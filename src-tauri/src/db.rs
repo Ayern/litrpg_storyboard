@@ -850,6 +850,94 @@ impl Db {
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
+    /// Edits a connection's label and/or relation type. As with nodes, only the
+    /// fields that actually changed are written, and each gets its own history
+    /// entry, so naming a connection is not buried under a type change. Both
+    /// fields are optional: an edge may carry neither.
+    pub fn update_edge(
+        &self,
+        id: &str,
+        label: Option<String>,
+        relation_type: Option<String>,
+        user: String,
+    ) -> DbResult<Edge> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
+                 FROM edges WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Edge {
+                        id: row.get(0)?,
+                        story_id: row.get(1)?,
+                        source_id: row.get(2)?,
+                        target_id: row.get(3)?,
+                        label: row.get(4)?,
+                        relation_type: row.get(5)?,
+                        created_by: row.get(6)?,
+                        created_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("edge"))?;
+
+        let label_changed = existing.label != label;
+        let relation_changed = existing.relation_type != relation_type;
+
+        if !label_changed && !relation_changed {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE edges SET label = ?1, relation_type = ?2 WHERE id = ?3",
+            params![&label, &relation_type, id],
+        )?;
+
+        if label_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "edge",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("label"),
+                    old_value: existing.label.clone(),
+                    new_value: label.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if relation_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "edge",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("relation_type"),
+                    old_value: existing.relation_type.clone(),
+                    new_value: relation_type.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(Edge {
+            label,
+            relation_type,
+            ..existing
+        })
+    }
+
     // ===== AUDIT LOG =====
 
     /// Newest-first history, optionally narrowed to one story and/or entity.
@@ -2813,6 +2901,123 @@ mod tests {
             delete.old_value.as_deref(),
             Some(format!("{} -> {}", node.id, other.id).as_str())
         );
+    }
+
+    #[test]
+    fn editing_an_edge_records_each_changed_field_separately() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
+        let from = db
+            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let to = db
+            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let edge = db
+            .create_edge(
+                story.id.clone(),
+                from.id.clone(),
+                to.id.clone(),
+                Some("early".into()),
+                Some("leads_to".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_edge(
+                &edge.id,
+                Some("later".into()),
+                Some("foreshadows".into()),
+                "Grace".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.label.as_deref(), Some("later"));
+        assert_eq!(updated.relation_type.as_deref(), Some("foreshadows"));
+        assert_eq!(updated.source_id, from.id, "endpoints are untouched");
+        assert_eq!(updated.target_id, to.id);
+        assert_eq!(updated.created_at, edge.created_at, "creation time is kept");
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("edge"), Some(&edge.id), 10)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "update")
+            .collect::<Vec<_>>();
+
+        assert_eq!(history.len(), 2, "one entry per changed field");
+        assert!(history.iter().all(|entry| entry.changed_by == "Grace"));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("label")
+                && entry.old_value.as_deref() == Some("early")
+                && entry.new_value.as_deref() == Some("later")));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("relation_type")
+                && entry.old_value.as_deref() == Some("leads_to")
+                && entry.new_value.as_deref() == Some("foreshadows")));
+
+        let stored = db.list_edges(&story.id).unwrap();
+        assert_eq!(stored[0].label.as_deref(), Some("later"));
+    }
+
+    #[test]
+    fn editing_an_edge_with_no_changes_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
+        let from = db
+            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let to = db
+            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let edge = db
+            .create_edge(
+                story.id.clone(),
+                from.id.clone(),
+                to.id.clone(),
+                Some("early".into()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let audit_before = db
+            .get_audit_log(Some(&story.id), None, None, 100)
+            .unwrap()
+            .len();
+
+        let unchanged = db
+            .update_edge(&edge.id, Some("early".into()), None, "Grace".into())
+            .unwrap();
+
+        assert_eq!(unchanged.label.as_deref(), Some("early"));
+        assert_eq!(
+            db.get_audit_log(Some(&story.id), None, None, 100)
+                .unwrap()
+                .len(),
+            audit_before,
+            "a no-op edit is not history"
+        );
+
+        // Clearing a field is a real change, recorded with no new value.
+        db.update_edge(&edge.id, None, Some("leads_to".into()), "Grace".into())
+            .unwrap();
+        let cleared = db
+            .get_audit_log(Some(&story.id), Some("edge"), Some(&edge.id), 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("label"))
+            .expect("clearing a label was not recorded");
+        assert_eq!(cleared.old_value.as_deref(), Some("early"));
+        assert!(cleared.new_value.is_none());
+
+        // A connection that does not exist is an error rather than a silent success.
+        assert!(db
+            .update_edge("missing", Some("x".into()), None, "Grace".into())
+            .is_err());
     }
 
     #[test]

@@ -846,6 +846,13 @@ body {
   color: #999;
 }
 
+.edge-endpoints {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #8f8f8f;
+}
+
 .node-editor-label,
 .node-editor-content {
   background: #1e1e1e;

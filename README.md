@@ -25,6 +25,12 @@ change its notes, and save. Only the fields you actually changed are written, ea
 as its own history entry, so rewording a label is not buried under a note edit.
 `Enter` saves and `Escape` closes the editor.
 
+**Editing a connection** — click an edge to open the same kind of editor for its
+label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
+change is recorded per field like a node edit. The canvas shows the label when
+there is one and falls back to the relation type. Only one editor is open at a
+time: selecting a node closes the connection editor and vice versa.
+
 **Characters** — a cast list per story, each with a name, an optional description,
 numeric stats and free-text attributes. Both are identified by name, so adding a
 stat or an attribute you already have updates it instead of creating a duplicate.
@@ -86,7 +92,8 @@ Behaviour worth knowing:
 
 - **Each field is recorded separately.** Renaming a character and editing its
   description produces two entries, so a rename is not buried inside an unrelated
-  edit. Rewording a graph node's label and its notes work the same way.
+  edit. Rewording a graph node's label and its notes work the same way, as do an
+  edge's label and relation type.
 - **Cascades are recorded individually.** Deleting a node records the node and
   every edge that went with it; deleting a character records its stats.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
@@ -155,7 +162,7 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 26 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 27 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.

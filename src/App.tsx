@@ -64,7 +64,7 @@ interface CharacterAttribute {
 
 // Simple type aliases for our custom node/edge data
 type NodeData = { label: string; nodeType: string; content?: string; createdBy: string };
-type EdgeData = { relationType?: string; createdBy: string };
+type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
 // We'll use ReactFlow's internal types but cast our data
 const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
@@ -140,6 +140,11 @@ function App() {
   const [nodeContentDraft, setNodeContentDraft] = useState('');
   const [nodeEditError, setNodeEditError] = useState<string | null>(null);
 
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
+  const [edgeRelationDraft, setEdgeRelationDraft] = useState('');
+  const [edgeEditError, setEdgeEditError] = useState<string | null>(null);
+
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
@@ -214,17 +219,21 @@ function App() {
         id: e.id,
         source: e.source_id,
         target: e.target_id,
+        // The canvas shows one string, but the two fields stay separate in
+        // `data` so the editor can tell a label from a relation type.
         label: e.label || e.relation_type || '',
         data: {
-          relationType: e.relation_type,
+          label: e.label ?? undefined,
+          relationType: e.relation_type ?? undefined,
           createdBy: e.created_by,
         },
       }));
 
       setNodes(flowNodes);
       setEdges(flowEdges);
-      // A node from the previous story is no longer on the canvas.
+      // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
+      setSelectedEdgeId(null);
     } catch (e) {
       console.error('Failed to load story graph:', e);
     }
@@ -462,6 +471,8 @@ function App() {
           },
         };
 
+        setSelectedEdgeId(null);
+
         setEdges(eds => addEdge(newEdge, eds));
       } catch (e) {
         console.error('Failed to create edge:', e);
@@ -499,6 +510,8 @@ function App() {
       // locally too in case the canvas still shows them.
       const removedIds = new Set(deleted.map(node => node.id));
       setSelectedNodeId(current => (current && removedIds.has(current) ? null : current));
+      // Connections attached to those nodes go with them, so close that editor.
+      setSelectedEdgeId(null);
       setEdges(eds =>
         eds.filter(edge => !removedIds.has(edge.source) && !removedIds.has(edge.target))
       );
@@ -520,6 +533,9 @@ function App() {
     async (deleted: Edge<EdgeData>[]) => {
       if (!currentStory) return;
       setActionError(null);
+
+      const removedIds = new Set(deleted.map(edge => edge.id));
+      setSelectedEdgeId(current => (current && removedIds.has(current) ? null : current));
 
       try {
         for (const edge of deleted) {
@@ -888,11 +904,22 @@ function App() {
     }
   };
 
+  // Only one editor is open at a time: picking a node closes the connection
+  // editor, because both occupy the same corner of the canvas.
   const selectNode = useCallback((_event: React.MouseEvent, node: Node<NodeData>) => {
     setNodeEditError(null);
+    setSelectedEdgeId(null);
     setSelectedNodeId(node.id);
     setNodeLabelDraft(node.data.label);
     setNodeContentDraft(node.data.content ?? '');
+  }, []);
+
+  const selectEdge = useCallback((_event: React.MouseEvent, edge: Edge<EdgeData>) => {
+    setEdgeEditError(null);
+    setSelectedNodeId(null);
+    setSelectedEdgeId(edge.id);
+    setEdgeLabelDraft(edge.data?.label ?? '');
+    setEdgeRelationDraft(edge.data?.relationType ?? '');
   }, []);
 
   const saveNode = async () => {
@@ -947,6 +974,54 @@ function App() {
     }
   };
 
+  const saveEdge = async () => {
+    if (!selectedEdgeId) return;
+
+    setEdgeEditError(null);
+
+    // Both fields are optional, so an empty box means "no label", not invalid.
+    const label = edgeLabelDraft.trim() || null;
+    const relationType = edgeRelationDraft.trim() || null;
+    const currentEdge = edges.find(edge => edge.id === selectedEdgeId);
+
+    // Saving without changing anything is not an edit, so it writes nothing.
+    if (
+      currentEdge &&
+      (currentEdge.data?.label ?? null) === label &&
+      (currentEdge.data?.relationType ?? null) === relationType
+    ) {
+      return;
+    }
+
+    try {
+      const updated: any = await invoke('update_graph_edge', {
+        id: selectedEdgeId,
+        label,
+        relationType,
+        user: actor,
+      });
+
+      setEdges(eds =>
+        eds.map(edge =>
+          edge.id === updated.id
+            ? {
+                ...edge,
+                label: updated.label || updated.relation_type || '',
+                data: {
+                  createdBy: edge.data?.createdBy ?? actor,
+                  label: updated.label ?? undefined,
+                  relationType: updated.relation_type ?? undefined,
+                },
+              }
+            : edge
+        )
+      );
+    } catch (e) {
+      console.error('Failed to update connection:', e);
+      setEdgeEditError(`Could not save connection: ${String(e)}`);
+    }
+  };
+
   const handleNodesChange = useCallback(
     (changes: any[]) => {
       onNodesChange(changes);
@@ -958,6 +1033,8 @@ function App() {
     characters.find(character => character.id === selectedCharacterId) ?? null;
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
+
+  const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
 
   return (
     <div className="app-container">
@@ -1163,6 +1240,7 @@ function App() {
                     onConnect={onConnect}
                     onNodeDragStop={onNodeDragStop}
                     onNodeClick={selectNode}
+                    onEdgeClick={selectEdge}
                     onNodesDelete={removeNodes}
                     onEdgesDelete={removeEdges}
                     fitView
@@ -1174,6 +1252,49 @@ function App() {
                         {nodeTypes.map(t => <span key={t} className={`legend ${t}`}>{t}</span>)}
                       </div>
                     </Panel>
+                    {selectedEdgeId && (
+                      <Panel position="top-left">
+                        <div className="node-editor">
+                          <div className="node-editor-heading">
+                            Edit connection
+                            {selectedEdge && (
+                              <span className="edge-endpoints">
+                                {nodes.find(node => node.id === selectedEdge.source)?.data.label ?? '?'}
+                                {' → '}
+                                {nodes.find(node => node.id === selectedEdge.target)?.data.label ?? '?'}
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            className="node-editor-label"
+                            placeholder="Label (optional)"
+                            value={edgeLabelDraft}
+                            onChange={e => setEdgeLabelDraft(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveEdge();
+                              if (e.key === 'Escape') setSelectedEdgeId(null);
+                            }}
+                          />
+                          <input
+                            className="node-editor-label"
+                            placeholder="Relation type (optional)"
+                            value={edgeRelationDraft}
+                            onChange={e => setEdgeRelationDraft(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveEdge();
+                              if (e.key === 'Escape') setSelectedEdgeId(null);
+                            }}
+                          />
+                          {edgeEditError && (
+                            <div className="node-editor-error">{edgeEditError}</div>
+                          )}
+                          <div className="node-editor-actions">
+                            <button onClick={saveEdge}>Save</button>
+                            <button onClick={() => setSelectedEdgeId(null)}>Close</button>
+                          </div>
+                        </div>
+                      </Panel>
+                    )}
                     {selectedNodeId && (
                       <Panel position="bottom-left">
                         <div className="node-editor">

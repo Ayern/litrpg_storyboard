@@ -218,6 +218,18 @@ fn create_graph_edge(
 }
 
 #[tauri::command]
+fn update_graph_edge(
+    db: tauri::State<'_, Db>,
+    id: String,
+    label: Option<String>,
+    relation_type: Option<String>,
+    user: String,
+) -> Result<Edge, String> {
+    db.update_edge(&id, label, relation_type, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_graph_edges(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Edge>, String> {
     db.list_edges(&story_id).map_err(|e| e.to_string())
 }
@@ -362,6 +374,7 @@ pub fn run() {
             update_graph_node_position,
             update_graph_node,
             create_graph_edge,
+            update_graph_edge,
             get_graph_edges,
             get_audit_history,
             update_story,
