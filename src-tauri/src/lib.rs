@@ -95,6 +95,23 @@ fn get_characters(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Char
 }
 
 #[tauri::command]
+fn update_character(
+    db: tauri::State<'_, Db>,
+    id: String,
+    name: String,
+    description: Option<String>,
+    user: String,
+) -> Result<Character, String> {
+    db.update_character(&id, name, description, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_character(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_character(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn set_character_stat(
     db: tauri::State<'_, Db>,
     character_id: String,
@@ -277,6 +294,8 @@ pub fn run() {
             get_story_by_id,
             create_new_character,
             get_characters,
+            update_character,
+            delete_character,
             set_character_stat,
             get_character_stats,
             create_graph_node,

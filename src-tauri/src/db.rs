@@ -948,6 +948,164 @@ impl Db {
 
         Ok(())
     }
+
+    // ===== CHARACTER MAINTENANCE =====
+
+    /// Renames a character and/or edits its description. Only the fields that
+    /// actually changed are written, and each one gets its own history entry so
+    /// a rename is not buried under a description tweak.
+    pub fn update_character(
+        &self,
+        id: &str,
+        name: String,
+        description: Option<String>,
+        user: String,
+    ) -> DbResult<Character> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, name, description, created_at, updated_at FROM characters WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Character {
+                        id: row.get(0)?,
+                        story_id: row.get(1)?,
+                        name: row.get(2)?,
+                        description: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("character"))?;
+
+        let name_changed = existing.name != name;
+        let description_changed = existing.description != description;
+
+        if !name_changed && !description_changed {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE characters SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
+            params![&name, &description, &timestamp, id],
+        )?;
+
+        if name_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("name"),
+                    old_value: Some(existing.name.clone()),
+                    new_value: Some(name.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if description_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("description"),
+                    old_value: existing.description.clone(),
+                    new_value: description.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(Character {
+            name,
+            description,
+            updated_at: timestamp,
+            ..existing
+        })
+    }
+
+    /// Removes a character and the stats that hang off it. Each stat removal is
+    /// recorded, so the history does not silently lose a character's numbers.
+    pub fn delete_character(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, name FROM characters WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, name)) = existing else {
+            return Ok(());
+        };
+
+        let stats = {
+            let mut stmt = tx.prepare(
+                "SELECT id, stat_name, value FROM character_stats WHERE character_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        for (stat_id, stat_name, value) in stats {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_stat",
+                    entity_id: &stat_id,
+                    action: "delete",
+                    field_changed: None,
+                    old_value: Some(format!("{stat_name}={value}")),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
+    }
 }
 
 // ===== MODELS =====
@@ -1702,5 +1860,125 @@ mod tests {
         assert!(!export.exported_at.is_empty());
 
         assert!(db.export_story("missing").is_err());
+    }
+
+    #[test]
+    fn renaming_a_character_and_editing_its_description_are_recorded() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), Some("Scout".into()), "Ada".into())
+            .unwrap();
+
+        let updated = db
+            .update_character(
+                &character.id,
+                "Rook Ashford".into(),
+                Some("Scout with a debt".into()),
+                "Grace".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.name, "Rook Ashford");
+        assert_eq!(updated.description.as_deref(), Some("Scout with a debt"));
+        assert_eq!(updated.created_at, character.created_at);
+
+        // The list reflects the new name.
+        let listed = db.list_characters(&story.id).unwrap();
+        assert_eq!(listed[0].name, "Rook Ashford");
+
+        let changes: Vec<AuditEntry> = db
+            .get_audit_log(Some(&story.id), Some("character"), None, 100)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "update")
+            .collect();
+
+        assert_eq!(changes.len(), 2, "name and description are separate entries");
+        assert!(changes.iter().all(|entry| entry.changed_by == "Grace"));
+
+        let rename = changes
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("name"))
+            .expect("rename was not recorded");
+        assert_eq!(rename.old_value.as_deref(), Some("Rook"));
+        assert_eq!(rename.new_value.as_deref(), Some("Rook Ashford"));
+
+        let description = changes
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("description"))
+            .expect("description edit was not recorded");
+        assert_eq!(description.old_value.as_deref(), Some("Scout"));
+        assert_eq!(description.new_value.as_deref(), Some("Scout with a debt"));
+    }
+
+    #[test]
+    fn updating_a_character_with_no_changes_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        let unchanged = db
+            .update_character(&character.id, "Rook".into(), None, "Grace".into())
+            .unwrap();
+
+        assert_eq!(unchanged.updated_at, character.updated_at);
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+    }
+
+    #[test]
+    fn deleting_a_character_removes_its_stats_and_records_them() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+            .unwrap();
+        let survivor = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&character.id, "Grace".into()).unwrap();
+
+        let remaining = db.list_characters(&story.id).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, survivor.id);
+        assert!(db.list_stats(&character.id).unwrap().is_empty());
+
+        let deletes: Vec<AuditEntry> = db
+            .get_audit_log(Some(&story.id), None, None, 100)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "delete")
+            .collect();
+
+        assert_eq!(deletes.len(), 2, "the character and its stat are both recorded");
+        assert!(deletes.iter().all(|entry| entry.changed_by == "Grace"));
+        assert!(deletes
+            .iter()
+            .any(|entry| entry.entity_type == "character"
+                && entry.old_value.as_deref() == Some("Rook")));
+        assert!(deletes
+            .iter()
+            .any(|entry| entry.entity_type == "character_stat"
+                && entry.old_value.as_deref() == Some("Level=3")));
+    }
+
+    #[test]
+    fn deleting_a_character_that_is_already_gone_is_quiet() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
+        db.create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        db.delete_character("does-not-exist", "Ada".into()).unwrap();
+
+        assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
     }
 }

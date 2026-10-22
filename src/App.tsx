@@ -33,6 +33,25 @@ interface AuditEntry {
   changed_at: string;
 }
 
+interface Character {
+  id: string;
+  story_id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CharacterStat {
+  id: string;
+  character_id: string;
+  stat_name: string;
+  value: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Simple type aliases for our custom node/edge data
 type NodeData = { label: string; nodeType: string; content?: string; createdBy: string };
 type EdgeData = { relationType?: string; createdBy: string };
@@ -114,6 +133,26 @@ function App() {
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
+  const [characterStats, setCharacterStats] = useState<CharacterStat[]>([]);
+  const [characterError, setCharacterError] = useState<string | null>(null);
+
+  const [newCharacterName, setNewCharacterName] = useState('');
+  const [newCharacterDescription, setNewCharacterDescription] = useState('');
+
+  const [editingStatId, setEditingStatId] = useState<string | null>(null);
+  const [statValueDraft, setStatValueDraft] = useState('');
+  const [statNotesDraft, setStatNotesDraft] = useState('');
+
+  const [newStatName, setNewStatName] = useState('');
+  const [newStatValue, setNewStatValue] = useState('');
+
+  const [editingCharacter, setEditingCharacter] = useState(false);
+  const [characterNameDraft, setCharacterNameDraft] = useState('');
+  const [characterDescriptionDraft, setCharacterDescriptionDraft] = useState('');
+  const [confirmDeleteCharacter, setConfirmDeleteCharacter] = useState(false);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -223,6 +262,70 @@ function App() {
     const timer = setTimeout(() => setExportStatus(null), 8000);
     return () => clearTimeout(timer);
   }, [exportStatus]);
+
+  // Characters are refreshed whenever the tab is opened or the story changes.
+  useEffect(() => {
+    if (selectedTab !== 'characters' || !currentStory) return;
+
+    let cancelled = false;
+
+    const loadCharacters = async () => {
+      setCharacterError(null);
+
+      try {
+        const loaded: Character[] = await invoke('get_characters', {
+          storyId: currentStory.id,
+        });
+        if (cancelled) return;
+
+        setCharacters(loaded);
+        // Keep the current pick if it still exists, otherwise fall back to the
+        // first character so the panel is never empty for no reason.
+        setSelectedCharacterId(previous =>
+          previous && loaded.some(character => character.id === previous)
+            ? previous
+            : loaded[0]?.id ?? null
+        );
+      } catch (e) {
+        console.error('Failed to load characters:', e);
+        if (!cancelled) setCharacterError(String(e));
+      }
+    };
+
+    loadCharacters();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTab, currentStory]);
+
+  // Stats follow whichever character is selected.
+  useEffect(() => {
+    if (!selectedCharacterId) {
+      setCharacterStats([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadStats = async () => {
+      try {
+        const loaded: CharacterStat[] = await invoke('get_character_stats', {
+          characterId: selectedCharacterId,
+        });
+        if (!cancelled) setCharacterStats(loaded);
+      } catch (e) {
+        console.error('Failed to load character stats:', e);
+        if (!cancelled) setCharacterError(String(e));
+      }
+    };
+
+    loadStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCharacterId]);
 
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
@@ -434,6 +537,166 @@ function App() {
     }
   };
 
+  const createCharacter = async () => {
+    if (!currentStory || !newCharacterName.trim()) return;
+    setCharacterError(null);
+
+    try {
+      const character: Character = await invoke('create_new_character', {
+        storyId: currentStory.id,
+        name: newCharacterName.trim(),
+        description: newCharacterDescription.trim() || null,
+        user: actor,
+      });
+
+      setCharacters(prev =>
+        [...prev, character].sort((a, b) => a.name.localeCompare(b.name))
+      );
+      setSelectedCharacterId(character.id);
+      setNewCharacterName('');
+      setNewCharacterDescription('');
+    } catch (e) {
+      console.error('Failed to create character:', e);
+      setCharacterError(`Could not create character: ${String(e)}`);
+    }
+  };
+
+  const startStatEdit = (stat: CharacterStat) => {
+    setEditingStatId(stat.id);
+    setStatValueDraft(String(stat.value));
+    setStatNotesDraft(stat.notes ?? '');
+  };
+
+  const saveStat = async (stat: CharacterStat) => {
+    const value = Number(statValueDraft);
+
+    if (!statValueDraft.trim() || !Number.isFinite(value)) {
+      setCharacterError('A stat value has to be a number.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: CharacterStat = await invoke('set_character_stat', {
+        characterId: stat.character_id,
+        statName: stat.stat_name,
+        value: Math.trunc(value),
+        notes: statNotesDraft.trim() || null,
+        user: actor,
+      });
+
+      setCharacterStats(prev =>
+        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
+          a.stat_name.localeCompare(b.stat_name)
+        )
+      );
+      setEditingStatId(null);
+    } catch (e) {
+      console.error('Failed to save stat:', e);
+      setCharacterError(`Could not save stat: ${String(e)}`);
+    }
+  };
+
+  const addStat = async () => {
+    if (!selectedCharacterId || !newStatName.trim()) return;
+
+    const raw = newStatValue.trim();
+    const value = Number(raw || '0');
+
+    if (!Number.isFinite(value)) {
+      setCharacterError('A stat value has to be a number.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      // Setting a stat that already exists updates it, which is what the name
+      // implies; the list below merges by id either way.
+      const saved: CharacterStat = await invoke('set_character_stat', {
+        characterId: selectedCharacterId,
+        statName: newStatName.trim(),
+        value: Math.trunc(value),
+        notes: null,
+        user: actor,
+      });
+
+      setCharacterStats(prev =>
+        [...prev.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+          a.stat_name.localeCompare(b.stat_name)
+        )
+      );
+      setNewStatName('');
+      setNewStatValue('');
+    } catch (e) {
+      console.error('Failed to add stat:', e);
+      setCharacterError(`Could not add stat: ${String(e)}`);
+    }
+  };
+
+  const startCharacterEdit = () => {
+    if (!selectedCharacter) return;
+    setCharacterError(null);
+    setConfirmDeleteCharacter(false);
+    setCharacterNameDraft(selectedCharacter.name);
+    setCharacterDescriptionDraft(selectedCharacter.description ?? '');
+    setEditingCharacter(true);
+  };
+
+  const saveCharacter = async () => {
+    if (!selectedCharacter) return;
+
+    const name = characterNameDraft.trim();
+
+    if (!name) {
+      setCharacterError('A character needs a name.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: Character = await invoke('update_character', {
+        id: selectedCharacter.id,
+        name,
+        description: characterDescriptionDraft.trim() || null,
+        user: actor,
+      });
+
+      setCharacters(prev =>
+        prev
+          .map(character => (character.id === updated.id ? updated : character))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+      setEditingCharacter(false);
+    } catch (e) {
+      console.error('Failed to update character:', e);
+      setCharacterError(`Could not update character: ${String(e)}`);
+    }
+  };
+
+  const removeCharacter = async () => {
+    if (!selectedCharacter) return;
+    setConfirmDeleteCharacter(false);
+    setCharacterError(null);
+
+    const removedId = selectedCharacter.id;
+
+    try {
+      await invoke('delete_character', { id: removedId, user: actor });
+
+      const remaining = characters.filter(character => character.id !== removedId);
+      setCharacters(remaining);
+      setSelectedCharacterId(remaining[0]?.id ?? null);
+      setCharacterStats([]);
+      setEditingCharacter(false);
+    } catch (e) {
+      console.error('Failed to delete character:', e);
+      setCharacterError(`Could not delete character: ${String(e)}`);
+    }
+  };
+
   const exportStory = async () => {
     if (!currentStory) return;
     setActionError(null);
@@ -456,6 +719,9 @@ function App() {
     },
     [onNodesChange]
   );
+
+  const selectedCharacter =
+    characters.find(character => character.id === selectedCharacterId) ?? null;
 
   return (
     <div className="app-container">
@@ -667,10 +933,188 @@ function App() {
 
         {selectedTab === 'characters' && (
           <div className="tab-content">
-            {currentStory ? (
-              <div>Character management coming in next iteration</div>
-            ) : (
+            {!currentStory ? (
               <div className="empty-state">Load a story to manage characters</div>
+            ) : (
+              <div className="characters-layout">
+                <div className="character-list">
+                  <div className="character-creator">
+                    <input
+                      placeholder="Character name"
+                      value={newCharacterName}
+                      onChange={(e) => setNewCharacterName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && createCharacter()}
+                    />
+                    <input
+                      placeholder="Description (optional)"
+                      value={newCharacterDescription}
+                      onChange={(e) => setNewCharacterDescription(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && createCharacter()}
+                    />
+                    <button onClick={createCharacter} disabled={!newCharacterName.trim()}>
+                      Add character
+                    </button>
+                  </div>
+
+                  {characters.length === 0 && <div className="empty">No characters yet</div>}
+
+                  {characters.map(character => (
+                    <div
+                      key={character.id}
+                      className={`character-item ${
+                        selectedCharacterId === character.id ? 'active' : ''
+                      }`}
+                      onClick={() => setSelectedCharacterId(character.id)}
+                    >
+                      <span className="character-name">{character.name}</span>
+                      {character.description && (
+                        <span className="character-description">{character.description}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="character-detail">
+                  {characterError && <div className="audit-error">{characterError}</div>}
+
+                  {!selectedCharacterId ? (
+                    <div className="empty">Select or create a character</div>
+                  ) : (
+                    <>
+                      <div className="character-header">
+                        {editingCharacter ? (
+                          <div className="character-editor">
+                            <input
+                              className="character-name-input"
+                              autoFocus
+                              value={characterNameDraft}
+                              onChange={(e) => setCharacterNameDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveCharacter();
+                                if (e.key === 'Escape') setEditingCharacter(false);
+                              }}
+                            />
+                            <input
+                              placeholder="Description (optional)"
+                              value={characterDescriptionDraft}
+                              onChange={(e) => setCharacterDescriptionDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveCharacter();
+                                if (e.key === 'Escape') setEditingCharacter(false);
+                              }}
+                            />
+                            <button onClick={saveCharacter} disabled={!characterNameDraft.trim()}>
+                              Save
+                            </button>
+                            <button onClick={() => setEditingCharacter(false)}>Cancel</button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="character-title">
+                              <h3 className="character-heading">
+                                {selectedCharacter?.name ?? 'Character'}
+                              </h3>
+                              {selectedCharacter?.description && (
+                                <div className="character-subheading">
+                                  {selectedCharacter.description}
+                                </div>
+                              )}
+                            </div>
+                            <div className="character-actions">
+                              {confirmDeleteCharacter ? (
+                                <>
+                                  <button className="danger" onClick={removeCharacter}>
+                                    Delete
+                                  </button>
+                                  <button onClick={() => setConfirmDeleteCharacter(false)}>
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={startCharacterEdit}>Edit</button>
+                                  <button
+                                    title="Delete character"
+                                    onClick={() => setConfirmDeleteCharacter(true)}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="stat-list">
+                        {characterStats.length === 0 && (
+                          <div className="empty">No stats yet — add one below.</div>
+                        )}
+
+                        {characterStats.map(stat => (
+                          <div key={stat.id} className="stat-row">
+                            <span className="stat-name">{stat.stat_name}</span>
+
+                            {editingStatId === stat.id ? (
+                              <>
+                                <input
+                                  className="stat-value-input"
+                                  type="number"
+                                  autoFocus
+                                  value={statValueDraft}
+                                  onChange={(e) => setStatValueDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveStat(stat);
+                                    if (e.key === 'Escape') setEditingStatId(null);
+                                  }}
+                                />
+                                <input
+                                  className="stat-notes-input"
+                                  placeholder="Notes (optional)"
+                                  value={statNotesDraft}
+                                  onChange={(e) => setStatNotesDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveStat(stat);
+                                    if (e.key === 'Escape') setEditingStatId(null);
+                                  }}
+                                />
+                                <button onClick={() => saveStat(stat)}>Save</button>
+                                <button onClick={() => setEditingStatId(null)}>Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <span className="stat-value">{stat.value}</span>
+                                {stat.notes && <span className="stat-notes">{stat.notes}</span>}
+                                <button onClick={() => startStatEdit(stat)}>Edit</button>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="stat-creator">
+                        <input
+                          placeholder="Stat name"
+                          value={newStatName}
+                          onChange={(e) => setNewStatName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addStat()}
+                        />
+                        <input
+                          className="stat-value-input"
+                          type="number"
+                          placeholder="0"
+                          value={newStatValue}
+                          onChange={(e) => setNewStatValue(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addStat()}
+                        />
+                        <button onClick={addStat} disabled={!newStatName.trim()}>
+                          Add stat
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}

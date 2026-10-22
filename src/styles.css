@@ -348,6 +348,258 @@ body {
   white-space: nowrap;
 }
 
+/* Characters */
+.characters-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.character-list {
+  width: 260px;
+  flex-shrink: 0;
+}
+
+.character-creator {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.character-creator input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+.character-creator button,
+.stat-creator button,
+.stat-row button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.character-creator button:disabled,
+.stat-creator button:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
+.character-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.character-item:hover {
+  background: #2a2a2b;
+}
+
+.character-item.active {
+  background: #37373d;
+}
+
+.character-name {
+  font-size: 13px;
+}
+
+.character-description {
+  font-size: 11px;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-detail {
+  flex: 1;
+  min-width: 0;
+}
+
+.character-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.character-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.character-heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: #eee;
+}
+
+.character-subheading {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #888;
+}
+
+.character-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.character-actions button,
+.character-editor button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.character-actions button:hover,
+.character-editor button:hover:not(:disabled) {
+  background: #37373d;
+  color: #fff;
+}
+
+.character-actions button.danger {
+  border-color: #6b3a3a;
+  color: #e07b7b;
+}
+
+.character-actions button.danger:hover {
+  background: #5a2b2b;
+  color: #ffd0d0;
+}
+
+.character-editor {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.character-editor input {
+  flex: 1;
+  min-width: 0;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.character-editor .character-name-input {
+  flex: 0 0 180px;
+  font-size: 14px;
+}
+
+.character-editor button:disabled {
+  border-color: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.stat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.stat-name {
+  min-width: 120px;
+  color: #ccc;
+}
+
+.stat-value {
+  min-width: 40px;
+  color: #b7d9b7;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-notes {
+  color: #888;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-row button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.stat-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.stat-row button + button {
+  margin-left: 0;
+}
+
+.stat-value-input,
+.stat-notes-input,
+.stat-creator input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.stat-value-input {
+  width: 70px;
+}
+
+.stat-notes-input {
+  flex: 1;
+}
+
+.stat-creator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-creator input:first-child {
+  flex: 1;
+}
+
 /* Audit log */
 .audit-list {
   list-style: none;
