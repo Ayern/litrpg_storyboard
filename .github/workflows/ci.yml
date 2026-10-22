@@ -11,8 +11,12 @@ on:
           ordinary CI run.
         type: string
 
+# One run per ref at a time, except that manual runs get a group of their own.
+# A dispatch that rebuilds a tag checks that tag out but still reports the
+# branch it was started from as github.ref, so sharing the group let a release
+# rebuild cancel an in-flight push run (and a push cancel a release rebuild).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}-${{ inputs.release_tag }}
   cancel-in-progress: true
 
 permissions:
