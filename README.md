@@ -1,5 +1,7 @@
 # LitRPG Storyboard Tracker
 
+[![CI](https://github.com/Ayern/litrpg_storyboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Ayern/litrpg_storyboard/actions/workflows/ci.yml?query=branch%3Amain)
+
 A local-first desktop app for plotting LitRPG and progression-fantasy stories: one
 idea graph per story, a character sheet with numeric stats, and an audit trail that
 records who changed what.
@@ -150,7 +152,10 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character.
 - **Single machine, no sync.** Sharing means copying the database file.
-- **No CI.** The test suite is run locally; nothing enforces it on push.
+- **CI checks Linux only, and not the desktop bundle.** The workflow typechecks and
+  builds the frontend and runs the database tests on Ubuntu; `tauri build` and any
+  platform-specific packaging (WebView2, macOS signing) are not exercised, so a
+  Windows- or macOS-only break would still reach `main`.
 
 ## Licence
 
