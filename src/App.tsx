@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactFlow, {
   Controls,
   Background,
@@ -32,6 +32,11 @@ interface AuditEntry {
   new_value: string | null;
   changed_by: string;
   changed_at: string;
+}
+
+interface AuditPage {
+  entries: AuditEntry[];
+  total: number;
 }
 
 interface Character {
@@ -80,6 +85,23 @@ const entityLabels: Record<string, string> = {
   node: 'Graph node',
   edge: 'Graph connection',
 };
+
+// One screenful of history at a time. The tab used to request everything up to a
+// fixed 200 and then stop silently, so anything older was simply unreachable.
+const AUDIT_PAGE_SIZE = 50;
+
+// Mirrors the entity types the database records in `audit_log.entity_type`.
+type AuditFilter = string | null;
+
+const auditFilters: { value: AuditFilter; label: string }[] = [
+  { value: null, label: 'All' },
+  { value: 'story', label: 'Story' },
+  { value: 'character', label: 'Characters' },
+  { value: 'character_stat', label: 'Stats' },
+  { value: 'character_attribute', label: 'Attributes' },
+  { value: 'node', label: 'Nodes' },
+  { value: 'edge', label: 'Connections' },
+];
 
 function entityLabel(entry: AuditEntry): string {
   const base = entityLabels[entry.entity_type] ?? entry.entity_type;
@@ -146,8 +168,15 @@ function App() {
   const [edgeEditError, setEdgeEditError] = useState<string | null>(null);
 
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>(null);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoadingMore, setAuditLoadingMore] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+
+  // Read by the "show older" request when it returns, so a page fetched under one
+  // filter is never appended to a list showing another.
+  const auditFilterRef = useRef<AuditFilter>(null);
 
   const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -246,8 +275,12 @@ function App() {
     }
   }, [stories, currentStory, loadStory]);
 
-  // History is fetched whenever the tab is opened or the story changes, so
-  // returning to the tab always reflects the latest changes.
+  // History is fetched whenever the tab is opened, the story changes or the
+  // filter changes, so returning to the tab always reflects the latest changes.
+  useEffect(() => {
+    auditFilterRef.current = auditFilter;
+  }, [auditFilter]);
+
   useEffect(() => {
     if (selectedTab !== 'audit' || !currentStory) return;
 
@@ -258,13 +291,17 @@ function App() {
       setAuditError(null);
 
       try {
-        const entries: AuditEntry[] = await invoke('get_audit_history', {
+        const page: AuditPage = await invoke('get_audit_history', {
           storyId: currentStory.id,
-          entityType: null,
+          entityType: auditFilter,
           entityId: null,
-          limit: 200,
+          limit: AUDIT_PAGE_SIZE,
+          offset: 0,
         });
-        if (!cancelled) setAuditEntries(entries);
+        if (!cancelled) {
+          setAuditEntries(page.entries);
+          setAuditTotal(page.total);
+        }
       } catch (e) {
         console.error('Failed to load audit history:', e);
         if (!cancelled) setAuditError(String(e));
@@ -278,7 +315,37 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTab, currentStory]);
+  }, [selectedTab, currentStory, auditFilter]);
+
+  // Older changes are appended rather than reloaded, so the list grows where the
+  // reader is instead of jumping back to the newest entry.
+  const loadMoreAudit = async () => {
+    if (!currentStory) return;
+
+    const filter = auditFilter;
+    setAuditLoadingMore(true);
+    setAuditError(null);
+
+    try {
+      const page: AuditPage = await invoke('get_audit_history', {
+        storyId: currentStory.id,
+        entityType: filter,
+        entityId: null,
+        limit: AUDIT_PAGE_SIZE,
+        offset: auditEntries.length,
+      });
+
+      if (filter !== auditFilterRef.current) return;
+
+      setAuditEntries(previous => [...previous, ...page.entries]);
+      setAuditTotal(page.total);
+    } catch (e) {
+      console.error('Failed to load more audit history:', e);
+      setAuditError(String(e));
+    } finally {
+      setAuditLoadingMore(false);
+    }
+  };
 
   // Remember who is using the app: an audit trail that resets everyone to
   // "You" after a restart is not attribution.
@@ -1604,32 +1671,79 @@ function App() {
           <div className="tab-content">
             {!currentStory ? (
               <div className="empty-state">Load a story to see history</div>
-            ) : auditError ? (
-              <div className="audit-error">
-                Could not load history for this story: {auditError}
-              </div>
-            ) : auditLoading ? (
-              <div className="empty">Loading history…</div>
-            ) : auditEntries.length === 0 ? (
-              <div className="empty">
-                No changes recorded yet. Edits to this story will show up here,
-                newest first.
-              </div>
             ) : (
-              <ol className="audit-list">
-                {auditEntries.map(entry => (
-                  <li key={entry.id} className="audit-entry">
-                    <div className="audit-row">
-                      <span className={`audit-badge ${entry.action}`}>{entry.action}</span>
-                      <span className="audit-entity">{entityLabel(entry)}</span>
-                      <span className="audit-when">
-                        {entry.changed_by} · {formatWhen(entry.changed_at)}
-                      </span>
+              <>
+                <div
+                  className="audit-filters"
+                  role="group"
+                  aria-label="Filter history by what changed"
+                >
+                  {auditFilters.map(filter => (
+                    <button
+                      key={filter.value ?? 'all'}
+                      className={
+                        auditFilter === filter.value ? 'audit-filter active' : 'audit-filter'
+                      }
+                      aria-pressed={auditFilter === filter.value}
+                      onClick={() => setAuditFilter(filter.value)}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+
+                {auditError && (
+                  <div className="audit-error">
+                    Could not load history for this story: {auditError}
+                  </div>
+                )}
+
+                {auditLoading ? (
+                  <div className="empty">Loading history…</div>
+                ) : auditEntries.length === 0 ? (
+                  auditError ? null : (
+                    <div className="empty">
+                      {auditFilter
+                        ? 'No changes of this kind recorded yet.'
+                        : 'No changes recorded yet. Edits to this story will show up here, newest first.'}
                     </div>
-                    <AuditChange entry={entry} />
-                  </li>
-                ))}
-              </ol>
+                  )
+                ) : (
+                  <>
+                    <div className="audit-summary">
+                      Showing {auditEntries.length} of {auditTotal}{' '}
+                      {auditTotal === 1 ? 'change' : 'changes'}
+                    </div>
+
+                    <ol className="audit-list">
+                      {auditEntries.map(entry => (
+                        <li key={entry.id} className="audit-entry">
+                          <div className="audit-row">
+                            <span className={`audit-badge ${entry.action}`}>{entry.action}</span>
+                            <span className="audit-entity">{entityLabel(entry)}</span>
+                            <span className="audit-when">
+                              {entry.changed_by} · {formatWhen(entry.changed_at)}
+                            </span>
+                          </div>
+                          <AuditChange entry={entry} />
+                        </li>
+                      ))}
+                    </ol>
+
+                    {auditEntries.length < auditTotal && (
+                      <button
+                        className="audit-more"
+                        onClick={loadMoreAudit}
+                        disabled={auditLoadingMore}
+                      >
+                        {auditLoadingMore
+                          ? 'Loading…'
+                          : `Show older changes (${auditTotal - auditEntries.length} more)`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         )}

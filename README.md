@@ -36,7 +36,10 @@ numeric stats and free-text attributes. Both are identified by name, so adding a
 stat or an attribute you already have updates it instead of creating a duplicate.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
-before/after values, and can be reviewed per story. See
+before/after values, and can be reviewed per story. The tab shows the newest changes
+first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,
+nodes or connections. "Show older changes" pages further back and says how many are
+still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
 **Export** — writes a complete JSON snapshot of one story — characters, stats,

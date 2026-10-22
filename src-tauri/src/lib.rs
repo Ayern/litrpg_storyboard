@@ -1,7 +1,7 @@
 mod db;
 
 use db::{
-    AuditEntry, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story, StoryExport,
+    AuditPage, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -242,12 +242,14 @@ fn get_audit_history(
     entity_type: Option<String>,
     entity_id: Option<String>,
     limit: Option<i64>,
-) -> Result<Vec<AuditEntry>, String> {
-    db.get_audit_log(
+    offset: Option<i64>,
+) -> Result<AuditPage, String> {
+    db.get_audit_page(
         story_id.as_deref(),
         entity_type.as_deref(),
         entity_id.as_deref(),
         limit.unwrap_or(100),
+        offset.unwrap_or(0),
     )
     .map_err(|e| e.to_string())
 }

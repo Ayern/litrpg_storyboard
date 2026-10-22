@@ -740,6 +740,60 @@ body {
 }
 
 /* Audit log */
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.audit-filter {
+  background: #2d2d30;
+  color: #bbb;
+  border: 1px solid #3a3a3d;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.audit-filter:hover {
+  background: #37373d;
+  color: #ddd;
+}
+
+.audit-filter.active {
+  background: #0e639c;
+  border-color: #1177bb;
+  color: #fff;
+}
+
+.audit-summary {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.audit-more {
+  margin-top: 10px;
+  background: #2d2d30;
+  color: #ccc;
+  border: 1px solid #3a3a3d;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.audit-more:hover:not(:disabled) {
+  background: #37373d;
+}
+
+.audit-more:disabled {
+  color: #777;
+  cursor: not-allowed;
+}
+
 .audit-list {
   list-style: none;
   margin: 0;

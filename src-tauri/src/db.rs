@@ -940,7 +940,10 @@ impl Db {
 
     // ===== AUDIT LOG =====
 
-    /// Newest-first history, optionally narrowed to one story and/or entity.
+    /// Newest-first history with no window boundary, optionally narrowed to one
+    /// story and/or entity. The app itself pages through `get_audit_page`; this is
+    /// the convenience the tests read whole histories with.
+    #[cfg(test)]
     pub fn get_audit_log(
         &self,
         story_id: Option<&str>,
@@ -955,7 +958,45 @@ impl Db {
             entity_type,
             entity_id,
             Some(limit),
+            0,
         )?)
+    }
+
+    /// One window of history plus the total matching the same filter. The count is
+    /// queried from the same filter as the rows, so a page can never claim to be
+    /// the last one while the rest of the history is still there.
+    pub fn get_audit_page(
+        &self,
+        story_id: Option<&str>,
+        entity_type: Option<&str>,
+        entity_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> DbResult<AuditPage> {
+        // A caller asking for zero rows, or a negative window, is asked for
+        // something SQLite would answer unhelpfully; keep the window sane instead.
+        let limit = limit.clamp(1, MAX_AUDIT_PAGE);
+        let offset = offset.max(0);
+
+        let guard = self.conn()?;
+        let (filter, args) = audit_filters(story_id, entity_type, entity_id);
+
+        let total: i64 = guard.query_row(
+            &format!("SELECT COUNT(*) FROM audit_log{filter}"),
+            rusqlite::params_from_iter(args),
+            |row| row.get(0),
+        )?;
+
+        let entries = query_audit(
+            &guard,
+            story_id,
+            entity_type,
+            entity_id,
+            Some(limit),
+            offset,
+        )?;
+
+        Ok(AuditPage { entries, total })
     }
 
     // ===== EXPORT =====
@@ -1082,7 +1123,7 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
-        let audit_trail = query_audit(&guard, Some(story_id), None, None, None)?;
+        let audit_trail = query_audit(&guard, Some(story_id), None, None, None, 0)?;
 
         Ok(StoryExport {
             exported_at: now(),
@@ -1830,6 +1871,16 @@ pub struct AuditEntry {
     pub changed_at: String,
 }
 
+/// A window of history together with how many entries the filter matches in total.
+#[derive(Debug, serde::Serialize)]
+pub struct AuditPage {
+    pub entries: Vec<AuditEntry>,
+    pub total: i64,
+}
+
+/// Upper bound on one window of history, so a bad caller cannot ask for everything.
+const MAX_AUDIT_PAGE: i64 = 500;
+
 /// A complete, self-contained snapshot of one story.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct StoryExport {
@@ -1899,17 +1950,14 @@ fn now() -> String {
     Utc::now().to_rfc3339()
 }
 
-fn query_audit(
-    conn: &Connection,
+/// The `WHERE` clause shared by the history query and its count, so the rows and
+/// the total can never disagree about which entries they are talking about.
+fn audit_filters(
     story_id: Option<&str>,
     entity_type: Option<&str>,
     entity_id: Option<&str>,
-    limit: Option<i64>,
-) -> SqliteResult<Vec<AuditEntry>> {
-    let mut sql = String::from(
-        "SELECT id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at, story_id
-         FROM audit_log WHERE 1 = 1",
-    );
+) -> (String, Vec<Value>) {
+    let mut sql = String::from(" WHERE 1 = 1");
     let mut args: Vec<Value> = Vec::new();
 
     if let Some(story_id) = story_id {
@@ -1925,12 +1973,34 @@ fn query_audit(
         args.push(Value::Text(entity_id.to_string()));
     }
 
+    (sql, args)
+}
+
+fn query_audit(
+    conn: &Connection,
+    story_id: Option<&str>,
+    entity_type: Option<&str>,
+    entity_id: Option<&str>,
+    limit: Option<i64>,
+    offset: i64,
+) -> SqliteResult<Vec<AuditEntry>> {
+    let (filter, mut args) = audit_filters(story_id, entity_type, entity_id);
+    let mut sql = String::from(
+        "SELECT id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at, story_id
+         FROM audit_log",
+    );
+    sql.push_str(&filter);
+
     // rowid breaks ties so entries written in the same tick stay in order.
     sql.push_str(" ORDER BY changed_at DESC, rowid DESC");
 
     if let Some(limit) = limit {
         sql.push_str(" LIMIT ?");
         args.push(Value::Integer(limit));
+        // SQLite only accepts OFFSET alongside a LIMIT, which is why a window with
+        // no limit has no offset either.
+        sql.push_str(" OFFSET ?");
+        args.push(Value::Integer(offset));
     }
 
     let mut stmt = conn.prepare(&sql)?;
@@ -2550,6 +2620,89 @@ mod tests {
 
         let all = db.get_audit_log(None, None, None, 100).unwrap();
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn audit_history_pages_without_repeating_or_dropping_entries() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Paged".into(), None, "Ada".into()).unwrap();
+
+        for i in 0..5 {
+            db.create_node(
+                story.id.clone(),
+                "idea".into(),
+                format!("Node {i}"),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        }
+
+        let all = db
+            .get_audit_log(Some(&story.id), Some("node"), None, 100)
+            .unwrap();
+        assert_eq!(all.len(), 5);
+
+        let mut paged = Vec::new();
+        let mut offsets = Vec::new();
+        let mut offset = 0;
+
+        loop {
+            let page = db
+                .get_audit_page(Some(&story.id), Some("node"), None, 2, offset)
+                .unwrap();
+
+            assert_eq!(page.total, 5, "the total describes the filter, not the window");
+
+            if page.entries.is_empty() {
+                break;
+            }
+
+            offsets.push(offset);
+            paged.extend(page.entries.into_iter().map(|entry| entry.id));
+            offset += 2;
+        }
+
+        assert_eq!(offsets, vec![0, 2, 4], "three pages, then the end");
+        assert_eq!(paged.len(), 5, "no entry was skipped or repeated");
+        assert_eq!(
+            paged,
+            all.iter().map(|entry| entry.id.clone()).collect::<Vec<_>>(),
+            "pages stitch back into exactly the full history"
+        );
+    }
+
+    #[test]
+    fn audit_paging_keeps_the_window_sane_and_scoped() {
+        let db = Db::open_in_memory().unwrap();
+        let first = db.create_story("First".into(), None, "Ada".into()).unwrap();
+        let second = db.create_story("Second".into(), None, "Ada".into()).unwrap();
+        db.create_character(first.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        // A zero or negative window still returns rows rather than quietly meaning
+        // "no limit", which is what SQLite would do with LIMIT 0 / OFFSET -10.
+        let clamped = db
+            .get_audit_page(Some(&first.id), None, None, 0, -10)
+            .unwrap();
+        assert_eq!(clamped.total, 2, "story + character");
+        assert_eq!(clamped.entries.len(), 1);
+
+        // Asking past the end is empty, not an error, and still knows the total.
+        let past_end = db
+            .get_audit_page(Some(&first.id), None, None, 10, 2)
+            .unwrap();
+        assert!(past_end.entries.is_empty());
+        assert_eq!(past_end.total, 2);
+
+        // Another story's history never leaks into a filtered page.
+        let other = db
+            .get_audit_page(Some(&second.id), Some("character"), None, 10, 0)
+            .unwrap();
+        assert_eq!(other.total, 0);
+        assert!(other.entries.is_empty());
     }
 
     #[test]
