@@ -52,6 +52,15 @@ interface CharacterStat {
   updated_at: string;
 }
 
+interface CharacterAttribute {
+  id: string;
+  character_id: string;
+  attr_name: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // Simple type aliases for our custom node/edge data
 type NodeData = { label: string; nodeType: string; content?: string; createdBy: string };
 type EdgeData = { relationType?: string; createdBy: string };
@@ -66,6 +75,7 @@ const entityLabels: Record<string, string> = {
   story: 'Story',
   character: 'Character',
   character_stat: 'Character stat',
+  character_attribute: 'Character attribute',
   node: 'Graph node',
   edge: 'Graph connection',
 };
@@ -137,6 +147,12 @@ function App() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [characterStats, setCharacterStats] = useState<CharacterStat[]>([]);
+  const [characterAttributes, setCharacterAttributes] = useState<CharacterAttribute[]>([]);
+
+  const [newAttributeName, setNewAttributeName] = useState('');
+  const [newAttributeValue, setNewAttributeValue] = useState('');
+  const [editingAttributeId, setEditingAttributeId] = useState<string | null>(null);
+  const [attributeValueDraft, setAttributeValueDraft] = useState('');
   const [characterError, setCharacterError] = useState<string | null>(null);
 
   const [newCharacterName, setNewCharacterName] = useState('');
@@ -321,6 +337,34 @@ function App() {
     };
 
     loadStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCharacterId]);
+
+  // Text attributes follow the selected character too.
+  useEffect(() => {
+    if (!selectedCharacterId) {
+      setCharacterAttributes([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAttributes = async () => {
+      try {
+        const loaded: CharacterAttribute[] = await invoke('get_character_attributes', {
+          characterId: selectedCharacterId,
+        });
+        if (!cancelled) setCharacterAttributes(loaded);
+      } catch (e) {
+        console.error('Failed to load character attributes:', e);
+        if (!cancelled) setCharacterError(String(e));
+      }
+    };
+
+    loadAttributes();
 
     return () => {
       cancelled = true;
@@ -635,6 +679,90 @@ function App() {
     }
   };
 
+  const startAttributeEdit = (attribute: CharacterAttribute) => {
+    setEditingAttributeId(attribute.id);
+    setAttributeValueDraft(attribute.value);
+  };
+
+  const saveAttribute = async (attribute: CharacterAttribute) => {
+    if (!selectedCharacterId) return;
+
+    const value = attributeValueDraft.trim();
+
+    if (!value) {
+      setCharacterError('An attribute needs a value — delete it to remove it.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: CharacterAttribute = await invoke('set_character_attribute', {
+        characterId: selectedCharacterId,
+        attrName: attribute.attr_name,
+        value,
+        user: actor,
+      });
+
+      setCharacterAttributes(prev =>
+        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
+          a.attr_name.localeCompare(b.attr_name)
+        )
+      );
+      setEditingAttributeId(null);
+    } catch (e) {
+      console.error('Failed to save attribute:', e);
+      setCharacterError(`Could not save attribute: ${String(e)}`);
+    }
+  };
+
+  const addAttribute = async () => {
+    if (!selectedCharacterId || !newAttributeName.trim()) return;
+
+    const value = newAttributeValue.trim();
+
+    if (!value) {
+      setCharacterError('An attribute needs a value.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      // Setting a name that already exists updates it, like stats do.
+      const saved: CharacterAttribute = await invoke('set_character_attribute', {
+        characterId: selectedCharacterId,
+        attrName: newAttributeName.trim(),
+        value,
+        user: actor,
+      });
+
+      setCharacterAttributes(prev =>
+        [...prev.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+          a.attr_name.localeCompare(b.attr_name)
+        )
+      );
+      setNewAttributeName('');
+      setNewAttributeValue('');
+    } catch (e) {
+      console.error('Failed to add attribute:', e);
+      setCharacterError(`Could not add attribute: ${String(e)}`);
+    }
+  };
+
+  const removeAttribute = async (attribute: CharacterAttribute) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_character_attribute', { id: attribute.id, user: actor });
+      setCharacterAttributes(prev => prev.filter(other => other.id !== attribute.id));
+      setEditingAttributeId(null);
+    } catch (e) {
+      console.error('Failed to delete attribute:', e);
+      setCharacterError(`Could not delete attribute: ${String(e)}`);
+    }
+  };
+
   const startCharacterEdit = () => {
     if (!selectedCharacter) return;
     setCharacterError(null);
@@ -690,6 +818,7 @@ function App() {
       setCharacters(remaining);
       setSelectedCharacterId(remaining[0]?.id ?? null);
       setCharacterStats([]);
+      setCharacterAttributes([]);
       setEditingCharacter(false);
     } catch (e) {
       console.error('Failed to delete character:', e);
@@ -745,6 +874,7 @@ function App() {
           />
           <button onClick={createNewStory}>Create</button>
         </div>
+
 
         <div className="story-list">
           {stories.length === 0 && <div className="empty">No stories yet</div>}
@@ -878,6 +1008,7 @@ function App() {
             Exported to {exportStatus}
           </div>
         )}
+
 
         {selectedTab === 'graph' && (
           <div className="graph-container">
@@ -1044,6 +1175,78 @@ function App() {
                             </div>
                           </>
                         )}
+                      </div>
+
+                      <div className="attribute-section">
+                        <h4 className="character-section-heading">Attributes</h4>
+
+                        <div className="attribute-list">
+                          {characterAttributes.length === 0 && (
+                            <div className="empty">
+                              No attributes yet — Class, Title, Aura, Affinity.
+                            </div>
+                          )}
+
+                          {characterAttributes.map(attribute => (
+                            <div key={attribute.id} className="attribute-row">
+                              <span className="attribute-name">{attribute.attr_name}</span>
+
+                              {editingAttributeId === attribute.id ? (
+                                <>
+                                  <input
+                                    className="attribute-value-input"
+                                    autoFocus
+                                    value={attributeValueDraft}
+                                    onChange={(e) => setAttributeValueDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveAttribute(attribute);
+                                      if (e.key === 'Escape') setEditingAttributeId(null);
+                                    }}
+                                  />
+                                  <button onClick={() => saveAttribute(attribute)}>Save</button>
+                                  <button onClick={() => setEditingAttributeId(null)}>
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="attribute-value">{attribute.value}</span>
+                                  <button onClick={() => startAttributeEdit(attribute)}>
+                                    Edit
+                                  </button>
+                                  <button
+                                    title={`Delete ${attribute.attr_name}`}
+                                    onClick={() => removeAttribute(attribute)}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="attribute-creator">
+                          <input
+                            placeholder="Attribute (Class)"
+                            value={newAttributeName}
+                            onChange={(e) => setNewAttributeName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
+                          />
+                          <input
+                            className="attribute-value-input"
+                            placeholder="Value (Rogue)"
+                            value={newAttributeValue}
+                            onChange={(e) => setNewAttributeValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
+                          />
+                          <button
+                            onClick={addAttribute}
+                            disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
+                          >
+                            Add attribute
+                          </button>
+                        </div>
                       </div>
 
                       <div className="stat-list">

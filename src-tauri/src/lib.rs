@@ -1,6 +1,6 @@
 mod db;
 
-use db::{AuditEntry, Character, CharacterStat, Db, Edge, Node, Story};
+use db::{AuditEntry, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
@@ -130,6 +130,31 @@ fn get_character_stats(
     character_id: String,
 ) -> Result<Vec<CharacterStat>, String> {
     db.list_stats(&character_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_character_attribute(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    attr_name: String,
+    value: String,
+    user: String,
+) -> Result<CharacterAttribute, String> {
+    db.add_or_update_attribute(character_id, attr_name, value, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_attributes(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<CharacterAttribute>, String> {
+    db.list_attributes(&character_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_character_attribute(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_attribute(&id, user).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -298,6 +323,9 @@ pub fn run() {
             delete_character,
             set_character_stat,
             get_character_stats,
+            set_character_attribute,
+            get_character_attributes,
+            delete_character_attribute,
             create_graph_node,
             get_graph_nodes,
             update_graph_node_position,

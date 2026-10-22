@@ -600,6 +600,116 @@ body {
   flex: 1;
 }
 
+/* Text attributes (Class, Title, Aura) */
+.character-section-heading {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+}
+
+.attribute-section {
+  margin-bottom: 18px;
+}
+
+.attribute-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.attribute-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.attribute-name {
+  min-width: 120px;
+  color: #ccc;
+}
+
+.attribute-value {
+  color: #e2c68f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attribute-row button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.attribute-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.attribute-row button + button {
+  margin-left: 0;
+}
+
+.attribute-value-input {
+  flex: 1;
+  min-width: 100px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.attribute-creator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.attribute-creator input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.attribute-creator input:first-child {
+  flex: 1;
+}
+
+.attribute-creator button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.attribute-creator button:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
 /* Audit log */
 .audit-list {
   list-style: none;

@@ -20,16 +20,17 @@ connected with edges. Dragging a node saves its position. Deleting a node remove
 the connections attached to it, and the node plus each removed connection are
 recorded in the history.
 
-**Characters** — a cast list per story, each with a name, an optional description
-and numeric stats. Stats are identified by name, so adding a stat you already have
-updates it instead of creating a duplicate.
+**Characters** — a cast list per story, each with a name, an optional description,
+numeric stats and free-text attributes. Both are identified by name, so adding a
+stat or an attribute you already have updates it instead of creating a duplicate.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. See
 [The audit model](#the-audit-model).
 
 **Export** — writes a complete JSON snapshot of one story — characters, stats,
-graph and full history — beside the database.
+attributes, graph and full history — beside the database, under
+`exports/<story-slug>-<timestamp>.json`.
 
 **Current user** — remembered between launches and used to attribute every change.
 This is a name, not an identity; see [Limitations](#limitations).
@@ -62,7 +63,7 @@ An entry records:
 | Column | Meaning |
 | --- | --- |
 | `story_id` | Which story the change belongs to, so history can be shown per story |
-| `entity_type` | `story`, `character`, `character_stat`, `node` or `edge` |
+| `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
 | `entity_id` | The row that changed |
 | `action` | `create`, `update` or `delete` |
 | `field_changed` | Name of the changed field, for updates |
@@ -88,20 +89,24 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `1`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `2`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
-adding a block for the next version.
+adding a block for the next version. Version 2 added `character_attributes`, so a
+database written by an earlier build gains the table on first launch and keeps
+everything it already held.
 
 | Table | Contents |
 | --- | --- |
 | `stories` | `id`, `title`, `description`, timestamps |
 | `characters` | Belongs to a story; `name`, `description` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
+| `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), `created_by` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type` |
 | `audit_log` | Change history, described above |
 
-`characters`, `character_stats`, `nodes` and `edges` all cascade from their parent,
+`characters`, `character_stats`, `character_attributes`, `nodes` and `edges` all
+cascade from their parent,
 with `PRAGMA foreign_keys = ON`. `audit_log` deliberately has no foreign key, so
 history survives the deletion of what it describes. It is indexed on
 `(story_id, changed_at)` and `(entity_type, entity_id)`.
@@ -136,7 +141,7 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 21 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 24 thin `#[tauri::command]` wrappers, the JSON
   export writer, and startup (which opens the database and adopts a legacy file).
 
 ## Limitations
@@ -145,12 +150,13 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
   in the app's local storage. Anyone using the machine can enter any name, and the
   audit log lives in a file they can edit. Treat the history as a helpful record,
   not a tamper-proof trail.
-- **Stats are integers only.** Something like "Class: Rogue" has to live in notes.
+- **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
+  `Rogue`), which are plain text with no typing, validation or formatting.
 - **There is no undo.** Deletions are permanent; they are recorded in the history
   but cannot be restored from it.
 - **Export only, no import.** A snapshot cannot be loaded back into the app yet.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
-  character.
+  character. Attributes can be deleted one at a time.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI checks Linux only, and not the desktop bundle.** The workflow typechecks and
   builds the frontend and runs the database tests on Ubuntu; `tauri build` and any

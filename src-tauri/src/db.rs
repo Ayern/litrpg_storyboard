@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -368,6 +368,184 @@ impl Db {
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
+    // ===== ATTRIBUTE OPERATIONS =====
+    //
+    // Attributes are named text values ("Class" = "Rogue", "Aura" = "Ember").
+    // Setting a name that already exists updates it, exactly like stats, so the
+    // sheet cannot end up with two different Classes.
+
+    pub fn add_or_update_attribute(
+        &self,
+        character_id: String,
+        attr_name: String,
+        value: String,
+        user: String,
+    ) -> DbResult<CharacterAttribute> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        // Audit entries are scoped to a story, so resolve it from the character.
+        let story_id: String = tx
+            .query_row(
+                "SELECT story_id FROM characters WHERE id = ?1",
+                params![&character_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("character"))?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, value, created_at FROM character_attributes WHERE character_id = ?1 AND attr_name = ?2",
+                params![&character_id, &attr_name],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let attribute = if let Some((existing_id, old_value, created_at)) = existing {
+            tx.execute(
+                "UPDATE character_attributes SET value = ?1, updated_at = ?2 WHERE id = ?3",
+                params![&value, &timestamp, &existing_id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_attribute",
+                    entity_id: &existing_id,
+                    action: "update",
+                    field_changed: Some("value"),
+                    old_value: Some(old_value),
+                    new_value: Some(value.clone()),
+                    changed_by: &user,
+                },
+            )?;
+
+            CharacterAttribute {
+                id: existing_id,
+                character_id,
+                attr_name,
+                value,
+                // Keep the real creation time rather than the update time.
+                created_at,
+                updated_at: timestamp,
+            }
+        } else {
+            let id = Uuid::new_v4().to_string();
+
+            tx.execute(
+                "INSERT INTO character_attributes (id, character_id, attr_name, value, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![&id, &character_id, &attr_name, &value, &timestamp, &timestamp],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_attribute",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("value"),
+                    old_value: None,
+                    new_value: Some(value.clone()),
+                    changed_by: &user,
+                },
+            )?;
+
+            CharacterAttribute {
+                id,
+                character_id,
+                attr_name,
+                value,
+                created_at: timestamp.clone(),
+                updated_at: timestamp,
+            }
+        };
+
+        tx.commit()?;
+
+        Ok(attribute)
+    }
+
+    pub fn list_attributes(&self, character_id: &str) -> DbResult<Vec<CharacterAttribute>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT id, character_id, attr_name, value, created_at, updated_at
+             FROM character_attributes WHERE character_id = ?1 ORDER BY attr_name",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], |row| {
+            Ok(CharacterAttribute {
+                id: row.get(0)?,
+                character_id: row.get(1)?,
+                attr_name: row.get(2)?,
+                value: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Removes one attribute. Deleting something already gone succeeds quietly, so
+    /// a double click cannot fail.
+    pub fn delete_attribute(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT a.attr_name, a.value, c.story_id
+                 FROM character_attributes a
+                 JOIN characters c ON c.id = a.character_id
+                 WHERE a.id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((attr_name, value, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_attributes WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_attribute",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(format!("{attr_name}={value}")),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
     // ===== NODE OPERATIONS (IDEA GRAPH) =====
 
     pub fn create_node(
@@ -657,6 +835,26 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let character_attributes = {
+            let mut stmt = guard.prepare(
+                "SELECT id, character_id, attr_name, value, created_at, updated_at
+                 FROM character_attributes
+                 WHERE character_id IN (SELECT id FROM characters WHERE story_id = ?1)
+                 ORDER BY attr_name",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(CharacterAttribute {
+                    id: row.get(0)?,
+                    character_id: row.get(1)?,
+                    attr_name: row.get(2)?,
+                    value: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let nodes = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
@@ -706,6 +904,7 @@ impl Db {
             story,
             characters,
             character_stats,
+            character_attributes,
             nodes,
             edges,
             audit_trail,
@@ -1070,6 +1269,20 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let attributes = {
+            let mut stmt = tx.prepare(
+                "SELECT id, attr_name, value FROM character_attributes WHERE character_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
 
         log_audit(
@@ -1085,6 +1298,22 @@ impl Db {
                 changed_by: &user,
             },
         )?;
+
+        for (attribute_id, attr_name, value) in attributes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_attribute",
+                    entity_id: &attribute_id,
+                    action: "delete",
+                    field_changed: None,
+                    old_value: Some(format!("{attr_name}={value}")),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
 
         for (stat_id, stat_name, value) in stats {
             log_audit(
@@ -1141,6 +1370,16 @@ pub struct CharacterStat {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterAttribute {
+    pub id: String,
+    pub character_id: String,
+    pub attr_name: String,
+    pub value: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Node {
     pub id: String,
     pub story_id: String,
@@ -1188,6 +1427,7 @@ pub struct StoryExport {
     pub story: Story,
     pub characters: Vec<Character>,
     pub character_stats: Vec<CharacterStat>,
+    pub character_attributes: Vec<CharacterAttribute>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub audit_trail: Vec<AuditEntry>,
@@ -1308,6 +1548,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(INDEXES)?;
     }
 
+    if version < 2 {
+        conn.execute_batch(MIGRATION_002)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -1400,6 +1644,25 @@ const BASE_SCHEMA: &str = "
     );
 ";
 
+/// Schema v2: named text attributes (Class, Title, Aura, Affinity). They live in
+/// their own table because `character_stats.value` is an integer and cannot hold
+/// them, and one table per kind keeps the numeric sheet intact.
+const MIGRATION_002: &str = "
+    CREATE TABLE IF NOT EXISTS character_attributes (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        attr_name TEXT NOT NULL,
+        value TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        UNIQUE(character_id, attr_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_attributes_character
+        ON character_attributes (character_id);
+";
+
 const INDEXES: &str = "
     CREATE INDEX IF NOT EXISTS idx_audit_log_story ON audit_log (story_id, changed_at);
     CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity_type, entity_id);
@@ -1408,6 +1671,183 @@ const INDEXES: &str = "
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attributes_hold_text_and_update_by_name() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.add_or_update_attribute(
+            character.id.clone(),
+            "Class".into(),
+            "Rogue".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_or_update_attribute(
+            character.id.clone(),
+            "Aura".into(),
+            "Ember".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let attributes = db.list_attributes(&character.id).unwrap();
+        assert_eq!(attributes.len(), 2);
+        assert_eq!(attributes[0].attr_name, "Aura", "ordered by name");
+
+        // The same name updates in place rather than creating a second Class.
+        db.add_or_update_attribute(
+            character.id.clone(),
+            "Class".into(),
+            "Shadowblade".into(),
+            "Grace".into(),
+        )
+        .unwrap();
+
+        let attributes = db.list_attributes(&character.id).unwrap();
+        assert_eq!(attributes.len(), 2);
+        let class = attributes
+            .iter()
+            .find(|attribute| attribute.attr_name == "Class")
+            .unwrap();
+        assert_eq!(class.value, "Shadowblade");
+
+        // Text attributes are not numeric, so they stay out of the stats table.
+        assert!(db.list_stats(&character.id).unwrap().is_empty());
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_attribute"), None, 10)
+            .unwrap();
+        assert!(history
+            .iter()
+            .any(|entry| entry.action == "update" && entry.old_value.as_deref() == Some("Rogue")));
+        assert!(history.iter().any(|entry| entry.changed_by == "Grace"));
+    }
+
+    #[test]
+    fn deleting_an_attribute_is_recorded_and_idempotent() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let attribute = db
+            .add_or_update_attribute(
+                character.id.clone(),
+                "Title".into(),
+                "Ashborn".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_attribute(&attribute.id, "Grace".into())
+            .unwrap();
+        assert!(db.list_attributes(&character.id).unwrap().is_empty());
+
+        // A second delete of the same row is quiet and writes nothing.
+        db.delete_attribute(&attribute.id, "Grace".into()).unwrap();
+
+        let deletes = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_attribute"),
+                Some(&attribute.id),
+                10,
+            )
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "delete")
+            .count();
+        assert_eq!(deletes, 1, "the no-op delete wrote nothing");
+    }
+
+    #[test]
+    fn deleting_a_character_records_and_removes_its_attributes() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let attribute = db
+            .add_or_update_attribute(
+                character.id.clone(),
+                "Title".into(),
+                "Ashborn".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_character(&character.id, "Grace".into()).unwrap();
+
+        assert!(db.list_attributes(&character.id).unwrap().is_empty());
+
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_attribute"),
+                Some(&attribute.id),
+                10,
+            )
+            .unwrap();
+        assert_eq!(history.len(), 2, "creation and deletion are both recorded");
+        assert!(history
+            .iter()
+            .any(|entry| entry.action == "delete"
+                && entry.old_value.as_deref() == Some("Title=Ashborn")));
+    }
+
+    #[test]
+    fn migrating_a_version_1_database_adds_attributes_without_losing_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v2', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // The new table exists: this insert is the assertion.
+        conn.execute(
+            "INSERT INTO character_attributes
+             (id, character_id, attr_name, value, created_at, updated_at)
+             VALUES ('a1', 'c1', 'Class', 'Rogue', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Written before v2", "existing rows are untouched");
+    }
 
     #[test]
     fn every_mutation_is_audited_with_the_acting_user() {
@@ -1823,6 +2263,13 @@ mod tests {
             .unwrap();
         db.add_or_update_stat(character.id.clone(), "Level".into(), 7, None, "Ada".into())
             .unwrap();
+        db.add_or_update_attribute(
+            character.id.clone(),
+            "Class".into(),
+            "Rogue".into(),
+            "Ada".into(),
+        )
+        .unwrap();
         let first = db
             .create_node(story.id.clone(), "chapter".into(), "One".into(), None, 5.0, 6.0, "Ada".into())
             .unwrap();
@@ -1850,6 +2297,8 @@ mod tests {
         assert_eq!(export.story.description.as_deref(), Some("notes"));
         assert_eq!(export.characters.len(), 1);
         assert_eq!(export.character_stats.len(), 1);
+        assert_eq!(export.character_attributes.len(), 1, "text attributes travel too");
+        assert_eq!(export.character_attributes[0].value, "Rogue");
         assert_eq!(export.nodes.len(), 2);
         assert_eq!(export.edges.len(), 1);
         assert!(!export.audit_trail.is_empty());
