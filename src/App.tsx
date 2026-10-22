@@ -135,6 +135,11 @@ function App() {
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
 
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [nodeLabelDraft, setNodeLabelDraft] = useState('');
+  const [nodeContentDraft, setNodeContentDraft] = useState('');
+  const [nodeEditError, setNodeEditError] = useState<string | null>(null);
+
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
@@ -218,6 +223,8 @@ function App() {
 
       setNodes(flowNodes);
       setEdges(flowEdges);
+      // A node from the previous story is no longer on the canvas.
+      setSelectedNodeId(null);
     } catch (e) {
       console.error('Failed to load story graph:', e);
     }
@@ -386,7 +393,11 @@ function App() {
       setStories(prev => [story, ...prev]);
       setNewStoryTitle('');
       setCurrentStory(story);
-      // Don't load graph yet - new story has no nodes/edges
+      // A new story has no graph, so drop the previous story's canvas — leaving
+      // it up would let a node from the old story be edited from this one.
+      setNodes([]);
+      setEdges([]);
+      setSelectedNodeId(null);
     } catch (e) {
       console.error('Failed to create story:', e);
     }
@@ -487,6 +498,7 @@ function App() {
       // Attached edges disappear with the node in the database, so drop them
       // locally too in case the canvas still shows them.
       const removedIds = new Set(deleted.map(node => node.id));
+      setSelectedNodeId(current => (current && removedIds.has(current) ? null : current));
       setEdges(eds =>
         eds.filter(edge => !removedIds.has(edge.source) && !removedIds.has(edge.target))
       );
@@ -876,6 +888,65 @@ function App() {
     }
   };
 
+  const selectNode = useCallback((_event: React.MouseEvent, node: Node<NodeData>) => {
+    setNodeEditError(null);
+    setSelectedNodeId(node.id);
+    setNodeLabelDraft(node.data.label);
+    setNodeContentDraft(node.data.content ?? '');
+  }, []);
+
+  const saveNode = async () => {
+    if (!selectedNodeId) return;
+
+    const label = nodeLabelDraft.trim();
+
+    if (!label) {
+      setNodeEditError('A node needs a label.');
+      return;
+    }
+
+    setNodeEditError(null);
+
+    const content = nodeContentDraft.trim() || null;
+    const currentNode = nodes.find(node => node.id === selectedNodeId);
+
+    // Saving without changing anything is not an edit, so it writes nothing.
+    if (
+      currentNode &&
+      currentNode.data.label === label &&
+      (currentNode.data.content ?? null) === content
+    ) {
+      return;
+    }
+
+    try {
+      const updated: any = await invoke('update_graph_node', {
+        id: selectedNodeId,
+        label,
+        content,
+        user: actor,
+      });
+
+      setNodes(nds =>
+        nds.map(node =>
+          node.id === updated.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  label: updated.label,
+                  content: updated.content ?? undefined,
+                },
+              }
+            : node
+        )
+      );
+    } catch (e) {
+      console.error('Failed to update node:', e);
+      setNodeEditError(`Could not save node: ${String(e)}`);
+    }
+  };
+
   const handleNodesChange = useCallback(
     (changes: any[]) => {
       onNodesChange(changes);
@@ -885,6 +956,8 @@ function App() {
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
+
+  const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
 
   return (
     <div className="app-container">
@@ -1089,6 +1162,7 @@ function App() {
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
                     onNodeDragStop={onNodeDragStop}
+                    onNodeClick={selectNode}
                     onNodesDelete={removeNodes}
                     onEdgesDelete={removeEdges}
                     fitView
@@ -1100,6 +1174,44 @@ function App() {
                         {nodeTypes.map(t => <span key={t} className={`legend ${t}`}>{t}</span>)}
                       </div>
                     </Panel>
+                    {selectedNodeId && (
+                      <Panel position="bottom-left">
+                        <div className="node-editor">
+                          <div className="node-editor-heading">
+                            Edit node
+                            {selectedNode && (
+                              <span className={`legend ${selectedNode.data.nodeType}`}>
+                                {selectedNode.data.nodeType}
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            className="node-editor-label"
+                            value={nodeLabelDraft}
+                            onChange={e => setNodeLabelDraft(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveNode();
+                              if (e.key === 'Escape') setSelectedNodeId(null);
+                            }}
+                          />
+                          <textarea
+                            className="node-editor-content"
+                            placeholder="Notes for this node (optional)"
+                            value={nodeContentDraft}
+                            onChange={e => setNodeContentDraft(e.target.value)}
+                          />
+                          {nodeEditError && (
+                            <div className="node-editor-error">{nodeEditError}</div>
+                          )}
+                          <div className="node-editor-actions">
+                            <button onClick={saveNode} disabled={!nodeLabelDraft.trim()}>
+                              Save
+                            </button>
+                            <button onClick={() => setSelectedNodeId(null)}>Close</button>
+                          </div>
+                        </div>
+                      </Panel>
+                    )}
                   </ReactFlow>
                 </div>
               </>

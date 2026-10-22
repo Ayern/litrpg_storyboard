@@ -192,6 +192,18 @@ fn update_graph_node_position(
 }
 
 #[tauri::command]
+fn update_graph_node(
+    db: tauri::State<'_, Db>,
+    id: String,
+    label: String,
+    content: Option<String>,
+    user: String,
+) -> Result<Node, String> {
+    db.update_node(&id, label, content, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn create_graph_edge(
     db: tauri::State<'_, Db>,
     story_id: String,
@@ -348,6 +360,7 @@ pub fn run() {
             create_graph_node,
             get_graph_nodes,
             update_graph_node_position,
+            update_graph_node,
             create_graph_edge,
             get_graph_edges,
             get_audit_history,

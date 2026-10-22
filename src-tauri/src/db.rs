@@ -659,6 +659,98 @@ impl Db {
         Ok(())
     }
 
+    /// Edits a node's label and/or content. Only the fields that actually changed
+    /// are written, and each one gets its own history entry, so rewording a label
+    /// is not buried under a content edit.
+    pub fn update_node(
+        &self,
+        id: &str,
+        label: String,
+        content: Option<String>,
+        user: String,
+    ) -> DbResult<Node> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
+                 FROM nodes WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Node {
+                        id: row.get(0)?,
+                        story_id: row.get(1)?,
+                        node_type: row.get(2)?,
+                        label: row.get(3)?,
+                        content: row.get(4)?,
+                        pos_x: row.get(5)?,
+                        pos_y: row.get(6)?,
+                        created_by: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("node"))?;
+
+        let label_changed = existing.label != label;
+        let content_changed = existing.content != content;
+
+        if !label_changed && !content_changed {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE nodes SET label = ?1, content = ?2, updated_at = ?3 WHERE id = ?4",
+            params![&label, &content, &timestamp, id],
+        )?;
+
+        if label_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("label"),
+                    old_value: Some(existing.label.clone()),
+                    new_value: Some(label.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if content_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("content"),
+                    old_value: existing.content.clone(),
+                    new_value: content.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(Node {
+            label,
+            content,
+            updated_at: timestamp,
+            ..existing
+        })
+    }
+
     pub fn list_nodes(&self, story_id: &str) -> DbResult<Vec<Node>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
@@ -2516,6 +2608,110 @@ mod tests {
         let story = db.create_story("Fresh".into(), None, "Ada".into()).unwrap();
         let fresh = db.get_audit_log(Some(&story.id), None, None, 10).unwrap();
         assert_eq!(fresh.len(), 1);
+    }
+
+    #[test]
+    fn editing_a_node_records_each_changed_field_separately() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let node = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Opening hook".into(),
+                None,
+                10.0,
+                20.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_node(
+                &node.id,
+                "Opening beat".into(),
+                Some("Ash wakes in the hold".into()),
+                "Grace".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.label, "Opening beat");
+        assert_eq!(updated.content.as_deref(), Some("Ash wakes in the hold"));
+        assert_eq!(updated.pos_x, 10.0, "position and type are untouched");
+        assert_eq!(updated.node_type, "idea");
+        assert_eq!(updated.created_at, node.created_at, "creation time is kept");
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("node"), Some(&node.id), 10)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "update")
+            .collect::<Vec<_>>();
+
+        assert_eq!(history.len(), 2, "one entry per changed field");
+        assert!(history.iter().all(|entry| entry.changed_by == "Grace"));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("label")
+                && entry.old_value.as_deref() == Some("Opening hook")
+                && entry.new_value.as_deref() == Some("Opening beat")));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("content")
+                && entry.old_value.is_none()
+                && entry.new_value.as_deref() == Some("Ash wakes in the hold")));
+
+        let stored = db.list_nodes(&story.id).unwrap();
+        assert_eq!(stored[0].label, "Opening beat");
+    }
+
+    #[test]
+    fn editing_a_node_with_no_changes_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let node = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Opening hook".into(),
+                Some("notes".into()),
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let audit_before = db
+            .get_audit_log(Some(&story.id), None, None, 100)
+            .unwrap()
+            .len();
+
+        let unchanged = db
+            .update_node(
+                &node.id,
+                "Opening hook".into(),
+                Some("notes".into()),
+                "Grace".into(),
+            )
+            .unwrap();
+
+        assert_eq!(unchanged.updated_at, node.updated_at, "no timestamp bump");
+        assert_eq!(
+            db.get_audit_log(Some(&story.id), None, None, 100)
+                .unwrap()
+                .len(),
+            audit_before,
+            "a no-op edit is not history"
+        );
+
+        // A node that does not exist is an error rather than a silent success.
+        assert!(db
+            .update_node("missing", "x".into(), None, "Grace".into())
+            .is_err());
     }
 
     #[test]
