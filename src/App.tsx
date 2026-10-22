@@ -20,6 +20,19 @@ interface Story {
   updated_at: string;
 }
 
+interface AuditEntry {
+  id: string;
+  story_id: string | null;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  field_changed: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string;
+  changed_at: string;
+}
+
 // Simple type aliases for our custom node/edge data
 type NodeData = { label: string; nodeType: string; content?: string; createdBy: string };
 type EdgeData = { relationType?: string; createdBy: string };
@@ -27,6 +40,44 @@ type EdgeData = { relationType?: string; createdBy: string };
 // We'll use ReactFlow's internal types but cast our data
 const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
 type NodeType = typeof nodeTypes[number];
+
+const entityLabels: Record<string, string> = {
+  story: 'Story',
+  character: 'Character',
+  character_stat: 'Character stat',
+  node: 'Graph node',
+  edge: 'Graph connection',
+};
+
+function entityLabel(entry: AuditEntry): string {
+  const base = entityLabels[entry.entity_type] ?? entry.entity_type;
+  return entry.field_changed ? `${base} (${entry.field_changed})` : base;
+}
+
+function formatWhen(timestamp: string): string {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
+}
+
+function AuditChange({ entry }: { entry: AuditEntry }) {
+  if (entry.action === 'update') {
+    return (
+      <div className="audit-change">
+        <span className="audit-old">{entry.old_value ?? 'nothing'}</span>
+        <span className="audit-arrow">→</span>
+        <span className="audit-new">{entry.new_value ?? 'nothing'}</span>
+      </div>
+    );
+  }
+
+  if (!entry.new_value) return null;
+
+  return (
+    <div className="audit-change">
+      <span className="audit-new">{entry.new_value}</span>
+    </div>
+  );
+}
 
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
@@ -41,6 +92,10 @@ function App() {
   const [newStoryTitle, setNewStoryTitle] = useState('');
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
+
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -99,6 +154,40 @@ function App() {
       loadStory(stories[0]);
     }
   }, [stories, currentStory, loadStory]);
+
+  // History is fetched whenever the tab is opened or the story changes, so
+  // returning to the tab always reflects the latest changes.
+  useEffect(() => {
+    if (selectedTab !== 'audit' || !currentStory) return;
+
+    let cancelled = false;
+
+    const loadAudit = async () => {
+      setAuditLoading(true);
+      setAuditError(null);
+
+      try {
+        const entries: AuditEntry[] = await invoke('get_audit_history', {
+          storyId: currentStory.id,
+          entityType: null,
+          entityId: null,
+          limit: 200,
+        });
+        if (!cancelled) setAuditEntries(entries);
+      } catch (e) {
+        console.error('Failed to load audit history:', e);
+        if (!cancelled) setAuditError(String(e));
+      } finally {
+        if (!cancelled) setAuditLoading(false);
+      }
+    };
+
+    loadAudit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTab, currentStory]);
 
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
@@ -335,10 +424,34 @@ function App() {
 
         {selectedTab === 'audit' && (
           <div className="tab-content">
-            {currentStory ? (
-              <div>Audit log for current story coming soon</div>
-            ) : (
+            {!currentStory ? (
               <div className="empty-state">Load a story to see history</div>
+            ) : auditError ? (
+              <div className="audit-error">
+                Could not load history for this story: {auditError}
+              </div>
+            ) : auditLoading ? (
+              <div className="empty">Loading history…</div>
+            ) : auditEntries.length === 0 ? (
+              <div className="empty">
+                No changes recorded yet. Edits to this story will show up here,
+                newest first.
+              </div>
+            ) : (
+              <ol className="audit-list">
+                {auditEntries.map(entry => (
+                  <li key={entry.id} className="audit-entry">
+                    <div className="audit-row">
+                      <span className={`audit-badge ${entry.action}`}>{entry.action}</span>
+                      <span className="audit-entity">{entityLabel(entry)}</span>
+                      <span className="audit-when">
+                        {entry.changed_by} · {formatWhen(entry.changed_at)}
+                      </span>
+                    </div>
+                    <AuditChange entry={entry} />
+                  </li>
+                ))}
+              </ol>
             )}
           </div>
         )}

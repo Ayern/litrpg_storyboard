@@ -230,6 +230,88 @@ body {
   color: #aaa;
 }
 
+/* Audit log */
+.audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 900px;
+}
+
+.audit-entry {
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.audit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #37373d;
+  color: #bbb;
+}
+
+.audit-badge.create {
+  background: #1d4d2b;
+  color: #9ee6a8;
+}
+
+.audit-badge.update {
+  background: #4a3b12;
+  color: #e6cf9e;
+}
+
+.audit-entity {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.audit-when {
+  margin-left: auto;
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+}
+
+.audit-change {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.audit-old {
+  color: #c98b8b;
+}
+
+.audit-arrow {
+  color: #666;
+}
+
+.audit-new {
+  color: #b7d9b7;
+}
+
+.audit-error {
+  color: #e07b7b;
+  font-size: 13px;
+}
+
 /* React Flow customizations */
 .react-flow__node {
   background: #2d2d2d;
