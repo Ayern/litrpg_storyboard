@@ -163,5 +163,6 @@ MIT — see [LICENSE](LICENSE). You may use, copy, modify, redistribute and sell
 software, provided the copyright notice and permission notice travel with it. There
 is no warranty.
 
-If the app saves you time, a donation is welcome but never required. The licence
-grants unrestricted use, and nothing in it depends on payment.
+If the app saves you time, [a donation via PayPal](https://paypal.me/cjdugwyler) is
+welcome but never required. The licence grants unrestricted use, and nothing in it
+depends on payment.
