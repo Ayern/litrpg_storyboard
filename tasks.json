@@ -1,0 +1,57 @@
+[
+  {
+    "content": "Update project metadata (name, title, icons, identifiers) in package.json, tauri.conf.json, Cargo.toml",
+    "id": "setup-01",
+    "status": "completed"
+  },
+  {
+    "content": "Add core dependencies: rusqlite + serde for backend; React + ReactFlow + types for frontend graph UI",
+    "id": "setup-02",
+    "status": "completed"
+  },
+  {
+    "content": "Design and implement SQLite schema: stories, characters, stats, nodes, edges, audit_log with user attribution",
+    "id": "data-01",
+    "status": "completed"
+  },
+  {
+    "content": "Create Rust DB module, connection, migrations, basic CRUD models",
+    "id": "backend-01",
+    "status": "completed"
+  },
+  {
+    "content": "Implement Tauri commands for stories, characters, nodes/edges, change history",
+    "id": "backend-02",
+    "status": "completed"
+  },
+  {
+    "content": "Convert frontend from vanilla TS to React + TS + Vite",
+    "id": "frontend-01",
+    "status": "completed"
+  },
+  {
+    "content": "Build basic app shell: sidebar (stories), tabs (Graph, Characters, Timeline, Audit)",
+    "id": "frontend-02",
+    "status": "completed"
+  },
+  {
+    "content": "Integrate React Flow for idea/node graph with add/connect/delete",
+    "id": "graph-01",
+    "status": "completed"
+  },
+  {
+    "content": "Wire frontend to call Rust commands for create/save/load",
+    "id": "persist-01",
+    "status": "completed"
+  },
+  {
+    "content": "Add simple user identification (name selector) and attribute all changes",
+    "id": "multiuser-01",
+    "status": "completed"
+  },
+  {
+    "content": "Run dev build to verify no errors and basic flow works",
+    "id": "test-01",
+    "status": "in_progress"
+  }
+]
