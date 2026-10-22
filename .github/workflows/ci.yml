@@ -17,10 +17,10 @@ jobs:
     name: Frontend typecheck and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           # Vite 8 needs Node ^20.19 || >=22.12; match the version the build
           # is developed and verified against.
@@ -41,7 +41,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The tauri crate links against webkit and gtk, which the runner does not
       # ship. `cargo test --lib` needs them even though no window is opened.
