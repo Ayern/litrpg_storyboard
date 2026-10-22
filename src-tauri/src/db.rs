@@ -628,6 +628,243 @@ impl Db {
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
+
+    // ===== STORY MAINTENANCE =====
+
+    /// Renames a story. Renaming to the name it already has is not a change, so
+    /// it writes nothing at all.
+    pub fn update_story(&self, id: &str, title: String, user: String) -> DbResult<Story> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, title, description, created_at, updated_at FROM stories WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Story {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("story"))?;
+
+        if existing.title == title {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE stories SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![&title, &timestamp, id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(id),
+                entity_type: "story",
+                entity_id: id,
+                action: "update",
+                field_changed: Some("title"),
+                old_value: Some(existing.title),
+                new_value: Some(title.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(Story {
+            title,
+            updated_at: timestamp,
+            ..existing
+        })
+    }
+
+    /// Removes a story and everything hanging off it. Children are removed by the
+    /// foreign key cascade; the audit entry records how much went with it.
+    ///
+    /// The story's audit rows are deliberately kept: the history of a deleted
+    /// story is still history, and an audit log that erases itself is not one.
+    pub fn delete_story(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT title FROM stories WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        // Already gone: nothing to delete, nothing to record.
+        let Some(title) = existing else {
+            return Ok(());
+        };
+
+        let characters: i64 = tx.query_row(
+            "SELECT count(*) FROM characters WHERE story_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        let nodes: i64 = tx.query_row(
+            "SELECT count(*) FROM nodes WHERE story_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        let edges: i64 = tx.query_row(
+            "SELECT count(*) FROM edges WHERE story_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        tx.execute("DELETE FROM stories WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(id),
+                entity_type: "story",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(format!(
+                    "{title} ({characters} characters, {nodes} nodes, {edges} edges)"
+                )),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    // ===== DELETIONS =====
+
+    /// Deletes a node along with the edges attached to it. Edges removed by the
+    /// cascade are recorded individually, so the history does not silently lose
+    /// connections. Deleting something that is already gone succeeds quietly.
+    pub fn delete_node(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, label FROM nodes WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, label)) = existing else {
+            return Ok(());
+        };
+
+        let attached = {
+            let mut stmt = tx.prepare(
+                "SELECT id, source_id, target_id FROM edges WHERE source_id = ?1 OR target_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        tx.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "node",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(label),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        for (edge_id, source_id, target_id) in attached {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "edge",
+                    entity_id: &edge_id,
+                    action: "delete",
+                    field_changed: None,
+                    old_value: Some(format!("{source_id} -> {target_id}")),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Deletes a single connection. Already gone is not an error, which matters
+    /// because deleting a node also reports its edges as deleted.
+    pub fn delete_edge(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, source_id, target_id FROM edges WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((story_id, source_id, target_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM edges WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "edge",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(format!("{source_id} -> {target_id}")),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
 }
 
 // ===== MODELS =====
@@ -1078,5 +1315,193 @@ mod tests {
         let story = db.create_story("Fresh".into(), None, "Ada".into()).unwrap();
         let fresh = db.get_audit_log(Some(&story.id), None, None, 10).unwrap();
         assert_eq!(fresh.len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_node_removes_its_edges_and_records_both() {
+        let db = Db::open_in_memory().unwrap();
+
+        let story = db.create_story("Prune".into(), None, "Ada".into()).unwrap();
+        let first = db
+            .create_node(story.id.clone(), "idea".into(), "First".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let second = db
+            .create_node(story.id.clone(), "idea".into(), "Second".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        db.create_edge(
+            story.id.clone(),
+            first.id.clone(),
+            second.id.clone(),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_node(&first.id, "Grace".into()).unwrap();
+
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, second.id);
+
+        let edges = db.list_edges(&story.id).unwrap();
+        assert!(edges.is_empty(), "the attached edge went with the node");
+
+        let deletes: Vec<AuditEntry> = db
+            .get_audit_log(Some(&story.id), None, None, 100)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "delete")
+            .collect();
+
+        assert_eq!(deletes.len(), 2, "the node and its edge are both recorded");
+        assert!(deletes.iter().all(|entry| entry.changed_by == "Grace"));
+        assert!(deletes.iter().any(|entry| entry.entity_type == "node"
+            && entry.old_value.as_deref() == Some("First")));
+        assert!(deletes.iter().any(|entry| entry.entity_type == "edge"));
+    }
+
+    #[test]
+    fn deleting_something_already_gone_is_a_quiet_no_op() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Empty".into(), None, "Ada".into()).unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        // The frontend reports a node's edges as deleted too, even though the
+        // node's cascade already removed them, so this must not error.
+        db.delete_edge("does-not-exist".into(), "Ada".into()).unwrap();
+        db.delete_node("does-not-exist".into(), "Ada".into()).unwrap();
+        db.delete_story("does-not-exist".into(), "Ada".into()).unwrap();
+
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(db.list_stories().unwrap().len(), 1);
+        assert_eq!(db.list_stories().unwrap()[0].id, story.id);
+    }
+
+    #[test]
+    fn deleting_an_edge_is_recorded() {
+        let db = Db::open_in_memory().unwrap();
+
+        let story = db.create_story("Cut".into(), None, "Ada".into()).unwrap();
+        let node = db
+            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let other = db
+            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let edge = db
+            .create_edge(
+                story.id.clone(),
+                node.id.clone(),
+                other.id.clone(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_edge(&edge.id, "Grace".into()).unwrap();
+
+        assert!(db.list_edges(&story.id).unwrap().is_empty());
+
+        let delete = db
+            .get_audit_log(Some(&story.id), Some("edge"), Some(&edge.id), 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "delete")
+            .expect("edge deletion was not recorded");
+
+        assert_eq!(delete.changed_by, "Grace");
+        assert_eq!(
+            delete.old_value.as_deref(),
+            Some(format!("{} -> {}", node.id, other.id).as_str())
+        );
+    }
+
+    #[test]
+    fn renaming_a_story_records_the_previous_title() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Untitled".into(), None, "Ada".into()).unwrap();
+
+        let renamed = db
+            .update_story(&story.id, "The Long Walk".into(), "Grace".into())
+            .unwrap();
+
+        assert_eq!(renamed.title, "The Long Walk");
+        assert_eq!(renamed.id, story.id);
+        assert_eq!(renamed.created_at, story.created_at);
+        assert_eq!(db.list_stories().unwrap()[0].title, "The Long Walk");
+
+        let rename = db
+            .get_audit_log(Some(&story.id), Some("story"), None, 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "update")
+            .expect("rename was not recorded");
+
+        assert_eq!(rename.field_changed.as_deref(), Some("title"));
+        assert_eq!(rename.old_value.as_deref(), Some("Untitled"));
+        assert_eq!(rename.new_value.as_deref(), Some("The Long Walk"));
+        assert_eq!(rename.changed_by, "Grace");
+    }
+
+    #[test]
+    fn renaming_to_the_same_title_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Same".into(), None, "Ada".into()).unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        let unchanged = db
+            .update_story(&story.id, "Same".into(), "Grace".into())
+            .unwrap();
+
+        assert_eq!(unchanged.updated_at, story.updated_at);
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+    }
+
+    #[test]
+    fn deleting_a_story_removes_its_contents_but_keeps_the_history() {
+        let db = Db::open_in_memory().unwrap();
+
+        let story = db.create_story("Doomed".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+            .unwrap();
+        let node = db
+            .create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 1.0, 1.0, "Ada".into())
+            .unwrap();
+        db.create_edge(
+            story.id.clone(),
+            node.id.clone(),
+            node.id.clone(),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_story(&story.id, "Grace".into()).unwrap();
+
+        assert!(db.list_stories().unwrap().is_empty());
+        assert!(db.list_characters(&story.id).unwrap().is_empty());
+        assert!(db.list_stats(&character.id).unwrap().is_empty());
+        assert!(db.list_nodes(&story.id).unwrap().is_empty());
+        assert!(db.list_edges(&story.id).unwrap().is_empty());
+
+        let history = db.get_audit_log(Some(&story.id), None, None, 100).unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|entry| entry.entity_type == "story"
+                    && entry.action == "delete"
+                    && entry.changed_by == "Grace"),
+            "the deletion itself is recorded"
+        );
+        assert!(
+            history.len() > 1,
+            "earlier history survives the deletion"
+        );
     }
 }

@@ -184,6 +184,31 @@ fn get_audit_history(
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn update_story(
+    db: tauri::State<'_, Db>,
+    id: String,
+    title: String,
+    user: String,
+) -> Result<Story, String> {
+    db.update_story(&id, title, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_story(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_story(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_node(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_node(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_edge(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_edge(&id, user).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -208,6 +233,10 @@ pub fn run() {
             create_graph_edge,
             get_graph_edges,
             get_audit_history,
+            update_story,
+            delete_story,
+            delete_node,
+            delete_edge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

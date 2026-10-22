@@ -8,7 +8,7 @@ import ReactFlow, {
   addEdge,
   Panel,
 } from 'reactflow';
-import type { Node } from 'reactflow';
+import type { Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -108,6 +108,11 @@ function App() {
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+
+  const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -315,6 +320,112 @@ function App() {
     [currentStory, actor]
   );
 
+  // React Flow removes the node from the canvas optimistically. Persist that,
+  // and if the write fails put the canvas back to what the database says.
+  const removeNodes = useCallback(
+    async (deleted: Node<NodeData>[]) => {
+      if (!currentStory) return;
+      setActionError(null);
+
+      // Attached edges disappear with the node in the database, so drop them
+      // locally too in case the canvas still shows them.
+      const removedIds = new Set(deleted.map(node => node.id));
+      setEdges(eds =>
+        eds.filter(edge => !removedIds.has(edge.source) && !removedIds.has(edge.target))
+      );
+
+      try {
+        for (const node of deleted) {
+          await invoke('delete_node', { id: node.id, user: actor });
+        }
+      } catch (e) {
+        console.error('Failed to delete node:', e);
+        setActionError(`Could not delete node: ${String(e)}`);
+        await loadStory(currentStory);
+      }
+    },
+    [currentStory, actor, loadStory, setEdges]
+  );
+
+  const removeEdges = useCallback(
+    async (deleted: Edge<EdgeData>[]) => {
+      if (!currentStory) return;
+      setActionError(null);
+
+      try {
+        for (const edge of deleted) {
+          await invoke('delete_edge', { id: edge.id, user: actor });
+        }
+      } catch (e) {
+        console.error('Failed to delete connection:', e);
+        setActionError(`Could not delete connection: ${String(e)}`);
+        await loadStory(currentStory);
+      }
+    },
+    [currentStory, actor, loadStory]
+  );
+
+  const startRename = (story: Story) => {
+    setActionError(null);
+    setConfirmDeleteStoryId(null);
+    setRenamingStoryId(story.id);
+    setRenameValue(story.title);
+  };
+
+  const commitRename = useCallback(
+    async (story: Story) => {
+      setRenamingStoryId(null);
+
+      const title = renameValue.trim();
+      if (!title || title === story.title) return;
+
+      try {
+        const updated: Story = await invoke('update_story', {
+          id: story.id,
+          title,
+          user: actor,
+        });
+
+        // The sidebar is ordered by most recently touched, matching the query.
+        setStories(prev =>
+          [updated, ...prev.filter(other => other.id !== updated.id)].sort((a, b) =>
+            b.updated_at.localeCompare(a.updated_at)
+          )
+        );
+        setCurrentStory(prev => (prev && prev.id === updated.id ? updated : prev));
+      } catch (e) {
+        console.error('Failed to rename story:', e);
+        setActionError(`Could not rename story: ${String(e)}`);
+      }
+    },
+    [renameValue, actor]
+  );
+
+  const removeStory = async (story: Story) => {
+    setConfirmDeleteStoryId(null);
+    setActionError(null);
+
+    try {
+      await invoke('delete_story', { id: story.id, user: actor });
+
+      const remaining = stories.filter(other => other.id !== story.id);
+      setStories(remaining);
+
+      if (currentStory?.id === story.id) {
+        if (remaining.length > 0) {
+          await loadStory(remaining[0]);
+        } else {
+          setCurrentStory(null);
+          setNodes([]);
+          setEdges([]);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to delete story:', e);
+      setActionError(`Could not delete story: ${String(e)}`);
+    }
+  };
+
   const handleNodesChange = useCallback(
     (changes: any[]) => {
       onNodesChange(changes);
@@ -347,15 +458,87 @@ function App() {
 
         <div className="story-list">
           {stories.length === 0 && <div className="empty">No stories yet</div>}
-          {stories.map(story => (
-            <div
-              key={story.id}
-              className={`story-item ${currentStory?.id === story.id ? 'active' : ''}`}
-              onClick={() => loadStory(story)}
-            >
-              {story.title}
-            </div>
-          ))}
+          {stories.map(story => {
+            const isRenaming = renamingStoryId === story.id;
+            const isConfirmingDelete = confirmDeleteStoryId === story.id;
+
+            return (
+              <div
+                key={story.id}
+                className={`story-item ${currentStory?.id === story.id ? 'active' : ''}`}
+                onClick={() => !isRenaming && loadStory(story)}
+              >
+                {isRenaming ? (
+                  <input
+                    className="story-rename"
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => commitRename(story)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename(story);
+                      if (e.key === 'Escape') setRenamingStoryId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <>
+                    <span
+                      className="story-title"
+                      title="Double-click to rename"
+                      onDoubleClick={() => startRename(story)}
+                    >
+                      {story.title}
+                    </span>
+                    <span className="story-actions">
+                      {isConfirmingDelete ? (
+                        <>
+                          <button
+                            className="danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeStory(story);
+                            }}
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteStoryId(null);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            title="Rename story"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startRename(story);
+                            }}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            title="Delete story"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteStoryId(story.id);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -383,6 +566,13 @@ function App() {
           </div>
           {currentStory && <span className="current-story">{currentStory.title}</span>}
         </div>
+
+        {actionError && (
+          <div className="error-strip">
+            <span>{actionError}</span>
+            <button onClick={() => setActionError(null)}>Dismiss</button>
+          </div>
+        )}
 
         {selectedTab === 'graph' && (
           <div className="graph-container">
@@ -418,6 +608,8 @@ function App() {
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
                     onNodeDragStop={onNodeDragStop}
+                    onNodesDelete={removeNodes}
+                    onEdgesDelete={removeEdges}
                     fitView
                   >
                     <Controls />
