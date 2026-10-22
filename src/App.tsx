@@ -41,6 +41,8 @@ type EdgeData = { relationType?: string; createdBy: string };
 const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
 type NodeType = typeof nodeTypes[number];
 
+const USER_KEY = 'litrpg.currentUser';
+
 const entityLabels: Record<string, string> = {
   story: 'Story',
   character: 'Character',
@@ -82,7 +84,17 @@ function AuditChange({ entry }: { entry: AuditEntry }) {
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [currentStory, setCurrentStory] = useState<Story | null>(null);
-  const [currentUser, setCurrentUser] = useState<string>('You');
+  const [currentUser, setCurrentUser] = useState<string>(() => {
+    try {
+      return localStorage.getItem(USER_KEY) ?? 'You';
+    } catch {
+      return 'You';
+    }
+  });
+
+  // Attribution always uses a non-empty name, so a blank field can never put a
+  // change into the history with nobody's name on it.
+  const actor = currentUser.trim() || 'You';
   
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EdgeData>([]);
@@ -189,6 +201,16 @@ function App() {
     };
   }, [selectedTab, currentStory]);
 
+  // Remember who is using the app: an audit trail that resets everyone to
+  // "You" after a restart is not attribution.
+  useEffect(() => {
+    try {
+      localStorage.setItem(USER_KEY, currentUser);
+    } catch (e) {
+      console.warn('Could not persist the current user name:', e);
+    }
+  }, [currentUser]);
+
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
     
@@ -196,7 +218,7 @@ function App() {
       const story: Story = await invoke('create_new_story', {
         title: newStoryTitle.trim(),
         description: null,
-        user: currentUser,
+        user: actor,
       });
       
       setStories(prev => [story, ...prev]);
@@ -221,7 +243,7 @@ function App() {
         content: null,
         posX: position.x,
         posY: position.y,
-        createdBy: currentUser,
+        createdBy: actor,
       });
 
       const flowNode: any = {
@@ -254,7 +276,7 @@ function App() {
           targetId: params.target,
           label: null,
           relationType: null,
-          createdBy: currentUser,
+          createdBy: actor,
         });
 
         const newEdge: any = {
@@ -263,7 +285,7 @@ function App() {
           target: params.target,
           label: '',
           data: {
-            createdBy: currentUser,
+            createdBy: actor,
           },
         };
 
@@ -272,7 +294,7 @@ function App() {
         console.error('Failed to create edge:', e);
       }
     },
-    [currentStory, currentUser, setEdges]
+    [currentStory, actor, setEdges]
   );
 
   const onNodeDragStop = useCallback(
@@ -284,13 +306,13 @@ function App() {
           id: node.id,
           posX: node.position.x,
           posY: node.position.y,
-          user: currentUser,
+          user: actor,
         });
       } catch (e) {
         console.error('Failed to persist node position:', e);
       }
     },
-    [currentStory, currentUser]
+    [currentStory, actor]
   );
 
   const handleNodesChange = useCallback(
