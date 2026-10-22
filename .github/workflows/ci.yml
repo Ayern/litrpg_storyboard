@@ -80,6 +80,14 @@ jobs:
   package:
     name: Package the desktop app
     runs-on: windows-latest
+    # Packaging compiles the release profile with LTO and builds both
+    # installers, so it is the slowest job here. Run it where a break would
+    # actually ship -- pushes to main and tagged releases -- plus on demand,
+    # rather than on every branch push and pull request.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || github.ref_type == 'tag'))
     steps:
       - uses: actions/checkout@v5
 
