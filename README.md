@@ -191,10 +191,11 @@ page that arrives late, and what it says when a filter matches nothing.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time.
 - **Single machine, no sync.** Sharing means copying the database file.
-- **CI checks Linux only, and not the desktop bundle.** The workflow typechecks and
-  builds the frontend and runs the database tests on Ubuntu; `tauri build` and any
-  platform-specific packaging (WebView2, macOS signing) are not exercised, so a
-  Windows- or macOS-only break would still reach `main`.
+- **CI packages for Windows only.** The workflow typechecks, builds and tests the
+  frontend and runs the database tests on Ubuntu, and runs `tauri build` on
+  `windows-latest` to produce both Windows installers. The installers are unsigned,
+  and nothing is packaged for macOS or Linux, so a break in those targets would
+  still reach `main`.
 
 ## Licence
 

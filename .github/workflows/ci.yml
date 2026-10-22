@@ -76,3 +76,59 @@ jobs:
 
       - name: Run tests
         run: cargo test --lib
+
+  package:
+    name: Package the desktop app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # The release profile uses LTO with one codegen unit, so compiling it is the
+      # slowest part of this job. Cache it, or every run pays that cost again.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Builds the frontend through `beforeBuildCommand`, then the release binary
+      # and every Windows installer. Nothing here is signed, so this proves the
+      # packaging still works rather than producing anything shippable.
+      - name: Build the desktop bundle
+        run: npm run tauri build
+
+      # A zero exit is not proof an installer was produced: a bundler that quietly
+      # wrote nothing would otherwise pass this job.
+      - name: Check the installers were produced
+        shell: pwsh
+        run: |
+          $patterns = @(
+            "src-tauri/target/release/bundle/msi/*.msi",
+            "src-tauri/target/release/bundle/nsis/*-setup.exe"
+          )
+          $missing = @()
+          foreach ($pattern in $patterns) {
+            $found = @(Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue)
+            if ($found.Count -eq 0) {
+              $missing += $pattern
+              continue
+            }
+            $found | ForEach-Object {
+              "{0} ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB)
+            }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error "No installer matched: $($missing -join ', ')"
+            exit 1
+          }
