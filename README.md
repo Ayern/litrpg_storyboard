@@ -159,5 +159,9 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
 
 ## Licence
 
-No licence file is included, which means all rights are reserved by default. Add one
-if you intend others to reuse this.
+MIT — see [LICENSE](LICENSE). You may use, copy, modify, redistribute and sell this
+software, provided the copyright notice and permission notice travel with it. There
+is no warranty.
+
+If the app saves you time, a donation is welcome but never required. The licence
+grants unrestricted use, and nothing in it depends on payment.
