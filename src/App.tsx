@@ -8,6 +8,7 @@ import ReactFlow, {
   addEdge,
   Panel,
 } from 'reactflow';
+import type { Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -186,7 +187,7 @@ function App() {
   );
 
   const onNodeDragStop = useCallback(
-    async (_event: any, node: FlowNode) => {
+    async (_event: any, node: Node<NodeData>) => {
       if (!currentStory) return;
 
       try {
