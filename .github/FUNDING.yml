@@ -1,0 +1,4 @@
+# Funding links shown as the "Sponsor" button on the repository sidebar.
+# PayPal is not one of GitHub's first-class funding platforms, so it goes under
+# `custom`; GitHub lists it as a single "Custom" entry behind the button.
+custom: ["https://paypal.me/cjdugwyler"]
