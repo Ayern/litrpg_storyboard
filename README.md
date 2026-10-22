@@ -32,6 +32,12 @@ before/after values, and can be reviewed per story. See
 attributes, graph and full history — beside the database, under
 `exports/<story-slug>-<timestamp>.json`.
 
+**Import** — restores one of those snapshots as a **new** story. Every id is
+remapped, so importing the same file twice gives two independent stories and
+nothing that already exists is touched; a title collision becomes
+`<title> (imported)`. Graph connections, attribute values and the original history
+come across, and the restore is all-or-nothing.
+
 **Current user** — remembered between launches and used to attribute every change.
 This is a name, not an identity; see [Limitations](#limitations).
 
@@ -83,6 +89,9 @@ Behaviour worth knowing:
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the
   history of a deleted story is still history. They remain in the database but are
   not reachable from the Audit tab, which filters by an existing story.
+- **An import records itself.** Restoring a file replays that file's history and
+  then adds one `story` creation by the person importing, so the story's arrival on
+  this machine is visible rather than looking like it was always there.
 - **Deletion is idempotent.** Deleting something already gone succeeds quietly and
   writes nothing, which matters because the canvas reports a node's edges as
   deleted as well as the node.
@@ -141,8 +150,10 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 24 thin `#[tauri::command]` wrappers, the JSON
-  export writer, and startup (which opens the database and adopts a legacy file).
+- **`src-tauri/src/lib.rs`** — the 25 thin `#[tauri::command]` wrappers, the JSON
+  export writer and import reader, and startup (which opens the database and adopts
+  a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
+  `dialog:default` permission is declared in `capabilities/default.json`.
 
 ## Limitations
 
@@ -154,7 +165,9 @@ cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
   `Rogue`), which are plain text with no typing, validation or formatting.
 - **There is no undo.** Deletions are permanent; they are recorded in the history
   but cannot be restored from it.
-- **Export only, no import.** A snapshot cannot be loaded back into the app yet.
+- **Import always creates a copy.** There is no way to overwrite or merge into an
+  existing story, so restoring over a damaged one leaves the original in place to
+  delete by hand.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time.
 - **Single machine, no sync.** Sharing means copying the database file.

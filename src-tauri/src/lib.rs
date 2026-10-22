@@ -1,6 +1,8 @@
 mod db;
 
-use db::{AuditEntry, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story};
+use db::{
+    AuditEntry, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story, StoryExport,
+};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
@@ -282,6 +284,22 @@ fn export_story_json(
     Ok(path.display().to_string())
 }
 
+/// Restores a story from a JSON export as a new copy. The path comes from the file
+/// dialog, and every id is remapped, so an import never overwrites anything.
+#[tauri::command]
+fn import_story_json(
+    db: tauri::State<'_, Db>,
+    path: String,
+    user: String,
+) -> Result<Story, String> {
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))?;
+
+    let export: StoryExport =
+        serde_json::from_str(&raw).map_err(|e| format!("{path} is not a story export: {e}"))?;
+
+    db.import_story(export, user).map_err(|e| e.to_string())
+}
+
 /// Turns a title into a safe file name: "The Long Walk" becomes "the-long-walk".
 fn slugify(title: &str) -> String {
     let mut slug = String::new();
@@ -307,6 +325,7 @@ fn slugify(title: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| -> Result<(), Box<dyn std::error::Error>> {
             let path = resolve_db_path(app.handle())?;
             app.manage(Db::open(&path)?);
@@ -337,6 +356,7 @@ pub fn run() {
             delete_node,
             delete_edge,
             export_story_json,
+            import_story_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

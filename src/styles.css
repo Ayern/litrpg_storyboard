@@ -85,6 +85,35 @@ body {
   background: #1177bb;
 }
 
+.import-button {
+  width: 100%;
+  margin-bottom: 4px;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.import-button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.status-dismiss {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #bbb;
+  padding: 1px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 .story-list {
   flex: 1;
 }

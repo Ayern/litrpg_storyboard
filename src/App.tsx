@@ -11,6 +11,7 @@ import ReactFlow, {
 import type { Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 
 interface Story {
   id: string;
@@ -142,6 +143,7 @@ function App() {
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -826,6 +828,38 @@ function App() {
     }
   };
 
+  const importStory = async () => {
+    setActionError(null);
+    setImportStatus(null);
+
+    try {
+      const selected = await openFileDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: 'Story export', extensions: ['json'] }],
+      });
+
+      // The dialog returns null when it is dismissed, which is not an error.
+      if (typeof selected !== 'string') return;
+
+      const imported: Story = await invoke('import_story_json', {
+        path: selected,
+        user: actor,
+      });
+
+      setStories(prev => [
+        imported,
+        ...prev.filter(other => other.id !== imported.id),
+      ]);
+      setCurrentStory(imported);
+      setSelectedTab('graph');
+      setImportStatus(`Imported "${imported.title}"`);
+    } catch (e) {
+      console.error('Failed to import story:', e);
+      setActionError(`Could not import that file: ${String(e)}`);
+    }
+  };
+
   const exportStory = async () => {
     if (!currentStory) return;
     setActionError(null);
@@ -875,6 +909,9 @@ function App() {
           <button onClick={createNewStory}>Create</button>
         </div>
 
+        <button className="import-button" title="Restore a story from a JSON export" onClick={importStory}>
+          Import JSON
+        </button>
 
         <div className="story-list">
           {stories.length === 0 && <div className="empty">No stories yet</div>}
@@ -1009,6 +1046,14 @@ function App() {
           </div>
         )}
 
+        {importStatus && (
+          <div className="status-strip" title={importStatus}>
+            {importStatus}
+            <button className="status-dismiss" onClick={() => setImportStatus(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {selectedTab === 'graph' && (
           <div className="graph-container">

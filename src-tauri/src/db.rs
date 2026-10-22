@@ -1,6 +1,7 @@
 use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
@@ -19,6 +20,9 @@ pub enum DbError {
     /// of panicking again, which with `panic = "abort"` would kill the app.
     Poisoned,
     NotFound(&'static str),
+    /// The data is well formed but cannot be restored — for example a connection
+    /// pointing at a node the file does not contain.
+    Invalid(String),
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -33,6 +37,7 @@ impl std::fmt::Display for DbError {
             Self::Sqlite(error) => write!(f, "{error}"),
             Self::Poisoned => write!(f, "database connection is in a poisoned state"),
             Self::NotFound(what) => write!(f, "{what} not found"),
+            Self::Invalid(message) => write!(f, "{message}"),
         }
     }
 }
@@ -1335,6 +1340,231 @@ impl Db {
 
         Ok(())
     }
+
+    // ===== IMPORT =====
+
+    /// Restores a story from an export as a **new** story.
+    ///
+    /// Every id is remapped, so importing the same file twice yields two
+    /// independent stories and nothing that already exists is touched. Titles,
+    /// positions and history are carried across, and the restore runs in a single
+    /// transaction: either the whole story arrives or nothing changes at all.
+    pub fn import_story(&self, export: StoryExport, user: String) -> DbResult<Story> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = Uuid::new_v4().to_string();
+        let title = unique_story_title(&tx, &export.story.title)?;
+
+        // Every id is remapped before anything is written, so references can be
+        // rewritten consistently and the source ids stay free to collide with ours.
+        let characters: HashMap<String, String> = export
+            .characters
+            .iter()
+            .map(|character| (character.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let stats: HashMap<String, String> = export
+            .character_stats
+            .iter()
+            .map(|stat| (stat.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let attributes: HashMap<String, String> = export
+            .character_attributes
+            .iter()
+            .map(|attribute| (attribute.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let nodes: HashMap<String, String> = export
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let edges: HashMap<String, String> = export
+            .edges
+            .iter()
+            .map(|edge| (edge.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+
+        // Refuse a file whose contents cannot be restored rather than quietly
+        // dropping the parts that do not fit.
+        for stat in &export.character_stats {
+            if !characters.contains_key(&stat.character_id) {
+                return Err(DbError::Invalid(format!(
+                    "the stat '{}' belongs to a character the file does not contain",
+                    stat.stat_name
+                )));
+            }
+        }
+
+        for attribute in &export.character_attributes {
+            if !characters.contains_key(&attribute.character_id) {
+                return Err(DbError::Invalid(format!(
+                    "the attribute '{}' belongs to a character the file does not contain",
+                    attribute.attr_name
+                )));
+            }
+        }
+
+        for edge in &export.edges {
+            if !nodes.contains_key(&edge.source_id) || !nodes.contains_key(&edge.target_id) {
+                return Err(DbError::Invalid(
+                    "a connection points at a node the file does not contain".to_string(),
+                ));
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                &story_id,
+                &title,
+                &export.story.description,
+                &export.story.created_at,
+                &export.story.updated_at
+            ],
+        )?;
+
+        for character in &export.characters {
+            tx.execute(
+                "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    &characters[&character.id],
+                    &story_id,
+                    &character.name,
+                    &character.description,
+                    &character.created_at,
+                    &character.updated_at
+                ],
+            )?;
+        }
+
+        for stat in &export.character_stats {
+            tx.execute(
+                "INSERT INTO character_stats (id, character_id, stat_name, value, notes, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &stats[&stat.id],
+                    &characters[&stat.character_id],
+                    &stat.stat_name,
+                    stat.value,
+                    &stat.notes,
+                    &stat.created_at,
+                    &stat.updated_at
+                ],
+            )?;
+        }
+
+        for attribute in &export.character_attributes {
+            tx.execute(
+                "INSERT INTO character_attributes (id, character_id, attr_name, value, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    &attributes[&attribute.id],
+                    &characters[&attribute.character_id],
+                    &attribute.attr_name,
+                    &attribute.value,
+                    &attribute.created_at,
+                    &attribute.updated_at
+                ],
+            )?;
+        }
+
+        for node in &export.nodes {
+            tx.execute(
+                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    &nodes[&node.id],
+                    &story_id,
+                    &node.node_type,
+                    &node.label,
+                    &node.content,
+                    node.pos_x,
+                    node.pos_y,
+                    &node.created_by,
+                    &node.created_at,
+                    &node.updated_at
+                ],
+            )?;
+        }
+
+        for edge in &export.edges {
+            tx.execute(
+                "INSERT INTO edges (id, story_id, source_id, target_id, label, relation_type, created_by, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    &edges[&edge.id],
+                    &story_id,
+                    &nodes[&edge.source_id],
+                    &nodes[&edge.target_id],
+                    &edge.label,
+                    &edge.relation_type,
+                    &edge.created_by,
+                    &edge.created_at
+                ],
+            )?;
+        }
+
+        // History is restored with its original actor and timestamp. An entry for
+        // something deleted before the export keeps its old id, exactly as it does
+        // in the database it came from: that history is still history.
+        for entry in &export.audit_trail {
+            let remapped = match entry.entity_type.as_str() {
+                "story" => Some(story_id.clone()),
+                "character" => characters.get(&entry.entity_id).cloned(),
+                "character_stat" => stats.get(&entry.entity_id).cloned(),
+                "character_attribute" => attributes.get(&entry.entity_id).cloned(),
+                "node" => nodes.get(&entry.entity_id).cloned(),
+                "edge" => edges.get(&entry.entity_id).cloned(),
+                _ => None,
+            };
+
+            tx.execute(
+                "INSERT INTO audit_log
+                 (id, story_id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    &story_id,
+                    &entry.entity_type,
+                    remapped.as_deref().unwrap_or(&entry.entity_id),
+                    &entry.action,
+                    &entry.field_changed,
+                    &entry.old_value,
+                    &entry.new_value,
+                    &entry.changed_by,
+                    &entry.changed_at
+                ],
+            )?;
+        }
+
+        // The import itself is a change, so it is recorded like any other.
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "story",
+                entity_id: &story_id,
+                action: "create",
+                field_changed: None,
+                old_value: None,
+                new_value: Some(title.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(Story {
+            id: story_id,
+            title,
+            description: export.story.description,
+            created_at: export.story.created_at,
+            updated_at: export.story.updated_at,
+        })
+    }
+
 }
 
 // ===== MODELS =====
@@ -1421,12 +1651,14 @@ pub struct AuditEntry {
 }
 
 /// A complete, self-contained snapshot of one story.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct StoryExport {
     pub exported_at: String,
     pub story: Story,
     pub characters: Vec<Character>,
     pub character_stats: Vec<CharacterStat>,
+    /// Absent from exports written before schema v2, so it defaults to empty.
+    #[serde(default)]
     pub character_attributes: Vec<CharacterAttribute>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
@@ -1437,6 +1669,40 @@ pub struct StoryExport {
 //
 // These take a `&Connection` (or a transaction, which derefs to one) rather than
 // reaching for the mutex. Locking happens once, in the public methods above.
+
+/// Keeps the title unless a story already has it, in which case the copy is named
+/// "(imported)", then "(imported 2)" and so on. Nothing existing is renamed.
+fn unique_story_title(conn: &Connection, base: &str) -> SqliteResult<String> {
+    fn taken(conn: &Connection, title: &str) -> SqliteResult<bool> {
+        let found: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM stories WHERE title = ?1",
+                params![title],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    if !taken(conn, base)? {
+        return Ok(base.to_string());
+    }
+
+    let mut attempt = 1;
+    loop {
+        let candidate = if attempt == 1 {
+            format!("{base} (imported)")
+        } else {
+            format!("{base} (imported {attempt})")
+        };
+
+        if !taken(conn, &candidate)? {
+            return Ok(candidate);
+        }
+
+        attempt += 1;
+    }
+}
 
 struct AuditRecord<'a> {
     story_id: Option<&'a str>,
@@ -1671,6 +1937,195 @@ const INDEXES: &str = "
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_export_round_trips_into_a_new_story() {
+        let source = Db::open_in_memory().unwrap();
+        let story = source
+            .create_story("Ash".into(), Some("notes".into()), "Ada".into())
+            .unwrap();
+        let character = source
+            .create_character(story.id.clone(), "Rook".into(), Some("Scout".into()), "Ada".into())
+            .unwrap();
+        source
+            .add_or_update_stat(character.id.clone(), "Level".into(), 7, None, "Ada".into())
+            .unwrap();
+        source
+            .add_or_update_attribute(
+                character.id.clone(),
+                "Class".into(),
+                "Rogue".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+        let first = source
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "One".into(),
+                None,
+                5.0,
+                6.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = source
+            .create_node(
+                story.id.clone(),
+                "event".into(),
+                "Two".into(),
+                None,
+                7.0,
+                8.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .create_edge(
+                story.id.clone(),
+                first.id.clone(),
+                second.id.clone(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        let history_before = export.audit_trail.len();
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+
+        assert_eq!(restored.title, "Ash");
+        assert_eq!(restored.description.as_deref(), Some("notes"));
+        assert_ne!(restored.id, story.id, "the story gets a fresh id");
+
+        let characters = target.list_characters(&restored.id).unwrap();
+        assert_eq!(characters.len(), 1);
+        assert_eq!(characters[0].name, "Rook");
+        assert_ne!(characters[0].id, character.id, "characters get fresh ids");
+
+        let stats = target.list_stats(&characters[0].id).unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].value, 7);
+
+        let attributes = target.list_attributes(&characters[0].id).unwrap();
+        assert_eq!(attributes.len(), 1);
+        assert_eq!(attributes[0].value, "Rogue");
+
+        // The graph arrives whole: both nodes and the connection between them.
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let edges = target.list_edges(&restored.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert!(nodes.iter().any(|node| node.id == edges[0].source_id));
+        assert!(nodes.iter().any(|node| node.id == edges[0].target_id));
+
+        // History came along, pointing at the new rows, plus the import itself.
+        let history = target
+            .get_audit_log(Some(&restored.id), None, None, 100)
+            .unwrap();
+        assert_eq!(history.len(), history_before + 1, "history plus the import entry");
+        assert!(history
+            .iter()
+            .all(|entry| entry.story_id.as_deref() == Some(&restored.id)));
+        assert!(history.iter().any(|entry| entry.entity_type == "character"
+            && entry.entity_id == characters[0].id));
+        assert!(history.iter().any(|entry| entry.changed_by == "Grace"));
+    }
+
+    #[test]
+    fn importing_the_same_file_twice_creates_two_stories() {
+        let source = Db::open_in_memory().unwrap();
+        let story = source
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+
+        let first = source.export_story(&story.id).unwrap();
+        let second = source.export_story(&story.id).unwrap();
+
+        let target = Db::open_in_memory().unwrap();
+        let one = target.import_story(first, "Grace".into()).unwrap();
+        let two = target.import_story(second, "Grace".into()).unwrap();
+
+        assert_ne!(one.id, two.id);
+        assert_eq!(one.title, "Ash");
+        assert_eq!(two.title, "Ash (imported)", "the copy gets a distinct title");
+        assert_eq!(target.list_stories().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_export_written_before_attributes_still_imports() {
+        let source = Db::open_in_memory().unwrap();
+        let story = source
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        source
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        // Strip the field a pre-v2 export would not have had.
+        let export = source.export_story(&story.id).unwrap();
+        let mut value = serde_json::to_value(&export).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("character_attributes");
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        assert!(older.character_attributes.is_empty());
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(older, "Grace".into()).unwrap();
+
+        let characters = target.list_characters(&restored.id).unwrap();
+        assert_eq!(characters.len(), 1);
+        assert!(target.list_attributes(&characters[0].id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_connection_to_a_missing_node_is_rejected_without_writing_anything() {
+        let source = Db::open_in_memory().unwrap();
+        let story = source
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
+        let node = source
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Only node".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let mut export = source.export_story(&story.id).unwrap();
+        let target_node = node.id.clone();
+        export.edges.push(Edge {
+            id: "bogus-edge".into(),
+            story_id: story.id.clone(),
+            source_id: "missing-node".into(),
+            target_id: target_node,
+            label: None,
+            relation_type: None,
+            created_by: "Ada".into(),
+            created_at: "now".into(),
+        });
+
+        let target = Db::open_in_memory().unwrap();
+        let error = target.import_story(export, "Grace".into()).unwrap_err();
+
+        assert!(
+            error.to_string().contains("connection"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            target.list_stories().unwrap().is_empty(),
+            "a rejected import must write nothing"
+        );
+    }
 
     #[test]
     fn attributes_hold_text_and_update_by_name() {
