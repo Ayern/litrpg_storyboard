@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: >-
+          Existing tag to build and publish a release for. Leave empty for an
+          ordinary CI run.
+        type: string
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -88,8 +94,17 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' &&
        (github.ref == 'refs/heads/main' || github.ref_type == 'tag'))
+    # Publishing a release writes to the repository, so this job alone gets
+    # write access; every other job stays read-only.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # A manual run can name a tag that already exists, so a release can be
+          # rebuilt without moving the tag. Empty means the ref that triggered
+          # this run.
+          ref: ${{ inputs.release_tag }}
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -140,3 +155,46 @@ jobs:
             Write-Error "No installer matched: $($missing -join ', ')"
             exit 1
           }
+
+      # Artifacts die with the run; keep a copy on it so the build can be
+      # inspected without re-running CI.
+      - name: Upload the installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: litrpg-storyboard-tracker-${{ inputs.release_tag || github.ref_name }}
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          # The verification step above already fails when a bundle is missing;
+          # this keeps the artifact honest too instead of uploading nothing.
+          if-no-files-found: error
+
+      # A tagged build is what people download, so give it a release page rather
+      # than leaving the installers in a run that eventually ages out.
+      - name: Publish the release
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          # Refuse to touch the repository if the bundler wrote nothing: an
+          # empty release would look like a successful build.
+          shopt -s nullglob
+          assets=(src-tauri/target/release/bundle/msi/*.msi
+                  src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if [ ${#assets[@]} -lt 2 ]; then
+            echo "expected an MSI and a setup exe, found: ${assets[*]:-none}" >&2
+            exit 1
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Rebuilding an existing tag replaces the assets in place.
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" \
+              --title "LitRPG Storyboard Tracker $TAG" \
+              --generate-notes
+          fi

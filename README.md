@@ -194,9 +194,10 @@ page that arrives late, and what it says when a filter matches nothing.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every
   push and pull request, but runs `tauri build` on `windows-latest` only for
-  pushes to `main`, tags and manual runs. The installers are unsigned, and nothing
-  is packaged for macOS or Linux, so a break in those targets would still reach
-  `main`.
+  pushes to `main`, tags and manual runs. Every packaging run keeps the installers
+  as workflow artifacts, and a tagged build also publishes them on a GitHub
+  Release. The installers are unsigned, and nothing is packaged for macOS or
+  Linux, so a break in those targets would still reach `main`.
 
 ## Licence
 
