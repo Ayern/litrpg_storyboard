@@ -112,6 +112,7 @@ function App() {
   const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Initialize DB and load stories
@@ -215,6 +216,13 @@ function App() {
       console.warn('Could not persist the current user name:', e);
     }
   }, [currentUser]);
+
+  // A stale "exported to ..." note is worse than none, so let it expire.
+  useEffect(() => {
+    if (!exportStatus) return;
+    const timer = setTimeout(() => setExportStatus(null), 8000);
+    return () => clearTimeout(timer);
+  }, [exportStatus]);
 
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
@@ -426,6 +434,22 @@ function App() {
     }
   };
 
+  const exportStory = async () => {
+    if (!currentStory) return;
+    setActionError(null);
+    setExportStatus(null);
+
+    try {
+      const path: string = await invoke('export_story_json', {
+        storyId: currentStory.id,
+      });
+      setExportStatus(path);
+    } catch (e) {
+      console.error('Failed to export story:', e);
+      setActionError(`Could not export story: ${String(e)}`);
+    }
+  };
+
   const handleNodesChange = useCallback(
     (changes: any[]) => {
       onNodesChange(changes);
@@ -564,13 +588,28 @@ function App() {
               Audit Log
             </button>
           </div>
-          {currentStory && <span className="current-story">{currentStory.title}</span>}
+          <div className="topbar-actions">
+            {currentStory && (
+              <>
+                <button className="export-button" onClick={exportStory}>
+                  Export JSON
+                </button>
+                <span className="current-story">{currentStory.title}</span>
+              </>
+            )}
+          </div>
         </div>
 
         {actionError && (
           <div className="error-strip">
             <span>{actionError}</span>
             <button onClick={() => setActionError(null)}>Dismiss</button>
+          </div>
+        )}
+
+        {exportStatus && (
+          <div className="status-strip" title={exportStatus}>
+            Exported to {exportStatus}
           </div>
         )}
 

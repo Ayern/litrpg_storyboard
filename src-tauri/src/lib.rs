@@ -209,6 +209,58 @@ fn delete_edge(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(),
     db.delete_edge(&id, user).map_err(|e| e.to_string())
 }
 
+/// Writes a complete JSON snapshot of one story next to the database and returns
+/// the path it wrote, so the user can copy it somewhere safe.
+#[tauri::command]
+fn export_story_json(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<String, String> {
+    let export = db.export_story(&story_id).map_err(|e| e.to_string())?;
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve the app data directory: {e}"))?
+        .join("exports");
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("{}-{stamp}.json", slugify(&export.story.title)));
+
+    let json = serde_json::to_string_pretty(&export)
+        .map_err(|e| format!("could not serialize the story: {e}"))?;
+
+    std::fs::write(&path, json)
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+
+    Ok(path.display().to_string())
+}
+
+/// Turns a title into a safe file name: "The Long Walk" becomes "the-long-walk".
+fn slugify(title: &str) -> String {
+    let mut slug = String::new();
+
+    for character in title.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+
+    let slug = slug.trim_matches('-');
+
+    if slug.is_empty() {
+        "story".to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -237,6 +289,7 @@ pub fn run() {
             delete_story,
             delete_node,
             delete_edge,
+            export_story_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

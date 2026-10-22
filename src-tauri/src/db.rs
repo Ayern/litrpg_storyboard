@@ -586,47 +586,130 @@ impl Db {
         limit: i64,
     ) -> DbResult<Vec<AuditEntry>> {
         let guard = self.conn()?;
+        Ok(query_audit(
+            &guard,
+            story_id,
+            entity_type,
+            entity_id,
+            Some(limit),
+        )?)
+    }
 
-        let mut sql = String::from(
-            "SELECT id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at, story_id
-             FROM audit_log WHERE 1 = 1",
-        );
-        let mut args: Vec<Value> = Vec::new();
+    // ===== EXPORT =====
 
-        if let Some(story_id) = story_id {
-            sql.push_str(" AND story_id = ?");
-            args.push(Value::Text(story_id.to_string()));
-        }
-        if let Some(entity_type) = entity_type {
-            sql.push_str(" AND entity_type = ?");
-            args.push(Value::Text(entity_type.to_string()));
-        }
-        if let Some(entity_id) = entity_id {
-            sql.push_str(" AND entity_id = ?");
-            args.push(Value::Text(entity_id.to_string()));
-        }
+    /// Everything needed to restore a story elsewhere, including its full history.
+    pub fn export_story(&self, story_id: &str) -> DbResult<StoryExport> {
+        let guard = self.conn()?;
 
-        // rowid breaks ties so entries written in the same tick stay in order.
-        sql.push_str(" ORDER BY changed_at DESC, rowid DESC LIMIT ?");
-        args.push(Value::Integer(limit));
+        let story = guard
+            .query_row(
+                "SELECT id, title, description, created_at, updated_at FROM stories WHERE id = ?1",
+                params![story_id],
+                |row| {
+                    Ok(Story {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("story"))?;
 
-        let mut stmt = guard.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
-            Ok(AuditEntry {
-                id: row.get(0)?,
-                entity_type: row.get(1)?,
-                entity_id: row.get(2)?,
-                action: row.get(3)?,
-                field_changed: row.get(4)?,
-                old_value: row.get(5)?,
-                new_value: row.get(6)?,
-                changed_by: row.get(7)?,
-                changed_at: row.get(8)?,
-                story_id: row.get(9)?,
-            })
-        })?;
+        let characters = {
+            let mut stmt = guard.prepare(
+                "SELECT id, story_id, name, description, created_at, updated_at
+                 FROM characters WHERE story_id = ?1 ORDER BY name",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(Character {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
 
-        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+        let character_stats = {
+            let mut stmt = guard.prepare(
+                "SELECT id, character_id, stat_name, value, notes, created_at, updated_at
+                 FROM character_stats
+                 WHERE character_id IN (SELECT id FROM characters WHERE story_id = ?1)
+                 ORDER BY stat_name",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(CharacterStat {
+                    id: row.get(0)?,
+                    character_id: row.get(1)?,
+                    stat_name: row.get(2)?,
+                    value: row.get(3)?,
+                    notes: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let nodes = {
+            let mut stmt = guard.prepare(
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
+                 FROM nodes WHERE story_id = ?1 ORDER BY created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(Node {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    node_type: row.get(2)?,
+                    label: row.get(3)?,
+                    content: row.get(4)?,
+                    pos_x: row.get(5)?,
+                    pos_y: row.get(6)?,
+                    created_by: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let edges = {
+            let mut stmt = guard.prepare(
+                "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
+                 FROM edges WHERE story_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(Edge {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    source_id: row.get(2)?,
+                    target_id: row.get(3)?,
+                    label: row.get(4)?,
+                    relation_type: row.get(5)?,
+                    created_by: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let audit_trail = query_audit(&guard, Some(story_id), None, None, None)?;
+
+        Ok(StoryExport {
+            exported_at: now(),
+            story,
+            characters,
+            character_stats,
+            nodes,
+            edges,
+            audit_trail,
+        })
     }
 
     // ===== STORY MAINTENANCE =====
@@ -940,6 +1023,18 @@ pub struct AuditEntry {
     pub changed_at: String,
 }
 
+/// A complete, self-contained snapshot of one story.
+#[derive(Debug, serde::Serialize)]
+pub struct StoryExport {
+    pub exported_at: String,
+    pub story: Story,
+    pub characters: Vec<Character>,
+    pub character_stats: Vec<CharacterStat>,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub audit_trail: Vec<AuditEntry>,
+}
+
 // ===== INTERNAL HELPERS =====
 //
 // These take a `&Connection` (or a transaction, which derefs to one) rather than
@@ -958,6 +1053,59 @@ struct AuditRecord<'a> {
 
 fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn query_audit(
+    conn: &Connection,
+    story_id: Option<&str>,
+    entity_type: Option<&str>,
+    entity_id: Option<&str>,
+    limit: Option<i64>,
+) -> SqliteResult<Vec<AuditEntry>> {
+    let mut sql = String::from(
+        "SELECT id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at, story_id
+         FROM audit_log WHERE 1 = 1",
+    );
+    let mut args: Vec<Value> = Vec::new();
+
+    if let Some(story_id) = story_id {
+        sql.push_str(" AND story_id = ?");
+        args.push(Value::Text(story_id.to_string()));
+    }
+    if let Some(entity_type) = entity_type {
+        sql.push_str(" AND entity_type = ?");
+        args.push(Value::Text(entity_type.to_string()));
+    }
+    if let Some(entity_id) = entity_id {
+        sql.push_str(" AND entity_id = ?");
+        args.push(Value::Text(entity_id.to_string()));
+    }
+
+    // rowid breaks ties so entries written in the same tick stay in order.
+    sql.push_str(" ORDER BY changed_at DESC, rowid DESC");
+
+    if let Some(limit) = limit {
+        sql.push_str(" LIMIT ?");
+        args.push(Value::Integer(limit));
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
+        Ok(AuditEntry {
+            id: row.get(0)?,
+            entity_type: row.get(1)?,
+            entity_id: row.get(2)?,
+            action: row.get(3)?,
+            field_changed: row.get(4)?,
+            old_value: row.get(5)?,
+            new_value: row.get(6)?,
+            changed_by: row.get(7)?,
+            changed_at: row.get(8)?,
+            story_id: row.get(9)?,
+        })
+    })?;
+
+    rows.collect()
 }
 
 fn log_audit(conn: &Connection, record: AuditRecord<'_>) -> SqliteResult<()> {
@@ -1503,5 +1651,56 @@ mod tests {
             history.len() > 1,
             "earlier history survives the deletion"
         );
+    }
+
+    #[test]
+    fn export_contains_the_whole_story() {
+        let db = Db::open_in_memory().unwrap();
+
+        let story = db
+            .create_story("Exportable".into(), Some("notes".into()), "Ada".into())
+            .unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 7, None, "Ada".into())
+            .unwrap();
+        let first = db
+            .create_node(story.id.clone(), "chapter".into(), "One".into(), None, 5.0, 6.0, "Ada".into())
+            .unwrap();
+        let second = db
+            .create_node(story.id.clone(), "event".into(), "Two".into(), None, 7.0, 8.0, "Ada".into())
+            .unwrap();
+        db.create_edge(
+            story.id.clone(),
+            first.id.clone(),
+            second.id.clone(),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // Another story must not leak into the export.
+        let other = db.create_story("Other".into(), None, "Ada".into()).unwrap();
+        db.create_node(other.id.clone(), "idea".into(), "Nope".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+
+        let export = db.export_story(&story.id).unwrap();
+
+        assert_eq!(export.story.id, story.id);
+        assert_eq!(export.story.description.as_deref(), Some("notes"));
+        assert_eq!(export.characters.len(), 1);
+        assert_eq!(export.character_stats.len(), 1);
+        assert_eq!(export.nodes.len(), 2);
+        assert_eq!(export.edges.len(), 1);
+        assert!(!export.audit_trail.is_empty());
+        assert!(
+            export.audit_trail.iter().all(|entry| entry.story_id.as_deref() == Some(&story.id)),
+            "history from other stories must not be included"
+        );
+        assert!(!export.exported_at.is_empty());
+
+        assert!(db.export_story("missing").is_err());
     }
 }

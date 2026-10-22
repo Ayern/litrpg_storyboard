@@ -288,14 +288,39 @@ body {
   font-size: 13px;
 }
 
-/* Error strip */
-.error-strip {
+/* Topbar actions and status strips */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.export-button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.export-button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.error-strip,
+.status-strip {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
   font-size: 12px;
   border-bottom: 1px solid #3c3c3c;
+}
+
+.error-strip {
   background: #3a1f1f;
   color: #f0b0b0;
 }
@@ -312,6 +337,15 @@ body {
   padding: 2px 8px;
   font-size: 11px;
   cursor: pointer;
+}
+
+.status-strip {
+  display: block;
+  background: #1f2f22;
+  color: #b8e0be;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Audit log */
