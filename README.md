@@ -152,8 +152,13 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
+npm test                             # audit tab paging and filtering (vitest, jsdom)
 cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
 ```
+
+The frontend suite renders the real `App` with Tauri's `invoke` mocked, so it covers
+the wiring the Rust tests cannot see: what the tab requests, what it does with a
+page that arrives late, and what it says when a filter matches nothing.
 
 ### Architecture
 

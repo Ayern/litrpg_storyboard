@@ -1715,7 +1715,7 @@ function App() {
                       {auditTotal === 1 ? 'change' : 'changes'}
                     </div>
 
-                    <ol className="audit-list">
+                    <ol className="audit-list" aria-label="Change history">
                       {auditEntries.map(entry => (
                         <li key={entry.id} className="audit-entry">
                           <div className="audit-row">
