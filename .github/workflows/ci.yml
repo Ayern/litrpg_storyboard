@@ -67,10 +67,10 @@ jobs:
       # before abandoning that file (measured: 60s per source, as it tries
       # InRelease and then Release) and retries a failed file three times, so one
       # dead mirror becomes a chain of multi-minute gaps. Shorter timeout, more
-      # retries, and a cap on the step: a dead mirror should cost minutes, not
-      # half an hour.
+      # retries, a bounded fetch that is retried once, and a cap on the step: a
+      # dead mirror should cost minutes, not half an hour.
       - name: Install Tauri system dependencies
-        timeout-minutes: 8
+        timeout-minutes: 10
         env:
           # Nothing here should wait for a prompt; fail loudly if a package wants
           # to ask something instead of sitting there until the timeout.
@@ -81,19 +81,37 @@ jobs:
             -o Acquire::http::Timeout=20
             -o Acquire::https::Timeout=20
           )
-          sudo apt-get "${apt_opts[@]}" update
-          sudo apt-get "${apt_opts[@]}" install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
+          packages=(
+            build-essential
+            curl
+            wget
+            file
+            libssl-dev
+            libgtk-3-dev
+            libwebkit2gtk-4.1-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
+            libxdo-dev
             patchelf
+          )
+
+          # Fetching the packages is the only part a stalled mirror can hold up,
+          # so bound it and give it one retry: a stall is usually the mirror
+          # having a bad minute, and the second attempt lands on a healthy one.
+          # Interrupting apt while it is only fetching is safe, since nothing is
+          # unpacked until the install below, which runs from the local cache.
+          fetch() {
+            sudo timeout -k 10 90 apt-get "${apt_opts[@]}" update &&
+              sudo timeout -k 10 120 apt-get "${apt_opts[@]}" install -y \
+                --download-only "${packages[@]}"
+          }
+
+          if ! fetch; then
+            echo "::warning::the package fetch stalled or failed; retrying once"
+            fetch
+          fi
+
+          sudo apt-get "${apt_opts[@]}" install -y "${packages[@]}"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
