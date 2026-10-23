@@ -40,10 +40,11 @@ the next begins.
   fields, but skills, items and system messages are still just `character_stats`
   rows and free-text attributes, and nothing checks whether a level-up was
   earned or a rank only rose.
-- **Chapters are still ordered by buttons.** They are numbered 1..n, grouped by
-  arc and counted, but there is no POV, in-world clock or drag in the list — so
-  the app cannot yet answer "what happens in chapter 12?" or "where is Rook at
-  chapter 9?"
+- **In-world time is only a day number.** A chapter can name its POV and its day
+  and appears on a timeline, but there is no time of day, no calendar and no
+  warning when two chapters share a moment or a chapter runs backwards. Chapters
+  are still reordered with buttons rather than by dragging in the list, so "where
+  is Rook at chapter 9?" is answered by the timeline, not by a search.
 - **No continuity checking.** Nothing warns that a character is in two places, a
   skill is used before it is learned, or a chapter is missing.
 - **Visuals are unverified.** Every UI claim in this project is proven through
@@ -238,12 +239,16 @@ numbers and the counts, numbering an older file's chapters in its own order.
 Remaining: dragging rows to reorder them; the ↑/↓ buttons do the job meanwhile.
 **M**
 
-**8. POV and in-world time.** Chapter nodes gain a POV cast member and an
-in-world time (a free-text label plus an optional numeric day for sorting). Add a
-timeline strip that orders chapters by in-world time and flags out-of-order days,
-two chapters at the same moment, and casts that are in two places at once. For
-LitRPG the "Day since the System arrived" counter matters more than a calendar,
-so make the day field prominent. **M**
+**8. POV and in-world time.** **Started.** Migration v9 gives chapters
+`chapter_pov` (a live cast id, named in the history and cleared when its cast
+member is purged) and `chapter_day` (a whole number from 0 up). Both are edited
+in the chapter row beside the arc and counts, validated, carried by export and
+import, and drawn on the row. The Chapters tab has a **Timeline** below the list
+that orders chapters by day, keeps same-day chapters in reading order, names each
+POV, and counts the chapters with no day yet; the story bible carries the same
+timeline. Remaining: a free-text time label for moments inside a day, and the
+continuity flags — out-of-order days, two chapters at the same moment, cast in
+two places at once. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
 member (`character_progress`, unique on character + chapter), entered in a small
@@ -299,8 +304,10 @@ words against target and notes, followed by a story total; the cast comes next
 with level, rank, XP, description, stats and attributes, then the other cards
 grouped by kind. Character cards are omitted so a sheet is never written twice,
 and no app jargon reaches the file. **Copy bible** puts the same Markdown on the
-clipboard, so both routes carry identical text. Remaining: POV and in-world time
-(item 8), skills and inventory (phase 3), and open threads. **M**
+clipboard, so both routes carry identical text, and chapters now carry their POV
+and in-world day, with a **Timeline** section in time order. Remaining: a time
+label inside a day (item 8), skills and inventory (phase 3), and open threads.
+**M**
 
 ### Phase 5 — make it feel inevitable
 

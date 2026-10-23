@@ -37,15 +37,24 @@ beside its type on the canvas, both directions of a move are recorded in the
 history, and a move is undone like any canvas change. Cards that are not chapters
 are never numbered.
 
-**Chapter arcs and word counts** — a chapter can also name the arc it belongs to
-and record the words written against an optional target. **Edit** on its row opens
-Arc / Words / Target in place; `Enter` saves, `Escape` closes without writing. A
-blank arc or target stores nothing, while a count of zero is kept — "no count" and
-"nothing written" are different facts. The top of the tab totals the counts across
-the chapters, adds up the targets that exist (and says how many chapters have
-one), and fills a bar against that total. These numbers are the author's: nothing
-reads a manuscript to work them out. Each field that changes is a history entry of
-its own, so an arc or a count can be put back from the Audit tab.
+**Chapter arcs, counts, POV and days** — a chapter can also name the arc it
+belongs to, record the words written against an optional target, say whose point
+of view it is told from, and sit on an in-world day. **Edit** on its row opens
+Arc / Words / Target / POV / Day in place; `Enter` saves, `Escape` closes without
+writing. A blank arc, target, POV or day stores nothing, while a count of zero is
+kept — "no count" and "nothing written" are different facts. The POV picker lists
+the story's live cast, and the day is a whole number from 0 up; there is no
+calendar, so a story can count "days since the System arrived" instead of dating
+anything. Both show on the row and the day places the chapter on the **Timeline**
+below the list, which orders chapters by day rather than by chapter number and
+names each one's POV. Chapters sharing a day keep their reading order, and a
+chapter with no day stays off the timeline while the panel counts how many are
+waiting for one. The top of the tab totals the counts across the chapters, adds
+up the targets that exist (and says how many chapters have one), and fills a bar
+against that total. These numbers are the author's: nothing reads a manuscript to
+work them out. Each field that changes is a history entry of its own, so an arc, a
+count or a day can be put back from the Audit tab; a POV is recorded by name (and
+is not revertible, because the link is stored as an id).
 
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
@@ -181,9 +190,10 @@ attributes, graph and full history — beside the database, under
 
 **Story bible** — writes a Markdown file beside the JSON exports,
 `exports/<story-slug>-story-bible-<timestamp>.md`. It opens with the title and
-logline, then the chapters in reading order, each with its arc, its words against
-the target and its notes; a one-line story total follows the chapter list. The
-cast comes next — level, rank and XP where they exist, the description, then the
+logline, then the chapters in reading order, each with its arc, its day, its POV,
+its words against the target and its notes; a one-line story total follows the
+chapter list, and a **Timeline** section lists the chapters that have a day in
+time order with their POV. The cast comes next — level, rank and XP where they exist, the description, then the
 stats and attributes as a plain list — followed by the other cards grouped by
 kind. Character cards are left out because the cast section already carries their
 sheet. Headings are numbered and nothing is written in app jargon, so the file can
@@ -305,7 +315,9 @@ level 1 and 0 XP, and no level is inferred from a stat that happened to be calle
 the order they were created; every other card holds NULL, and a chapter made
 afterwards is numbered when it is created. Version 8 added `chapter_arc`,
 `chapter_words` and `chapter_target`; an older chapter starts with none of them,
-which is different from a word count of zero.
+which is different from a word count of zero. Version 9 added `chapter_pov` and
+`chapter_day`; an older chapter is unplaced and has no point of view until one is
+set.
 
 | Table | Contents |
 | --- | --- |
@@ -313,7 +325,7 @@ which is different from a word count of zero.
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words` and `chapter_target`, `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id) and `chapter_day`, `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -353,7 +365,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, POV and timeline, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -387,13 +399,17 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
-- **Only chapters have these fields.** POV and in-world time are not modelled
-  yet, and chapters are reordered with the ↑/↓ buttons rather than by dragging in
-  the list. Deleting a chapter leaves its position empty until something is moved
+- **In-world time is a day number, not a clock.** There is no time of day, no
+  calendar and no ordering within a day beyond reading order, so two scenes at
+  the same moment cannot be told apart. Nothing flags a chapter that jumps
+  backwards in time or a cast member placed in two places on one day.
+- **Only chapters have these fields.** POV and a day belong to chapters, and
+  chapters are reordered with the ↑/↓ buttons rather than by dragging in the
+  list. Deleting a chapter leaves its position empty until something is moved
   or **Renumber** is pressed; that is shown in the tab, not repaired silently.
 - **The story bible carries only what the app models.** The file and the clipboard
-  hold the same Markdown: chapters with arcs and counts, the cast with their
-  sheets, and the other cards. POV, in-world time, skills and inventory have no
+  hold the same Markdown: chapters with arcs, days, POV and counts, a timeline,
+  the cast with their sheets, and the other cards. Skills and inventory have no
   fields yet, so they cannot appear in it. Copying needs the clipboard write
   permission; if the platform refuses it, the error strip says so.
 - **Word counts are typed, not measured.** There is no manuscript to count, so the

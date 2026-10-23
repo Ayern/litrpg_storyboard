@@ -99,6 +99,8 @@ interface NodeRow {
   chapter_arc: string | null;
   chapter_words: number | null;
   chapter_target: number | null;
+  chapter_pov: string | null;
+  chapter_day: number | null;
 }
 
 function nodeRow(
@@ -124,7 +126,47 @@ function nodeRow(
     chapter_arc: null,
     chapter_words: null,
     chapter_target: null,
+    chapter_pov: null,
+    chapter_day: null,
   };
+}
+
+// The cast a chapter can be told from. Only the tests about POV and the timeline
+// need it, so they install it rather than every test carrying a cast around.
+const cast = [
+  {
+    id: 'c1',
+    story_id: story.id,
+    name: 'Rook',
+    description: null,
+    level: 1,
+    xp: 0,
+    rank: null,
+    xp_to_next: null,
+    created_at: '2026-10-22T12:00:00Z',
+    updated_at: '2026-10-22T12:00:00Z',
+  },
+  {
+    id: 'c2',
+    story_id: story.id,
+    name: 'Mara',
+    description: null,
+    level: 1,
+    xp: 0,
+    rank: null,
+    xp_to_next: null,
+    created_at: '2026-10-22T12:00:00Z',
+    updated_at: '2026-10-22T12:00:00Z',
+  },
+];
+
+function withCast() {
+  const fallback = invokeMock.getMockImplementation();
+
+  invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+    if (command === 'get_characters') return cast.map(character => ({ ...character }));
+    return fallback?.(command, args);
+  });
 }
 
 let rows: NodeRow[] = [];
@@ -187,6 +229,8 @@ beforeEach(() => {
         row.chapter_arc = args.arc ?? null;
         row.chapter_words = args.words ?? null;
         row.chapter_target = args.target ?? null;
+        row.chapter_pov = args.pov ?? null;
+        row.chapter_day = args.day ?? null;
         return { ...row };
       }
       default:
@@ -420,6 +464,8 @@ describe('chapter arcs and word counts', () => {
       arc: 'The Deep',
       words: 1500,
       target: 2500,
+      pov: null,
+      day: null,
       user: 'You',
     });
 
@@ -452,6 +498,8 @@ describe('chapter arcs and word counts', () => {
       arc: null,
       words: 400,
       target: null,
+      pov: null,
+      day: null,
       user: 'You',
     });
 
@@ -474,6 +522,8 @@ describe('chapter arcs and word counts', () => {
       arc: null,
       words: null,
       target: 2000,
+      pov: null,
+      day: null,
       user: 'You',
     });
 
@@ -509,7 +559,7 @@ describe('chapter arcs and word counts', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
-      await screen.findByText(/Could not save the arc and counts: the database is locked/i)
+      await screen.findByText(/Could not save the chapter details: the database is locked/i)
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Words')).toBeInTheDocument();
   });
@@ -524,5 +574,118 @@ describe('chapter arcs and word counts', () => {
     expect(screen.queryByLabelText('Words')).not.toBeInTheDocument();
     expect(within(rowsInList()[1]).getByText('800 / 2,000 words')).toBeInTheDocument();
     expect(lastCall('set_chapter_details')).toBeUndefined();
+  });
+});
+
+describe('chapter POV and in-world days', () => {
+  it('saves a POV cast member and a day, and shows both on the row', async () => {
+    withCast();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+
+    const pov = screen.getByLabelText('POV');
+    expect(within(pov).getByRole('option', { name: 'Rook' })).toBeInTheDocument();
+    await user.selectOptions(pov, 'c1');
+
+    await user.type(screen.getByLabelText('Day'), '3');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toMatchObject({
+      nodeId: 'n1',
+      pov: 'c1',
+      day: 3,
+    });
+
+    await waitFor(() => {
+      const [one] = rowsInList();
+      expect(within(one).getByText('Rook')).toBeInTheDocument();
+      expect(within(one).getByText('Day 3')).toBeInTheDocument();
+    });
+
+    // The day places it on the timeline, which names its POV too.
+    const timeline = screen.getByRole('list', { name: 'Chapter timeline' });
+    const placed = within(timeline).getAllByRole('listitem');
+    expect(placed).toHaveLength(1);
+    expect(within(placed[0]).getByText('Day 3')).toBeInTheDocument();
+    expect(within(placed[0]).getByText('Rook')).toBeInTheDocument();
+  });
+
+  it('orders the timeline by day rather than by chapter number', async () => {
+    rows[0].chapter_day = 3; // One, chapter 1
+    rows[2].chapter_day = 2; // Two, chapter 2
+    rows[3].chapter_day = 2; // Three, chapter 3
+
+    await openChapters();
+
+    const timeline = screen.getByRole('list', { name: 'Chapter timeline' });
+    const placed = within(timeline).getAllByRole('listitem');
+
+    // Same-day chapters keep their reading order; the later day comes last.
+    expect(placed.map(row => within(row).getByText(/^Day /).textContent)).toEqual([
+      'Day 2',
+      'Day 2',
+      'Day 3',
+    ]);
+    expect(placed.map(row => within(row).getByText(/^(One|Two|Three)$/).textContent)).toEqual([
+      'Two',
+      'Three',
+      'One',
+    ]);
+
+    expect(screen.getByText('3 placed')).toBeInTheDocument();
+  });
+
+  it('leaves a chapter without a day off the timeline and says how many are waiting', async () => {
+    rows[0].chapter_day = 1;
+
+    await openChapters();
+
+    const timeline = screen.getByRole('list', { name: 'Chapter timeline' });
+    const placed = within(timeline).getAllByRole('listitem');
+
+    expect(placed).toHaveLength(1);
+    expect(within(placed[0]).getByText('One')).toBeInTheDocument();
+    expect(screen.getByText('1 placed · 2 without a day')).toBeInTheDocument();
+  });
+
+  it('keeps a POV whose cast member is in the trash', async () => {
+    rows[0].chapter_pov = 'c9';
+    withCast();
+    const user = await openChapters();
+
+    const [one] = rowsInList();
+    expect(within(one).getByText('cast member in the trash')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+
+    const pov = screen.getByLabelText('POV');
+    expect(pov).toHaveValue('c9');
+    expect(
+      within(pov).getByRole('option', { name: 'Cast member in the trash' })
+    ).toBeInTheDocument();
+
+    // Saving an unrelated field sends the link back unchanged rather than
+    // dropping the author's POV because its cast member is not on the tab.
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toMatchObject({ nodeId: 'n1', pov: 'c9' });
+  });
+
+  it('refuses a negative day without calling the database', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+
+    const day = screen.getByLabelText('Day');
+    await user.clear(day);
+    await user.type(day, '-1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      screen.getByText('An in-world day is a whole number, 0 or more, or blank.')
+    ).toBeInTheDocument();
+    expect(lastCall('set_chapter_details')).toBeUndefined();
+    expect(screen.getByLabelText('Day')).toHaveValue(-1);
   });
 });

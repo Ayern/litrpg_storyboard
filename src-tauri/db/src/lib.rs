@@ -24,7 +24,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -930,6 +930,8 @@ impl Db {
             chapter_arc: None,
             chapter_words: None,
             chapter_target: None,
+            chapter_pov: None,
+            chapter_day: None,
         })
     }
 
@@ -1005,7 +1007,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
                  FROM nodes WHERE id = ?1",
                 params![id],
                 node_row,
@@ -1155,7 +1157,7 @@ impl Db {
         let mut stmt = guard.prepare(
             "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
                     n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq,
-                    n.chapter_arc, n.chapter_words, n.chapter_target
+                    n.chapter_arc, n.chapter_words, n.chapter_target, n.chapter_pov, n.chapter_day
              FROM nodes n JOIN stories s ON s.id = n.story_id
              WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
              ORDER BY n.created_at",
@@ -1238,7 +1240,7 @@ impl Db {
             let mut stmt = tx.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y,
                         created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
                  FROM nodes
                  WHERE story_id = ?1 AND node_type = 'chapter' AND deleted_at IS NULL
                  ORDER BY chapter_seq, created_at",
@@ -1263,6 +1265,8 @@ impl Db {
         arc: Option<String>,
         words: Option<i64>,
         target: Option<i64>,
+        pov: Option<String>,
+        day: Option<i64>,
         user: String,
     ) -> DbResult<Node> {
         if words.is_some_and(|count| count < 0) {
@@ -1277,10 +1281,17 @@ impl Db {
             ));
         }
 
+        if day.is_some_and(|day| day < 0) {
+            return Err(DbError::Invalid(
+                "an in-world day cannot be negative".to_string(),
+            ));
+        }
+
         let timestamp = now();
         let arc = arc
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        let pov = pov.filter(|id| !id.trim().is_empty());
 
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -1288,7 +1299,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
                  FROM nodes WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 node_row,
@@ -1298,23 +1309,36 @@ impl Db {
 
         if existing.node_type != "chapter" {
             return Err(DbError::Invalid(
-                "only a chapter has an arc or word counts".to_string(),
+                "only a chapter has an arc, a POV, a day or word counts".to_string(),
             ));
         }
+
+        // A POV is a cast link, checked the same way as the node's own link, so a
+        // member from another story or one in the trash is refused up front. A POV
+        // sent back unchanged is not checked again: its cast member may be in the
+        // trash by now, and that should not stop an unrelated arc being saved.
+        let pov_name = if pov == existing.chapter_pov {
+            character_name(&tx, pov.as_deref())?
+        } else {
+            linkable_character_name(&tx, &existing.story_id, pov.as_deref())?
+        };
+        let previous_pov_name = character_name(&tx, existing.chapter_pov.as_deref())?;
 
         let arc_changed = existing.chapter_arc != arc;
         let words_changed = existing.chapter_words != words;
         let target_changed = existing.chapter_target != target;
+        let pov_changed = existing.chapter_pov != pov;
+        let day_changed = existing.chapter_day != day;
 
-        if !arc_changed && !words_changed && !target_changed {
+        if !arc_changed && !words_changed && !target_changed && !pov_changed && !day_changed {
             return Ok(existing);
         }
 
         tx.execute(
             "UPDATE nodes SET chapter_arc = ?1, chapter_words = ?2, chapter_target = ?3,
-                    updated_at = ?4
-             WHERE id = ?5",
-            params![&arc, words, target, &timestamp, id],
+                    chapter_pov = ?4, chapter_day = ?5, updated_at = ?6
+             WHERE id = ?7",
+            params![&arc, words, target, &pov, day, &timestamp, id],
         )?;
 
         // One entry per field that changed, including a value being cleared: the
@@ -1367,12 +1391,48 @@ impl Db {
             )?;
         }
 
+        // Names, not ids, for the same reason a node's link records names: the
+        // history is meant to be read, not resolved.
+        if pov_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_pov"),
+                    old_value: previous_pov_name,
+                    new_value: pov_name,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if day_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_day"),
+                    old_value: existing.chapter_day.map(|value| value.to_string()),
+                    new_value: day.map(|value| value.to_string()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
         tx.commit()?;
 
         Ok(Node {
             chapter_arc: arc,
             chapter_words: words,
             chapter_target: target,
+            chapter_pov: pov,
+            chapter_day: day,
             updated_at: timestamp,
             ..existing
         })
@@ -1704,7 +1764,7 @@ impl Db {
         let nodes = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
                  FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
             let rows = stmt.query_map(params![story_id], node_row)?;
@@ -1756,6 +1816,10 @@ impl Db {
         let nodes = self.list_nodes(story_id)?;
         let characters = self.list_characters(story_id)?;
         let stats = self.list_story_stats(story_id)?;
+        let pov_names: std::collections::HashMap<&str, &str> = characters
+            .iter()
+            .map(|character| (character.id.as_str(), character.name.as_str()))
+            .collect();
 
         let mut lines: Vec<String> = vec![format!("# {}", story.title)];
 
@@ -1811,7 +1875,7 @@ impl Db {
                 lines.push(format!("*{total}*"));
             }
 
-            for chapter in chapters {
+            for chapter in &chapters {
                 lines.push(String::new());
                 lines.push(match chapter.chapter_seq {
                     Some(sequence) => format!("### {sequence}. {}", chapter.label),
@@ -1827,6 +1891,18 @@ impl Db {
                     .filter(|arc| !arc.is_empty())
                 {
                     facts.push(format!("**Arc:** {arc}"));
+                }
+
+                if let Some(day) = chapter.chapter_day {
+                    facts.push(format!("**Day:** {day}"));
+                }
+
+                if let Some(pov) = chapter
+                    .chapter_pov
+                    .as_deref()
+                    .and_then(|id| pov_names.get(id))
+                {
+                    facts.push(format!("**POV:** {pov}"));
                 }
 
                 match (chapter.chapter_words, chapter.chapter_target) {
@@ -1854,6 +1930,37 @@ impl Db {
                     lines.push(String::new());
                     lines.push(notes.to_string());
                 }
+            }
+        }
+
+        // Time order, which is not always reading order. Only chapters with a day
+        // appear here; an unplaced chapter is not quietly given one.
+        let mut timeline: Vec<&Node> = chapters
+            .iter()
+            .copied()
+            .filter(|chapter| chapter.chapter_day.is_some())
+            .collect();
+
+        if !timeline.is_empty() {
+            timeline.sort_by_key(|chapter| chapter.chapter_day.unwrap_or(0));
+
+            lines.push(String::new());
+            lines.push("## Timeline".to_string());
+
+            for chapter in timeline {
+                let pov = chapter
+                    .chapter_pov
+                    .as_deref()
+                    .and_then(|id| pov_names.get(id))
+                    .map(|name| format!(" ({name})"))
+                    .unwrap_or_default();
+
+                lines.push(format!(
+                    "- Day {} — {}{}",
+                    chapter.chapter_day.unwrap_or(0),
+                    chapter.label,
+                    pov
+                ));
             }
         }
 
@@ -2962,6 +3069,35 @@ impl Db {
             )?;
         }
 
+        // A chapter's point of view points at the same row, so it goes the same
+        // way; trashing the member keeps it, and restoring brings it back.
+        let narrated = {
+            let mut stmt = tx.prepare("SELECT id FROM nodes WHERE chapter_pov = ?1")?;
+            let rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<Vec<String>>>()?
+        };
+
+        for node_id in narrated {
+            tx.execute(
+                "UPDATE nodes SET chapter_pov = NULL WHERE id = ?1",
+                params![&node_id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "node",
+                    entity_id: &node_id,
+                    action: "update",
+                    field_changed: Some("chapter_pov"),
+                    old_value: Some(name.clone()),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
         tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
 
         log_audit(
@@ -3495,8 +3631,8 @@ impl Db {
 
             tx.execute(
                 "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                                    chapter_arc, chapter_words, chapter_target)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                    chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     &nodes[&node.id],
                     &story_id,
@@ -3516,6 +3652,10 @@ impl Db {
                     &node.chapter_arc,
                     node.chapter_words,
                     node.chapter_target,
+                    // The point of view is a cast id, remapped like the node's own
+                    // link so the copy does not point at the source story's row.
+                    node.chapter_pov.as_ref().and_then(|id| characters.get(id)),
+                    node.chapter_day,
                 ],
             )?;
         }
@@ -3711,6 +3851,13 @@ pub struct Node {
     pub chapter_words: Option<i64>,
     #[serde(default)]
     pub chapter_target: Option<i64>,
+    /// Whose point of view the chapter is told from, kept as a cast id like the
+    /// node's own link. Absent from exports written before schema v9.
+    #[serde(default)]
+    pub chapter_pov: Option<String>,
+    /// The in-world day the chapter happens on; NULL when it is not placed yet.
+    #[serde(default)]
+    pub chapter_day: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -4035,6 +4182,9 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
         ("node", "chapter_target") => {
             optional_number_spec("nodes", "chapter_target", NODE_FROM, OWN_LIVE)
         }
+        ("node", "chapter_day") => {
+            optional_number_spec("nodes", "chapter_day", NODE_FROM, OWN_LIVE)
+        }
         ("node", "position") => RevertSpec {
             table: "nodes",
             column: "pos_x",
@@ -4357,6 +4507,8 @@ fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
         chapter_arc: row.get(12)?,
         chapter_words: row.get(13)?,
         chapter_target: row.get(14)?,
+        chapter_pov: row.get(15)?,
+        chapter_day: row.get(16)?,
     })
 }
 
@@ -4364,7 +4516,7 @@ fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
 fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
     conn.query_row(
         "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                chapter_arc, chapter_words, chapter_target
+                chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
          FROM nodes WHERE id = ?1",
         params![id],
         node_row,
@@ -4376,6 +4528,21 @@ fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
 /// the name the history should record. `None` needs no checks because there is
 /// nothing to point at. Both the link setter and the creator go through here, so
 /// a drop and a picker refusal say the same thing.
+/// The name a cast id currently has, live or in the trash, for the history.
+fn character_name(conn: &Connection, character_id: Option<&str>) -> DbResult<Option<String>> {
+    let Some(id) = character_id else {
+        return Ok(None);
+    };
+
+    Ok(conn
+        .query_row(
+            "SELECT name FROM characters WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
 fn linkable_character_name(
     conn: &Connection,
     story_id: &str,
@@ -4485,6 +4652,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
 
     if version < 8 {
         conn.execute_batch(MIGRATION_008)?;
+    }
+
+    if version < 9 {
+        conn.execute_batch(MIGRATION_009)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -4667,6 +4838,14 @@ const MIGRATION_008: &str = "
     ALTER TABLE nodes ADD COLUMN chapter_arc TEXT;
     ALTER TABLE nodes ADD COLUMN chapter_words INTEGER;
     ALTER TABLE nodes ADD COLUMN chapter_target INTEGER;
+";
+
+/// Schema v9: a chapter can name whose eyes it is told through and which
+/// in-world day it happens on. Nothing is backfilled; a day of 0 is a day, not
+/// an absence.
+const MIGRATION_009: &str = "
+    ALTER TABLE nodes ADD COLUMN chapter_pov TEXT;
+    ALTER TABLE nodes ADD COLUMN chapter_day INTEGER;
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -6399,7 +6578,7 @@ mod tests {
             .unwrap()
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         let characters = db.list_characters("s1").unwrap();
         assert_eq!(characters[0].level, 1);
@@ -6662,6 +6841,8 @@ mod tests {
                 Some("  The Vault ".into()),
                 Some(1200),
                 Some(2000),
+                None,
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -6713,7 +6894,7 @@ mod tests {
         assert_eq!(copy.chapter_target, Some(2000));
 
         let cleared = db
-            .set_chapter_details(&chapter.id, None, Some(0), None, "Ada".into())
+            .set_chapter_details(&chapter.id, None, Some(0), None, None, None, "Ada".into())
             .unwrap();
         assert_eq!(cleared.chapter_arc, None);
         assert_eq!(cleared.chapter_words, Some(0), "zero is a count, not an absence");
@@ -6722,13 +6903,176 @@ mod tests {
         // Counts are the author's, but they still have to make sense, and a card
         // that is not a chapter has no place to keep them.
         assert!(db
-            .set_chapter_details(&chapter.id, None, Some(-1), None, "Ada".into())
+            .set_chapter_details(&chapter.id, None, Some(-1), None, None, None, "Ada".into())
             .is_err());
         assert!(db
-            .set_chapter_details(&chapter.id, None, None, Some(0), "Ada".into())
+            .set_chapter_details(&chapter.id, None, None, Some(0), None, None, "Ada".into())
             .is_err());
         assert!(db
-            .set_chapter_details(&idea.id, Some("Arc".into()), None, None, "Ada".into())
+            .set_chapter_details(
+                &idea.id,
+                Some("Arc".into()),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn a_chapter_names_its_pov_and_its_in_world_day() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Opening".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        let saved = db
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                None,
+                None,
+                Some(rook.id.clone()),
+                Some(12),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(saved.chapter_pov.as_deref(), Some(rook.id.as_str()));
+        assert_eq!(saved.chapter_day, Some(12));
+
+        // The history names the cast member rather than storing an id, and a day
+        // that is just a number is recorded the same way as any other edit.
+        let page = db
+            .get_audit_page(Some(&story.id), Some("node"), Some(&chapter.id), 50, 0)
+            .unwrap();
+        let pov_entry = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("chapter_pov"))
+            .unwrap();
+        assert_eq!(pov_entry.new_value.as_deref(), Some("Rook"));
+        assert!(page
+            .entries
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("chapter_day")));
+
+        let day_entry = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("chapter_day"))
+            .unwrap();
+        assert!(db.revert_change(&day_entry.id, "Ada".into()).unwrap());
+        let reverted = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == chapter.id)
+            .unwrap();
+        assert_eq!(reverted.chapter_day, None);
+        assert_eq!(
+            reverted.chapter_pov.as_deref(),
+            Some(rook.id.as_str()),
+            "putting the day back leaves the POV alone"
+        );
+
+        // Both survive an export, and the POV points at the copy's own cast.
+        db.set_chapter_details(
+            &chapter.id,
+            None,
+            None,
+            None,
+            Some(rook.id.clone()),
+            Some(12),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let imported = db
+            .import_story(db.export_story(&story.id).unwrap(), "Ada".into())
+            .unwrap();
+        let copy = db
+            .list_nodes(&imported.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.label == "Opening")
+            .unwrap();
+        assert_eq!(copy.chapter_day, Some(12));
+
+        let copied_pov = copy.chapter_pov.expect("the POV link comes across");
+        let copied_cast = db.list_characters(&imported.id).unwrap();
+        assert_eq!(
+            copied_cast
+                .iter()
+                .find(|character| character.id == copied_pov)
+                .unwrap()
+                .name,
+            "Rook"
+        );
+
+        // A cast member in the trash keeps its chapter's POV, and sending that POV
+        // back unchanged does not stop an unrelated field being saved. A restore
+        // brings the name back with the member.
+        db.delete_character(&rook.id, "Ada".into()).unwrap();
+        let edited = db
+            .set_chapter_details(
+                &chapter.id,
+                Some("The Vault".into()),
+                None,
+                None,
+                Some(rook.id.clone()),
+                Some(12),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(edited.chapter_pov.as_deref(), Some(rook.id.as_str()));
+        assert_eq!(edited.chapter_arc.as_deref(), Some("The Vault"));
+        db.restore_character(&rook.id, "Ada".into()).unwrap();
+
+        // A day cannot be negative, and a POV has to be live cast of this story.
+        assert!(db
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                None,
+                None,
+                None,
+                Some(-1),
+                "Ada".into(),
+            )
+            .is_err());
+
+        let other = db
+            .create_story("Other".into(), None, "Ada".into())
+            .unwrap();
+        let stranger = db
+            .create_character(other.id, "Stranger".into(), None, "Ada".into())
+            .unwrap();
+        assert!(db
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                None,
+                None,
+                Some(stranger.id),
+                Some(1),
+                "Ada".into(),
+            )
             .is_err());
     }
 
@@ -6769,12 +7113,14 @@ mod tests {
             Some("The Vault".into()),
             Some(1200),
             Some(2000),
+            None,
+            None,
             "Ada".into(),
         )
         .unwrap();
 
         let second = make("Second", "chapter", None);
-        db.set_chapter_details(&second.id, None, Some(300), None, "Ada".into())
+        db.set_chapter_details(&second.id, None, Some(300), None, None, None, "Ada".into())
             .unwrap();
 
         let rook = db
@@ -6804,6 +7150,29 @@ mod tests {
         )
         .unwrap();
 
+        // Told from Rook, on day 3. The second chapter happens earlier in the
+        // world than the one the reader meets first.
+        db.set_chapter_details(
+            &opening.id,
+            Some("The Vault".into()),
+            Some(1200),
+            Some(2000),
+            Some(rook.id.clone()),
+            Some(3),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.set_chapter_details(
+            &second.id,
+            None,
+            Some(300),
+            None,
+            None,
+            Some(1),
+            "Ada".into(),
+        )
+        .unwrap();
+
         make("Blackgate", "location", Some("A gate that remembers.".into()));
         // A character card is not repeated: the cast section carries the sheet.
         make("Rook", "character", Some("The card.".into()));
@@ -6816,16 +7185,23 @@ mod tests {
         assert!(markdown.ends_with('\n'));
 
         let chapters = markdown.find("## Chapters").unwrap();
+        let timeline = markdown.find("## Timeline").unwrap();
         let cast = markdown.find("## Cast").unwrap();
         let cards = markdown.find("## Other cards").unwrap();
-        assert!(chapters < cast && cast < cards);
+        assert!(chapters < timeline && timeline < cast && cast < cards);
 
         let first = markdown.find("### 1. Opening").unwrap();
         let next = markdown.find("### 2. Second").unwrap();
         assert!(first < next);
 
-        assert!(markdown.contains("**Arc:** The Vault · **Words:** 1,200 of 2,000"));
-        assert!(markdown.contains("**Words:** 300"));
+        assert!(markdown.contains(
+            "**Arc:** The Vault · **Day:** 3 · **POV:** Rook · **Words:** 1,200 of 2,000"
+        ));
+        assert!(markdown.contains("**Day:** 1 · **Words:** 300"));
+
+        // The timeline is time order, and only the chapters with a day are on it.
+        assert!(markdown.contains("- Day 1 — Second\n- Day 3 — Opening (Rook)"));
+        assert_eq!(markdown.matches("## Timeline").count(), 1);
         assert!(markdown.contains("The gates open."));
         assert!(markdown.contains("*1,500 words in 2 chapters; 2,000 targeted across 1 of them.*"));
 

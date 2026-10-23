@@ -240,9 +240,11 @@ fn set_chapter_details(
     arc: Option<String>,
     words: Option<i64>,
     target: Option<i64>,
+    pov: Option<String>,
+    day: Option<i64>,
     user: String,
 ) -> Result<Node, String> {
-    db.set_chapter_details(&node_id, arc, words, target, user)
+    db.set_chapter_details(&node_id, arc, words, target, pov, day, user)
         .map_err(|e| e.to_string())
 }
 

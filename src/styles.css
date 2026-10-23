@@ -1189,6 +1189,35 @@ body {
   width: 220px;
 }
 
+.chapter-details-form select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+  width: 140px;
+}
+
+.chapter-pov {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(94, 200, 192, 0.16);
+  color: #9adfd9;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-day {
+  font-size: 10px;
+  color: #a8a8a8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .chapter-details-actions {
   display: flex;
   gap: 6px;
@@ -1229,6 +1258,77 @@ body {
 .chapter-row button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.chapter-timeline {
+  margin-top: 16px;
+  padding: 10px 12px 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.chapter-timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.chapter-timeline-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.chapter-timeline-note {
+  font-size: 11px;
+  color: #888;
+}
+
+.chapter-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid #3a3a3f;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chapter-timeline-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.chapter-timeline-day {
+  color: #8fbf8f;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chapter-timeline-seq {
+  color: #777;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-timeline-label {
+  color: #ddd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-timeline-pov {
+  margin-left: auto;
+  color: #9adfd9;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .node-legend {

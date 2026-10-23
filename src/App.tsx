@@ -128,6 +128,10 @@ type NodeData = {
   chapterArc?: string | null;
   chapterWords?: number | null;
   chapterTarget?: number | null;
+  // The cast member the chapter is told from, kept as an id like the node's
+  // own link, and the in-world day it happens on. Both optional.
+  chapterPov?: string | null;
+  chapterDay?: number | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -331,6 +335,8 @@ function toFlowNode(row: any): Node<NodeData> {
       chapterArc: row.chapter_arc ?? null,
       chapterWords: row.chapter_words ?? null,
       chapterTarget: row.chapter_target ?? null,
+      chapterPov: row.chapter_pov ?? null,
+      chapterDay: row.chapter_day ?? null,
     },
   };
 }
@@ -545,6 +551,8 @@ const retentionChoices: { value: string; label: string }[] = [
 const fieldLabels: Record<string, string> = {
   xp: 'XP',
   xp_to_next: 'XP to next',
+  chapter_pov: 'POV',
+  chapter_day: 'in-world day',
 };
 
 // The chapter list's one-sentence warning. Positions start at 1, so a story
@@ -692,6 +700,8 @@ function App() {
   const [chapterArcDraft, setChapterArcDraft] = useState('');
   const [chapterWordsDraft, setChapterWordsDraft] = useState('');
   const [chapterTargetDraft, setChapterTargetDraft] = useState('');
+  const [chapterPovDraft, setChapterPovDraft] = useState('');
+  const [chapterDayDraft, setChapterDayDraft] = useState('');
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
@@ -1695,6 +1705,8 @@ function App() {
           chapterArc: newDbNode.chapter_arc ?? null,
           chapterWords: newDbNode.chapter_words ?? null,
           chapterTarget: newDbNode.chapter_target ?? null,
+          chapterPov: newDbNode.chapter_pov ?? null,
+          chapterDay: newDbNode.chapter_day ?? null,
         },
       };
 
@@ -1773,6 +1785,25 @@ function App() {
     chapterTotals.target && chapterTotals.target > 0
       ? Math.min(100, Math.round((chapterTotals.words / chapterTotals.target) * 100))
       : 0;
+
+  // A chapter's POV is stored as a cast id, so the list and the timeline resolve
+  // it here instead of every copy of a chapter carrying the name.
+  const castNames = useMemo(
+    () => new Map(characters.map(character => [character.id, character.name])),
+    [characters]
+  );
+
+  // Time order, which is not always reading order. A chapter without a day is
+  // left off rather than quietly given one; the note above the list counts them.
+  // The sort is stable, so chapters sharing a day keep their reading order.
+  const chapterTimeline = useMemo(() => {
+    return chapterNodes
+      .filter(node => node.data.chapterDay != null)
+      .sort(
+        (left, right) =>
+          (left.data.chapterDay ?? 0) - (right.data.chapterDay ?? 0)
+      );
+  }, [chapterNodes]);
 
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
@@ -1893,6 +1924,8 @@ function App() {
     setChapterTargetDraft(
       node.data.chapterTarget != null ? String(node.data.chapterTarget) : ''
     );
+    setChapterPovDraft(node.data.chapterPov ?? '');
+    setChapterDayDraft(node.data.chapterDay != null ? String(node.data.chapterDay) : '');
   };
 
   const saveChapterDetails = async () => {
@@ -1900,6 +1933,7 @@ function App() {
 
     const words = chapterWordsDraft.trim() === '' ? null : Number(chapterWordsDraft);
     const target = chapterTargetDraft.trim() === '' ? null : Number(chapterTargetDraft);
+    const day = chapterDayDraft.trim() === '' ? null : Number(chapterDayDraft);
 
     if (words !== null && (!Number.isInteger(words) || words < 0)) {
       setChapterError('A word count is a whole number, 0 or more.');
@@ -1908,6 +1942,11 @@ function App() {
 
     if (target !== null && (!Number.isInteger(target) || target < 1)) {
       setChapterError('A word target is a whole number above 0, or blank.');
+      return;
+    }
+
+    if (day !== null && (!Number.isInteger(day) || day < 0)) {
+      setChapterError('An in-world day is a whole number, 0 or more, or blank.');
       return;
     }
 
@@ -1920,6 +1959,8 @@ function App() {
         arc: chapterArcDraft.trim() || null,
         words,
         target,
+        pov: chapterPovDraft || null,
+        day,
         user: actor,
       });
 
@@ -1933,6 +1974,8 @@ function App() {
                   chapterArc: updated.chapter_arc ?? null,
                   chapterWords: updated.chapter_words ?? null,
                   chapterTarget: updated.chapter_target ?? null,
+                  chapterPov: updated.chapter_pov ?? null,
+                  chapterDay: updated.chapter_day ?? null,
                 },
               }
             : node
@@ -1942,7 +1985,7 @@ function App() {
       setEditingChapterId(null);
     } catch (e) {
       console.error('Failed to save chapter details:', e);
-      setChapterError(`Could not save the arc and counts: ${String(e)}`);
+      setChapterError(`Could not save the chapter details: ${String(e)}`);
     } finally {
       setChapterBusy(false);
     }
@@ -4693,6 +4736,17 @@ function App() {
                                 {node.data.chapterArc}
                               </span>
                             )}
+                            {node.data.chapterPov && (
+                              <span className="chapter-pov" title="Point of view">
+                                {castNames.get(node.data.chapterPov) ??
+                                  'cast member in the trash'}
+                              </span>
+                            )}
+                            {node.data.chapterDay != null && (
+                              <span className="chapter-day" title="In-world day">
+                                Day {node.data.chapterDay}
+                              </span>
+                            )}
                             <span className="chapter-words">
                               {formatChapterWords(
                                 node.data.chapterWords,
@@ -4768,6 +4822,42 @@ function App() {
                                   }}
                                 />
                               </label>
+                              <label>
+                                POV
+                                <select
+                                  title="Whose point of view the chapter is told from"
+                                  value={chapterPovDraft}
+                                  onChange={(e) => setChapterPovDraft(e.target.value)}
+                                >
+                                  <option value="">No POV</option>
+                                  {/* A POV whose cast member is in the trash is
+                                      kept and shown, not silently dropped. */}
+                                  {chapterPovDraft && !castNames.has(chapterPovDraft) && (
+                                    <option value={chapterPovDraft}>
+                                      Cast member in the trash
+                                    </option>
+                                  )}
+                                  {characters.map(character => (
+                                    <option key={character.id} value={character.id}>
+                                      {character.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                Day
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="Not placed"
+                                  value={chapterDayDraft}
+                                  onChange={(e) => setChapterDayDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void saveChapterDetails();
+                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                  }}
+                                />
+                              </label>
                               <div className="chapter-details-actions">
                                 <button
                                   title="Save the arc and the word counts"
@@ -4788,6 +4878,50 @@ function App() {
                         </li>
                       ))}
                     </ol>
+
+                    <section
+                      className="chapter-timeline"
+                      aria-labelledby="chapter-timeline-heading"
+                    >
+                      <div className="chapter-timeline-head">
+                        <h3 id="chapter-timeline-heading">Timeline</h3>
+                        <span className="chapter-timeline-note">
+                          {chapterTimeline.length} placed
+                          {chapterTimeline.length < chapterNodes.length &&
+                            ` · ${chapterNodes.length - chapterTimeline.length} without a day`}
+                        </span>
+                      </div>
+
+                      {chapterTimeline.length === 0 ? (
+                        <p className="chapters-hint">
+                          Give a chapter an in-world day to place it on the timeline.
+                        </p>
+                      ) : (
+                        <ol className="chapter-timeline-list" aria-label="Chapter timeline">
+                          {chapterTimeline.map(node => (
+                            <li key={node.id} className="chapter-timeline-row">
+                              <span className="chapter-timeline-day">
+                                Day {node.data.chapterDay}
+                              </span>
+                              {node.data.chapterSeq != null && (
+                                <span className="chapter-timeline-seq">
+                                  #{node.data.chapterSeq}
+                                </span>
+                              )}
+                              <span className="chapter-timeline-label">
+                                {node.data.label}
+                              </span>
+                              {node.data.chapterPov && (
+                                <span className="chapter-timeline-pov">
+                                  {castNames.get(node.data.chapterPov) ??
+                                    'cast member in the trash'}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
                   </>
                 )}
               </div>
