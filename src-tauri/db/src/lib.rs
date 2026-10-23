@@ -1,3 +1,5 @@
+pub mod snapshots;
+
 use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
@@ -63,6 +65,24 @@ impl Db {
             path: Some(path.to_path_buf()),
             ..db
         })
+    }
+
+    /// Opens the database after copying it into a `snapshots` folder beside it.
+    ///
+    /// The copy is taken before `migrate` runs, so a migration that goes wrong,
+    /// or a session that ends badly, can be undone by putting the previous file
+    /// back. Note that the audit log cannot do this: its delete entries keep a
+    /// name or a label, not the row.
+    ///
+    /// A copy that cannot be written is reported and then ignored. A read-only
+    /// folder should not cost the user their session, even though it does cost
+    /// them the safety net.
+    pub fn open_with_snapshot(path: &Path, keep: usize) -> DbResult<Self> {
+        if let Err(error) = snapshots::snapshot(path, keep) {
+            eprintln!("could not copy the database before opening it: {error}");
+        }
+
+        Self::open(path)
     }
 
     /// In-memory database, used by the unit tests.
@@ -3438,5 +3458,50 @@ mod tests {
 
         assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
         assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+    }
+
+    /// The point of copying the file is that the copy predates the migration, so
+    /// a migration that goes wrong leaves the previous schema on disk.
+    #[test]
+    fn the_copy_is_taken_before_the_schema_is_migrated() {
+        let dir = std::env::temp_dir().join(format!("litrpg-open-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("storyboard.db");
+
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE audit_log (
+                    id TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    changed_by TEXT NOT NULL,
+                    changed_at TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        }
+
+        let db = Db::open_with_snapshot(&path, 5).unwrap();
+
+        let live: i32 = db
+            .conn()
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(live, SCHEMA_VERSION, "opening migrates the working copy");
+
+        let copy = std::fs::read_dir(snapshots::snapshot_dir(&path))
+            .unwrap()
+            .next()
+            .expect("a copy should have been written")
+            .unwrap()
+            .path();
+        let before: i32 = Connection::open(&copy)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(before, 0, "the copy is what was on disk before migrating");
     }
 }

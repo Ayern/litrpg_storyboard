@@ -6,6 +6,9 @@ use tauri::Manager;
 
 const DB_FILE_NAME: &str = "storyboard.db";
 
+/// How many launch-time copies of the database to keep beside it.
+const SNAPSHOTS_TO_KEEP: usize = 10;
+
 /// Earlier builds stored the database in a folder derived from `APPDATA`, not in
 /// Tauri's app data directory. Kept so an existing story library can be adopted
 /// instead of silently starting empty.
@@ -352,7 +355,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| -> Result<(), Box<dyn std::error::Error>> {
             let path = resolve_db_path(app.handle())?;
-            app.manage(Db::open(&path)?);
+            // Copies the file before opening it, so the copy is the state on disk
+            // before any migration runs.
+            app.manage(Db::open_with_snapshot(&path, SNAPSHOTS_TO_KEEP)?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

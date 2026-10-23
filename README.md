@@ -185,7 +185,13 @@ page that arrives late, and what it says when a filter matches nothing.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
 - **There is no undo.** Deletions are permanent; they are recorded in the history
-  but cannot be restored from it.
+  but cannot be restored from it. The history keeps a name or a label for what
+  was deleted, not the row itself, so it is a record rather than a backup.
+- **Recovery is a file copy, not a button.** Every launch copies the database into
+  a `snapshots` folder beside it, before the schema is migrated, and keeps the last
+  ten. A bad import, a wrong deletion or a migration that went wrong can be undone
+  by putting an older copy back, but nothing in the app does that for you, and
+  anything done since the last launch is not in a copy.
 - **Import always creates a copy.** There is no way to overwrite or merge into an
   existing story, so restoring over a damaged one leaves the original in place to
   delete by hand.
