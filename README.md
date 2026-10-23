@@ -42,6 +42,13 @@ nodes or connections. "Show older changes" pages further back and says how many 
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
+**Reverting an edit** — any field change in the history can be put back, and a
+revert is itself recorded, so it can be reverted in turn. It only applies while
+the field still holds the value that entry produced: if it changed again since,
+the revert is refused and says what the field reads now, rather than quietly
+throwing the newer edit away. Creations and deletions are not revertible — the
+trash is what undoes those.
+
 **Trash** — deleting a story, character, node or connection moves it here rather
 than destroying it. Restoring puts it back exactly as it was: a character returns
 with its stats and attributes, a node with the connections that went with it, a
@@ -96,7 +103,7 @@ An entry records:
 | `story_id` | Which story the change belongs to, so history can be shown per story |
 | `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
 | `entity_id` | The row that changed |
-| `action` | `create`, `update`, `soft_delete`, `restore` or `purge` |
+| `action` | `create`, `update`, `revert`, `soft_delete`, `restore` or `purge` |
 | `field_changed` | Name of the changed field, for updates |
 | `old_value` / `new_value` | Before and after, as text |
 | `changed_by` | The current user's name at the time |
@@ -119,6 +126,10 @@ Behaviour worth knowing:
   goes without an entry of its own, since those rows are gone by the time a
   cascade could be logged. A window-driven purge is attributed to
   `Trash retention` rather than to the current user.
+- **A revert is an edit.** It writes a `revert` entry holding the value it
+  replaced, which is why reverting a revert puts the original change back. The
+  guard is the entry's own `new_value`: the field must still hold it, so a revert
+  can never discard a later edit, and one with nothing to put back writes nothing.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
   it started, produces no entry and no timestamp bump.
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the
@@ -187,7 +198,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # audit paging/filtering and the trash tab (vitest, jsdom)
+npm test                             # audit paging, reverts and the trash tab (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -206,7 +217,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 32 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 33 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -219,10 +230,13 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
-- **Only deletions can be undone.** Deleting a story, character, node or
-  connection moves it to the Trash tab, where it can be restored exactly or
-  deleted for good. Edits are still final: there is no undo for a rename or a
-  changed stat, and the history records what it was but cannot put it back.
+- **Undoing an edit needs the field to still hold what the edit left.** Deleting
+  a story, character, node or connection moves it to the Trash tab, where it can
+  be restored exactly or deleted for good, and any single recorded field can be
+  put back from the Audit tab. That revert refuses once the field changed again,
+  so undoing an old rename means undoing the newer ones first. Creations and
+  purges cannot be reverted at all: the first is undone by deleting it, and the
+  second has no row left to write to.
 - **Retention only runs at launch and when it is changed.** A window of 30 days
   means an item deleted 40 days ago goes the next time the app starts, not the
   moment it turns 40 days old — a long-running session keeps everything until it

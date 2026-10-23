@@ -2183,6 +2183,195 @@ impl Db {
         Ok(purged)
     }
 
+    // ===== UNDOING AN EDIT =====
+
+    /// Puts one field back to the value a history entry recorded before it changed.
+    ///
+    /// The entry's own `new_value` is the guard: the revert only happens while the
+    /// field still holds it. If the field changed again since, writing the older
+    /// value would discard the newer edit without saying so, so the request is
+    /// refused and the caller is told what the field reads now.
+    ///
+    /// A revert is recorded as a `revert` entry holding the value it replaced, which
+    /// makes it a change like any other: it shows up in the history and can itself
+    /// be reverted. Returns whether anything was written — a field that already
+    /// holds the earlier value is left alone and records nothing.
+    pub fn revert_change(&self, entry_id: &str, user: String) -> DbResult<bool> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let found = tx
+            .query_row(
+                "SELECT story_id, entity_type, entity_id, action, field_changed, old_value, new_value
+                 FROM audit_log WHERE id = ?1",
+                params![entry_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("history entry"))?;
+
+        let (story_id, entity_type, entity_id, action, field, restore, expected) = found;
+
+        // Only an edit keeps the value it replaced. Everything else is already
+        // undone somewhere else, or cannot be undone at all.
+        match action.as_str() {
+            "update" | "revert" => {}
+            "create" => {
+                return Err(DbError::Invalid(
+                    "a creation has nothing to put back; delete it and it goes to the trash"
+                        .to_string(),
+                ))
+            }
+            "soft_delete" => {
+                return Err(DbError::Invalid(
+                    "a deletion is undone from the trash, not from the history".to_string(),
+                ))
+            }
+            "restore" => {
+                return Err(DbError::Invalid(
+                    "that entry is already a restore, so there is nothing to undo".to_string(),
+                ))
+            }
+            "purge" => {
+                return Err(DbError::Invalid(
+                    "that item was deleted for good, so there is nothing to put back".to_string(),
+                ))
+            }
+            other => return Err(DbError::Invalid(format!("a {other} cannot be reverted"))),
+        }
+
+        let Some(field) = field else {
+            return Err(DbError::Invalid(
+                "that entry did not record which field changed".to_string(),
+            ));
+        };
+
+        let Some(spec) = revert_spec(&entity_type, &field) else {
+            return Err(DbError::Invalid(format!(
+                "a change to {entity_type} {field} has nothing to put back"
+            )));
+        };
+
+        let read = format!(
+            "SELECT {} AS value, ({}) AS live FROM {} WHERE t.id = ?1",
+            spec.current_sql(),
+            spec.live,
+            spec.from
+        );
+
+        let row = tx
+            .query_row(&read, params![&entity_id], |row| {
+                Ok((row.get::<_, Option<String>>(0)?, row.get::<_, bool>(1)?))
+            })
+            .optional()?;
+
+        let Some((current, live)) = row else {
+            return Err(DbError::Invalid(
+                "that item is no longer in the database, so there is nothing to put back"
+                    .to_string(),
+            ));
+        };
+
+        // A row in the trash would take the change with it into hiding, so it has
+        // to come back first.
+        if !live {
+            return Err(DbError::Invalid(
+                "that item is in the trash; restore it before reverting an edit".to_string(),
+            ));
+        }
+
+        if same_value(spec.kind, current.as_deref(), restore.as_deref()) {
+            return Ok(false);
+        }
+
+        if !same_value(spec.kind, current.as_deref(), expected.as_deref()) {
+            return Err(DbError::Invalid(format!(
+                "{field} changed after that entry — it now reads \"{}\", so reverting would discard that edit",
+                current.as_deref().unwrap_or("nothing")
+            )));
+        }
+
+        let timestamp = now();
+
+        match spec.kind {
+            RevertKind::Text => {
+                if spec.touched {
+                    tx.execute(
+                        &format!(
+                            "UPDATE {} SET {} = ?1, updated_at = ?2 WHERE id = ?3",
+                            spec.table, spec.column
+                        ),
+                        params![restore, &timestamp, &entity_id],
+                    )?;
+                } else {
+                    tx.execute(
+                        &format!("UPDATE {} SET {} = ?1 WHERE id = ?2", spec.table, spec.column),
+                        params![restore, &entity_id],
+                    )?;
+                }
+            }
+            RevertKind::Number => {
+                let value = restore
+                    .as_deref()
+                    .and_then(|text| text.parse::<i64>().ok())
+                    .ok_or_else(|| {
+                        DbError::Invalid("that entry did not record a whole number".to_string())
+                    })?;
+
+                tx.execute(
+                    &format!(
+                        "UPDATE {} SET {} = ?1, updated_at = ?2 WHERE id = ?3",
+                        spec.table, spec.column
+                    ),
+                    params![value, &timestamp, &entity_id],
+                )?;
+            }
+            RevertKind::Point => {
+                let (x, y) = parse_point(restore.as_deref()).ok_or_else(|| {
+                    DbError::Invalid("that entry did not record a position".to_string())
+                })?;
+
+                let pair = spec.pair.unwrap_or("pos_y");
+
+                tx.execute(
+                    &format!(
+                        "UPDATE {} SET {} = ?1, {} = ?2, updated_at = ?3 WHERE id = ?4",
+                        spec.table, spec.column, pair
+                    ),
+                    params![x, y, &timestamp, &entity_id],
+                )?;
+            }
+        }
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: story_id.as_deref(),
+                entity_type: &entity_type,
+                entity_id: &entity_id,
+                action: "revert",
+                field_changed: Some(field.as_str()),
+                old_value: current,
+                new_value: restore,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(true)
+    }
+
     // ===== IMPORT =====
 
     /// Restores a story from an export as a **new** story.
@@ -2579,6 +2768,166 @@ struct AuditRecord<'a> {
     old_value: Option<String>,
     new_value: Option<String>,
     changed_by: &'a str,
+}
+
+/// How a reverted value is compared and written back.
+#[derive(Clone, Copy)]
+enum RevertKind {
+    Text,
+    Number,
+    /// Two coordinates recorded as one `x,y` value.
+    Point,
+}
+
+/// Where one reverted field lives, and whether the row may still be edited.
+struct RevertSpec {
+    table: &'static str,
+    /// The column holding the value, or the first half of a [`RevertKind::Point`].
+    column: &'static str,
+    /// Second half of a point; always set for one.
+    pair: Option<&'static str>,
+    /// `FROM` clause with the target table aliased `t`.
+    from: &'static str,
+    /// True while the row is on the board; a child also follows its parents.
+    live: &'static str,
+    /// Whether the table has an `updated_at` to bump.
+    touched: bool,
+    kind: RevertKind,
+}
+
+impl RevertSpec {
+    /// The current value as text, in the shape the history records it.
+    fn current_sql(&self) -> String {
+        match self.kind {
+            RevertKind::Text => format!("t.{}", self.column),
+            RevertKind::Number => format!("CAST(t.{} AS TEXT)", self.column),
+            RevertKind::Point => format!(
+                "t.{} || ',' || t.{}",
+                self.column,
+                self.pair.unwrap_or(self.column)
+            ),
+        }
+    }
+}
+
+const CHARACTER_FROM: &str = "characters t JOIN stories s ON s.id = t.story_id";
+const NODE_FROM: &str = "nodes t JOIN stories s ON s.id = t.story_id";
+const EDGE_FROM: &str = "edges t JOIN stories s ON s.id = t.story_id";
+const STAT_FROM: &str =
+    "character_stats t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+const ATTRIBUTE_FROM: &str = "character_attributes t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+
+/// A story's own children are visible while they and the story are live.
+const OWN_LIVE: &str = "t.deleted_at IS NULL AND s.deleted_at IS NULL";
+/// Stats and attributes have no `deleted_at`; they follow their character.
+const CHILD_LIVE: &str = "c.deleted_at IS NULL AND s.deleted_at IS NULL";
+
+fn text_spec(
+    table: &'static str,
+    column: &'static str,
+    from: &'static str,
+    live: &'static str,
+    touched: bool,
+) -> RevertSpec {
+    RevertSpec {
+        table,
+        column,
+        pair: None,
+        from,
+        live,
+        touched,
+        kind: RevertKind::Text,
+    }
+}
+
+fn number_spec(
+    table: &'static str,
+    column: &'static str,
+    from: &'static str,
+    live: &'static str,
+) -> RevertSpec {
+    RevertSpec {
+        table,
+        column,
+        pair: None,
+        from,
+        live,
+        touched: true,
+        kind: RevertKind::Number,
+    }
+}
+
+/// The fields a history entry can put back. Anything absent — a creation, a
+/// deletion, or a field the app never records — has nothing to restore.
+fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
+    Some(match (entity_type, field) {
+        ("story", "title") => {
+            text_spec("stories", "title", "stories t", "t.deleted_at IS NULL", true)
+        }
+        ("character", "name") => {
+            text_spec("characters", "name", CHARACTER_FROM, OWN_LIVE, true)
+        }
+        ("character", "description") => {
+            text_spec("characters", "description", CHARACTER_FROM, OWN_LIVE, true)
+        }
+        ("character_stat", "value") => {
+            number_spec("character_stats", "value", STAT_FROM, CHILD_LIVE)
+        }
+        ("character_attribute", "value") => text_spec(
+            "character_attributes",
+            "value",
+            ATTRIBUTE_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("node", "label") => text_spec("nodes", "label", NODE_FROM, OWN_LIVE, true),
+        ("node", "content") => text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
+        ("node", "position") => RevertSpec {
+            table: "nodes",
+            column: "pos_x",
+            pair: Some("pos_y"),
+            from: NODE_FROM,
+            live: OWN_LIVE,
+            touched: true,
+            kind: RevertKind::Point,
+        },
+        // Connections have no `updated_at` to bump.
+        ("edge", "label") => text_spec("edges", "label", EDGE_FROM, OWN_LIVE, false),
+        ("edge", "relation_type") => {
+            text_spec("edges", "relation_type", EDGE_FROM, OWN_LIVE, false)
+        }
+        _ => return None,
+    })
+}
+
+/// Reads the `x,y` a position entry records.
+fn parse_point(text: Option<&str>) -> Option<(f64, f64)> {
+    let (x, y) = text?.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+/// Whether two recorded values describe the same thing. Numbers compare as
+/// numbers, and a position within the one decimal the history keeps.
+fn same_value(kind: RevertKind, left: Option<&str>, right: Option<&str>) -> bool {
+    match kind {
+        RevertKind::Number => match (
+            left.and_then(|value| value.parse::<i64>().ok()),
+            right.and_then(|value| value.parse::<i64>().ok()),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => left == right,
+        },
+        RevertKind::Point => match (parse_point(left), parse_point(right)) {
+            // A drag is recorded to one decimal, so the stored value and the text
+            // can differ by half that much without being a different position.
+            (Some((left_x, left_y)), Some((right_x, right_y))) => {
+                (left_x - right_x).abs() <= 0.05 + f64::EPSILON
+                    && (left_y - right_y).abs() <= 0.05 + f64::EPSILON
+            }
+            _ => left == right,
+        },
+        RevertKind::Text => left == right,
+    }
 }
 
 fn now() -> String {
@@ -4673,6 +5022,340 @@ mod tests {
             .find(|entry| entry.action == "purge")
             .expect("the story purge is recorded");
         assert_eq!(purge.changed_by, "Trash retention");
+    }
+
+    // ===== reverting an edit =====
+
+    /// The newest entry for one field — the one a click in the audit tab targets.
+    fn latest_entry(db: &Db, entity_type: &str, entity_id: &str, field: &str) -> AuditEntry {
+        db.get_audit_log(None, Some(entity_type), Some(entity_id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.field_changed.as_deref() == Some(field))
+            .expect("the change should be in the history")
+    }
+
+    #[test]
+    fn reverting_a_rename_puts_the_previous_name_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let rename = latest_entry(&db, "character", &character.id, "name");
+        assert_eq!(rename.action, "update");
+
+        assert!(db.revert_change(&rename.id, "Grace".into()).unwrap());
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters[0].name, "Rook");
+
+        let revert = latest_entry(&db, "character", &character.id, "name");
+        assert_eq!(revert.action, "revert");
+        assert_eq!(revert.old_value.as_deref(), Some("Wren"));
+        assert_eq!(revert.new_value.as_deref(), Some("Rook"));
+        assert_eq!(revert.changed_by, "Grace");
+        assert_eq!(revert.story_id.as_deref(), Some(story.id.as_str()));
+    }
+
+    #[test]
+    fn a_field_that_moved_on_is_not_reverted() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        db.update_character(&character.id, "Ash".into(), None, "Ada".into())
+            .unwrap();
+
+        let first_rename = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.old_value.as_deref() == Some("Rook"))
+            .expect("the first rename is in the history");
+
+        let error = db
+            .revert_change(&first_rename.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("changed after that entry"), "{error}");
+        // The refusal says what the field reads now, which is why it refused.
+        assert!(error.contains("Ash"), "{error}");
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters[0].name, "Ash", "the newer edit stands");
+    }
+
+    #[test]
+    fn a_revert_is_itself_a_change_that_can_be_reverted() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let rename = latest_entry(&db, "character", &character.id, "name");
+        db.revert_change(&rename.id, "Ada".into()).unwrap();
+
+        let revert = latest_entry(&db, "character", &character.id, "name");
+        assert_eq!(revert.action, "revert");
+
+        // Undoing the undo puts the rename back, so no edit is a dead end.
+        assert!(db.revert_change(&revert.id, "Ada".into()).unwrap());
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters[0].name, "Wren");
+
+        let undo = latest_entry(&db, "character", &character.id, "name");
+        assert_eq!(undo.action, "revert");
+        assert_eq!(undo.old_value.as_deref(), Some("Rook"));
+        assert_eq!(undo.new_value.as_deref(), Some("Wren"));
+    }
+
+    #[test]
+    fn reverting_an_added_description_empties_it_again() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(
+            &character.id,
+            "Rook".into(),
+            Some("Scout".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        let edit = latest_entry(&db, "character", &character.id, "description");
+        assert_eq!(edit.old_value, None);
+
+        assert!(db.revert_change(&edit.id, "Ada".into()).unwrap());
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(
+            characters[0].description, None,
+            "a field that was empty comes back empty, not as a blank string"
+        );
+
+        let revert = latest_entry(&db, "character", &character.id, "description");
+        assert_eq!(revert.old_value.as_deref(), Some("Scout"));
+        assert_eq!(revert.new_value, None);
+    }
+
+    #[test]
+    fn a_stat_goes_back_to_its_old_number() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let stat = db
+            .add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 7, None, "Ada".into())
+            .unwrap();
+
+        let change = latest_entry(&db, "character_stat", &stat.id, "value");
+        assert!(db.revert_change(&change.id, "Ada".into()).unwrap());
+
+        let stats = db.list_stats(&character.id).unwrap();
+        assert_eq!(stats[0].value, 3);
+        assert_eq!(stats[0].stat_name, "Level", "the stat itself is still there");
+    }
+
+    #[test]
+    fn a_connection_label_can_be_put_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let first = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "event".into(),
+                "Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let edge = db
+            .create_edge(
+                story.id.clone(),
+                first.id.clone(),
+                second.id.clone(),
+                Some("first".into()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.update_edge(
+            &edge.id,
+            Some("second".into()),
+            Some("leads_to".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let rename = latest_entry(&db, "edge", &edge.id, "label");
+        assert!(db.revert_change(&rename.id, "Ada".into()).unwrap());
+
+        let edges = db.list_edges(&story.id).unwrap();
+        assert_eq!(edges[0].label.as_deref(), Some("first"));
+        assert_eq!(
+            edges[0].relation_type.as_deref(),
+            Some("leads_to"),
+            "one field is put back, not the whole row"
+        );
+    }
+
+    #[test]
+    fn a_node_move_can_be_undone_and_a_rounding_drag_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let node = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Beat".into(),
+                None,
+                10.0,
+                20.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_node_position(node.id.clone(), 30.0, 40.0, "Ada".into())
+            .unwrap();
+        let moved = latest_entry(&db, "node", &node.id, "position");
+        assert_eq!(moved.old_value.as_deref(), Some("10.0,20.0"));
+
+        assert!(db.revert_change(&moved.id, "Ada".into()).unwrap());
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes[0].pos_x, 10.0);
+        assert_eq!(nodes[0].pos_y, 20.0);
+
+        // A nudge smaller than the one decimal the history keeps records the same
+        // value twice, so putting it back would change nothing at all.
+        db.update_node_position(node.id.clone(), 10.02, 20.0, "Ada".into())
+            .unwrap();
+        let nudge = latest_entry(&db, "node", &node.id, "position");
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        assert!(!db.revert_change(&nudge.id, "Ada".into()).unwrap());
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before,
+            "a revert with nothing to do writes no history"
+        );
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes[0].pos_x, 10.02);
+    }
+
+    #[test]
+    fn only_an_edit_has_something_to_put_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        let history = |action: &str| {
+            db.get_audit_log(None, Some("character"), Some(&character.id), 50)
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.action == action)
+                .expect("the entry should be in the history")
+        };
+
+        let creation = history("create");
+        let error = db
+            .revert_change(&creation.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a creation has nothing to put back"), "{error}");
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let rename = latest_entry(&db, "character", &character.id, "name");
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+
+        let error = db
+            .revert_change(&rename.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("in the trash"), "{error}");
+
+        let deletion = history("soft_delete");
+        let error = db
+            .revert_change(&deletion.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("undone from the trash"), "{error}");
+
+        // Nothing above touched the character, so it is still in the trash.
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, character.id);
+    }
+
+    #[test]
+    fn a_purged_item_has_nothing_left_to_put_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+        db.purge_character(&character.id, "Ada".into()).unwrap();
+
+        let purge = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "purge")
+            .unwrap();
+
+        let error = db
+            .revert_change(&purge.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("deleted for good"), "{error}");
+    }
+
+    #[test]
+    fn a_story_title_can_be_put_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        db.update_story(&story.id, "Embers".into(), "Ada".into())
+            .unwrap();
+
+        let rename = latest_entry(&db, "story", &story.id, "title");
+        assert!(db.revert_change(&rename.id, "Ada".into()).unwrap());
+
+        let stored = db.get_story(&story.id).unwrap().unwrap();
+        assert_eq!(stored.title, "Ash");
+        assert_eq!(db.list_stories().unwrap()[0].title, "Ash");
     }
 
     #[test]

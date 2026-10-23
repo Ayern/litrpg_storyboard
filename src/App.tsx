@@ -125,6 +125,7 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
 const actionLabels: Record<string, string> = {
   soft_delete: 'trash',
   purge: 'delete forever',
+  revert: 'revert',
 };
 
 // Both lists the trash shows, in one round trip. Shared by the tab's first load
@@ -159,13 +160,68 @@ function formatWhen(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
-function AuditChange({ entry }: { entry: AuditEntry }) {
-  if (entry.action === 'update') {
+// Every field the database can put back, and which of them may legitimately be
+// empty. On the others a null `old_value` means the entry recorded nothing to
+// restore. Keep in step with `revert_spec` in the database crate.
+const revertFields = new Set([
+  'story:title',
+  'character:name',
+  'character:description',
+  'character_stat:value',
+  'character_attribute:value',
+  'node:label',
+  'node:content',
+  'node:position',
+  'edge:label',
+  'edge:relation_type',
+]);
+
+const nullableRevertFields = new Set([
+  'character:description',
+  'node:content',
+  'edge:label',
+  'edge:relation_type',
+]);
+
+// Only a change that kept an earlier value can be put back. A creation or a
+// deletion is undone elsewhere — the trash — so it gets no Revert button.
+function canRevert(entry: AuditEntry): boolean {
+  if (entry.action !== 'update' && entry.action !== 'revert') return false;
+
+  const key = `${entry.entity_type}:${entry.field_changed ?? ''}`;
+  if (!revertFields.has(key)) return false;
+
+  return nullableRevertFields.has(key) || entry.old_value !== null;
+}
+
+function AuditChange({
+  entry,
+  onRevert,
+  busy,
+}: {
+  entry: AuditEntry;
+  onRevert: (entry: AuditEntry) => void;
+  busy: string | null;
+}) {
+  const revertButton = canRevert(entry) ? (
+    <button
+      className="audit-revert"
+      aria-label={`Revert ${entry.field_changed}`}
+      title="Put this field back to what it was before this change"
+      onClick={() => onRevert(entry)}
+      disabled={busy !== null}
+    >
+      {busy === entry.id ? 'Reverting…' : 'Revert'}
+    </button>
+  ) : null;
+
+  if (entry.action === 'update' || entry.action === 'revert') {
     return (
       <div className="audit-change">
         <span className="audit-old">{entry.old_value ?? 'nothing'}</span>
         <span className="audit-arrow">→</span>
         <span className="audit-new">{entry.new_value ?? 'nothing'}</span>
+        {revertButton}
       </div>
     );
   }
@@ -175,6 +231,7 @@ function AuditChange({ entry }: { entry: AuditEntry }) {
   return (
     <div className="audit-change">
       <span className="audit-new">{entry.new_value}</span>
+      {revertButton}
     </div>
   );
 }
@@ -219,6 +276,9 @@ function App() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditLoadingMore, setAuditLoadingMore] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [revertBusyId, setRevertBusyId] = useState<string | null>(null);
+  const [revertNotice, setRevertNotice] = useState<string | null>(null);
+  const [revertError, setRevertError] = useState<string | null>(null);
 
   // Read by the "show older" request when it returns, so a page fetched under one
   // filter is never appended to a list showing another.
@@ -398,6 +458,83 @@ function App() {
       setAuditError(String(e));
     } finally {
       setAuditLoadingMore(false);
+    }
+  };
+
+  // A revert changes what the other tabs show, so they are reloaded rather than
+  // left displaying the value the history just put back.
+  const refreshAfterRevert = async () => {
+    if (!currentStory) return;
+
+    await loadStory(currentStory);
+
+    const loaded: Character[] = await invoke('get_characters', {
+      storyId: currentStory.id,
+    });
+    setCharacters(loaded);
+
+    if (selectedCharacterId) {
+      const [stats, attributes] = await Promise.all([
+        invoke<CharacterStat[]>('get_character_stats', {
+          characterId: selectedCharacterId,
+        }),
+        invoke<CharacterAttribute[]>('get_character_attributes', {
+          characterId: selectedCharacterId,
+        }),
+      ]);
+      setCharacterStats(stats);
+      setCharacterAttributes(attributes);
+    }
+  };
+
+  // The window is refetched at the size the reader had reached, so a revert adds
+  // its own entry without collapsing "show older changes" back to one page.
+  const reloadAuditWindow = async () => {
+    if (!currentStory) return;
+
+    const page: AuditPage = await invoke('get_audit_history', {
+      storyId: currentStory.id,
+      entityType: auditFilter,
+      entityId: null,
+      limit: Math.min(Math.max(auditEntries.length, AUDIT_PAGE_SIZE), 500),
+      offset: 0,
+    });
+
+    setAuditEntries(page.entries);
+    setAuditTotal(page.total);
+  };
+
+  const revertChange = async (entry: AuditEntry) => {
+    setRevertBusyId(entry.id);
+    setRevertError(null);
+    setRevertNotice(null);
+
+    try {
+      const changed: boolean = await invoke('revert_change', {
+        entryId: entry.id,
+        user: actor,
+      });
+
+      if (!changed) {
+        setRevertNotice('Nothing to put back: that field already holds its earlier value.');
+      } else {
+        setRevertNotice(
+          `Reverted ${entityLabel(entry)} to “${entry.old_value ?? 'nothing'}”.`
+        );
+      }
+
+      try {
+        await refreshAfterRevert();
+        await reloadAuditWindow();
+      } catch (e) {
+        // The revert itself succeeded; a failed refresh must not be reported as one.
+        console.error('Failed to refresh after a revert:', e);
+      }
+    } catch (e) {
+      console.error('Failed to revert a change:', e);
+      setRevertError(String(e));
+    } finally {
+      setRevertBusyId(null);
     }
   };
 
@@ -1997,6 +2134,24 @@ function App() {
                   </div>
                 )}
 
+                {revertError && (
+                  <div className="audit-error">
+                    Cannot revert that change: {revertError}{' '}
+                    <button className="status-dismiss" onClick={() => setRevertError(null)}>
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {revertNotice && (
+                  <div className="status-strip">
+                    {revertNotice}
+                    <button className="status-dismiss" onClick={() => setRevertNotice(null)}>
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
                 {auditLoading ? (
                   <div className="empty">Loading history…</div>
                 ) : auditEntries.length === 0 ? (
@@ -2026,7 +2181,11 @@ function App() {
                               {entry.changed_by} · {formatWhen(entry.changed_at)}
                             </span>
                           </div>
-                          <AuditChange entry={entry} />
+                          <AuditChange
+                            entry={entry}
+                            onRevert={revertChange}
+                            busy={revertBusyId}
+                          />
                         </li>
                       ))}
                     </ol>

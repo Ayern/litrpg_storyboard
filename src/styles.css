@@ -870,6 +870,34 @@ body {
   color: #b7d9b7;
 }
 
+.audit-badge.revert {
+  background: #1d3b4d;
+  color: #9ecfe6;
+}
+
+.audit-revert {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3a5a75;
+  color: #9ecfe6;
+  border-radius: 3px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.audit-revert:hover:not(:disabled) {
+  background: #1d3b4d;
+  color: #fff;
+}
+
+.audit-revert:disabled {
+  color: #777;
+  border-color: #3c3c3c;
+  cursor: not-allowed;
+}
+
 .audit-error {
   color: #e07b7b;
   font-size: 13px;

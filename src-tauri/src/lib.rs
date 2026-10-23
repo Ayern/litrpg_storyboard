@@ -348,6 +348,13 @@ fn purge_deleted(
     .map_err(|e| e.to_string())
 }
 
+/// Puts one field back to what a history entry recorded, refusing when the field
+/// changed again since — a revert never discards a newer edit.
+#[tauri::command]
+fn revert_change(db: tauri::State<'_, Db>, entry_id: String, user: String) -> Result<bool, String> {
+    db.revert_change(&entry_id, user).map_err(|e| e.to_string())
+}
+
 /// Writes a complete JSON snapshot of one story next to the database and returns
 /// the path it wrote, so the user can copy it somewhere safe.
 #[tauri::command]
@@ -464,6 +471,7 @@ pub fn run() {
             update_graph_edge,
             get_graph_edges,
             get_audit_history,
+            revert_change,
             update_story,
             delete_story,
             delete_node,
