@@ -1,5 +1,6 @@
 use litrpg_db::{
-    AuditPage, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story, StoryExport,
+    AuditPage, Character, CharacterAttribute, CharacterStat, Db, DeletedItem, Edge, Node, Story,
+    StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -280,6 +281,51 @@ fn delete_edge(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(),
     db.delete_edge(&id, user).map_err(|e| e.to_string())
 }
 
+/// What can be brought back: the deleted stories when no story is named, or the
+/// deleted contents of one story.
+#[tauri::command]
+fn get_trash(db: tauri::State<'_, Db>, story_id: Option<String>) -> Result<Vec<DeletedItem>, String> {
+    db.list_deleted(story_id.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Undoes one deletion. The kind is what the trash row said it was, so the UI
+/// never has to know which table an id belongs to.
+#[tauri::command]
+fn restore_deleted(
+    db: tauri::State<'_, Db>,
+    id: String,
+    kind: String,
+    user: String,
+) -> Result<(), String> {
+    match kind.as_str() {
+        "story" => db.restore_story(&id, user),
+        "character" => db.restore_character(&id, user),
+        "node" => db.restore_node(&id, user),
+        "edge" => db.restore_edge(&id, user),
+        other => return Err(format!("nothing called {other} can be restored")),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Deletes one item from the trash for good.
+#[tauri::command]
+fn purge_deleted(
+    db: tauri::State<'_, Db>,
+    id: String,
+    kind: String,
+    user: String,
+) -> Result<(), String> {
+    match kind.as_str() {
+        "story" => db.purge_story(&id, user),
+        "character" => db.purge_character(&id, user),
+        "node" => db.purge_node(&id, user),
+        "edge" => db.purge_edge(&id, user),
+        other => return Err(format!("nothing called {other} can be deleted permanently")),
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// Writes a complete JSON snapshot of one story next to the database and returns
 /// the path it wrote, so the user can copy it somewhere safe.
 #[tauri::command]
@@ -386,6 +432,9 @@ pub fn run() {
             delete_story,
             delete_node,
             delete_edge,
+            get_trash,
+            restore_deleted,
+            purge_deleted,
             export_story_json,
             import_story_json,
         ])

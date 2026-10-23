@@ -39,6 +39,16 @@ interface AuditPage {
   total: number;
 }
 
+// One deleted row. `kind` is what it was, `story_id` is the story it belonged to
+// (its own id for a story), so the trash can tell a restore where to look.
+interface DeletedItem {
+  id: string;
+  kind: string;
+  label: string;
+  story_id: string;
+  deleted_at: string;
+}
+
 interface Character {
   id: string;
   story_id: string;
@@ -77,6 +87,13 @@ type NodeType = typeof nodeTypes[number];
 
 const USER_KEY = 'litrpg.currentUser';
 
+const trashKindLabels: Record<string, string> = {
+  story: 'Story',
+  character: 'Character',
+  node: 'Graph node',
+  edge: 'Graph connection',
+};
+
 const entityLabels: Record<string, string> = {
   story: 'Story',
   character: 'Character',
@@ -102,6 +119,13 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
   { value: 'node', label: 'Nodes' },
   { value: 'edge', label: 'Connections' },
 ];
+
+// The badge reads as a word; the CSS class stays the raw action so the colours
+// are keyed to what the database recorded.
+const actionLabels: Record<string, string> = {
+  soft_delete: 'trash',
+  purge: 'delete forever',
+};
 
 function entityLabel(entry: AuditEntry): string {
   const base = entityLabels[entry.entity_type] ?? entry.entity_type;
@@ -151,7 +175,7 @@ function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EdgeData>([]);
   
-  const [selectedTab, setSelectedTab] = useState<'graph' | 'characters' | 'audit'>('graph');
+  const [selectedTab, setSelectedTab] = useState<'graph' | 'characters' | 'audit' | 'trash'>('graph');
   
   const [newStoryTitle, setNewStoryTitle] = useState('');
   const [newNodeLabel, setNewNodeLabel] = useState('');
@@ -210,6 +234,13 @@ function App() {
   const [characterNameDraft, setCharacterNameDraft] = useState('');
   const [characterDescriptionDraft, setCharacterDescriptionDraft] = useState('');
   const [confirmDeleteCharacter, setConfirmDeleteCharacter] = useState(false);
+
+  const [trash, setTrash] = useState<DeletedItem[]>([]);
+  const [deletedStories, setDeletedStories] = useState<DeletedItem[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState<string | null>(null);
+  const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null);
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -455,6 +486,134 @@ function App() {
       cancelled = true;
     };
   }, [selectedCharacterId]);
+
+  // The trash is re-read every time the tab is opened, so it always reflects the
+  // latest deletions — including ones made a moment ago from another tab.
+  useEffect(() => {
+    if (selectedTab !== 'trash') return;
+
+    let cancelled = false;
+
+    const loadTrash = async () => {
+      setTrashLoading(true);
+      setTrashError(null);
+
+      try {
+        const [inStory, stories] = await Promise.all([
+          currentStory
+            ? invoke<DeletedItem[]>('get_trash', { storyId: currentStory.id })
+            : Promise.resolve<DeletedItem[]>([]),
+          invoke<DeletedItem[]>('get_trash', { storyId: null }),
+        ]);
+
+        if (cancelled) return;
+        setTrash(inStory);
+        setDeletedStories(stories);
+      } catch (e) {
+        console.error('Failed to load the trash:', e);
+        if (!cancelled) setTrashError(String(e));
+      } finally {
+        if (!cancelled) setTrashLoading(false);
+      }
+    };
+
+    loadTrash();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTab, currentStory]);
+
+  // A restored item has to reappear where the user last saw it, so the sides of
+  // the app that show it are reloaded rather than patched by hand.
+  const restoreDeleted = async (item: DeletedItem) => {
+    setConfirmPurgeId(null);
+    setTrashError(null);
+    setRestoreNotice(null);
+
+    try {
+      await invoke('restore_deleted', { id: item.id, kind: item.kind, user: actor });
+
+      if (item.kind === 'story') {
+        const loadedStories: Story[] = await invoke('get_all_stories');
+        setStories(loadedStories);
+        setDeletedStories(previous => previous.filter(other => other.id !== item.id));
+      } else {
+        setTrash(previous => previous.filter(other => other.id !== item.id));
+
+        if (currentStory) {
+          await loadStory(currentStory);
+
+          const loaded: Character[] = await invoke('get_characters', {
+            storyId: currentStory.id,
+          });
+          setCharacters(loaded);
+          setSelectedCharacterId(previous => {
+            if (item.kind === 'character' && loaded.some(other => other.id === item.id)) {
+              return item.id;
+            }
+            return previous && loaded.some(other => other.id === previous)
+              ? previous
+              : loaded[0]?.id ?? null;
+          });
+        }
+      }
+
+      setRestoreNotice(`Restored ${trashKindLabels[item.kind] ?? item.kind} “${item.label}”.`);
+    } catch (e) {
+      console.error('Failed to restore:', e);
+      setTrashError(String(e));
+    }
+  };
+
+  // The one irreversible action in the app, so it stays behind a confirmation.
+  const purgeDeleted = async (item: DeletedItem) => {
+    setConfirmPurgeId(null);
+    setTrashError(null);
+
+    try {
+      await invoke('purge_deleted', { id: item.id, kind: item.kind, user: actor });
+
+      if (item.kind === 'story') {
+        setDeletedStories(previous => previous.filter(other => other.id !== item.id));
+      } else {
+        setTrash(previous => previous.filter(other => other.id !== item.id));
+      }
+    } catch (e) {
+      console.error('Failed to delete permanently:', e);
+      setTrashError(String(e));
+    }
+  };
+
+  const renderTrashItem = (item: DeletedItem) => (
+    <li key={item.id} className="trash-item">
+      <span className={`trash-kind ${item.kind}`}>
+        {trashKindLabels[item.kind] ?? item.kind}
+      </span>
+      <span className="trash-label">{item.label}</span>
+      <span className="trash-when">deleted {formatWhen(item.deleted_at)}</span>
+
+      {confirmPurgeId === item.id ? (
+        <>
+          <button className="trash-danger" onClick={() => purgeDeleted(item)}>
+            Yes, delete forever
+          </button>
+          <button onClick={() => setConfirmPurgeId(null)}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <button onClick={() => restoreDeleted(item)}>Restore</button>
+          <button
+            className="trash-danger"
+            title="Delete permanently — this cannot be undone"
+            onClick={() => setConfirmPurgeId(item.id)}
+          >
+            Delete forever
+          </button>
+        </>
+      )}
+    </li>
+  );
 
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
@@ -1237,6 +1396,12 @@ function App() {
             >
               Audit Log
             </button>
+            <button
+              className={selectedTab === 'trash' ? 'active' : ''}
+              onClick={() => setSelectedTab('trash')}
+            >
+              Trash
+            </button>
           </div>
           <div className="topbar-actions">
             {currentStory && (
@@ -1667,6 +1832,62 @@ function App() {
           </div>
         )}
 
+        {selectedTab === 'trash' && (
+          <div className="tab-content">
+            <div className="trash-intro">
+              Deleting a story, character, node or connection puts it here instead of
+              destroying it. Restoring brings it back exactly as it was.
+            </div>
+
+            {trashError && (
+              <div className="audit-error">Could not use the trash: {trashError}</div>
+            )}
+
+            {restoreNotice && (
+              <div className="status-strip">
+                {restoreNotice}
+                <button className="status-dismiss" onClick={() => setRestoreNotice(null)}>
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {trashLoading ? (
+              <div className="empty">Loading the trash…</div>
+            ) : (
+              <>
+                <div className="trash-section">
+                  <h4 className="character-section-heading">Deleted stories</h4>
+
+                  {deletedStories.length === 0 ? (
+                    <div className="empty">No stories in the trash.</div>
+                  ) : (
+                    <ul className="trash-list" aria-label="Deleted stories">
+                      {deletedStories.map(item => renderTrashItem(item))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="trash-section">
+                  <h4 className="character-section-heading">
+                    {currentStory ? `Deleted from “${currentStory.title}”` : 'Deleted items'}
+                  </h4>
+
+                  {!currentStory ? (
+                    <div className="empty">Select a story to see what was deleted from it.</div>
+                  ) : trash.length === 0 ? (
+                    <div className="empty">Nothing deleted from this story.</div>
+                  ) : (
+                    <ul className="trash-list" aria-label="Deleted from this story">
+                      {trash.map(item => renderTrashItem(item))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {selectedTab === 'audit' && (
           <div className="tab-content">
             {!currentStory ? (
@@ -1719,7 +1940,9 @@ function App() {
                       {auditEntries.map(entry => (
                         <li key={entry.id} className="audit-entry">
                           <div className="audit-row">
-                            <span className={`audit-badge ${entry.action}`}>{entry.action}</span>
+                            <span className={`audit-badge ${entry.action}`}>
+                              {actionLabels[entry.action] ?? entry.action}
+                            </span>
                             <span className="audit-entity">{entityLabel(entry)}</span>
                             <span className="audit-when">
                               {entry.changed_by} · {formatWhen(entry.changed_at)}

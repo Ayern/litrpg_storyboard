@@ -1,0 +1,220 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, within, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+import App from './App';
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+
+// The trash tab is plain DOM; the canvas it sits beside needs React Flow's DOM
+// measurements, so render its children through a passthrough instead.
+vi.mock('reactflow', async () => {
+  const React = await import('react');
+  const PassThrough = ({ children }: { children?: unknown }) =>
+    React.createElement('div', null, children as React.ReactNode);
+
+  return {
+    default: PassThrough,
+    Controls: () => null,
+    Background: () => null,
+    Panel: PassThrough,
+    addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
+    useNodesState: (initial: unknown[]) => [initial, () => {}, () => {}],
+    useEdgesState: (initial: unknown[]) => [initial, () => {}, () => {}],
+  };
+});
+
+interface DeletedRow {
+  id: string;
+  kind: string;
+  label: string;
+  story_id: string;
+  deleted_at: string;
+}
+
+const story = {
+  id: 'story-1',
+  title: 'Ledger',
+  description: null,
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+};
+
+function deleted(id: string, kind: string, label: string, storyId = story.id): DeletedRow {
+  return {
+    id,
+    kind,
+    label,
+    story_id: storyId,
+    deleted_at: '2026-10-22T12:00:00Z',
+  };
+}
+
+interface Invocation {
+  command: string;
+  args: Record<string, unknown>;
+}
+
+let calls: Invocation[] = [];
+let storyTrash: DeletedRow[] = [];
+let deletedStories: DeletedRow[] = [];
+let failOn: string | null = null;
+
+beforeEach(() => {
+  calls = [];
+  storyTrash = [];
+  deletedStories = [];
+  failOn = null;
+  invokeMock.mockReset();
+  invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
+    const args = (rawArgs ?? {}) as Record<string, unknown>;
+    calls.push({ command, args });
+
+    if (command === failOn) throw 'restore the connected nodes first';
+
+    switch (command) {
+      case 'get_all_stories':
+        return [story];
+      case 'get_graph_nodes':
+      case 'get_graph_edges':
+      case 'get_characters':
+        return [];
+      case 'get_trash':
+        return args.storyId ? storyTrash : deletedStories;
+      default:
+        // initialize_database, restore_deleted, purge_deleted and friends.
+        return null;
+    }
+  });
+});
+
+async function openTrashTab() {
+  const user = userEvent.setup();
+  render(<App />);
+
+  // The story list has to arrive before the tab has a story to report on.
+  await screen.findAllByText('Ledger');
+  await user.click(screen.getByRole('button', { name: 'Trash' }));
+
+  return user;
+}
+
+function commandsRun() {
+  return calls.map(call => call.command).filter(command => command !== 'get_trash');
+}
+
+describe('trash tab', () => {
+  it('separates deleted stories from what was deleted inside the open story', async () => {
+    storyTrash = [
+      deleted('char-1', 'character', 'Rook'),
+      deleted('edge-1', 'edge', 'Rook -> Vault'),
+    ];
+    deletedStories = [deleted('story-2', 'story', 'Old Draft', 'story-2')];
+
+    await openTrashTab();
+
+    const stories = await screen.findByRole('list', { name: 'Deleted stories' });
+    expect(within(stories).getByText('Old Draft')).toBeInTheDocument();
+    expect(within(stories).getByText('Story')).toBeInTheDocument();
+
+    const items = screen.getByRole('list', { name: 'Deleted from this story' });
+    expect(within(items).getByText('Rook')).toBeInTheDocument();
+    expect(within(items).getByText('Graph connection')).toBeInTheDocument();
+
+    // The open story's list must not repeat the deleted story above it.
+    expect(within(items).queryByText('Old Draft')).not.toBeInTheDocument();
+  });
+
+  it('says so when the story has nothing in the trash', async () => {
+    deletedStories = [deleted('story-2', 'story', 'Old Draft', 'story-2')];
+
+    await openTrashTab();
+
+    expect(
+      await screen.findByText('Nothing deleted from this story.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No stories in the trash.')).not.toBeInTheDocument();
+  });
+
+  it('restores an item and takes it out of the list', async () => {
+    storyTrash = [deleted('char-1', 'character', 'Rook')];
+
+    const user = await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    await user.click(within(items).getByRole('button', { name: 'Restore' }));
+
+    const restore = calls.find(call => call.command === 'restore_deleted');
+    expect(restore?.args).toEqual({ id: 'char-1', kind: 'character', user: 'You' });
+
+    await waitFor(() =>
+      expect(screen.queryByText('Rook')).not.toBeInTheDocument()
+    );
+    expect(await screen.findByText(/Restored Character/)).toBeInTheDocument();
+  });
+
+  it('asks before deleting something forever', async () => {
+    storyTrash = [deleted('char-1', 'character', 'Rook')];
+
+    const user = await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    await user.click(within(items).getByRole('button', { name: 'Delete forever' }));
+
+    // Nothing irreversible happens on the first click.
+    expect(commandsRun()).not.toContain('purge_deleted');
+    expect(within(items).getByText('Rook')).toBeInTheDocument();
+
+    await user.click(within(items).getByRole('button', { name: 'Yes, delete forever' }));
+
+    const purge = calls.find(call => call.command === 'purge_deleted');
+    expect(purge?.args).toEqual({ id: 'char-1', kind: 'character', user: 'You' });
+
+    await waitFor(() =>
+      expect(screen.queryByText('Rook')).not.toBeInTheDocument()
+    );
+  });
+
+  it('keeps a cancelled permanent delete', async () => {
+    storyTrash = [deleted('char-1', 'character', 'Rook')];
+
+    const user = await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    await user.click(within(items).getByRole('button', { name: 'Delete forever' }));
+    await user.click(within(items).getByRole('button', { name: 'Cancel' }));
+
+    expect(commandsRun()).not.toContain('purge_deleted');
+    expect(within(items).getByText('Rook')).toBeInTheDocument();
+  });
+
+  it('explains why a restore failed instead of just dropping the row', async () => {
+    storyTrash = [deleted('edge-1', 'edge', 'Rook -> Vault')];
+    failOn = 'restore_deleted';
+
+    const user = await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    await user.click(within(items).getByRole('button', { name: 'Restore' }));
+
+    expect(await screen.findByText(/restore the connected nodes first/)).toBeInTheDocument();
+    expect(within(items).getByText('Rook -> Vault')).toBeInTheDocument();
+  });
+
+  it('re-reads the trash every time the tab is opened', async () => {
+    storyTrash = [deleted('char-1', 'character', 'Rook')];
+
+    const user = await openTrashTab();
+    await screen.findByText('Rook');
+
+    storyTrash = [];
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Trash' }));
+
+    expect(await screen.findByText('Nothing deleted from this story.')).toBeInTheDocument();
+  });
+});

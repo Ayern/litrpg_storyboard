@@ -42,6 +42,12 @@ nodes or connections. "Show older changes" pages further back and says how many 
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
+**Trash** — deleting a story, character, node or connection moves it here rather
+than destroying it. Restoring puts it back exactly as it was: a character returns
+with its stats and attributes, a node with the connections that went with it, a
+story with everything that was live inside it. "Delete forever" is the only
+irreversible action in the app, and it asks first.
+
 **Export** — writes a complete JSON snapshot of one story — characters, stats,
 attributes, graph and full history — beside the database, under
 `exports/<story-slug>-<timestamp>.json`.
@@ -85,7 +91,7 @@ An entry records:
 | `story_id` | Which story the change belongs to, so history can be shown per story |
 | `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
 | `entity_id` | The row that changed |
-| `action` | `create`, `update` or `delete` |
+| `action` | `create`, `update`, `soft_delete`, `restore` or `purge` |
 | `field_changed` | Name of the changed field, for updates |
 | `old_value` / `new_value` | Before and after, as text |
 | `changed_by` | The current user's name at the time |
@@ -98,7 +104,11 @@ Behaviour worth knowing:
   edit. Rewording a graph node's label and its notes work the same way, as do an
   edge's label and relation type.
 - **Cascades are recorded individually.** Deleting a node records the node and
-  every edge that went with it; deleting a character records its stats.
+  every edge that went with it.
+- **A deletion records where the item can be found again.** Deleting a character
+  writes one entry naming it; its stats and attributes are not touched, because
+  they stay attached to it and come back with it. Restoring writes a `restore`
+  entry, and deleting from the trash for good writes `purge`.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
   it started, produces no entry and no timestamp bump.
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the
@@ -113,21 +123,34 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `2`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `3`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
-everything it already held.
+everything it already held. Version 3 added `deleted_at`, so every existing row
+migrates in the live state.
 
 | Table | Contents |
 | --- | --- |
-| `stories` | `id`, `title`, `description`, timestamps |
-| `characters` | Belongs to a story; `name`, `description` |
+| `stories` | `id`, `title`, `description`, timestamps, `deleted_at` |
+| `characters` | Belongs to a story; `name`, `description`, `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), `created_by` |
-| `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), `created_by`, `deleted_at` |
+| `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
+
+`deleted_at` is `NULL` while a row is live and holds the RFC 3339 time it was
+moved to the trash. Deletion is an `UPDATE`, not a `DELETE`: restoring sets it
+back to `NULL` and the row reappears unchanged, and only a `purge` in the Trash
+tab issues the real `DELETE`. Every read filters on `deleted_at IS NULL`, and a
+child row is also hidden while its parent is in the trash. Stats and attributes
+have no column of their own — they are reachable only through their character, so
+they leave and return with it.
+
+A node and the connections removed with it share one `deleted_at` value, which is
+how restoring the node knows which connections to bring back with it. A
+connection deleted on its own keeps its earlier timestamp and stays in the trash.
 
 `characters`, `character_stats`, `character_attributes`, `nodes` and `edges` all
 cascade from their parent,
@@ -152,7 +175,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # audit tab paging and filtering (vitest, jsdom)
+npm test                             # audit paging/filtering and the trash tab (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -171,7 +194,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 27 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 30 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -184,9 +207,13 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
-- **There is no undo.** Deletions are permanent; they are recorded in the history
-  but cannot be restored from it. The history keeps a name or a label for what
-  was deleted, not the row itself, so it is a record rather than a backup.
+- **Only deletions can be undone.** Deleting a story, character, node or
+  connection moves it to the Trash tab, where it can be restored exactly or
+  deleted for good. Edits are still final: there is no undo for a rename or a
+  changed stat, and the history records what it was but cannot put it back.
+- **The trash has no expiry.** Nothing is purged automatically, so the database
+  slowly grows with whatever gets deleted. Permanent deletion is a deliberate
+  click in the Trash tab.
 - **Recovery is a file copy, not a button.** Every launch copies the database into
   a `snapshots` folder beside it, before the schema is migrated, and keeps the last
   ten. A bad import, a wrong deletion or a migration that went wrong can be undone

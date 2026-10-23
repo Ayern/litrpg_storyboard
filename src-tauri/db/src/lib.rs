@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -159,7 +159,8 @@ impl Db {
     pub fn list_stories(&self) -> DbResult<Vec<Story>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, title, description, created_at, updated_at FROM stories ORDER BY updated_at DESC",
+            "SELECT id, title, description, created_at, updated_at
+             FROM stories WHERE deleted_at IS NULL ORDER BY updated_at DESC",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -178,7 +179,8 @@ impl Db {
     pub fn get_story(&self, id: &str) -> DbResult<Option<Story>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, title, description, created_at, updated_at FROM stories WHERE id = ?1",
+            "SELECT id, title, description, created_at, updated_at
+             FROM stories WHERE id = ?1 AND deleted_at IS NULL",
         )?;
 
         let story = stmt
@@ -245,8 +247,10 @@ impl Db {
     pub fn list_characters(&self, story_id: &str) -> DbResult<Vec<Character>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, story_id, name, description, created_at, updated_at
-             FROM characters WHERE story_id = ?1 ORDER BY name",
+            "SELECT c.id, c.story_id, c.name, c.description, c.created_at, c.updated_at
+             FROM characters c JOIN stories s ON s.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND s.deleted_at IS NULL
+             ORDER BY c.name",
         )?;
 
         let rows = stmt.query_map(params![story_id], |row| {
@@ -374,8 +378,12 @@ impl Db {
     pub fn list_stats(&self, character_id: &str) -> DbResult<Vec<CharacterStat>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, character_id, stat_name, value, notes, created_at, updated_at
-             FROM character_stats WHERE character_id = ?1 ORDER BY stat_name",
+            "SELECT s.id, s.character_id, s.stat_name, s.value, s.notes, s.created_at, s.updated_at
+             FROM character_stats s
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE s.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY s.stat_name",
         )?;
 
         let rows = stmt.query_map(params![character_id], |row| {
@@ -505,8 +513,12 @@ impl Db {
     pub fn list_attributes(&self, character_id: &str) -> DbResult<Vec<CharacterAttribute>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, character_id, attr_name, value, created_at, updated_at
-             FROM character_attributes WHERE character_id = ?1 ORDER BY attr_name",
+            "SELECT a.id, a.character_id, a.attr_name, a.value, a.created_at, a.updated_at
+             FROM character_attributes a
+             JOIN characters c ON c.id = a.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE a.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY a.attr_name",
         )?;
 
         let rows = stmt.query_map(params![character_id], |row| {
@@ -774,8 +786,11 @@ impl Db {
     pub fn list_nodes(&self, story_id: &str) -> DbResult<Vec<Node>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
-             FROM nodes WHERE story_id = ?1 ORDER BY created_at",
+            "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
+                    n.created_by, n.created_at, n.updated_at
+             FROM nodes n JOIN stories s ON s.id = n.story_id
+             WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
+             ORDER BY n.created_at",
         )?;
 
         let rows = stmt.query_map(params![story_id], |row| {
@@ -850,8 +865,10 @@ impl Db {
     pub fn list_edges(&self, story_id: &str) -> DbResult<Vec<Edge>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
-             FROM edges WHERE story_id = ?1",
+            "SELECT e.id, e.story_id, e.source_id, e.target_id, e.label, e.relation_type,
+                    e.created_by, e.created_at
+             FROM edges e JOIN stories s ON s.id = e.story_id
+             WHERE e.story_id = ?1 AND e.deleted_at IS NULL AND s.deleted_at IS NULL",
         )?;
 
         let rows = stmt.query_map(params![story_id], |row| {
@@ -1027,7 +1044,8 @@ impl Db {
 
         let story = guard
             .query_row(
-                "SELECT id, title, description, created_at, updated_at FROM stories WHERE id = ?1",
+                "SELECT id, title, description, created_at, updated_at
+             FROM stories WHERE id = ?1 AND deleted_at IS NULL",
                 params![story_id],
                 |row| {
                     Ok(Story {
@@ -1045,7 +1063,7 @@ impl Db {
         let characters = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, name, description, created_at, updated_at
-                 FROM characters WHERE story_id = ?1 ORDER BY name",
+                 FROM characters WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY name",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
                 Ok(Character {
@@ -1064,7 +1082,8 @@ impl Db {
             let mut stmt = guard.prepare(
                 "SELECT id, character_id, stat_name, value, notes, created_at, updated_at
                  FROM character_stats
-                 WHERE character_id IN (SELECT id FROM characters WHERE story_id = ?1)
+                 WHERE character_id IN (SELECT id FROM characters
+                                         WHERE story_id = ?1 AND deleted_at IS NULL)
                  ORDER BY stat_name",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
@@ -1085,7 +1104,8 @@ impl Db {
             let mut stmt = guard.prepare(
                 "SELECT id, character_id, attr_name, value, created_at, updated_at
                  FROM character_attributes
-                 WHERE character_id IN (SELECT id FROM characters WHERE story_id = ?1)
+                 WHERE character_id IN (SELECT id FROM characters
+                                         WHERE story_id = ?1 AND deleted_at IS NULL)
                  ORDER BY attr_name",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
@@ -1104,7 +1124,7 @@ impl Db {
         let nodes = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
-                 FROM nodes WHERE story_id = ?1 ORDER BY created_at",
+                 FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
                 Ok(Node {
@@ -1126,7 +1146,7 @@ impl Db {
         let edges = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
-                 FROM edges WHERE story_id = ?1",
+                 FROM edges WHERE story_id = ?1 AND deleted_at IS NULL",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
                 Ok(Edge {
@@ -1169,7 +1189,8 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT id, title, description, created_at, updated_at FROM stories WHERE id = ?1",
+                "SELECT id, title, description, created_at, updated_at
+             FROM stories WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 |row| {
                     Ok(Story {
@@ -1216,45 +1237,46 @@ impl Db {
         })
     }
 
-    /// Removes a story and everything hanging off it. Children are removed by the
-    /// foreign key cascade; the audit entry records how much went with it.
-    ///
-    /// The story's audit rows are deliberately kept: the history of a deleted
-    /// story is still history, and an audit log that erases itself is not one.
+    /// Moves a story to the trash. Its contents keep whatever state they already
+    /// had, so restoring the story brings back exactly what was live beforehand,
+    /// and anything deleted separately stays in the trash.
     pub fn delete_story(&self, id: &str, user: String) -> DbResult<()> {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
         let existing = tx
             .query_row(
-                "SELECT title FROM stories WHERE id = ?1",
+                "SELECT title FROM stories WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
 
-        // Already gone: nothing to delete, nothing to record.
+        // Already in the trash: nothing to move, nothing to record.
         let Some(title) = existing else {
             return Ok(());
         };
 
         let characters: i64 = tx.query_row(
-            "SELECT count(*) FROM characters WHERE story_id = ?1",
+            "SELECT count(*) FROM characters WHERE story_id = ?1 AND deleted_at IS NULL",
             params![id],
             |row| row.get(0),
         )?;
         let nodes: i64 = tx.query_row(
-            "SELECT count(*) FROM nodes WHERE story_id = ?1",
+            "SELECT count(*) FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL",
             params![id],
             |row| row.get(0),
         )?;
         let edges: i64 = tx.query_row(
-            "SELECT count(*) FROM edges WHERE story_id = ?1",
+            "SELECT count(*) FROM edges WHERE story_id = ?1 AND deleted_at IS NULL",
             params![id],
             |row| row.get(0),
         )?;
 
-        tx.execute("DELETE FROM stories WHERE id = ?1", params![id])?;
+        tx.execute(
+            "UPDATE stories SET deleted_at = ?2 WHERE id = ?1",
+            params![id, now()],
+        )?;
 
         log_audit(
             &tx,
@@ -1262,7 +1284,7 @@ impl Db {
                 story_id: Some(id),
                 entity_type: "story",
                 entity_id: id,
-                action: "delete",
+                action: "soft_delete",
                 field_changed: None,
                 old_value: Some(format!(
                     "{title} ({characters} characters, {nodes} nodes, {edges} edges)"
@@ -1279,16 +1301,18 @@ impl Db {
 
     // ===== DELETIONS =====
 
-    /// Deletes a node along with the edges attached to it. Edges removed by the
-    /// cascade are recorded individually, so the history does not silently lose
-    /// connections. Deleting something that is already gone succeeds quietly.
+    /// Moves a node to the trash, along with the connections attached to it.
+    ///
+    /// The node and those connections share one timestamp, so restoring the node
+    /// brings back exactly the connections that went with it, and ones the user
+    /// removed separately stay in the trash.
     pub fn delete_node(&self, id: &str, user: String) -> DbResult<()> {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
         let existing = tx
             .query_row(
-                "SELECT story_id, label FROM nodes WHERE id = ?1",
+                "SELECT story_id, label FROM nodes WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
@@ -1300,7 +1324,8 @@ impl Db {
 
         let attached = {
             let mut stmt = tx.prepare(
-                "SELECT id, source_id, target_id FROM edges WHERE source_id = ?1 OR target_id = ?1",
+                "SELECT id, source_id, target_id FROM edges
+                 WHERE (source_id = ?1 OR target_id = ?1) AND deleted_at IS NULL",
             )?;
             let rows = stmt.query_map(params![id], |row| {
                 Ok((
@@ -1312,7 +1337,12 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
-        tx.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
+        let timestamp = now();
+
+        tx.execute(
+            "UPDATE nodes SET deleted_at = ?2 WHERE id = ?1",
+            params![id, &timestamp],
+        )?;
 
         log_audit(
             &tx,
@@ -1320,7 +1350,7 @@ impl Db {
                 story_id: Some(&story_id),
                 entity_type: "node",
                 entity_id: id,
-                action: "delete",
+                action: "soft_delete",
                 field_changed: None,
                 old_value: Some(label),
                 new_value: None,
@@ -1329,13 +1359,18 @@ impl Db {
         )?;
 
         for (edge_id, source_id, target_id) in attached {
+            tx.execute(
+                "UPDATE edges SET deleted_at = ?2 WHERE id = ?1",
+                params![&edge_id, &timestamp],
+            )?;
+
             log_audit(
                 &tx,
                 AuditRecord {
                     story_id: Some(&story_id),
                     entity_type: "edge",
                     entity_id: &edge_id,
-                    action: "delete",
+                    action: "soft_delete",
                     field_changed: None,
                     old_value: Some(format!("{source_id} -> {target_id}")),
                     new_value: None,
@@ -1349,15 +1384,16 @@ impl Db {
         Ok(())
     }
 
-    /// Deletes a single connection. Already gone is not an error, which matters
-    /// because deleting a node also reports its edges as deleted.
+    /// Moves a single connection to the trash. Already gone is not an error,
+    /// which matters because deleting a node also moves its connections.
     pub fn delete_edge(&self, id: &str, user: String) -> DbResult<()> {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
         let existing = tx
             .query_row(
-                "SELECT story_id, source_id, target_id FROM edges WHERE id = ?1",
+                "SELECT story_id, source_id, target_id
+                   FROM edges WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 |row| {
                     Ok((
@@ -1373,7 +1409,10 @@ impl Db {
             return Ok(());
         };
 
-        tx.execute("DELETE FROM edges WHERE id = ?1", params![id])?;
+        tx.execute(
+            "UPDATE edges SET deleted_at = ?2 WHERE id = ?1",
+            params![id, now()],
+        )?;
 
         log_audit(
             &tx,
@@ -1381,7 +1420,7 @@ impl Db {
                 story_id: Some(&story_id),
                 entity_type: "edge",
                 entity_id: id,
-                action: "delete",
+                action: "soft_delete",
                 field_changed: None,
                 old_value: Some(format!("{source_id} -> {target_id}")),
                 new_value: None,
@@ -1483,15 +1522,16 @@ impl Db {
         })
     }
 
-    /// Removes a character and the stats that hang off it. Each stat removal is
-    /// recorded, so the history does not silently lose a character's numbers.
+    /// Moves a character to the trash. Its stats and attributes are not copied
+    /// anywhere: they stay attached to it, hidden while it is in the trash, and
+    /// come back untouched when it is restored.
     pub fn delete_character(&self, id: &str, user: String) -> DbResult<()> {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
         let existing = tx
             .query_row(
-                "SELECT story_id, name FROM characters WHERE id = ?1",
+                "SELECT story_id, name FROM characters WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
@@ -1501,25 +1541,206 @@ impl Db {
             return Ok(());
         };
 
-        let stats = {
-            let mut stmt = tx.prepare(
-                "SELECT id, stat_name, value FROM character_stats WHERE character_id = ?1",
-            )?;
-            let rows = stmt.query_map(params![id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?;
-            rows.collect::<SqliteResult<Vec<_>>>()?
+        tx.execute(
+            "UPDATE characters SET deleted_at = ?2 WHERE id = ?1",
+            params![id, now()],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character",
+                entity_id: id,
+                action: "soft_delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    // ===== TRASH =====
+
+    /// What is in the trash: the deleted stories when no story is named, or the
+    /// deleted characters, nodes and connections belonging to one story.
+    pub fn list_deleted(&self, story_id: Option<&str>) -> DbResult<Vec<DeletedItem>> {
+        let guard = self.conn()?;
+
+        let mut stmt = match story_id {
+            None => guard.prepare(
+                "SELECT id, 'story', title, id, deleted_at FROM stories
+                  WHERE deleted_at IS NOT NULL
+                  ORDER BY deleted_at DESC",
+            )?,
+            Some(_) => guard.prepare(
+                "SELECT id, kind, label, story_id, deleted_at FROM (
+                     SELECT id, 'character' AS kind, name AS label, story_id, deleted_at
+                       FROM characters WHERE story_id = ?1 AND deleted_at IS NOT NULL
+                     UNION ALL
+                     SELECT id, 'node', label, story_id, deleted_at
+                       FROM nodes WHERE story_id = ?1 AND deleted_at IS NOT NULL
+                     UNION ALL
+                     SELECT id, 'edge', COALESCE(label, relation_type, 'connection'),
+                            story_id, deleted_at
+                       FROM edges WHERE story_id = ?1 AND deleted_at IS NOT NULL
+                 )
+                 ORDER BY deleted_at DESC",
+            )?,
         };
 
-        let attributes = {
+        let items = match story_id {
+            None => {
+                let rows = stmt.query_map([], |row| {
+                    Ok(DeletedItem {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        label: row.get(2)?,
+                        story_id: row.get(3)?,
+                        deleted_at: row.get(4)?,
+                    })
+                })?;
+                rows.collect::<SqliteResult<Vec<_>>>()?
+            }
+            Some(story_id) => {
+                let rows = stmt.query_map(params![story_id], |row| {
+                    Ok(DeletedItem {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        label: row.get(2)?,
+                        story_id: row.get(3)?,
+                        deleted_at: row.get(4)?,
+                    })
+                })?;
+                rows.collect::<SqliteResult<Vec<_>>>()?
+            }
+        };
+
+        Ok(items)
+    }
+
+    /// Undoes a story deletion. The story comes back with whatever was live when
+    /// it was deleted; anything that was already in the trash separately stays
+    /// there.
+    pub fn restore_story(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT title FROM stories WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        let Some(title) = existing else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "UPDATE stories SET deleted_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(id),
+                entity_type: "story",
+                entity_id: id,
+                action: "restore",
+                field_changed: None,
+                old_value: Some(title),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Undoes a character deletion, stats and attributes included.
+    pub fn restore_character(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, name FROM characters
+                  WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, name)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "UPDATE characters SET deleted_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character",
+                entity_id: id,
+                action: "restore",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Undoes a node deletion and brings back the connections that were removed
+    /// with it, recognised by sharing its deletion timestamp.
+    pub fn restore_node(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, label, deleted_at FROM nodes
+                  WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((story_id, label, timestamp)) = existing else {
+            return Ok(());
+        };
+
+        let attached = {
             let mut stmt = tx.prepare(
-                "SELECT id, attr_name, value FROM character_attributes WHERE character_id = ?1",
+                "SELECT id, source_id, target_id FROM edges
+                 WHERE (source_id = ?1 OR target_id = ?1)
+                   AND deleted_at IS NOT NULL AND deleted_at = ?2",
             )?;
-            let rows = stmt.query_map(params![id], |row| {
+            let rows = stmt.query_map(params![id, &timestamp], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1527,6 +1748,174 @@ impl Db {
                 ))
             })?;
             rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        tx.execute(
+            "UPDATE nodes SET deleted_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "node",
+                entity_id: id,
+                action: "restore",
+                field_changed: None,
+                old_value: Some(label),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        for (edge_id, source_id, target_id) in attached {
+            tx.execute(
+                "UPDATE edges SET deleted_at = NULL WHERE id = ?1",
+                params![&edge_id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "edge",
+                    entity_id: &edge_id,
+                    action: "restore",
+                    field_changed: None,
+                    old_value: Some(format!("{source_id} -> {target_id}")),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Undoes a single connection deletion. Refused while either end is still in
+    /// the trash, since such a connection would draw itself to nowhere.
+    pub fn restore_edge(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, source_id, target_id FROM edges
+                  WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((story_id, source_id, target_id)) = existing else {
+            return Ok(());
+        };
+
+        let live_ends: i64 = tx.query_row(
+            "SELECT (SELECT count(*) FROM nodes WHERE id = ?1 AND deleted_at IS NULL)
+                  + (SELECT count(*) FROM nodes WHERE id = ?2 AND deleted_at IS NULL)",
+            params![&source_id, &target_id],
+            |row| row.get(0),
+        )?;
+
+        if live_ends != 2 {
+            return Err(DbError::Invalid(
+                "restore the connected nodes first".to_string(),
+            ));
+        }
+
+        tx.execute(
+            "UPDATE edges SET deleted_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "edge",
+                entity_id: id,
+                action: "restore",
+                field_changed: None,
+                old_value: Some(format!("{source_id} -> {target_id}")),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Deletes a story from the database for good, along with everything in it.
+    /// Only reachable for something already in the trash.
+    pub fn purge_story(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT title FROM stories WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        let Some(title) = existing else {
+            return Err(DbError::Invalid(
+                "only a story in the trash can be deleted permanently".to_string(),
+            ));
+        };
+
+        tx.execute("DELETE FROM stories WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(id),
+                entity_type: "story",
+                entity_id: id,
+                action: "purge",
+                field_changed: None,
+                old_value: Some(title),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Deletes a character from the database for good, stats and attributes too.
+    pub fn purge_character(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, name FROM characters
+                  WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, name)) = existing else {
+            return Err(DbError::Invalid(
+                "only a character in the trash can be deleted permanently".to_string(),
+            ));
         };
 
         tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
@@ -1537,7 +1926,7 @@ impl Db {
                 story_id: Some(&story_id),
                 entity_type: "character",
                 entity_id: id,
-                action: "delete",
+                action: "purge",
                 field_changed: None,
                 old_value: Some(name),
                 new_value: None,
@@ -1545,37 +1934,93 @@ impl Db {
             },
         )?;
 
-        for (attribute_id, attr_name, value) in attributes {
-            log_audit(
-                &tx,
-                AuditRecord {
-                    story_id: Some(&story_id),
-                    entity_type: "character_attribute",
-                    entity_id: &attribute_id,
-                    action: "delete",
-                    field_changed: None,
-                    old_value: Some(format!("{attr_name}={value}")),
-                    new_value: None,
-                    changed_by: &user,
-                },
-            )?;
-        }
+        tx.commit()?;
 
-        for (stat_id, stat_name, value) in stats {
-            log_audit(
-                &tx,
-                AuditRecord {
-                    story_id: Some(&story_id),
-                    entity_type: "character_stat",
-                    entity_id: &stat_id,
-                    action: "delete",
-                    field_changed: None,
-                    old_value: Some(format!("{stat_name}={value}")),
-                    new_value: None,
-                    changed_by: &user,
+        Ok(())
+    }
+
+    /// Deletes a node from the database for good, and every connection touching
+    /// it — including ones whose own deletion had already put them in the trash.
+    pub fn purge_node(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, label FROM nodes WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, label)) = existing else {
+            return Err(DbError::Invalid(
+                "only a node in the trash can be deleted permanently".to_string(),
+            ));
+        };
+
+        tx.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "node",
+                entity_id: id,
+                action: "purge",
+                field_changed: None,
+                old_value: Some(label),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Deletes a connection from the database for good.
+    pub fn purge_edge(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, source_id, target_id FROM edges
+                  WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 },
-            )?;
-        }
+            )
+            .optional()?;
+
+        let Some((story_id, source_id, target_id)) = existing else {
+            return Err(DbError::Invalid(
+                "only a connection in the trash can be deleted permanently".to_string(),
+            ));
+        };
+
+        tx.execute("DELETE FROM edges WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "edge",
+                entity_id: id,
+                action: "purge",
+                field_changed: None,
+                old_value: Some(format!("{source_id} -> {target_id}")),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
 
         tx.commit()?;
 
@@ -1810,6 +2255,20 @@ impl Db {
 
 // ===== MODELS =====
 
+/// One deleted row, as the trash lists it.
+///
+/// `kind` is `story`, `character`, `node` or `edge`; `story_id` names the story
+/// it belongs to (for a story, its own id), so a restore knows which view to
+/// refresh.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct DeletedItem {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub story_id: String,
+    pub deleted_at: String,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Story {
     pub id: String,
@@ -1927,7 +2386,7 @@ fn unique_story_title(conn: &Connection, base: &str) -> SqliteResult<String> {
     fn taken(conn: &Connection, title: &str) -> SqliteResult<bool> {
         let found: Option<i64> = conn
             .query_row(
-                "SELECT 1 FROM stories WHERE title = ?1",
+                "SELECT 1 FROM stories WHERE title = ?1 AND deleted_at IS NULL",
                 params![title],
                 |row| row.get(0),
             )
@@ -2088,6 +2547,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_002)?;
     }
 
+    if version < 3 {
+        conn.execute_batch(MIGRATION_003)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -2197,6 +2660,18 @@ const MIGRATION_002: &str = "
 
     CREATE INDEX IF NOT EXISTS idx_character_attributes_character
         ON character_attributes (character_id);
+";
+
+/// Schema v3: deletions become recoverable.
+///
+/// `deleted_at` is NULL while a row is live and holds the RFC 3339 time it was
+/// moved to the trash. Stats and attributes have no column of their own: they are
+/// only reachable through their character, so they leave and return with it.
+const MIGRATION_003: &str = "
+    ALTER TABLE stories ADD COLUMN deleted_at TEXT;
+    ALTER TABLE characters ADD COLUMN deleted_at TEXT;
+    ALTER TABLE nodes ADD COLUMN deleted_at TEXT;
+    ALTER TABLE edges ADD COLUMN deleted_at TEXT;
 ";
 
 const INDEXES: &str = "
@@ -2495,7 +2970,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_character_records_and_removes_its_attributes() {
+    fn a_deleted_character_takes_its_attributes_off_the_board() {
         let db = Db::open_in_memory().unwrap();
         let story = db
             .create_story("Ash".into(), None, "Ada".into())
@@ -2517,20 +2992,223 @@ mod tests {
         assert!(db.list_attributes(&character.id).unwrap().is_empty());
 
         let history = db
-            .get_audit_log(
-                Some(&story.id),
-                Some("character_attribute"),
-                Some(&attribute.id),
-                10,
-            )
+            .get_audit_log(Some(&story.id), Some("character"), Some(&character.id), 10)
             .unwrap();
         assert_eq!(history.len(), 2, "creation and deletion are both recorded");
         assert!(history
             .iter()
-            .any(|entry| entry.action == "delete"
-                && entry.old_value.as_deref() == Some("Title=Ashborn")));
+            .any(|entry| entry.action == "soft_delete" && entry.changed_by == "Grace"));
+
+        // The attribute was never removed, so the character comes back with it.
+        db.restore_character(&character.id, "Grace".into()).unwrap();
+        let restored = db.list_attributes(&character.id).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, attribute.id);
+        assert_eq!(restored[0].value, "Ashborn");
     }
 
+    #[test]
+    fn the_trash_lists_what_belongs_to_one_story() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Trash".into(), None, "Ada".into()).unwrap();
+        let other = db.create_story("Kept".into(), None, "Ada".into()).unwrap();
+        let kept = db
+            .create_character(story.id.clone(), "Kept".into(), None, "Ada".into())
+            .unwrap();
+        let gone = db
+            .create_character(story.id.clone(), "Gone".into(), None, "Ada".into())
+            .unwrap();
+        let node = db
+            .create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&gone.id, "Ada".into()).unwrap();
+        db.delete_node(&node.id, "Ada".into()).unwrap();
+        db.delete_story(&other.id, "Ada".into()).unwrap();
+
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        assert_eq!(trash.len(), 2);
+        assert!(trash
+            .iter()
+            .any(|item| item.kind == "character" && item.label == "Gone"));
+        assert!(trash
+            .iter()
+            .any(|item| item.kind == "node" && item.label == "Hook"));
+        assert!(trash.iter().all(|item| item.story_id == story.id));
+
+        let stories = db.list_deleted(None).unwrap();
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].kind, "story");
+        assert_eq!(stories[0].id, other.id);
+        assert_eq!(stories[0].label, "Kept");
+
+        // A live character is not in the trash, and its id is not a story id.
+        assert!(db.list_deleted(Some(&kept.id)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn restoring_a_story_leaves_separately_deleted_items_in_the_trash() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Split".into(), None, "Ada".into()).unwrap();
+        let live = db
+            .create_character(story.id.clone(), "Live".into(), None, "Ada".into())
+            .unwrap();
+        let gone = db
+            .create_character(story.id.clone(), "Gone".into(), None, "Ada".into())
+            .unwrap();
+        db.create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&gone.id, "Ada".into()).unwrap();
+        db.delete_story(&story.id, "Ada".into()).unwrap();
+
+        assert!(db.list_stories().unwrap().is_empty());
+
+        db.restore_story(&story.id, "Ada".into()).unwrap();
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters.len(), 1, "only what was live comes back");
+        assert_eq!(characters[0].id, live.id);
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 1);
+        assert_eq!(db.list_deleted(Some(&story.id)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn purging_a_story_removes_it_and_its_contents_for_good() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Doomed".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+            .unwrap();
+
+        db.delete_story(&story.id, "Ada".into()).unwrap();
+        db.purge_story(&story.id, "Grace".into()).unwrap();
+
+        assert!(db.list_deleted(None).unwrap().is_empty());
+        assert!(db.get_story(&story.id).unwrap().is_none());
+
+        let stats: i64 = db
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM character_stats WHERE character_id = ?1",
+                params![character.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stats, 0, "the purged story took its stats with it");
+
+        let purge = db
+            .get_audit_log(None, Some("story"), Some(&story.id), 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "purge")
+            .expect("the permanent delete is recorded");
+        assert_eq!(purge.changed_by, "Grace");
+        assert_eq!(purge.old_value.as_deref(), Some("Doomed"));
+    }
+
+    #[test]
+    fn purging_something_that_is_not_in_the_trash_is_refused() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Kept".into(), None, "Ada".into()).unwrap();
+        let node = db
+            .create_node(story.id.clone(), "idea".into(), "Live".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+
+        assert!(
+            db.purge_story(&story.id, "Ada".into()).is_err(),
+            "a live story should not be purgeable"
+        );
+        assert!(db.purge_node(&node.id, "Ada".into()).is_err());
+        assert_eq!(db.list_stories().unwrap().len(), 1);
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 1);
+
+        db.delete_node(&node.id, "Ada".into()).unwrap();
+        db.purge_node(&node.id, "Ada".into()).unwrap();
+        assert!(
+            db.purge_node(&node.id, "Ada".into()).is_err(),
+            "purging is not repeatable"
+        );
+    }
+
+    #[test]
+    fn a_connection_waits_for_its_nodes_to_come_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
+        let from = db
+            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let to = db
+            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let edge = db
+            .create_edge(story.id.clone(), from.id.clone(), to.id.clone(), None, None, "Ada".into())
+            .unwrap();
+
+        db.delete_edge(&edge.id, "Ada".into()).unwrap();
+        db.delete_node(&from.id, "Ada".into()).unwrap();
+
+        assert!(
+            db.restore_edge(&edge.id, "Ada".into()).is_err(),
+            "a connection to a node still in the trash should not come back"
+        );
+
+        // The connection went to the trash on its own, before the node did, so
+        // restoring the node leaves it there.
+        db.restore_node(&from.id, "Ada".into()).unwrap();
+        assert!(db.list_edges(&story.id).unwrap().is_empty());
+
+        db.restore_edge(&edge.id, "Ada".into()).unwrap();
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restoring_something_that_is_not_in_the_trash_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Live".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+
+        db.restore_story(&story.id, "Ada".into()).unwrap();
+        db.restore_character(&character.id, "Ada".into()).unwrap();
+        db.restore_node("does-not-exist", "Ada".into()).unwrap();
+        db.restore_edge("does-not-exist", "Ada".into()).unwrap();
+
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+    }
+
+    #[test]
+    fn migrating_a_version_2_database_leaves_every_row_live() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v3', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let deleted_at: Option<String> = conn
+            .query_row("SELECT deleted_at FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(deleted_at, None, "a migrated row starts live");
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
     #[test]
     fn migrating_a_version_1_database_adds_attributes_without_losing_data() {
         let conn = Connection::open_in_memory().unwrap();
@@ -2976,7 +3654,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_node_removes_its_edges_and_records_both() {
+    fn deleting_a_node_hides_its_edges_and_records_both() {
         let db = Db::open_in_memory().unwrap();
 
         let story = db.create_story("Prune".into(), None, "Ada".into()).unwrap();
@@ -3009,7 +3687,7 @@ mod tests {
             .get_audit_log(Some(&story.id), None, None, 100)
             .unwrap()
             .into_iter()
-            .filter(|entry| entry.action == "delete")
+            .filter(|entry| entry.action == "soft_delete")
             .collect();
 
         assert_eq!(deletes.len(), 2, "the node and its edge are both recorded");
@@ -3017,8 +3695,12 @@ mod tests {
         assert!(deletes.iter().any(|entry| entry.entity_type == "node"
             && entry.old_value.as_deref() == Some("First")));
         assert!(deletes.iter().any(|entry| entry.entity_type == "edge"));
-    }
 
+        // The edge went to the trash with the node, so it comes back with it.
+        db.restore_node(&first.id, "Grace".into()).unwrap();
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 1);
+    }
     #[test]
     fn deleting_something_already_gone_is_a_quiet_no_op() {
         let db = Db::open_in_memory().unwrap();
@@ -3037,7 +3719,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_an_edge_is_recorded() {
+    fn deleting_an_edge_records_it_and_puts_it_in_the_trash() {
         let db = Db::open_in_memory().unwrap();
 
         let story = db.create_story("Cut".into(), None, "Ada".into()).unwrap();
@@ -3052,7 +3734,7 @@ mod tests {
                 story.id.clone(),
                 node.id.clone(),
                 other.id.clone(),
-                None,
+                Some("cut me".into()),
                 None,
                 "Ada".into(),
             )
@@ -3066,7 +3748,7 @@ mod tests {
             .get_audit_log(Some(&story.id), Some("edge"), Some(&edge.id), 10)
             .unwrap()
             .into_iter()
-            .find(|entry| entry.action == "delete")
+            .find(|entry| entry.action == "soft_delete")
             .expect("edge deletion was not recorded");
 
         assert_eq!(delete.changed_by, "Grace");
@@ -3074,8 +3756,16 @@ mod tests {
             delete.old_value.as_deref(),
             Some(format!("{} -> {}", node.id, other.id).as_str())
         );
-    }
 
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].kind, "edge");
+        assert_eq!(trash[0].label, "cut me");
+
+        // Both ends are still live, so it can come straight back.
+        db.restore_edge(&edge.id, "Grace".into()).unwrap();
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 1);
+    }
     #[test]
     fn editing_an_edge_records_each_changed_field_separately() {
         let db = Db::open_in_memory().unwrap();
@@ -3235,7 +3925,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_story_removes_its_contents_but_keeps_the_history() {
+    fn deleting_a_story_hides_its_contents_but_keeps_the_history() {
         let db = Db::open_in_memory().unwrap();
 
         let story = db.create_story("Doomed".into(), None, "Ada".into()).unwrap();
@@ -3270,7 +3960,7 @@ mod tests {
             history
                 .iter()
                 .any(|entry| entry.entity_type == "story"
-                    && entry.action == "delete"
+                    && entry.action == "soft_delete"
                     && entry.changed_by == "Grace"),
             "the deletion itself is recorded"
         );
@@ -3278,8 +3968,16 @@ mod tests {
             history.len() > 1,
             "earlier history survives the deletion"
         );
-    }
 
+        // Everything inside the story was live when it went to the trash, so all
+        // of it comes back with the story.
+        db.restore_story(&story.id, "Grace".into()).unwrap();
+        assert_eq!(db.list_stories().unwrap().len(), 1);
+        assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 1);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 1);
+        assert_eq!(db.list_stats(&character.id).unwrap().len(), 1);
+    }
     #[test]
     fn export_contains_the_whole_story() {
         let db = Db::open_in_memory().unwrap();
@@ -3408,13 +4106,13 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_character_removes_its_stats_and_records_them() {
+    fn a_deleted_character_takes_its_stats_off_the_board() {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
-        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, Some("from the raid".into()), "Ada".into())
             .unwrap();
         let survivor = db
             .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
@@ -3431,21 +4129,26 @@ mod tests {
             .get_audit_log(Some(&story.id), None, None, 100)
             .unwrap()
             .into_iter()
-            .filter(|entry| entry.action == "delete")
+            .filter(|entry| entry.action == "soft_delete")
             .collect();
 
-        assert_eq!(deletes.len(), 2, "the character and its stat are both recorded");
-        assert!(deletes.iter().all(|entry| entry.changed_by == "Grace"));
-        assert!(deletes
-            .iter()
-            .any(|entry| entry.entity_type == "character"
-                && entry.old_value.as_deref() == Some("Rook")));
-        assert!(deletes
-            .iter()
-            .any(|entry| entry.entity_type == "character_stat"
-                && entry.old_value.as_deref() == Some("Level=3")));
-    }
+        assert_eq!(
+            deletes.len(),
+            1,
+            "the character is recorded once; its stat was not touched"
+        );
+        assert_eq!(deletes[0].entity_type, "character");
+        assert_eq!(deletes[0].changed_by, "Grace");
+        assert_eq!(deletes[0].old_value.as_deref(), Some("Rook"));
 
+        // The stat keeps its notes: nothing about it was rewritten.
+        db.restore_character(&character.id, "Grace".into()).unwrap();
+        assert_eq!(db.list_characters(&story.id).unwrap().len(), 2);
+        let stats = db.list_stats(&character.id).unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].value, 3);
+        assert_eq!(stats[0].notes.as_deref(), Some("from the raid"));
+    }
     #[test]
     fn deleting_a_character_that_is_already_gone_is_quiet() {
         let db = Db::open_in_memory().unwrap();
