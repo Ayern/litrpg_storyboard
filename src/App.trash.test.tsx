@@ -61,12 +61,16 @@ interface Invocation {
 let calls: Invocation[] = [];
 let storyTrash: DeletedRow[] = [];
 let deletedStories: DeletedRow[] = [];
+let retention: number | null = null;
+let purgedByChangingRetention = 0;
 let failOn: string | null = null;
 
 beforeEach(() => {
   calls = [];
   storyTrash = [];
   deletedStories = [];
+  retention = null;
+  purgedByChangingRetention = 0;
   failOn = null;
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -84,6 +88,11 @@ beforeEach(() => {
         return [];
       case 'get_trash':
         return args.storyId ? storyTrash : deletedStories;
+      case 'get_trash_retention':
+        return retention;
+      case 'set_trash_retention':
+        retention = (args.days as number | null) ?? null;
+        return purgedByChangingRetention;
       default:
         // initialize_database, restore_deleted, purge_deleted and friends.
         return null;
@@ -216,5 +225,82 @@ describe('trash tab', () => {
     await user.click(screen.getByRole('button', { name: 'Trash' }));
 
     expect(await screen.findByText('Nothing deleted from this story.')).toBeInTheDocument();
+  });
+
+  it('shows the retention window that is stored', async () => {
+    retention = 30;
+
+    await openTrashTab();
+
+    const select = await screen.findByLabelText('Keep deleted items for');
+    await waitFor(() => expect(select).toHaveValue('30'));
+
+    const labels = within(select)
+      .getAllByRole('option')
+      .map(option => option.textContent);
+    expect(labels).toEqual(['Forever', '7 days', '30 days', '90 days', '1 year']);
+  });
+
+  it('shows a stored window the list does not offer', async () => {
+    retention = 14;
+
+    await openTrashTab();
+
+    const select = await screen.findByLabelText('Keep deleted items for');
+    await waitFor(() => expect(select).toHaveValue('14'));
+    expect(within(select).getByRole('option', { name: '14 days' })).toBeInTheDocument();
+  });
+
+  it('applies a shorter window at once and says what it removed', async () => {
+    storyTrash = [deleted('char-1', 'character', 'Old Rook')];
+    purgedByChangingRetention = 2;
+
+    const user = await openTrashTab();
+    const select = await screen.findByLabelText('Keep deleted items for');
+
+    storyTrash = [];
+    await user.selectOptions(select, '90');
+
+    const change = calls.find(call => call.command === 'set_trash_retention');
+    expect(change?.args).toEqual({ days: 90 });
+
+    expect(
+      await screen.findByText('Removed 2 items deleted more than 90 days ago.')
+    ).toBeInTheDocument();
+
+    // The lists are re-read so the purged rows leave the screen immediately.
+    const trashReads = calls.filter(call => call.command === 'get_trash');
+    expect(trashReads.length).toBeGreaterThan(2);
+    expect(screen.queryByText('Old Rook')).not.toBeInTheDocument();
+  });
+
+  it('turns the window off by asking for no window at all', async () => {
+    retention = 30;
+
+    const user = await openTrashTab();
+    const select = await screen.findByLabelText('Keep deleted items for');
+    await waitFor(() => expect(select).toHaveValue('30'));
+
+    await user.selectOptions(select, 'forever');
+
+    const change = calls.find(call => call.command === 'set_trash_retention');
+    expect(change?.args).toEqual({ days: null });
+    expect(screen.queryByText(/Removed/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the previous window when the change is refused', async () => {
+    retention = 30;
+    failOn = 'set_trash_retention';
+
+    const user = await openTrashTab();
+    const select = await screen.findByLabelText('Keep deleted items for');
+    await waitFor(() => expect(select).toHaveValue('30'));
+
+    await user.selectOptions(select, '7');
+
+    expect(
+      await screen.findByText(/restore the connected nodes first/)
+    ).toBeInTheDocument();
+    expect(select).toHaveValue('30');
   });
 });

@@ -127,6 +127,28 @@ const actionLabels: Record<string, string> = {
   purge: 'delete forever',
 };
 
+// Both lists the trash shows, in one round trip. Shared by the tab's first load
+// and by anything that changes what is in the trash.
+async function fetchTrash(storyId: string | null) {
+  const [inStory, stories] = await Promise.all([
+    storyId
+      ? invoke<DeletedItem[]>('get_trash', { storyId })
+      : Promise.resolve<DeletedItem[]>([]),
+    invoke<DeletedItem[]>('get_trash', { storyId: null }),
+  ]);
+
+  return { inStory, stories };
+}
+
+// How long the trash is kept. `null` is forever, which is the default.
+const retentionChoices: { value: string; label: string }[] = [
+  { value: 'forever', label: 'Forever' },
+  { value: '7', label: '7 days' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '365', label: '1 year' },
+];
+
 function entityLabel(entry: AuditEntry): string {
   const base = entityLabels[entry.entity_type] ?? entry.entity_type;
   return entry.field_changed ? `${base} (${entry.field_changed})` : base;
@@ -240,7 +262,8 @@ function App() {
   const [trashLoading, setTrashLoading] = useState(false);
   const [trashError, setTrashError] = useState<string | null>(null);
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null);
-  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+  const [trashNotice, setTrashNotice] = useState<string | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -499,16 +522,15 @@ function App() {
       setTrashError(null);
 
       try {
-        const [inStory, stories] = await Promise.all([
-          currentStory
-            ? invoke<DeletedItem[]>('get_trash', { storyId: currentStory.id })
-            : Promise.resolve<DeletedItem[]>([]),
-          invoke<DeletedItem[]>('get_trash', { storyId: null }),
+        const [lists, days] = await Promise.all([
+          fetchTrash(currentStory?.id ?? null),
+          invoke<number | null>('get_trash_retention'),
         ]);
 
         if (cancelled) return;
-        setTrash(inStory);
-        setDeletedStories(stories);
+        setTrash(lists.inStory);
+        setDeletedStories(lists.stories);
+        setRetentionDays(days);
       } catch (e) {
         console.error('Failed to load the trash:', e);
         if (!cancelled) setTrashError(String(e));
@@ -529,7 +551,7 @@ function App() {
   const restoreDeleted = async (item: DeletedItem) => {
     setConfirmPurgeId(null);
     setTrashError(null);
-    setRestoreNotice(null);
+    setTrashNotice(null);
 
     try {
       await invoke('restore_deleted', { id: item.id, kind: item.kind, user: actor });
@@ -559,7 +581,7 @@ function App() {
         }
       }
 
-      setRestoreNotice(`Restored ${trashKindLabels[item.kind] ?? item.kind} “${item.label}”.`);
+      setTrashNotice(`Restored ${trashKindLabels[item.kind] ?? item.kind} “${item.label}”.`);
     } catch (e) {
       console.error('Failed to restore:', e);
       setTrashError(String(e));
@@ -581,6 +603,35 @@ function App() {
       }
     } catch (e) {
       console.error('Failed to delete permanently:', e);
+      setTrashError(String(e));
+    }
+  };
+
+  // Shortening the window applies it straight away, so the effect of the choice
+  // is visible instead of deferred to the next launch.
+  const changeRetention = async (value: string) => {
+    const days = value === 'forever' ? null : Number(value);
+
+    setTrashError(null);
+    setTrashNotice(null);
+
+    try {
+      const purged: number = await invoke('set_trash_retention', { days });
+      setRetentionDays(days);
+
+      if (purged > 0) {
+        const lists = await fetchTrash(currentStory?.id ?? null);
+        setTrash(lists.inStory);
+        setDeletedStories(lists.stories);
+
+        setTrashNotice(
+          `Removed ${purged} ${purged === 1 ? 'item' : 'items'} deleted more than ${days} ${
+            days === 1 ? 'day' : 'days'
+          } ago.`
+        );
+      }
+    } catch (e) {
+      console.error('Failed to change how long the trash is kept:', e);
       setTrashError(String(e));
     }
   };
@@ -1255,6 +1306,14 @@ function App() {
     [onNodesChange]
   );
 
+  // A window the list does not offer (a hand-edited database, or one written by
+  // a future build) still has to show as itself rather than as a blank box.
+  const retentionOptions =
+    retentionDays !== null &&
+    !retentionChoices.some(choice => choice.value === String(retentionDays))
+      ? [...retentionChoices, { value: String(retentionDays), label: `${retentionDays} days` }]
+      : retentionChoices;
+
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
 
@@ -1843,14 +1902,33 @@ function App() {
               <div className="audit-error">Could not use the trash: {trashError}</div>
             )}
 
-            {restoreNotice && (
+            {trashNotice && (
               <div className="status-strip">
-                {restoreNotice}
-                <button className="status-dismiss" onClick={() => setRestoreNotice(null)}>
+                {trashNotice}
+                <button className="status-dismiss" onClick={() => setTrashNotice(null)}>
                   Dismiss
                 </button>
               </div>
             )}
+
+            <div className="trash-retention">
+              <label htmlFor="trash-retention">Keep deleted items for</label>
+              <select
+                id="trash-retention"
+                value={retentionDays === null ? 'forever' : String(retentionDays)}
+                onChange={event => changeRetention(event.target.value)}
+              >
+                {retentionOptions.map(choice => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">
+                Older items are removed when the app starts, and as soon as you shorten
+                this window.
+              </span>
+            </div>
 
             {trashLoading ? (
               <div className="empty">Loading the trash…</div>

@@ -48,6 +48,11 @@ with its stats and attributes, a node with the connections that went with it, a
 story with everything that was live inside it. "Delete forever" is the only
 irreversible action in the app, and it asks first.
 
+**Trash retention** — the trash can be kept forever (the default) or cleared
+automatically after 7, 30, 90 days or a year. The window is applied at launch and
+immediately when shortened, and anything it removes is recorded as a `purge` by
+`Trash retention` rather than looking like someone's deliberate click.
+
 **Export** — writes a complete JSON snapshot of one story — characters, stats,
 attributes, graph and full history — beside the database, under
 `exports/<story-slug>-<timestamp>.json`.
@@ -109,6 +114,11 @@ Behaviour worth knowing:
   writes one entry naming it; its stats and attributes are not touched, because
   they stay attached to it and come back with it. Restoring writes a `restore`
   entry, and deleting from the trash for good writes `purge`.
+- **A purge records the item it was asked about.** Whatever cascades from that
+  row — a character's stats, a node's connections, everything inside a story —
+  goes without an entry of its own, since those rows are gone by the time a
+  cascade could be logged. A window-driven purge is attributed to
+  `Trash retention` rather than to the current user.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
   it started, produces no entry and no timestamp bump.
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the
@@ -123,12 +133,13 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `3`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `4`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
 everything it already held. Version 3 added `deleted_at`, so every existing row
-migrates in the live state.
+migrates in the live state. Version 4 added `settings`, which starts empty — so an
+upgraded database keeps its trash forever until someone chooses otherwise.
 
 | Table | Contents |
 | --- | --- |
@@ -139,6 +150,7 @@ migrates in the live state.
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
+| `settings` | App-wide key/value pairs; currently only the trash retention window |
 
 `deleted_at` is `NULL` while a row is live and holds the RFC 3339 time it was
 moved to the trash. Deletion is an `UPDATE`, not a `DELETE`: restoring sets it
@@ -194,7 +206,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 30 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 32 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -211,9 +223,10 @@ page that arrives late, and what it says when a filter matches nothing.
   connection moves it to the Trash tab, where it can be restored exactly or
   deleted for good. Edits are still final: there is no undo for a rename or a
   changed stat, and the history records what it was but cannot put it back.
-- **The trash has no expiry.** Nothing is purged automatically, so the database
-  slowly grows with whatever gets deleted. Permanent deletion is a deliberate
-  click in the Trash tab.
+- **Retention only runs at launch and when it is changed.** A window of 30 days
+  means an item deleted 40 days ago goes the next time the app starts, not the
+  moment it turns 40 days old — a long-running session keeps everything until it
+  is restarted. Nothing is ever purged while the app is closed.
 - **Recovery is a file copy, not a button.** Every launch copies the database into
   a `snapshots` folder beside it, before the schema is migrated, and keeps the last
   ten. A bad import, a wrong deletion or a migration that went wrong can be undone

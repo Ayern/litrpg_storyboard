@@ -1075,3 +1075,28 @@ body {
   background: #3a1f1f;
   color: #ffd0d0;
 }
+
+/* The retention window is an app-wide setting, so it sits above both lists and
+   outside the story-scoped section. */
+.trash-retention {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: #bbb;
+}
+
+.trash-retention select {
+  background: #2d2d2d;
+  border: 1px solid #444;
+  color: #ddd;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.trash-retention .hint {
+  color: #777;
+  font-size: 11px;
+}

@@ -308,6 +308,28 @@ fn restore_deleted(
     .map_err(|e| e.to_string())
 }
 
+/// How long items stay in the trash, in days; `None` means forever.
+#[tauri::command]
+fn get_trash_retention(db: tauri::State<'_, Db>) -> Result<Option<i64>, String> {
+    db.trash_retention_days().map_err(|e| e.to_string())
+}
+
+/// Sets the window and applies it immediately, so shortening it has a visible
+/// effect instead of waiting for the next launch. Returns how many items went.
+#[tauri::command]
+fn set_trash_retention(db: tauri::State<'_, Db>, days: Option<i64>) -> Result<i64, String> {
+    db.set_trash_retention_days(days)
+        .map_err(|e| e.to_string())?;
+
+    match days {
+        Some(days) => db
+            .purge_expired(days)
+            .map(|purged| purged as i64)
+            .map_err(|e| e.to_string()),
+        None => Ok(0),
+    }
+}
+
 /// Deletes one item from the trash for good.
 #[tauri::command]
 fn purge_deleted(
@@ -403,7 +425,21 @@ pub fn run() {
             let path = resolve_db_path(app.handle())?;
             // Copies the file before opening it, so the copy is the state on disk
             // before any migration runs.
-            app.manage(Db::open_with_snapshot(&path, SNAPSHOTS_TO_KEEP)?);
+            let db = Db::open_with_snapshot(&path, SNAPSHOTS_TO_KEEP)?;
+
+            // Launch is when the trash retention window is applied: the copy just
+            // taken holds whatever this is about to remove.
+            match db.trash_retention_days() {
+                Ok(Some(days)) => {
+                    if let Err(error) = db.purge_expired(days) {
+                        eprintln!("could not apply the trash retention window: {error}");
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("could not read the trash retention window: {error}"),
+            }
+
+            app.manage(db);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -435,6 +471,8 @@ pub fn run() {
             get_trash,
             restore_deleted,
             purge_deleted,
+            get_trash_retention,
+            set_trash_retention,
             export_story_json,
             import_story_json,
         ])

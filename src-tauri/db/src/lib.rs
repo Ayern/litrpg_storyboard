@@ -8,10 +8,21 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
+/// Settings key holding the trash retention window, in days.
+const TRASH_RETENTION_KEY: &str = "trash_retention_days";
+
+/// Ten years: long enough to mean "effectively forever", short enough that no
+/// stray value can overflow the date arithmetic.
+const MAX_RETENTION_DAYS: i64 = 3650;
+
+/// Attributed to deletions the retention window performs, so automatic purges
+/// are not mistaken for something a person did.
+const RETENTION_ACTOR: &str = "Trash retention";
+
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -2027,6 +2038,151 @@ impl Db {
         Ok(())
     }
 
+    // ===== SETTINGS =====
+
+    /// How long items stay in the trash. `None` means forever, which is the
+    /// default: an upgrade must never start deleting anything on its own.
+    pub fn trash_retention_days(&self) -> DbResult<Option<i64>> {
+        let guard = self.conn()?;
+        let stored: Option<String> = guard
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![TRASH_RETENTION_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(stored
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|days| *days > 0))
+    }
+
+    /// Sets the retention window, or turns it off again with `None`.
+    pub fn set_trash_retention_days(&self, days: Option<i64>) -> DbResult<()> {
+        if let Some(days) = days {
+            if !(1..=MAX_RETENTION_DAYS).contains(&days) {
+                return Err(DbError::Invalid(format!(
+                    "a retention window has to be between 1 and {MAX_RETENTION_DAYS} days"
+                )));
+            }
+        }
+
+        let guard = self.conn()?;
+
+        match days {
+            Some(days) => {
+                guard.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![TRASH_RETENTION_KEY, days.to_string()],
+                )?;
+            }
+            None => {
+                guard.execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    params![TRASH_RETENTION_KEY],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Removes everything that has been in the trash for longer than `days`.
+    ///
+    /// This is the only deletion the app performs without being asked for that
+    /// exact row, so it records itself: each item it removes gets a `purge` entry
+    /// attributed to `Trash retention`. Returns how many items went.
+    pub fn purge_expired(&self, days: i64) -> DbResult<usize> {
+        if days < 1 {
+            return Err(DbError::Invalid(
+                "a retention window needs at least one day".to_string(),
+            ));
+        }
+
+        let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let mut purged = 0;
+
+        // Children before stories: deleting a story cascades, and a row already
+        // taken out by that cascade could not have its own removal recorded.
+        let children = [
+            (
+                "characters",
+                "character",
+                "SELECT id, story_id, name FROM characters
+                  WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            ),
+            (
+                "nodes",
+                "node",
+                "SELECT id, story_id, label FROM nodes
+                  WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            ),
+            (
+                "edges",
+                "edge",
+                "SELECT id, story_id, COALESCE(label, relation_type, 'connection')
+                   FROM edges
+                  WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            ),
+        ];
+
+        for (table, entity_type, sql) in children {
+            for (id, story_id, label) in expired_rows(&tx, sql, &cutoff)? {
+                log_audit(
+                    &tx,
+                    AuditRecord {
+                        story_id: Some(&story_id),
+                        entity_type,
+                        entity_id: &id,
+                        action: "purge",
+                        field_changed: None,
+                        old_value: Some(label),
+                        new_value: None,
+                        changed_by: RETENTION_ACTOR,
+                    },
+                )?;
+
+                // `table` is one of our own literals, never user input.
+                tx.execute(&format!("DELETE FROM {table} WHERE id = ?1"), params![&id])?;
+                purged += 1;
+            }
+        }
+
+        let stories = expired_rows(
+            &tx,
+            "SELECT id, id, title FROM stories
+              WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            &cutoff,
+        )?;
+
+        for (id, _, title) in stories {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&id),
+                    entity_type: "story",
+                    entity_id: &id,
+                    action: "purge",
+                    field_changed: None,
+                    old_value: Some(title),
+                    new_value: None,
+                    changed_by: RETENTION_ACTOR,
+                },
+            )?;
+
+            tx.execute("DELETE FROM stories WHERE id = ?1", params![&id])?;
+            purged += 1;
+        }
+
+        tx.commit()?;
+
+        Ok(purged)
+    }
+
     // ===== IMPORT =====
 
     /// Restores a story from an export as a **new** story.
@@ -2551,9 +2707,26 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_003)?;
     }
 
+    if version < 4 {
+        conn.execute_batch(MIGRATION_004)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
+}
+
+/// Rows past their retention window, as `(id, story_id, label)`.
+fn expired_rows(
+    conn: &Connection,
+    sql: &str,
+    cutoff: &str,
+) -> SqliteResult<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![cutoff], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    rows.collect()
 }
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> SqliteResult<bool> {
@@ -2672,6 +2845,18 @@ const MIGRATION_003: &str = "
     ALTER TABLE characters ADD COLUMN deleted_at TEXT;
     ALTER TABLE nodes ADD COLUMN deleted_at TEXT;
     ALTER TABLE edges ADD COLUMN deleted_at TEXT;
+";
+
+/// Schema v4: app-wide settings, starting with how long the trash is kept.
+///
+/// A table rather than a config file, so the setting travels with the database,
+/// is covered by the launch snapshot, and cannot drift out of step with what is
+/// actually in the trash.
+const MIGRATION_004: &str = "
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
 ";
 
 const INDEXES: &str = "
@@ -4264,5 +4449,264 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(before, 0, "the copy is what was on disk before migrating");
+    }
+
+    /// Retention deletes for real, so the launch order matters: the copy taken
+    /// before the file is opened is the only place a purged item still exists.
+    #[test]
+    fn a_launch_copy_still_holds_what_retention_removes() {
+        let dir = std::env::temp_dir().join(format!("litrpg-retention-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("storyboard.db");
+
+        {
+            let first = Db::open(&path).unwrap();
+            let story = first
+                .create_story("Retained".into(), None, "Ada".into())
+                .unwrap();
+            let character = first
+                .create_character(story.id.clone(), "Old Rook".into(), None, "Ada".into())
+                .unwrap();
+            first.delete_character(&character.id, "Ada".into()).unwrap();
+            backdate_trash(&first, "characters", &character.id, 40);
+            first.set_trash_retention_days(Some(30)).unwrap();
+        }
+
+        // What startup does, in the order it does it.
+        let db = Db::open_with_snapshot(&path, 5).unwrap();
+        let window = db.trash_retention_days().unwrap().unwrap();
+        assert_eq!(db.purge_expired(window).unwrap(), 1);
+
+        let gone: i64 = db
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM characters WHERE name = 'Old Rook'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(gone, 0);
+
+        let copy = std::fs::read_dir(snapshots::snapshot_dir(&path))
+            .unwrap()
+            .next()
+            .expect("a copy should have been written")
+            .unwrap()
+            .path();
+        let kept: i64 = Connection::open(&copy)
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM characters WHERE name = 'Old Rook'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "the launch copy was taken before the purge");
+
+        drop(db);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ===== retention =====
+
+    /// Deletes are stamped with the clock, so a test that wants an old deletion
+    /// has to backdate it through the same connection the code uses.
+    fn backdate_trash(db: &Db, table: &str, id: &str, days_ago: i64) {
+        let stamp = (Utc::now() - chrono::Duration::days(days_ago)).to_rfc3339();
+        // `table` is one of our own literals, never user input.
+        db.conn()
+            .unwrap()
+            .execute(
+                &format!("UPDATE {table} SET deleted_at = ?1 WHERE id = ?2"),
+                params![stamp, id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_new_database_keeps_the_trash_forever() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.trash_retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn the_retention_window_is_remembered_and_can_be_turned_off() {
+        let db = Db::open_in_memory().unwrap();
+
+        db.set_trash_retention_days(Some(30)).unwrap();
+        assert_eq!(db.trash_retention_days().unwrap(), Some(30));
+
+        // Changing it replaces the value instead of piling up settings.
+        db.set_trash_retention_days(Some(7)).unwrap();
+        assert_eq!(db.trash_retention_days().unwrap(), Some(7));
+        let rows: i64 = db
+            .conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+
+        db.set_trash_retention_days(None).unwrap();
+        assert_eq!(db.trash_retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn an_impossible_retention_window_is_refused() {
+        let db = Db::open_in_memory().unwrap();
+        db.set_trash_retention_days(Some(30)).unwrap();
+
+        for days in [0, -1, 3651] {
+            assert!(
+                db.set_trash_retention_days(Some(days)).is_err(),
+                "{days} days should be refused"
+            );
+        }
+        assert_eq!(
+            db.trash_retention_days().unwrap(),
+            Some(30),
+            "a refused change leaves the window alone"
+        );
+
+        assert!(db.purge_expired(0).is_err());
+    }
+
+    #[test]
+    fn retention_removes_only_what_is_older_than_the_window() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Retention".into(), None, "Ada".into()).unwrap();
+        let old = db
+            .create_character(story.id.clone(), "Ancient".into(), None, "Ada".into())
+            .unwrap();
+        let recent = db
+            .create_character(story.id.clone(), "Recent".into(), None, "Ada".into())
+            .unwrap();
+        let live = db
+            .create_character(story.id.clone(), "Live".into(), None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&old.id, "Ada".into()).unwrap();
+        backdate_trash(&db, "characters", &old.id, 40);
+        db.delete_character(&recent.id, "Ada".into()).unwrap();
+
+        let purged = db.purge_expired(30).unwrap();
+        assert_eq!(purged, 1, "only the character older than the window went");
+
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, recent.id);
+
+        let live_characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(live_characters.len(), 1);
+        assert_eq!(live_characters[0].id, live.id);
+
+        // The old row is gone from the table, not merely hidden.
+        let remaining: i64 = db
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM characters WHERE id = ?1",
+                params![old.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn retention_records_who_removed_the_item() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Receipts".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Ancient".into(), None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+        backdate_trash(&db, "characters", &character.id, 40);
+        db.purge_expired(30).unwrap();
+
+        let purge = db
+            .get_audit_log(Some(&story.id), Some("character"), Some(&character.id), 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "purge")
+            .expect("the automatic purge is recorded");
+        assert_eq!(purge.changed_by, "Trash retention");
+        assert_eq!(purge.old_value.as_deref(), Some("Ancient"));
+
+        // A run that removes nothing writes nothing.
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+        assert_eq!(db.purge_expired(30).unwrap(), 0);
+        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+    }
+
+    #[test]
+    fn retention_takes_a_whole_story_and_its_contents() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ancient".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
+            .unwrap();
+        db.delete_story(&story.id, "Ada".into()).unwrap();
+        backdate_trash(&db, "stories", &story.id, 40);
+
+        assert_eq!(db.purge_expired(30).unwrap(), 1);
+
+        assert!(db.get_story(&story.id).unwrap().is_none());
+        let stats: i64 = db
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM character_stats WHERE character_id = ?1",
+                params![character.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stats, 0, "the story's stats went with it");
+
+        let purge = db
+            .get_audit_log(None, Some("story"), Some(&story.id), 10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "purge")
+            .expect("the story purge is recorded");
+        assert_eq!(purge.changed_by, "Trash retention");
+    }
+
+    #[test]
+    fn a_version_3_database_gains_settings_without_losing_anything() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at, deleted_at)
+             VALUES ('s1', 'Kept', NULL, 'then', 'then', NULL)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let settings: i64 = conn
+            .query_row("SELECT count(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(settings, 0, "the table starts empty, so nothing is ever purged by default");
+
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Kept");
     }
 }
