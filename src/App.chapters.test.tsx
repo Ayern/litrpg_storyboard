@@ -821,3 +821,67 @@ describe('chapter notes', () => {
     expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
   });
 });
+
+describe('chapter continuity', () => {
+  it('names the chapters that have no POV', async () => {
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText('3 chapters have no POV: One, Two, Three.')
+    ).toBeInTheDocument();
+    // The flags are advisory, and the panel says so rather than blocking a save.
+    expect(within(panel).getByText(/1 to check · advisory/)).toBeInTheDocument();
+  });
+
+  it('flags a day that goes backwards in reading order', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 5;
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 2;
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 3;
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText('“Two” goes back to Day 2 after “One” on Day 5.')
+    ).toBeInTheDocument();
+  });
+
+  it('flags one cast member looking after two chapters on the same day', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 3;
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 3;
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 3;
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText('Rook is the POV of 2 chapters on Day 3: One, Three.')
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing when the chapters agree', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 1;
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 2;
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 3;
+
+    await openChapters();
+
+    expect(screen.queryByRole('region', { name: 'Continuity' })).not.toBeInTheDocument();
+  });
+});

@@ -255,9 +255,12 @@ in the chapter row beside the arc and counts, validated, carried by export and
 import, and drawn on the row. The Chapters tab has a **Timeline** below the list
 that orders chapters by day, keeps same-day chapters in reading order, names each
 POV, and counts the chapters with no day yet; the story bible carries the same
-timeline. Remaining: a free-text time label for moments inside a day, and the
-continuity flags — out-of-order days, two chapters at the same moment, cast in
-two places at once. **M**
+timeline. A **Continuity** panel below it lists advisory flags — chapters with no
+POV, a chapter whose day goes backwards in reading order, and one cast member
+named as the POV of two chapters on the same day — and says nothing when the
+chapters agree. Remaining: a free-text time label for moments inside a day, two
+chapters at the same moment, and cast in two places at once across different
+days. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
 member (`character_progress`, unique on character + chapter), entered in a small

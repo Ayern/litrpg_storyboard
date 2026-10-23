@@ -56,6 +56,13 @@ work them out. Each field that changes is a history entry of its own, so an arc,
 count or a day can be put back from the Audit tab; a POV is recorded by name (and
 is not revertible, because the link is stored as an id).
 
+**Continuity** — below the timeline, the Chapters tab lists what looks
+inconsistent: a chapter with no POV, a chapter whose day goes backwards in
+reading order, and one cast member named as the POV of two chapters on the same
+day. The flags are advisory — nothing is blocked, and the list only appears when
+there is something to say — and a chapter with no day yet is left out of the
+timing checks rather than being given one.
+
 **Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
 row opens a panel with **Add note**, **Edit** and **Delete**. There is no
 formatting and no manuscript — a note is exactly the text typed into it, shown

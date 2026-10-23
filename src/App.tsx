@@ -1914,6 +1914,78 @@ function App() {
       );
   }, [chapterNodes]);
 
+  // Continuity is advisory: nothing here blocks a save. It names what looks
+  // inconsistent — a chapter with no POV, a day that goes backwards, or one cast
+  // member in two chapters on the same day — and leaves the decision to the
+  // author.
+  const chapterContinuity = useMemo(() => {
+    const warnings: string[] = [];
+
+    const withoutPov = chapterNodes.filter(node => !node.data.chapterPov);
+
+    if (withoutPov.length > 0) {
+      warnings.push(
+        `${withoutPov.length} chapter${
+          withoutPov.length === 1 ? ' has' : 's have'
+        } no POV: ${withoutPov.map(node => node.data.label).join(', ')}.`
+      );
+    }
+
+    // Reading order, with the chapters that are not placed in time skipped.
+    const placed = chapterNodes.filter(node => node.data.chapterDay != null);
+
+    for (let index = 1; index < placed.length; index += 1) {
+      const before = placed[index - 1];
+      const after = placed[index];
+
+      if ((after.data.chapterDay ?? 0) < (before.data.chapterDay ?? 0)) {
+        warnings.push(
+          `“${after.data.label}” goes back to Day ${after.data.chapterDay} after “${before.data.label}” on Day ${before.data.chapterDay}.`
+        );
+      }
+    }
+
+    // One cast member cannot be the point of view of two chapters on one day.
+    const bookings = new Map<
+      string,
+      { pov: string; day: number; chapters: string[] }
+    >();
+
+    placed.forEach(node => {
+      const pov = node.data.chapterPov;
+
+      if (!pov) return;
+
+      const key = `${pov}::${node.data.chapterDay}`;
+      const booking = bookings.get(key);
+
+      if (booking) {
+        booking.chapters.push(node.data.label);
+        return;
+      }
+
+      bookings.set(key, {
+        pov,
+        day: node.data.chapterDay ?? 0,
+        chapters: [node.data.label],
+      });
+    });
+
+    bookings.forEach(booking => {
+      if (booking.chapters.length < 2) return;
+
+      warnings.push(
+        `${
+          castNames.get(booking.pov) ?? 'A cast member in the trash'
+        } is the POV of ${booking.chapters.length} chapters on Day ${
+          booking.day
+        }: ${booking.chapters.join(', ')}.`
+      );
+    });
+
+    return warnings;
+  }, [chapterNodes, castNames]);
+
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
 
@@ -5386,6 +5458,25 @@ function App() {
                         </ol>
                       )}
                     </section>
+
+                    {chapterContinuity.length > 0 && (
+                      <section
+                        className="chapter-continuity"
+                        aria-labelledby="chapter-continuity-heading"
+                      >
+                        <div className="chapter-continuity-head">
+                          <h3 id="chapter-continuity-heading">Continuity</h3>
+                          <span className="chapter-continuity-note">
+                            {chapterContinuity.length} to check · advisory
+                          </span>
+                        </div>
+                        <ul>
+                          {chapterContinuity.map((warning, index) => (
+                            <li key={`${index}-${warning}`}>{warning}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
                   </>
                 )}
               </div>

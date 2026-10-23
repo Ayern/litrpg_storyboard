@@ -1449,6 +1449,47 @@ body {
   white-space: nowrap;
 }
 
+/* Advisory continuity flags. Warned, never blocked, so the colour is a note in
+   the margin rather than an error. */
+.chapter-continuity {
+  margin-top: 16px;
+  padding: 10px 12px 12px;
+  background: #262218;
+  border: 1px solid #4d4023;
+  border-radius: 6px;
+}
+
+.chapter-continuity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.chapter-continuity-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e3cb94;
+}
+
+.chapter-continuity-note {
+  font-size: 11px;
+  color: #9d8a5f;
+}
+
+.chapter-continuity ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #d8c9a8;
+}
+
 .node-legend {
   background: rgba(30,30,30,0.9);
   padding: 4px 8px;
