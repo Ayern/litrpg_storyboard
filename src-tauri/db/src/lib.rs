@@ -3,6 +3,7 @@ pub mod snapshots;
 use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -2135,9 +2136,9 @@ impl Db {
         }
 
         // Time order, which is not always reading order. Only chapters with a day
-        // appear here; an unplaced chapter is not quietly given one. The author's
-        // time label is printed beside the day, but the order inside a day stays
-        // reading order: a free-text label is not read as a clock here.
+        // appear here; an unplaced chapter is not quietly given one. Inside a day
+        // the author's time labels order the chapters when they read as a time of
+        // day; the rest wait after them in reading order, as on the Chapters tab.
         let mut timeline: Vec<&Node> = chapters
             .iter()
             .copied()
@@ -2145,7 +2146,28 @@ impl Db {
             .collect();
 
         if !timeline.is_empty() {
-            timeline.sort_by_key(|chapter| chapter.chapter_day.unwrap_or(0));
+            timeline.sort_by(|left, right| {
+                let day = left
+                    .chapter_day
+                    .unwrap_or(0)
+                    .cmp(&right.chapter_day.unwrap_or(0));
+
+                if day != Ordering::Equal {
+                    return day;
+                }
+
+                // A label the clock cannot read has no place inside the day, so
+                // it waits after the ones that do, in reading order.
+                match (
+                    left.chapter_time.as_deref().and_then(time_of_day),
+                    right.chapter_time.as_deref().and_then(time_of_day),
+                ) {
+                    (Some(left), Some(right)) => left.cmp(&right),
+                    (None, None) => Ordering::Equal,
+                    (None, Some(_)) => Ordering::Greater,
+                    (Some(_), None) => Ordering::Less,
+                }
+            });
 
             lines.push(String::new());
             lines.push("## Timeline".to_string());
@@ -4301,6 +4323,151 @@ fn grouped(value: i64) -> String {
     }
 
     grouped
+}
+
+/// The day parts a time label can name, with where each sits in the day. Only
+/// the earliest one counts when a label names two, as on the Chapters tab.
+const DAY_PARTS: [(&[&str], i32); 7] = [
+    (&["midnight"], 0),
+    (&["dawn", "sunrise", "first light"], 6 * 60),
+    (&["morning"], 9 * 60),
+    (&["noon", "midday"], 12 * 60),
+    (&["afternoon"], 14 * 60 + 30),
+    (&["dusk", "sunset", "evening"], 19 * 60),
+    (&["night", "nightfall", "after dark"], 21 * 60),
+];
+
+/// Words that pull a day part earlier or later: “early morning”, “late night”.
+const DAY_PART_NUDGES: [(&[&str], i32); 2] =
+    [(&["early", "before"], -60), (&["late", "after", "deep"], 60)];
+
+/// Whether a byte counts as part of a word for `\b`, which in the frontend's
+/// patterns (like JavaScript's) means ASCII letters, digits and the underscore.
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// The first place `word` appears in `text` on word boundaries. The words are
+/// ASCII, so byte offsets are safe and one byte past a match is still a char
+/// boundary.
+fn find_word(text: &str, word: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut from = 0;
+
+    while let Some(offset) = text[from..].find(word) {
+        let start = from + offset;
+        let end = start + word.len();
+        let before = start == 0 || !is_word_byte(bytes[start - 1]);
+        let after = end == text.len() || !is_word_byte(bytes[end]);
+
+        if before && after {
+            return Some(start);
+        }
+
+        from = start + 1;
+    }
+
+    None
+}
+
+/// A clock hour, which is one or two digits.
+fn hour_of(bits: &str) -> Option<i32> {
+    if bits.is_empty() || bits.len() > 2 || !bits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    bits.parse().ok()
+}
+
+/// Clock minutes and seconds, which are exactly two digits each.
+fn two_digits(bits: &str) -> Option<i32> {
+    if bits.len() != 2 || !bits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    bits.parse().ok()
+}
+
+/// Where a chapter's free-text time label sits in its day, in minutes from
+/// midnight, or `None` when the label does not read as a time of day.
+///
+/// This answers exactly as `timeOfDay` in `src/App.tsx` does: the tab and the
+/// story bible must place a day the same way. Both read a clock (`18:40`,
+/// `6:40 pm`) and a day part (`dawn`, `dusk`, `night`), and both leave anything
+/// else — `after the fire` — uncompared rather than guessing at it.
+fn time_of_day(label: &str) -> Option<i32> {
+    let text = label.trim().to_lowercase();
+
+    if text.is_empty() {
+        return None;
+    }
+
+    // A clock reading, with or without a meridiem. Seconds are allowed and then
+    // ignored: the order only needs the minute.
+    let (body, meridiem) = if let Some(rest) = text.strip_suffix("pm") {
+        (rest.trim_end(), Some(true))
+    } else if let Some(rest) = text.strip_suffix("am") {
+        (rest.trim_end(), Some(false))
+    } else {
+        (text.as_str(), None)
+    };
+
+    let parts: Vec<&str> = body.split(':').collect();
+
+    let clock = match (parts.as_slice(), meridiem) {
+        ([hour, minute], _) => hour_of(hour).zip(two_digits(minute)),
+        ([hour, minute, seconds], _) => hour_of(hour)
+            .zip(two_digits(minute))
+            .and_then(|(hour, minute)| two_digits(seconds).map(|_| (hour, minute))),
+        ([hour], Some(_)) => hour_of(hour).map(|hour| (hour, 0)),
+        _ => None,
+    };
+
+    if let Some((hour, minute)) = clock {
+        let latest = if meridiem.is_some() { 12 } else { 23 };
+
+        if hour > latest || minute > 59 {
+            return None;
+        }
+
+        // 12am is midnight and 12pm is noon; every other hour simply shifts.
+        let hour = match meridiem {
+            Some(true) => (hour % 12) + 12,
+            Some(false) => hour % 12,
+            None => hour,
+        };
+
+        return Some(hour * 60 + minute);
+    }
+
+    // A day part, wherever it appears in the label, nudged by “early” or “late”.
+    let mut best: Option<(usize, i32)> = None;
+
+    for (words, minutes) in DAY_PARTS {
+        let found = words.iter().filter_map(|word| find_word(&text, word)).min();
+
+        if let Some(at) = found {
+            let earlier = match best {
+                Some((closest, _)) => at < closest,
+                None => true,
+            };
+
+            if earlier {
+                best = Some((at, minutes));
+            }
+        }
+    }
+
+    let (_, base) = best?;
+
+    let nudge: i32 = DAY_PART_NUDGES
+        .iter()
+        .filter(|(words, _)| words.iter().any(|word| find_word(&text, word).is_some()))
+        .map(|(_, minutes)| *minutes)
+        .sum();
+
+    // Clamped to the day so “late night” does not spill into tomorrow.
+    Some((base + nudge).clamp(0, 23 * 60 + 59))
 }
 
 /// A complete, self-contained snapshot of one story.
@@ -8012,6 +8179,90 @@ mod tests {
         assert!(markdown.contains("*location*"));
         assert!(markdown.contains("A gate that remembers."));
         assert!(!markdown.contains("The card."));
+    }
+
+    #[test]
+    fn the_story_bible_orders_a_day_by_its_time_labels() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        let make = |label: &str| {
+            db.create_node(
+                story.id.clone(),
+                "chapter".into(),
+                label.into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap()
+        };
+
+        // Written in one order, placed on the day in another, plus one label the
+        // clock cannot read.
+        let evening = make("Evening");
+        let morning = make("Morning");
+        let unreadable = make("After the fire");
+        let early = make("Early");
+
+        for (chapter, time) in [
+            (&evening, "Dusk"),
+            (&morning, "7:30 am"),
+            (&unreadable, "after the fire"),
+            (&early, "early morning"),
+        ] {
+            db.set_chapter_details(
+                &chapter.id,
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                Some(time.into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        }
+
+        let markdown = db.story_bible(&story.id).unwrap().markdown;
+
+        // 7:30am, then early morning at 8:00, then Dusk, and the label no clock
+        // can read last, printed as the author typed it.
+        assert!(markdown.contains(
+            "- Day 4, 7:30 am — Morning\n- Day 4, early morning — Early\n- Day 4, Dusk — Evening\n- Day 4, after the fire — After the fire"
+        ));
+    }
+
+    #[test]
+    fn time_labels_are_read_the_same_way_as_the_tab() {
+        // Clock readings, as a person would write them.
+        assert_eq!(time_of_day("18:40"), Some(1120));
+        assert_eq!(time_of_day("6:40 pm"), Some(1120));
+        assert_eq!(time_of_day("6:40pm"), Some(1120));
+        assert_eq!(time_of_day("7:30:15 am"), Some(450));
+        assert_eq!(time_of_day("12:30 am"), Some(30));
+        assert_eq!(time_of_day("12 pm"), Some(720));
+        assert_eq!(time_of_day("11:59 pm"), Some(1439));
+
+        // Day parts, with the nudges that move them, and the edge of the day.
+        assert_eq!(time_of_day("  DUSK  "), Some(1140));
+        assert_eq!(time_of_day("midnight"), Some(0));
+        assert_eq!(time_of_day("afternoon"), Some(870));
+        assert_eq!(time_of_day("nightfall"), Some(1260));
+        assert_eq!(time_of_day("early morning"), Some(480));
+        assert_eq!(time_of_day("just before dawn"), Some(300));
+        assert_eq!(time_of_day("late night"), Some(1320));
+        assert_eq!(time_of_day("after dark"), Some(1320));
+
+        // Anything else is stored and printed, but never ordered or guessed at.
+        assert_eq!(time_of_day(""), None);
+        assert_eq!(time_of_day("after the fire"), None);
+        assert_eq!(time_of_day("25:00"), None);
+        assert_eq!(time_of_day("6:4"), None);
+        assert_eq!(time_of_day("noonish"), None);
     }
 
     #[test]

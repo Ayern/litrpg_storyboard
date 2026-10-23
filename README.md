@@ -48,17 +48,18 @@ whole number from 0 up; there is no calendar, so a story can count "days since
 the System arrived" instead of dating anything. The time is free text — "Dusk",
 "18:40", "after the fire" — kept in the author's own words. POV, day and time
 show on the row, and the day places the chapter on the **Timeline** below the
-list, which orders
-chapters by day rather than by chapter number and names each one's POV. Inside a
-day, chapters whose time reads as a clock or a day part (dawn, morning, noon,
-afternoon, dusk, night, with "early" or "late" nudging an hour) are ordered by
-it; a label that reads as neither keeps its reading order instead of being
-guessed at. A chapter with no day stays off the timeline while the panel counts
-how many are waiting for one. The top of the tab totals the counts across the
-chapters, adds up the targets that exist (and says how many chapters have one),
-and fills a bar against that total. These numbers are the author's: nothing reads
-a manuscript to work them out. Each field that changes is a history entry of its
-own, so an arc, a count, a day or a time can be put back from the Audit tab; a
+list, which orders chapters by day rather than by chapter number and names each
+one's POV. Inside a day, chapters whose time reads as a clock or a day part
+(dawn, morning, noon, afternoon, dusk, night, with "early" or "late" nudging an
+hour) are ordered by it; a label that reads as neither is left unordered, waiting
+after the readable ones in reading order instead of being guessed at. The story
+bible prints the same timeline in the same order. A chapter with no day stays off
+it while the panel counts how many are waiting for one. The top of the tab totals
+the counts across the chapters, adds up the targets that exist (and says how many
+chapters have one), and fills a bar against that total. These numbers are the
+author's: nothing reads a manuscript to work them out. Each field that changes is
+a history entry of its own, so an arc, a count, a day or a time can be put back
+from the Audit tab; a
 POV is recorded by name (and is not revertible, because the link is stored as an
 id).
 

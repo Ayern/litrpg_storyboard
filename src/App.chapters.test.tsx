@@ -703,6 +703,25 @@ describe('chapter POV and in-world days', () => {
     ]);
   });
 
+  it('puts a label the clock cannot read after the ones it can inside the day', async () => {
+    rows[0].chapter_day = 4; // One, chapter 1
+    rows[0].chapter_time = 'after the fire';
+    rows[2].chapter_day = 4; // Two, chapter 2
+    rows[2].chapter_time = '7:30 am';
+
+    await openChapters();
+
+    const timeline = screen.getByRole('list', { name: 'Chapter timeline' });
+    const placed = within(timeline).getAllByRole('listitem');
+
+    // An unreadable label has no place in the day, so it waits behind the one
+    // that does rather than holding its position and splitting the day.
+    expect(placed.map(row => within(row).getByText(/^(One|Two|Three)$/).textContent)).toEqual([
+      'Two',
+      'One',
+    ]);
+  });
+
   it('leaves a chapter without a day off the timeline and says how many are waiting', async () => {
     rows[0].chapter_day = 1;
 

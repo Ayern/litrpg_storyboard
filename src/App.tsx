@@ -1983,12 +1983,16 @@ function App() {
 
         if (day !== 0) return day;
 
-        // Inside a day, only labels that read as a time can be ordered. The rest
-        // keep their reading order, because the sort is stable.
+        // Inside a day, only labels that read as a time can be ordered. One that
+        // cannot has no place in the day, so it waits after the ones that can,
+        // keeping its reading order among the others the clock cannot read.
         const leftTime = timeOfDay(left.data.chapterTime);
         const rightTime = timeOfDay(right.data.chapterTime);
 
-        return leftTime == null || rightTime == null ? 0 : leftTime - rightTime;
+        if (leftTime == null) return rightTime == null ? 0 : 1;
+        if (rightTime == null) return -1;
+
+        return leftTime - rightTime;
       });
   }, [chapterNodes]);
 

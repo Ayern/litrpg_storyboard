@@ -258,14 +258,14 @@ of day — "Dusk", "18:40", "after the fire" — edited beside the day, kept in 
 author's words, printed on the row, in the story bible and in the timeline, and
 revertible like any other field. The Chapters tab has a **Timeline** below the
 list that orders chapters by day, and inside a day by the time when the label
-reads as a clock or a day part (an unreadable label keeps its reading order),
-names each POV, and counts the chapters with no day yet; the story bible carries
-the same timeline. A **Continuity** panel below it lists advisory flags —
-chapters with no POV, a chapter whose day goes backwards in reading order, a
-chapter whose time goes backwards inside one day, two chapters placed at the same
-moment (labels that resolve to the same minute, quoted as written), and one cast
-member named as the POV of two chapters on the same day — and says nothing when
-the chapters agree. Remaining: cast in two places at once across different days,
+reads as a clock or a day part (an unreadable label waits after them, in reading
+order), names each POV, and counts the chapters with no day yet; the story bible
+carries the same timeline and reads the labels the same way. A **Continuity**
+panel below it lists advisory flags — chapters with no POV, a chapter whose day
+goes backwards in reading order, a chapter whose time goes backwards inside one
+day, two chapters placed at the same moment (labels that resolve to the same
+minute, quoted as written), and one cast member named as the POV of two chapters
+on the same day — and says nothing when the chapters agree. Remaining: cast in two places at once across different days,
 and moments that can only be described in words. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
