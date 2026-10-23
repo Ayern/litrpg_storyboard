@@ -1,6 +1,6 @@
 [package]
 name = "litrpg-db"
-version = "0.1.0"
+version = "0.2.0"
 description = "SQLite storage for LitRPG Storyboard Tracker: models, migrations and queries, with no GUI dependency"
 authors = ["Chris"]
 edition = "2021"

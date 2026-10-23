@@ -1,6 +1,6 @@
 [package]
 name = "litrpg_storyboard_tracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "LitRPG Storyboard Tracker - Local multi-user desktop app for tracking stories, characters, and idea graphs"
 authors = ["Chris"]
 edition = "2021"
