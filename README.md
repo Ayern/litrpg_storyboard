@@ -9,6 +9,9 @@ records who changed what.
 Everything lives in a single SQLite file on your machine. No accounts, no network,
 no sync.
 
+What comes next, and the invariants every change keeps, are in
+[ROADMAP.md](ROADMAP.md).
+
 ## Features
 
 **Stories** — create, rename and delete. The sidebar orders them by most recently
