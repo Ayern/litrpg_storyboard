@@ -186,14 +186,16 @@ Two follow-ups: drafts do not survive a restart, and switching nodes keeps the
 draft rather than asking, which is a deliberate choice rather than an oversight.
 **S–M**
 
-**4. Undo and redo.** `Ctrl+Z` / `Ctrl+Shift+Z` for content actions: edits,
-relinks, renames, moves, single deletes. Implemented as a session action stack
-that calls the existing revert path for field edits and soft-delete/restore for
-deletions and creations — so the history stays the single source of truth and
-undo itself remains auditable. Scope it to the current story, clear it on story
-switch, and stop it at anything irreversible (purge, import). Order entries by
-`rowid`, not by timestamp. Explicitly cap the stack and say so in the README.
-**L**
+**4. Undo and redo.** **Done.** `Ctrl+Z` / `Ctrl+Shift+Z` and two toolbar buttons
+cover label and note edits, connection edits, relinks, moves, the rename offer,
+and creating or deleting nodes and connections. Each step is a pair of ordinary
+commands (edit → edit back, delete → restore), so the Audit tab records both
+directions; the stack holds 50 steps, is scoped to the open story, and is emptied
+on story switch and on any purge. Field edits use the same command as the
+forward write rather than `revert_change`, because undo here is a new recorded
+change rather than a correction of an old entry. Not covered, and stated in the
+README: character and story edits, stats and attributes, import, and the Trash
+tab. **L**
 
 **5. Backups you can restore.** The app already copies the database to
 `snapshots/` at every launch and keeps ten; nothing puts one back. Add a Backups

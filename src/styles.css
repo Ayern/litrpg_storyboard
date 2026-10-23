@@ -216,6 +216,17 @@ body {
   font-style: italic;
 }
 
+/* What the last undo or redo did. It expires on its own, so it never becomes a
+   permanent claim about a board that has moved on. */
+.history-notice {
+  font-size: 11px;
+  color: #f0d9a8;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graph-container {
   flex: 1;
   position: relative;

@@ -261,6 +261,53 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
 // Defined once: React Flow re-creates every node when this object changes.
 const flowNodeTypes = { default: GraphNode };
 
+// How many actions this session's undo stack keeps. The audit tab is the
+// permanent record; this is only the last few steps, so it is capped and never
+// written to disk.
+const UNDO_LIMIT = 50;
+
+// One recorded action, with the commands that walk it backwards and forwards.
+// The closures call the ordinary commands, so an undo is an audited change like
+// any other rather than a quiet rewrite of the database.
+interface UndoStep {
+  label: string;
+  undo: () => Promise<unknown>;
+  redo: () => Promise<unknown>;
+}
+
+// A database node row as React Flow wants it. One mapping, used by the story
+// load and by the refresh after an undo, so the two cannot drift.
+function toFlowNode(row: any): Node<NodeData> {
+  return {
+    id: row.id,
+    type: 'default',
+    position: { x: row.pos_x, y: row.pos_y },
+    data: {
+      label: row.label,
+      nodeType: row.node_type,
+      content: row.content,
+      createdBy: row.created_by,
+      characterId: row.character_id ?? null,
+    },
+  };
+}
+
+// The canvas shows one string for a connection, but the two fields stay separate
+// in `data` so the editor can tell a label from a relation type.
+function toFlowEdge(row: any): Edge<EdgeData> {
+  return {
+    id: row.id,
+    source: row.source_id,
+    target: row.target_id,
+    label: row.label || row.relation_type || '',
+    data: {
+      label: row.label ?? undefined,
+      relationType: row.relation_type ?? undefined,
+      createdBy: row.created_by,
+    },
+  };
+}
+
 const USER_KEY = 'litrpg.currentUser';
 
 // The key labels the app shows. The help list and any tooltip that names a key
@@ -271,6 +318,8 @@ const shortcutKeys = {
   choose: '↑ ↓',
   enter: 'Enter',
   escape: 'Esc',
+  undo: 'Ctrl+Z',
+  redo: 'Ctrl+Shift+Z',
 } as const;
 
 // Every keyboard route the app actually has, written once. The overlay renders
@@ -294,6 +343,13 @@ const shortcutGroups: {
       { keys: shortcutKeys.choose, action: 'Move through the results' },
       { keys: shortcutKeys.enter, action: 'Go to the chosen result' },
       { keys: shortcutKeys.escape, action: 'Close the palette' },
+    ],
+  },
+  {
+    title: 'Undo and redo',
+    keys: [
+      { keys: shortcutKeys.undo, action: 'Undo the last recorded change' },
+      { keys: shortcutKeys.redo, action: 'Redo the last undone change' },
     ],
   },
   {
@@ -612,6 +668,24 @@ function App() {
   const lastStoryIdRef = useRef<string | null>(null);
   const [otherStoryLoading, setOtherStoryLoading] = useState(false);
   const [otherStoryError, setOtherStoryError] = useState<string | null>(null);
+
+  // This session's actions, with a command for each direction. The stacks are
+  // refs because they are read only when a key is pressed; the counts below are
+  // what the toolbar draws.
+  const undoStackRef = useRef<UndoStep[]>([]);
+  const redoStackRef = useRef<UndoStep[]>([]);
+  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+  const dragStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  // Nodes React Flow is removing right now, so their connections are not
+  // recorded as a separate deletion.
+  const removedNodeIdsRef = useRef<Set<string>>(new Set());
+  // Read by the refresh after an undo, which runs outside a render.
+  const selectedNodeIdRef = useRef<string | null>(null);
+  const selectedEdgeIdRef = useRef<string | null>(null);
+  const nodeIsDirtyRef = useRef(false);
+  const edgeIsDirtyRef = useRef(false);
+
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
@@ -660,40 +734,19 @@ function App() {
 
   const loadStory = useCallback(async (story: Story) => {
     setCurrentStory(story);
+
+    // Undo is scoped to the story it was recorded in, so a switch starts clean.
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setHistoryDepth({ undo: 0, redo: 0 });
+    setHistoryNotice(null);
     
     try {
       const dbNodes: any[] = await invoke('get_graph_nodes', { storyId: story.id });
       const dbEdges: any[] = await invoke('get_graph_edges', { storyId: story.id });
 
-      const flowNodes: any[] = dbNodes.map((n: any) => ({
-        id: n.id,
-        type: 'default',
-        position: { x: n.pos_x, y: n.pos_y },
-        data: {
-          label: n.label,
-          nodeType: n.node_type,
-          content: n.content,
-          createdBy: n.created_by,
-          characterId: n.character_id ?? null,
-        },
-      }));
-
-      const flowEdges: any[] = dbEdges.map((e: any) => ({
-        id: e.id,
-        source: e.source_id,
-        target: e.target_id,
-        // The canvas shows one string, but the two fields stay separate in
-        // `data` so the editor can tell a label from a relation type.
-        label: e.label || e.relation_type || '',
-        data: {
-          label: e.label ?? undefined,
-          relationType: e.relation_type ?? undefined,
-          createdBy: e.created_by,
-        },
-      }));
-
-      setNodes(flowNodes);
-      setEdges(flowEdges);
+      setNodes(dbNodes.map(toFlowNode));
+      setEdges(dbEdges.map(toFlowEdge));
 
       // The cast rail and the cards' badges both read from here, so the cast and
       // its numbers are loaded with the graph rather than on another tab.
@@ -711,6 +764,92 @@ function App() {
       console.error('Failed to load story graph:', e);
     }
   }, [setNodes, setEdges]);
+
+  // After an undo the board is read back rather than patched from memory: a
+  // restored node brings its connections with it, and a move lives only in the
+  // database. Open editors follow the stored values unless they hold unsaved
+  // typing, which undo does not touch.
+  const reloadStory = useCallback(
+    async (storyId: string) => {
+      const [dbNodes, dbEdges] = await Promise.all([
+        invoke<any[]>('get_graph_nodes', { storyId }),
+        invoke<any[]>('get_graph_edges', { storyId }),
+      ]);
+
+      setNodes(dbNodes.map(toFlowNode));
+      setEdges(dbEdges.map(toFlowEdge));
+
+      if (selectedNodeIdRef.current && !nodeIsDirtyRef.current) {
+        const fresh = dbNodes.find(row => row.id === selectedNodeIdRef.current);
+        if (fresh) {
+          setNodeLabelDraft(fresh.label);
+          setNodeContentDraft(fresh.content ?? '');
+        }
+      }
+
+      if (selectedEdgeIdRef.current && !edgeIsDirtyRef.current) {
+        const fresh = dbEdges.find(row => row.id === selectedEdgeIdRef.current);
+        if (fresh) {
+          setEdgeLabelDraft(fresh.label ?? '');
+          setEdgeRelationDraft(fresh.relation_type ?? '');
+        }
+      }
+    },
+    [setNodes, setEdges]
+  );
+
+  const recordStep = useCallback((step: UndoStep) => {
+    // A new action makes the old redo branch impossible, as in any editor.
+    redoStackRef.current = [];
+    undoStackRef.current = [...undoStackRef.current, step].slice(-UNDO_LIMIT);
+    setHistoryDepth({ undo: undoStackRef.current.length, redo: 0 });
+  }, []);
+
+  const moveInHistory = useCallback(
+    async (direction: 'undo' | 'redo') => {
+      const source = direction === 'undo' ? undoStackRef : redoStackRef;
+      const target = direction === 'undo' ? redoStackRef : undoStackRef;
+      const step = source.current[source.current.length - 1];
+
+      if (!step) return;
+
+      removedNodeIdsRef.current = new Set();
+      setActionError(null);
+
+      try {
+        await (direction === 'undo' ? step.undo() : step.redo());
+      } catch (e) {
+        // The step stays where it was, so the failed change can be retried.
+        console.error(`Failed to ${direction}:`, e);
+        setActionError(`Could not ${direction} ${step.label}: ${String(e)}`);
+        return;
+      }
+
+      source.current = source.current.slice(0, -1);
+      target.current = [...target.current, step];
+      setHistoryDepth({
+        undo: undoStackRef.current.length,
+        redo: redoStackRef.current.length,
+      });
+      setHistoryNotice(`${direction === 'undo' ? 'Undid' : 'Redid'}: ${step.label}`);
+
+      const storyId = lastStoryIdRef.current;
+      if (!storyId) return;
+
+      try {
+        await reloadStory(storyId);
+      } catch (e) {
+        // The change itself went through; a failed refresh is reported, not
+        // pretended away.
+        console.error('Failed to reload the board after moving through history:', e);
+        setActionError(`The change was made, but the board could not be reloaded: ${String(e)}`);
+      }
+    },
+    [reloadStory]
+  );
+
+  const undoLast = useCallback(() => moveInHistory('undo'), [moveInHistory]);
+  const redoLast = useCallback(() => moveInHistory('redo'), [moveInHistory]);
 
   // Load first story by default if none selected
   useEffect(() => {
@@ -778,6 +917,51 @@ function App() {
 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [shortcutsOpen]);
+
+  // Ctrl+Z and Ctrl+Shift+Z walk the recorded actions. Inside a field they are
+  // left alone, because there they belong to the text being typed.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable ||
+        ['input', 'textarea', 'select'].includes(target?.tagName?.toLowerCase() ?? '');
+
+      if (typing || shortcutsOpen) return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        void undoLast();
+        return;
+      }
+
+      if ((key === 'z' && event.shiftKey) || key === 'y') {
+        event.preventDefault();
+        void redoLast();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undoLast, redoLast, shortcutsOpen]);
+
+  // A notice about an undo is useful for a moment, then it is just stale text.
+  useEffect(() => {
+    if (!historyNotice) return;
+
+    const timer = setTimeout(() => setHistoryNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [historyNotice]);
+
+  useEffect(() => {
+    selectedNodeIdRef.current = selectedNodeId;
+    selectedEdgeIdRef.current = selectedEdgeId;
+  }, [selectedNodeId, selectedEdgeId]);
 
   // A story's board is kept for searching only while that story is closed. The
   // moment it is opened the screen becomes the truth, and when it is left the
@@ -1195,6 +1379,12 @@ function App() {
     try {
       await invoke('purge_deleted', { id: item.id, kind: item.kind, user: actor });
 
+      // Nothing can bring a purged row back, so earlier steps are no longer a
+      // safe branch to undo into.
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setHistoryDepth({ undo: 0, redo: 0 });
+
       if (item.kind === 'story') {
         setDeletedStories(previous => previous.filter(other => other.id !== item.id));
       } else {
@@ -1225,6 +1415,11 @@ function App() {
       setRetentionDays(days);
 
       if (purged > 0) {
+        // Retention is a purge too: undoing past it could not restore what went.
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        setHistoryDepth({ undo: 0, redo: 0 });
+
         const lists = await fetchTrash(currentStory?.id ?? null);
         setTrash(lists.inStory);
         setDeletedStories(lists.stories);
@@ -1336,6 +1531,12 @@ function App() {
 
       setNodes(nds => [...nds, flowNode]);
       setNewNodeLabel('');
+
+      recordStep({
+        label: `Add “${newDbNode.label}”`,
+        undo: () => invoke('delete_node', { id: newDbNode.id, user: actor }),
+        redo: () => invoke('restore_deleted', { id: newDbNode.id, kind: 'node', user: actor }),
+      });
     } catch (e) {
       console.error('Failed to create node:', e);
     }
@@ -1501,6 +1702,22 @@ function App() {
           )
         );
 
+        recordStep({
+          label: `Relink “${target.data.label}”`,
+          undo: () =>
+            invoke('set_node_character', {
+              nodeId: target.id,
+              characterId: previousId,
+              user: actor,
+            }),
+          redo: () =>
+            invoke('set_node_character', {
+              nodeId: target.id,
+              characterId: character.id,
+              user: actor,
+            }),
+        });
+
         // Only the link changes here: the label, notes and type are the
         // author's. If the label was the old member's name, the drawer offers
         // the rename instead of taking it.
@@ -1557,6 +1774,12 @@ function App() {
         },
       ]);
 
+      recordStep({
+        label: `Add “${created.label}”`,
+        undo: () => invoke('delete_node', { id: created.id, user: actor }),
+        redo: () => invoke('restore_deleted', { id: created.id, kind: 'node', user: actor }),
+      });
+
       // Opening it is what makes the drop feel finished: the numbers are in the
       // inspector, and the link can be changed without hunting for the node.
       openNodeInspector({
@@ -1597,29 +1820,67 @@ function App() {
         setSelectedEdgeId(null);
 
         setEdges(eds => addEdge(newEdge, eds));
+
+        recordStep({
+          label: 'Add a connection',
+          undo: () => invoke('delete_edge', { id: newDbEdge.id, user: actor }),
+          redo: () =>
+            invoke('restore_deleted', { id: newDbEdge.id, kind: 'edge', user: actor }),
+        });
       } catch (e) {
         console.error('Failed to create edge:', e);
       }
     },
-    [currentStory, actor, setEdges]
+    [currentStory, actor, setEdges, recordStep]
   );
+
+  // Where a drag began, so ending it can record both ends of the move.
+  const onNodeDragStart = useCallback((_event: any, node: Node<NodeData>) => {
+    dragStartRef.current = { id: node.id, x: node.position.x, y: node.position.y };
+  }, []);
 
   const onNodeDragStop = useCallback(
     async (_event: any, node: Node<NodeData>) => {
       if (!currentStory) return;
 
+      const start = dragStartRef.current;
+      dragStartRef.current = null;
+
+      const from = start && start.id === node.id ? start : null;
+      const to = { x: node.position.x, y: node.position.y };
+
       try {
         await invoke('update_graph_node_position', {
           id: node.id,
-          posX: node.position.x,
-          posY: node.position.y,
+          posX: to.x,
+          posY: to.y,
           user: actor,
         });
+
+        if (from && (from.x !== to.x || from.y !== to.y)) {
+          recordStep({
+            label: `Move “${node.data.label}”`,
+            undo: () =>
+              invoke('update_graph_node_position', {
+                id: node.id,
+                posX: from.x,
+                posY: from.y,
+                user: actor,
+              }),
+            redo: () =>
+              invoke('update_graph_node_position', {
+                id: node.id,
+                posX: to.x,
+                posY: to.y,
+                user: actor,
+              }),
+          });
+        }
       } catch (e) {
         console.error('Failed to persist node position:', e);
       }
     },
-    [currentStory, actor]
+    [currentStory, actor, recordStep]
   );
 
   // React Flow removes the node from the canvas optimistically. Persist that,
@@ -1632,6 +1893,9 @@ function App() {
       // Attached edges disappear with the node in the database, so drop them
       // locally too in case the canvas still shows them.
       const removedIds = new Set(deleted.map(node => node.id));
+      // The edges going with these nodes are restored by the node restore, so
+      // they must not become a step of their own.
+      removedNodeIdsRef.current = removedIds;
       setSelectedNodeId(current => (current && removedIds.has(current) ? null : current));
       // Connections attached to those nodes go with them, so close that editor.
       setSelectedEdgeId(null);
@@ -1643,13 +1907,30 @@ function App() {
         for (const node of deleted) {
           await invoke('delete_node', { id: node.id, user: actor });
         }
+
+        recordStep({
+          label:
+            deleted.length === 1
+              ? `Delete “${deleted[0].data.label}”`
+              : `Delete ${deleted.length} nodes`,
+          undo: async () => {
+            for (const node of deleted) {
+              await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            }
+          },
+          redo: async () => {
+            for (const node of deleted) {
+              await invoke('delete_node', { id: node.id, user: actor });
+            }
+          },
+        });
       } catch (e) {
         console.error('Failed to delete node:', e);
         setActionError(`Could not delete node: ${String(e)}`);
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, loadStory, setEdges]
+    [currentStory, actor, loadStory, setEdges, recordStep]
   );
 
   const removeEdges = useCallback(
@@ -1660,9 +1941,36 @@ function App() {
       const removedIds = new Set(deleted.map(edge => edge.id));
       setSelectedEdgeId(current => (current && removedIds.has(current) ? null : current));
 
+      // Connections torn down by a node deletion are already part of that step.
+      const ownDeletes = deleted.filter(
+        edge =>
+          !removedNodeIdsRef.current.has(edge.source) &&
+          !removedNodeIdsRef.current.has(edge.target)
+      );
+      removedNodeIdsRef.current = new Set();
+
       try {
-        for (const edge of deleted) {
+        for (const edge of ownDeletes) {
           await invoke('delete_edge', { id: edge.id, user: actor });
+        }
+
+        if (ownDeletes.length > 0) {
+          recordStep({
+            label:
+              ownDeletes.length === 1
+                ? 'Delete a connection'
+                : `Delete ${ownDeletes.length} connections`,
+            undo: async () => {
+              for (const edge of ownDeletes) {
+                await invoke('restore_deleted', { id: edge.id, kind: 'edge', user: actor });
+              }
+            },
+            redo: async () => {
+              for (const edge of ownDeletes) {
+                await invoke('delete_edge', { id: edge.id, user: actor });
+              }
+            },
+          });
         }
       } catch (e) {
         console.error('Failed to delete connection:', e);
@@ -1670,7 +1978,7 @@ function App() {
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, loadStory]
+    [currentStory, actor, loadStory, recordStep]
   );
 
   const startRename = (story: Story) => {
@@ -2119,6 +2427,21 @@ function App() {
         )
       );
 
+      // The values before the save, kept so undo can put them back through the
+      // same command; the history records the walk in both directions.
+      const before = currentNode
+        ? { label: currentNode.data.label, content: currentNode.data.content ?? null }
+        : null;
+
+      if (before) {
+        recordStep({
+          label: `Edit “${label}”`,
+          undo: () => invoke('update_graph_node', { id: selectedNodeId, ...before, user: actor }),
+          redo: () =>
+            invoke('update_graph_node', { id: selectedNodeId, label, content, user: actor }),
+        });
+      }
+
       // The label is now whatever was saved, so any pending rename offer for it
       // was about a name that no longer exists.
       forgetNodeDraft(updated.id);
@@ -2179,6 +2502,29 @@ function App() {
             : edge
         )
       );
+
+      if (currentEdge) {
+        const beforeLabel = currentEdge.data?.label ?? null;
+        const beforeRelation = currentEdge.data?.relationType ?? null;
+
+        recordStep({
+          label: 'Edit a connection',
+          undo: () =>
+            invoke('update_graph_edge', {
+              id: selectedEdgeId,
+              label: beforeLabel,
+              relationType: beforeRelation,
+              user: actor,
+            }),
+          redo: () =>
+            invoke('update_graph_edge', {
+              id: selectedEdgeId,
+              label,
+              relationType,
+              user: actor,
+            }),
+        });
+      }
     } catch (e) {
       console.error('Failed to update connection:', e);
       setEdgeEditError(`Could not save connection: ${String(e)}`);
@@ -2209,6 +2555,22 @@ function App() {
             : node
         )
       );
+
+      recordStep({
+        label: `Relink “${selectedNode.data.label}”`,
+        undo: () =>
+          invoke('set_node_character', {
+            nodeId: selectedNode.id,
+            characterId: previousId,
+            user: actor,
+          }),
+        redo: () =>
+          invoke('set_node_character', {
+            nodeId: selectedNode.id,
+            characterId: characterId || null,
+            user: actor,
+          }),
+      });
 
       offerRenameAfterRelink(
         { id: selectedNode.id, label: selectedNode.data.label },
@@ -2278,6 +2640,24 @@ function App() {
             : other
         )
       );
+
+      recordStep({
+        label: `Rename “${node.data.label}”`,
+        undo: () =>
+          invoke('update_graph_node', {
+            id: node.id,
+            label: node.data.label,
+            content: node.data.content ?? null,
+            user: actor,
+          }),
+        redo: () =>
+          invoke('update_graph_node', {
+            id: node.id,
+            label: updated.label,
+            content: updated.content ?? null,
+            user: actor,
+          }),
+      });
 
       if (selectedNodeId === node.id) {
         setNodeLabelDraft(updated.label);
@@ -2661,6 +3041,20 @@ function App() {
 
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
 
+  const edgeIsDirty =
+    selectedEdge !== null &&
+    ((edgeLabelDraft.trim() || null) !== (selectedEdge.data?.label ?? null) ||
+      (edgeRelationDraft.trim() || null) !== (selectedEdge.data?.relationType ?? null));
+
+  // Read when the board is refreshed after an undo, which runs outside a render.
+  useEffect(() => {
+    nodeIsDirtyRef.current = nodeIsDirty;
+  }, [nodeIsDirty]);
+
+  useEffect(() => {
+    edgeIsDirtyRef.current = edgeIsDirty;
+  }, [edgeIsDirty]);
+
   // The node's stored link, resolved against the live cast. A link to a cast
   // member that is not in the list is one in the trash; nothing is guessed from
   // the node's label any more.
@@ -2867,6 +3261,11 @@ function App() {
             </button>
           </div>
           <div className="topbar-actions">
+            {historyNotice && (
+              <span className="history-notice" role="status">
+                {historyNotice}
+              </span>
+            )}
             {currentStory && (
               <>
                 <button
@@ -2939,6 +3338,22 @@ function App() {
                     disabled={!newNodeLabel.trim()}
                   >
                     Add Node
+                  </button>
+                  <button
+                    className="undo-button"
+                    title={`Undo the last change (${shortcutKeys.undo})`}
+                    onClick={() => void undoLast()}
+                    disabled={historyDepth.undo === 0}
+                  >
+                    Undo
+                  </button>
+                  <button
+                    className="redo-button"
+                    title={`Redo the last undone change (${shortcutKeys.redo})`}
+                    onClick={() => void redoLast()}
+                    disabled={historyDepth.redo === 0}
+                  >
+                    Redo
                   </button>
                   <button
                     className="search-button"
@@ -3165,6 +3580,7 @@ function App() {
                     onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={onNodeDragStop}
                     onNodeClick={selectNode}
                     onEdgeClick={selectEdge}

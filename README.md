@@ -94,6 +94,16 @@ title saying what the click will do: save or discard, move to the trash or delet
 for good, relink or keep the label. These are the platform's native tooltips, so
 they appear after the system's usual hover delay rather than instantly.
 
+**Undo and redo** — `Ctrl+Z` or the Undo button takes back the last recorded
+change on the board: a label or notes edit, a connection edit, a relink, a node
+move, accepting the rename offer, or creating and deleting a node or connection.
+`Ctrl+Shift+Z` or Redo puts it back. Each step runs the ordinary command in the
+opposite direction, so an undo appears in the Audit tab like any other change
+rather than quietly rewriting the database, and a short notice names what moved.
+The stack holds the last 50 actions of the open story and is emptied when another
+story is opened or something is purged; inside a text field `Ctrl+Z` is left to
+the text being typed.
+
 **Keyboard reference** — the `?` button beside the current-user field, or the
 `?` key on any tab, opens a list of every keyboard route, grouped by where it
 works. The list is rendered from one table, and the tooltip that names a key
@@ -346,6 +356,11 @@ point so it stops drawing the vanished badge.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
+- **Undo covers the canvas, not every screen.** Character names, stats and
+  attributes, story rename and delete, import, and actions in the Trash tab are
+  not on the undo stack; for recorded fields the Audit tab's revert is the way
+  back. The stack is per session and holds 50 steps, so restarting the app or
+  switching stories empties it.
 - **Unsaved drafts live in memory.** A half-written label or note survives
   switching nodes, closing the drawer and switching stories, but not restarting
   the app; nothing is written to disk until Save is pressed.
