@@ -960,6 +960,157 @@ body {
   overflow: auto;
 }
 
+/* Chapters: the reading order, kept beside the canvas rather than on it. */
+.chapters-layout {
+  max-width: 760px;
+}
+
+.chapters-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.chapters-heading {
+  margin: 0;
+  font-size: 16px;
+  color: #ddd;
+}
+
+.chapters-hint {
+  margin: 4px 0 0;
+  max-width: 380px;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.chapter-creator {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.chapter-creator input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  width: 170px;
+}
+
+.chapter-creator button {
+  background: #0e639c;
+  border: none;
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chapter-creator button:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
+.chapter-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid #6b5220;
+  background: #2c2413;
+  color: #e2c68f;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.chapter-warning button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #6b5220;
+  color: #e2c68f;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chapter-warning button:hover:not(:disabled) {
+  background: #3a2f19;
+}
+
+.chapter-warning button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chapter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 4px;
+}
+
+.chapter-number {
+  width: 26px;
+  flex-shrink: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #8fbf8f;
+  font-size: 13px;
+}
+
+.chapter-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #ddd;
+}
+
+.chapter-row button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.chapter-row button:hover:not(:disabled) {
+  background: #37373d;
+  color: #fff;
+}
+
+.chapter-row button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .node-legend {
   background: rgba(30,30,30,0.9);
   padding: 4px 8px;
@@ -1933,11 +2084,26 @@ body {
   --accent: #9a9a9a;
 }
 
+.graph-node-topline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .graph-node-kind {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
+}
+
+.graph-node-chapter {
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.18);
+  color: #cdbcfc;
+  white-space: nowrap;
 }
 
 .graph-node-label {

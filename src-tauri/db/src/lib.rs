@@ -24,7 +24,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -860,10 +860,23 @@ impl Db {
 
         let character_name = linkable_character_name(&tx, &story_id, character_id.as_deref())?;
 
+        // A chapter joins the end of the reading order. Trashed chapters count
+        // too, so restoring one never collides with a chapter made since.
+        let chapter_seq = if node_type == "chapter" {
+            Some(tx.query_row(
+                "SELECT COALESCE(MAX(chapter_seq), 0) + 1 FROM nodes
+                 WHERE story_id = ?1 AND node_type = 'chapter'",
+                params![&story_id],
+                |row| row.get::<_, i64>(0),
+            )?)
+        } else {
+            None
+        };
+
         tx.execute(
-            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![&id, &story_id, &node_type, &label, &content, pos_x, pos_y, &created_by, &timestamp, &timestamp, &character_id],
+            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![&id, &story_id, &node_type, &label, &content, pos_x, pos_y, &created_by, &timestamp, &timestamp, &character_id, chapter_seq],
         )?;
 
         log_audit(
@@ -913,6 +926,7 @@ impl Db {
             created_at: timestamp.clone(),
             updated_at: timestamp,
             character_id,
+            chapter_seq,
         })
     }
 
@@ -987,7 +1001,7 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
                  FROM nodes WHERE id = ?1",
                 params![id],
                 node_row,
@@ -1136,7 +1150,7 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
-                    n.created_by, n.created_at, n.updated_at, n.character_id
+                    n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq
              FROM nodes n JOIN stories s ON s.id = n.story_id
              WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
              ORDER BY n.created_at",
@@ -1145,6 +1159,91 @@ impl Db {
         let rows = stmt.query_map(params![story_id], node_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Puts the live chapters of a story in the given reading order, numbering
+    /// them 1..n. Every chapter must be listed exactly once: a partial order
+    /// would leave a chapter unnumbered or a number doubled.
+    pub fn set_chapter_order(
+        &self,
+        story_id: &str,
+        ordered_ids: Vec<String>,
+        user: String,
+    ) -> DbResult<Vec<Node>> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing: Vec<(String, Option<i64>)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, chapter_seq FROM nodes
+                 WHERE story_id = ?1 AND node_type = 'chapter' AND deleted_at IS NULL",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let listed: std::collections::HashSet<&str> =
+            ordered_ids.iter().map(|id| id.as_str()).collect();
+
+        if listed.len() != ordered_ids.len()
+            || listed.len() != existing.len()
+            || !existing.iter().all(|(id, _)| listed.contains(id.as_str()))
+        {
+            return Err(DbError::Invalid(
+                "the order must list every live chapter of this story exactly once".to_string(),
+            ));
+        }
+
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let position = (index + 1) as i64;
+            let previous = existing
+                .iter()
+                .find(|(chapter_id, _)| chapter_id == id)
+                .and_then(|(_, sequence)| *sequence);
+
+            if previous == Some(position) {
+                continue;
+            }
+
+            tx.execute(
+                "UPDATE nodes SET chapter_seq = ?1, updated_at = ?2 WHERE id = ?3",
+                params![position, &timestamp, id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_seq"),
+                    old_value: previous.map(|value| value.to_string()),
+                    new_value: Some(position.to_string()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        let chapters = {
+            let mut stmt = tx.prepare(
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y,
+                        created_by, created_at, updated_at, character_id, chapter_seq
+                 FROM nodes
+                 WHERE story_id = ?1 AND node_type = 'chapter' AND deleted_at IS NULL
+                 ORDER BY chapter_seq, created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], node_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        tx.commit()?;
+
+        Ok(chapters)
     }
 
     // ===== EDGE OPERATIONS =====
@@ -1472,7 +1571,7 @@ impl Db {
 
         let nodes = {
             let mut stmt = guard.prepare(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
                  FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
             let rows = stmt.query_map(params![story_id], node_row)?;
@@ -3025,10 +3124,31 @@ impl Db {
             )?;
         }
 
+        // An export written before chapters had a reading order has no numbers
+        // to carry, so its chapters are numbered in the order the file lists
+        // them rather than arriving unnumbered.
+        let mut next_chapter_seq = export
+            .nodes
+            .iter()
+            .filter_map(|node| node.chapter_seq)
+            .max()
+            .unwrap_or(0)
+            + 1;
+
         for node in &export.nodes {
+            let chapter_seq = match node.chapter_seq {
+                Some(sequence) => Some(sequence),
+                None if node.node_type == "chapter" => {
+                    let sequence = next_chapter_seq;
+                    next_chapter_seq += 1;
+                    Some(sequence)
+                }
+                None => None,
+            };
+
             tx.execute(
-                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     &nodes[&node.id],
                     &story_id,
@@ -3044,6 +3164,7 @@ impl Db {
                     // so the link has to be remapped or the copy would point at the
                     // source story's row.
                     node.character_id.as_ref().and_then(|id| characters.get(id)),
+                    chapter_seq,
                 ],
             )?;
         }
@@ -3223,6 +3344,10 @@ pub struct Node {
     /// written before schema v5, hence the default.
     #[serde(default)]
     pub character_id: Option<String>,
+    /// Where a chapter sits in the reading order, 1-based. NULL on every node
+    /// that is not a chapter, and absent from exports written before schema v7.
+    #[serde(default)]
+    pub chapter_seq: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -3512,6 +3637,9 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
         ),
         ("node", "label") => text_spec("nodes", "label", NODE_FROM, OWN_LIVE, true),
         ("node", "content") => optional_text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
+        ("node", "chapter_seq") => {
+            optional_number_spec("nodes", "chapter_seq", NODE_FROM, OWN_LIVE)
+        }
         ("node", "position") => RevertSpec {
             table: "nodes",
             column: "pos_x",
@@ -3830,13 +3958,14 @@ fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         character_id: row.get(10)?,
+        chapter_seq: row.get(11)?,
     })
 }
 
 /// One node as stored, live or in the trash.
 fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
     conn.query_row(
-        "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
+        "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
          FROM nodes WHERE id = ?1",
         params![id],
         node_row,
@@ -3949,6 +4078,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
 
     if version < 6 {
         conn.execute_batch(MIGRATION_006)?;
+    }
+
+    if version < 7 {
+        conn.execute_batch(MIGRATION_007)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -4106,6 +4239,21 @@ const MIGRATION_006: &str = "
     ALTER TABLE characters ADD COLUMN xp INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE characters ADD COLUMN rank TEXT;
     ALTER TABLE characters ADD COLUMN xp_to_next INTEGER;
+";
+
+/// Schema v7: chapters get a reading order of their own.
+///
+/// Existing chapter nodes are numbered by the order they were created, which is
+/// the only order an older story has; everyone else gets NULL, because a card
+/// that is not a chapter has no place in the books.
+const MIGRATION_007: &str = "
+    ALTER TABLE nodes ADD COLUMN chapter_seq INTEGER;
+    UPDATE nodes SET chapter_seq = (
+        SELECT COUNT(*) FROM nodes earlier
+        WHERE earlier.story_id = nodes.story_id
+          AND earlier.node_type = 'chapter'
+          AND earlier.rowid <= nodes.rowid
+    ) WHERE node_type = 'chapter';
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -5838,13 +5986,231 @@ mod tests {
             .unwrap()
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let characters = db.list_characters("s1").unwrap();
         assert_eq!(characters[0].level, 1);
         assert_eq!(characters[0].xp, 0);
         assert_eq!(characters[0].rank, None);
         assert_eq!(characters[0].xp_to_next, None);
+    }
+
+    #[test]
+    fn an_older_database_numbers_its_chapters_in_the_order_they_were_made() {
+        let dir = std::env::temp_dir().join(format!("litrpg-migrate7-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("storyboard.db");
+
+        // Built at v6, before chapters had a reading order.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(BASE_SCHEMA).unwrap();
+            conn.execute_batch(INDEXES).unwrap();
+            conn.execute_batch(MIGRATION_002).unwrap();
+            conn.execute_batch(MIGRATION_003).unwrap();
+            conn.execute_batch(MIGRATION_004).unwrap();
+            conn.execute_batch(MIGRATION_005).unwrap();
+            conn.execute_batch(MIGRATION_006).unwrap();
+            conn.pragma_update(None, "user_version", 6).unwrap();
+
+            conn.execute(
+                "INSERT INTO stories (id, title, description, created_at, updated_at)
+                 VALUES ('s1', 'Old', NULL, 'then', 'then')",
+                [],
+            )
+            .unwrap();
+
+            // Created out of order on the calendar, but made first and third: the
+            // reading order follows the making, which is the order the old board
+            // showed them in.
+            for (id, node_type, label, created_at) in [
+                ("n1", "chapter", "One", "2026-01-09"),
+                ("n2", "idea", "Idea", "2026-01-02"),
+                ("n3", "chapter", "Two", "2026-01-01"),
+            ] {
+                conn.execute(
+                    "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y,
+                                        created_by, created_at, updated_at)
+                     VALUES (?1, 's1', ?2, ?3, NULL, 0, 0, 'Ada', ?4, ?4)",
+                    params![id, node_type, label, created_at],
+                )
+                .unwrap();
+            }
+        }
+
+        let db = Db::open(&path).unwrap();
+        let nodes = db.list_nodes("s1").unwrap();
+        let sequence = |id: &str| {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| node.chapter_seq)
+        };
+
+        assert_eq!(sequence("n1"), Some(1));
+        assert_eq!(sequence("n3"), Some(2));
+        assert_eq!(sequence("n2"), None, "only a chapter has a place in the book");
+    }
+
+    #[test]
+    fn chapters_join_the_end_and_are_reordered_as_a_whole() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        let make = |label: &str, node_type: &str| {
+            db.create_node(
+                story.id.clone(),
+                node_type.into(),
+                label.into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap()
+        };
+
+        let one = make("One", "chapter");
+        let idea = make("Idea", "idea");
+        let two = make("Two", "chapter");
+        let three = make("Three", "chapter");
+
+        assert_eq!(one.chapter_seq, Some(1));
+        assert_eq!(two.chapter_seq, Some(2));
+        assert_eq!(three.chapter_seq, Some(3));
+        assert_eq!(idea.chapter_seq, None);
+
+        let reordered = db
+            .set_chapter_order(
+                &story.id,
+                vec![two.id.clone(), one.id.clone(), three.id.clone()],
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|node| (node.label.as_str(), node.chapter_seq))
+                .collect::<Vec<_>>(),
+            vec!["Two", "One", "Three"]
+                .into_iter()
+                .zip([Some(1), Some(2), Some(3)])
+                .collect::<Vec<_>>()
+        );
+
+        let page = db
+            .get_audit_page(Some(&story.id), Some("node"), Some(&one.id), 50, 0)
+            .unwrap();
+        let moved = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("chapter_seq"))
+            .expect("the move should be recorded");
+        assert_eq!(moved.old_value.as_deref(), Some("1"));
+        assert_eq!(moved.new_value.as_deref(), Some("2"));
+
+        // A partial, doubled or foreign list is refused whole rather than leaving
+        // the numbers half-written.
+        assert!(db
+            .set_chapter_order(&story.id, vec![one.id.clone()], "Ada".into())
+            .is_err());
+        assert!(db
+            .set_chapter_order(
+                &story.id,
+                vec![two.id.clone(), one.id.clone(), one.id.clone()],
+                "Ada".into()
+            )
+            .is_err());
+        assert!(db
+            .set_chapter_order(
+                &story.id,
+                vec![two.id.clone(), one.id.clone(), idea.id.clone()],
+                "Ada".into()
+            )
+            .is_err());
+
+        let chapters = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .filter(|node| node.node_type == "chapter")
+            .map(|node| node.label)
+            .collect::<Vec<_>>();
+        assert_eq!(chapters, vec!["One", "Two", "Three"], "refusals change nothing");
+
+        // A chapter in the trash keeps its number, so restoring it cannot collide
+        // with a chapter made since.
+        db.delete_node(&three.id, "Ada".into()).unwrap();
+        let four = make("Four", "chapter");
+        assert_eq!(four.chapter_seq, Some(4));
+    }
+
+    #[test]
+    fn an_export_carries_the_reading_order_through_an_import() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        let make = |label: &str| {
+            db.create_node(
+                story.id.clone(),
+                "chapter".into(),
+                label.into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap()
+        };
+
+        let one = make("One");
+        let two = make("Two");
+        db.set_chapter_order(&story.id, vec![two.id.clone(), one.id.clone()], "Ada".into())
+            .unwrap();
+
+        let imported = db
+            .import_story(db.export_story(&story.id).unwrap(), "Ada".into())
+            .unwrap();
+
+        let mut order: Vec<(String, Option<i64>)> = db
+            .list_nodes(&imported.id)
+            .unwrap()
+            .into_iter()
+            .filter(|node| node.node_type == "chapter")
+            .map(|node| (node.label, node.chapter_seq))
+            .collect();
+        order.sort_by_key(|(_, sequence)| *sequence);
+
+        assert_eq!(
+            order,
+            vec![("Two".to_string(), Some(1)), ("One".to_string(), Some(2))]
+        );
+
+        // An export written before the column existed has no order to carry, so
+        // its chapters are numbered in the order the file holds them.
+        let mut legacy = db.export_story(&story.id).unwrap();
+        for node in legacy.nodes.iter_mut() {
+            if node.node_type == "chapter" {
+                node.chapter_seq = None;
+            }
+        }
+
+        let restored = db.import_story(legacy, "Ada".into()).unwrap();
+        let mut sequences: Vec<Option<i64>> = db
+            .list_nodes(&restored.id)
+            .unwrap()
+            .into_iter()
+            .filter(|node| node.node_type == "chapter")
+            .map(|node| node.chapter_seq)
+            .collect();
+        sequences.sort();
+
+        assert_eq!(sequences, vec![Some(1), Some(2)]);
     }
 
     #[test]

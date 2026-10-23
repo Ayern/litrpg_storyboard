@@ -26,6 +26,17 @@ rather than unstyled. Dragging a node saves its position. Deleting a node remove
 the connections attached to it, and the node plus each removed connection are
 recorded in the history.
 
+**Chapter order** — the Chapters tab lists every live `chapter` card in reading
+order, numbered from 1, with **New chapter** (which creates the card and puts it
+last), **↑**/**↓** to move one place, and **Renumber** whenever positions repeat,
+are missing, or a chapter has none. A move writes the whole order in one command
+and renumbers the rest, so the list is 1..n unless a chapter was deleted or an
+older file was imported — and then the tab says which positions are empty or
+doubled rather than renumbering behind your back. A chapter card shows `Ch. N` beside its
+type on the canvas, both directions of a move are recorded in the history, and a
+move is undone like any canvas change. Cards that are not chapters are never
+numbered.
+
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
 the label, add or change its notes, and save. Only the fields you actually changed
@@ -217,6 +228,10 @@ Behaviour worth knowing:
   edge's label and relation type.
 - **Cascades are recorded individually.** Deleting a node records the node and
   every edge that went with it.
+- **A chapter move records the place it left and the place it took.** Moving one
+  chapter renumbers the ones between, and each chapter whose number changed gets
+  its own `chapter_seq` entry, so the history explains the whole new order rather
+  than only the card that was dragged.
 - **A deletion records where the item can be found again.** Deleting a character
   writes one entry naming it; its stats and attributes are not touched, because
   they stay attached to it and come back with it. Restoring writes a `restore`
@@ -260,7 +275,9 @@ added `nodes.character_id`, which is NULL on every existing node: nodes start
 unlinked and are pointed at a cast member from the inspector. Version 6 added
 `characters.level`, `xp`, `rank` and `xp_to_next`; an existing character gains
 level 1 and 0 XP, and no level is inferred from a stat that happened to be called
-"Level".
+"Level". Version 7 added `nodes.chapter_seq`, numbering existing chapter cards by
+the order they were created; every other card holds NULL, and a chapter made
+afterwards is numbered when it is created.
 
 | Table | Contents |
 | --- | --- |
@@ -268,7 +285,7 @@ level 1 and 0 XP, and no level is inferred from a stat that happened to be calle
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, `chapter_seq` for a chapter's place in the reading order, `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -308,7 +325,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -327,7 +344,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 39 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 40 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -340,6 +357,11 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
+- **Only chapters have a reading order.** Arcs, POV, in-world time and word
+  counts are not modelled yet, and chapters are reordered with the ↑/↓ buttons
+  rather than by dragging in the list. Deleting a chapter leaves its position
+  empty until something is moved or **Renumber** is pressed; that is shown in the
+  tab, not repaired silently.
 - **Progression is recorded, not calculated.** Nothing checks that experience is
   below the target, that a level-up is earned, or that a rank only rises: the
   fields hold whatever the author typed, and leveling up just adds one. The bar

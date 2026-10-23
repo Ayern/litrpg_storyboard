@@ -218,6 +218,19 @@ fn get_graph_nodes(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Nod
     db.list_nodes(&story_id).map_err(|e| e.to_string())
 }
 
+/// Numbers the live chapters 1..n in the order given. A list that misses or
+/// repeats a chapter is refused rather than half-applied.
+#[tauri::command]
+fn set_chapter_order(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    ordered_ids: Vec<String>,
+    user: String,
+) -> Result<Vec<Node>, String> {
+    db.set_chapter_order(&story_id, ordered_ids, user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_story_character_stats(
     db: tauri::State<'_, Db>,
@@ -537,6 +550,7 @@ pub fn run() {
             delete_character_attribute,
             create_graph_node,
             get_graph_nodes,
+            set_chapter_order,
             get_story_character_stats,
             update_graph_node_position,
             update_graph_node,

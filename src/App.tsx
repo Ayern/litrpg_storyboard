@@ -121,6 +121,8 @@ type NodeData = {
   characterStats?: CharacterStat[];
   // The linked cast member's level, drawn before the numbers.
   characterLevel?: number | null;
+  // Where a chapter sits in the reading order; null on every other kind.
+  chapterSeq?: number | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -242,7 +244,14 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   return (
     <div className={`graph-node ${kind}`}>
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
-      <span className="graph-node-kind">{kind}</span>
+      <span className="graph-node-topline">
+        <span className="graph-node-kind">{kind}</span>
+        {kind === 'chapter' && data.chapterSeq != null && (
+          <span className="graph-node-chapter" title="Place in the reading order">
+            Ch. {data.chapterSeq}
+          </span>
+        )}
+      </span>
       <span className="graph-node-label">{data.label}</span>
       {linked && (
         <span
@@ -312,6 +321,8 @@ function toFlowNode(row: any): Node<NodeData> {
       content: row.content,
       createdBy: row.created_by,
       characterId: row.character_id ?? null,
+      characterLevel: null,
+      chapterSeq: row.chapter_seq ?? null,
     },
   };
 }
@@ -511,6 +522,32 @@ const fieldLabels: Record<string, string> = {
   xp_to_next: 'XP to next',
 };
 
+// The chapter list's one-sentence warning. Positions start at 1, so a story
+// whose middle chapter was deleted can have 1 and 3 while 2 is empty.
+function describeChapterIssues(issues: {
+  duplicates: number[];
+  missing: number[];
+  unnumbered: number;
+}): string {
+  const parts: string[] = [];
+
+  if (issues.duplicates.length > 0) {
+    parts.push(`position ${issues.duplicates.join(', ')} is used more than once`);
+  }
+  if (issues.missing.length > 0) {
+    parts.push(`position ${issues.missing.join(', ')} is empty`);
+  }
+  if (issues.unnumbered > 0) {
+    parts.push(
+      `${issues.unnumbered} chapter${issues.unnumbered === 1 ? '' : 's'} ${
+        issues.unnumbered === 1 ? 'has' : 'have'
+      } no position`
+    );
+  }
+
+  return `The reading order needs attention: ${parts.join('; ')}.`;
+}
+
 function entityLabel(entry: AuditEntry): string {
   const base = entityLabels[entry.entity_type] ?? entry.entity_type;
   if (!entry.field_changed) return base;
@@ -612,11 +649,18 @@ function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EdgeData>([]);
   
-  const [selectedTab, setSelectedTab] = useState<'graph' | 'characters' | 'audit' | 'trash'>('graph');
+  const [selectedTab, setSelectedTab] = useState<
+    'graph' | 'chapters' | 'characters' | 'audit' | 'trash'
+  >('graph');
   
   const [newStoryTitle, setNewStoryTitle] = useState('');
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
+
+  // The chapter list's own controls.
+  const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [chapterError, setChapterError] = useState<string | null>(null);
+  const [chapterBusy, setChapterBusy] = useState(false);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
@@ -1608,6 +1652,7 @@ function App() {
           content: newDbNode.content,
           createdBy: newDbNode.created_by,
           characterId: newDbNode.character_id ?? null,
+          chapterSeq: newDbNode.chapter_seq ?? null,
         },
       };
 
@@ -1621,6 +1666,154 @@ function App() {
       });
     } catch (e) {
       console.error('Failed to create node:', e);
+    }
+  };
+
+  // The live chapters, in reading order. One with no position yet sorts last by
+  // name, so it is visible and can be given a place rather than hidden.
+  const chapterNodes = useMemo(() => {
+    const chapters = nodes.filter(node => node.data.nodeType === 'chapter');
+
+    return [...chapters].sort((left, right) => {
+      const leftSeq = left.data.chapterSeq ?? Number.MAX_SAFE_INTEGER;
+      const rightSeq = right.data.chapterSeq ?? Number.MAX_SAFE_INTEGER;
+
+      return leftSeq === rightSeq
+        ? left.data.label.localeCompare(right.data.label)
+        : leftSeq - rightSeq;
+    });
+  }, [nodes]);
+
+  // Duplicated, missing or absent numbers. Reordering avoids all three, so this
+  // only has something to say after a deletion or after an older import.
+  const chapterIssues = useMemo(() => {
+    const positions = chapterNodes
+      .map(node => node.data.chapterSeq)
+      .filter((sequence): sequence is number => sequence != null);
+
+    const duplicates = [...new Set(
+      positions.filter((sequence, index) => positions.indexOf(sequence) !== index)
+    )].sort((left, right) => left - right);
+
+    const missing: number[] = [];
+    const highest = positions.length > 0 ? Math.max(...positions) : 0;
+    for (let position = 1; position <= highest; position += 1) {
+      if (!positions.includes(position)) missing.push(position);
+    }
+
+    const unnumbered = chapterNodes.filter(
+      node => node.data.chapterSeq == null
+    ).length;
+
+    return { duplicates, missing, unnumbered };
+  }, [chapterNodes]);
+
+  const applyChapterOrder = async (orderedIds: string[]) => {
+    if (!currentStory) return;
+
+    const updated: any[] = await invoke('set_chapter_order', {
+      storyId: currentStory.id,
+      orderedIds,
+      user: actor,
+    });
+
+    const byId = new Map<string, number | null>(
+      updated.map(row => [row.id, row.chapter_seq ?? null])
+    );
+
+    setNodes(previous =>
+      previous.map(node =>
+        byId.has(node.id)
+          ? {
+              ...node,
+              data: { ...node.data, chapterSeq: byId.get(node.id) ?? null },
+            }
+          : node
+      )
+    );
+  };
+
+  // One move at a time: the list is read back from the database, so a second
+  // click before the first finishes would order the chapters from a stale list.
+  const saveChapterOrder = async (orderedIds: string[], undoIds: string[] | null) => {
+    if (!currentStory || chapterBusy) return;
+
+    setChapterBusy(true);
+    setChapterError(null);
+
+    try {
+      await applyChapterOrder(orderedIds);
+
+      // Renumbering has no earlier order worth returning to: the numbers it
+      // replaces were the problem.
+      if (undoIds) {
+        recordStep({
+          label: 'Reorder chapters',
+          undo: () => applyChapterOrder(undoIds),
+          redo: () => applyChapterOrder(orderedIds),
+        });
+      }
+    } catch (e) {
+      console.error('Failed to reorder chapters:', e);
+      setChapterError(`Could not reorder chapters: ${String(e)}`);
+    } finally {
+      setChapterBusy(false);
+    }
+  };
+
+  const moveChapter = (id: string, delta: number) => {
+    const order = chapterNodes.map(node => node.id);
+    const from = order.indexOf(id);
+    const to = from + delta;
+
+    if (from < 0 || to < 0 || to >= order.length) return;
+
+    const next = [...order];
+    [next[from], next[to]] = [next[to], next[from]];
+    void saveChapterOrder(next, order);
+  };
+
+  // The escape hatch for data that arrived numbered badly: number what is shown,
+  // in the order it is shown.
+  const renumberChapters = () => {
+    void saveChapterOrder(
+      chapterNodes.map(node => node.id),
+      null
+    );
+  };
+
+  const addChapter = async () => {
+    if (!currentStory || !newChapterTitle.trim()) return;
+
+    const position = { x: 120 + Math.random() * 360, y: 100 + Math.random() * 240 };
+
+    setChapterBusy(true);
+    setChapterError(null);
+
+    try {
+      const created: any = await invoke('create_graph_node', {
+        storyId: currentStory.id,
+        nodeType: 'chapter',
+        label: newChapterTitle.trim(),
+        content: null,
+        posX: position.x,
+        posY: position.y,
+        createdBy: actor,
+      });
+
+      setNodes(previous => [...previous, toFlowNode(created)]);
+      setNewChapterTitle('');
+
+      recordStep({
+        label: `Add “${created.label}”`,
+        undo: () => invoke('delete_node', { id: created.id, user: actor }),
+        redo: () => invoke('restore_deleted', { id: created.id, kind: 'node', user: actor }),
+      });
+    } catch (e) {
+      console.error('Failed to add a chapter:', e);
+      setChapterError(`Could not add a chapter: ${String(e)}`);
+    } finally {
+      setChapterBusy(false);
     }
   };
 
@@ -1852,6 +2045,7 @@ function App() {
             content: created.content,
             createdBy: created.created_by,
             characterId: created.character_id ?? character.id,
+            chapterSeq: created.chapter_seq ?? null,
           },
         },
       ]);
@@ -3473,6 +3667,13 @@ function App() {
               Graph
             </button>
             <button
+              className={selectedTab === 'chapters' ? 'active' : ''}
+              title="Put the chapters in reading order and add a new one"
+              onClick={() => setSelectedTab('chapters')}
+            >
+              Chapters
+            </button>
+            <button
               className={selectedTab === 'characters' ? 'active' : ''}
               title="Manage the cast, their stats and attributes"
               onClick={() => setSelectedTab('characters')}
@@ -4196,6 +4397,94 @@ function App() {
                   )}
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {selectedTab === 'chapters' && (
+          <div className="tab-content">
+            {!currentStory ? (
+              <div className="empty-state">Load a story to put its chapters in order</div>
+            ) : (
+              <div className="chapters-layout">
+                <div className="chapters-header">
+                  <div>
+                    <h3 className="chapters-heading">Reading order</h3>
+                    <p className="chapters-hint">
+                      Chapter cards on the Graph tab, numbered from 1. Moving one
+                      renumbers the rest. A new chapter joins the end.
+                    </p>
+                  </div>
+
+                  <div className="chapter-creator">
+                    <input
+                      placeholder="Chapter title"
+                      value={newChapterTitle}
+                      onChange={(e) => setNewChapterTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void addChapter();
+                      }}
+                    />
+                    <button
+                      title="Create a chapter card at the end of the reading order"
+                      onClick={() => void addChapter()}
+                      disabled={!newChapterTitle.trim() || chapterBusy}
+                    >
+                      New chapter
+                    </button>
+                  </div>
+                </div>
+
+                {chapterError && <div className="audit-error">{chapterError}</div>}
+
+                {(chapterIssues.duplicates.length > 0 ||
+                  chapterIssues.missing.length > 0 ||
+                  chapterIssues.unnumbered > 0) && (
+                  <div className="chapter-warning">
+                    <span>{describeChapterIssues(chapterIssues)}</span>
+                    <button
+                      title="Number the chapters one after another in the order shown"
+                      onClick={renumberChapters}
+                      disabled={chapterBusy}
+                    >
+                      Renumber
+                    </button>
+                  </div>
+                )}
+
+                {chapterNodes.length === 0 ? (
+                  <div className="empty">
+                    No chapters yet — add one here, or add a chapter card on the Graph tab.
+                  </div>
+                ) : (
+                  <ol className="chapter-list" aria-label="Chapters">
+                    {chapterNodes.map((node, index) => (
+                      <li key={node.id} className="chapter-row">
+                        <span className="chapter-number">
+                          {node.data.chapterSeq ?? '—'}
+                        </span>
+                        <span className="chapter-label">{node.data.label}</span>
+                        <button
+                          aria-label={`Move ${node.data.label} earlier`}
+                          title="Move this chapter one place earlier"
+                          onClick={() => moveChapter(node.id, -1)}
+                          disabled={index === 0 || chapterBusy}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          aria-label={`Move ${node.data.label} later`}
+                          title="Move this chapter one place later"
+                          onClick={() => moveChapter(node.id, 1)}
+                          disabled={index === chapterNodes.length - 1 || chapterBusy}
+                        >
+                          ↓
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             )}
           </div>
         )}

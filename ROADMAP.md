@@ -40,9 +40,10 @@ the next begins.
   fields, but skills, items and system messages are still just `character_stats`
   rows and free-text attributes, and nothing checks whether a level-up was
   earned or a rank only rose.
-- **No structure above the node.** Chapters are cards among other cards. There is
-  no reading order, no arcs, no POV, no in-world clock, no word counts — so the
-  app cannot answer "what happens in chapter 12?" or "where is Rook at chapter 9?"
+- **Only a reading order so far.** Chapters are numbered 1..n and can be moved
+  up and down, but there are no arcs, POV, in-world clock or word counts — so the
+  app cannot yet answer "what happens in chapter 12?" or "where is Rook at
+  chapter 9?"
 - **No continuity checking.** Nothing warns that a character is in two places, a
   skill is used before it is learned, or a chapter is missing.
 - **Visuals are unverified.** Every UI claim in this project is proven through
@@ -220,11 +221,17 @@ over, a target below the current XP simply fills the bar, and a rank is whatever
 was typed. Export, import and the launch copies carry the new columns, and an
 older export imports at the defaults. **M**
 
-**7. Chapter spine.** Give chapter nodes a sequence and an optional arc, add drag
--reorder in a chapter list with "New chapter" that appends, flag duplicate and
-missing positions, and show word count target/actual per chapter plus a story
-total. This is what turns a cloud of cards into a book. Start with sequence +
-list + reorder; arcs and targets can be a second slice. **M**
+**7. Chapter spine.** **Started — sequence, list and reorder are in.** Migration
+v7 gives `nodes.chapter_seq`; existing chapter cards are numbered by creation
+order, and each new chapter takes the next number. The Chapters tab lists them
+from 1 with **New chapter** appending, ↑/↓ moving one place, and **Renumber** to
+repair repeated, missing or absent numbers; a gap left by a deleted chapter is
+reported rather than silently closed. The whole order is written in one
+`set_chapter_order` command (partial or doubled lists are refused), each changed
+chapter's position lands in the history, a move is undoable, and a chapter card
+shows `Ch. N` on the canvas. Export and import carry the numbers, numbering an
+older file's chapters in its own order. Remaining: dragging in the list, an
+optional arc, word count target/actual per chapter and a story total. **M**
 
 **8. POV and in-world time.** Chapter nodes gain a POV cast member and an
 in-world time (a free-text label plus an optional numeric day for sorting). Add a
