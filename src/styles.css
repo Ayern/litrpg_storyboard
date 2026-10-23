@@ -1097,6 +1097,23 @@ body {
   border-radius: 4px;
 }
 
+/* A flag opens a row somewhere in a long list; a short glow says where the
+   scroll landed without changing the layout. */
+.chapter-row-revealed {
+  animation: chapter-row-glow 1.2s ease-out;
+}
+
+@keyframes chapter-row-glow {
+  from {
+    border-color: #e3cb94;
+    box-shadow: 0 0 0 1px rgba(227, 203, 148, 0.55);
+  }
+  to {
+    border-color: #333;
+    box-shadow: 0 0 0 1px rgba(227, 203, 148, 0);
+  }
+}
+
 .chapter-row-main {
   display: flex;
   align-items: center;
@@ -1507,6 +1524,29 @@ body {
   font-size: 12px;
   line-height: 1.4;
   color: #d8c9a8;
+}
+
+/* A chapter named in a flag is a link, not a second sentence: it sits in the
+   line and opens that chapter where it is. */
+.chapter-continuity-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: #e3cb94;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.chapter-continuity-link:hover {
+  text-decoration-style: solid;
+}
+
+.chapter-continuity-link:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: 2px;
 }
 
 .node-legend {

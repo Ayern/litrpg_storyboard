@@ -137,6 +137,10 @@ type NodeData = {
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
+// One advisory line in the continuity panel: its words, with every chapter it
+// names as a part that opens that chapter when clicked.
+type ContinuityPart = string | { id: string; text: string };
+
 // We'll use ReactFlow's internal types but cast our data
 const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
 type NodeType = typeof nodeTypes[number];
@@ -815,6 +819,10 @@ function App() {
 
   // The arc and word counts, edited one chapter at a time in the list.
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  // The chapter a continuity flag just opened, lit briefly so the eye can find
+  // the row the scroll landed on.
+  const [revealedChapterId, setRevealedChapterId] = useState<string | null>(null);
+  const revealTimer = useRef<number | null>(null);
   const [chapterArcDraft, setChapterArcDraft] = useState('');
   const [chapterWordsDraft, setChapterWordsDraft] = useState('');
   const [chapterTargetDraft, setChapterTargetDraft] = useState('');
@@ -1997,21 +2005,59 @@ function App() {
   }, [chapterNodes]);
 
   // Continuity is advisory: nothing here blocks a save. It names what looks
-  // inconsistent — a chapter with no POV, a day that goes backwards, a time that
-  // goes backwards inside a day, two chapters at the same moment, or one cast
-  // member in two chapters on the same day — and leaves the decision to the
-  // author.
+  // inconsistent — a chapter with no POV, a time with no day to place it on, a
+  // day that goes backwards, a time that goes backwards inside a day, two
+  // chapters at the same moment, or one cast member in two chapters on the same
+  // day — and leaves the decision to the author. Every chapter it names is a
+  // link that opens that chapter, so a flag leads to the thing to fix.
   const chapterContinuity = useMemo(() => {
-    const warnings: string[] = [];
+    const warnings: ContinuityPart[][] = [];
+
+    const chapterLink = (id: string, label: string, quoted = false): ContinuityPart => ({
+      id,
+      text: quoted ? `“${label}”` : label,
+    });
+
+    // The names in a grouped flag, comma-separated like the other counts.
+    const commaList = (chapters: { id: string; label: string }[]): ContinuityPart[] =>
+      chapters.flatMap((chapter, index) => [
+        ...(index === 0 ? [] : [', ']),
+        chapterLink(chapter.id, chapter.label),
+      ]);
+
+    // “One, Two and Three”, so a sentence reads as one.
+    const andList = (chapters: { id: string; label: string }[]): ContinuityPart[] =>
+      chapters.flatMap((chapter, index) => [
+        ...(index === 0 ? [] : [index === chapters.length - 1 ? ' and ' : ', ']),
+        chapterLink(chapter.id, chapter.label, true),
+      ]);
 
     const withoutPov = chapterNodes.filter(node => !node.data.chapterPov);
 
     if (withoutPov.length > 0) {
-      warnings.push(
+      warnings.push([
         `${withoutPov.length} chapter${
           withoutPov.length === 1 ? ' has' : 's have'
-        } no POV: ${withoutPov.map(node => node.data.label).join(', ')}.`
-      );
+        } no POV: `,
+        ...commaList(withoutPov.map(node => ({ id: node.id, label: node.data.label }))),
+        '.',
+      ]);
+    }
+
+    // A time without a day is kept but cannot be placed: the timeline has
+    // nothing to order the label against, so the author is told where to put it.
+    const timeWithoutDay = chapterNodes.filter(
+      node => node.data.chapterDay == null && (node.data.chapterTime ?? '').trim() !== ''
+    );
+
+    if (timeWithoutDay.length > 0) {
+      warnings.push([
+        `${timeWithoutDay.length} chapter${
+          timeWithoutDay.length === 1 ? ' has' : 's have'
+        } a time but no day: `,
+        ...commaList(timeWithoutDay.map(node => ({ id: node.id, label: node.data.label }))),
+        '.',
+      ]);
     }
 
     // Reading order, with the chapters that are not placed in time skipped.
@@ -2022,9 +2068,12 @@ function App() {
       const after = placed[index];
 
       if ((after.data.chapterDay ?? 0) < (before.data.chapterDay ?? 0)) {
-        warnings.push(
-          `“${after.data.label}” goes back to Day ${after.data.chapterDay} after “${before.data.label}” on Day ${before.data.chapterDay}.`
-        );
+        warnings.push([
+          chapterLink(after.id, after.data.label, true),
+          ` goes back to Day ${after.data.chapterDay} after `,
+          chapterLink(before.id, before.data.label, true),
+          ` on Day ${before.data.chapterDay}.`,
+        ]);
         continue;
       }
 
@@ -2040,16 +2089,19 @@ function App() {
         continue;
       }
 
-      warnings.push(
-        `“${after.data.label}” goes back to ${after.data.chapterTime} after “${before.data.label}” at ${before.data.chapterTime} on Day ${after.data.chapterDay}.`
-      );
+      warnings.push([
+        chapterLink(after.id, after.data.label, true),
+        ` goes back to ${after.data.chapterTime} after `,
+        chapterLink(before.id, before.data.label, true),
+        ` at ${before.data.chapterTime} on Day ${after.data.chapterDay}.`,
+      ]);
     }
 
     // Two chapters cannot happen at the same moment on the same day. Only labels
     // that read as a time of day can collide, so “after the fire” is left alone.
     const moments = new Map<
       string,
-      { day: number; chapters: { label: string; time: string }[] }
+      { day: number; chapters: { id: string; label: string; time: string }[] }
     >();
 
     placed.forEach(node => {
@@ -2059,6 +2111,7 @@ function App() {
 
       const key = `${node.data.chapterDay}::${minutes}`;
       const chapter = {
+        id: node.id,
         label: node.data.label,
         time: (node.data.chapterTime ?? '').trim(),
       };
@@ -2072,13 +2125,6 @@ function App() {
       moments.set(key, { day: node.data.chapterDay ?? 0, chapters: [chapter] });
     });
 
-    // “One, Two and Three” rather than a bare comma list, so a warning reads as
-    // a sentence.
-    const andList = (parts: string[]) =>
-      parts.length < 2
-        ? (parts[0] ?? '')
-        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-
     moments.forEach(moment => {
       if (moment.chapters.length < 2) return;
 
@@ -2089,25 +2135,36 @@ function App() {
       );
 
       if (writtenTheSame) {
-        warnings.push(
-          `${andList(moment.chapters.map(chapter => `“${chapter.label}”`))} ${
-            moment.chapters.length === 2 ? 'are both' : 'are all'
-          } at ${moment.chapters[0].time} on Day ${moment.day}.`
-        );
+        warnings.push([
+          ...andList(moment.chapters),
+          ` ${moment.chapters.length === 2 ? 'are both' : 'are all'} at ${
+            moment.chapters[0].time
+          } on Day ${moment.day}.`,
+        ]);
         return;
       }
 
-      warnings.push(
-        `${andList(
-          moment.chapters.map(chapter => `“${chapter.label}” at ${chapter.time}`)
-        )} happen at the same moment on Day ${moment.day}.`
-      );
+      const parts: ContinuityPart[] = [];
+
+      moment.chapters.forEach((chapter, index) => {
+        parts.push(
+          ...(index === 0
+            ? []
+            : [index === moment.chapters.length - 1 ? ' and ' : ', '])
+        );
+        parts.push(chapterLink(chapter.id, chapter.label, true));
+        parts.push(` at ${chapter.time}`);
+      });
+
+      parts.push(` happen at the same moment on Day ${moment.day}.`);
+
+      warnings.push(parts);
     });
 
     // One cast member cannot be the point of view of two chapters on one day.
     const bookings = new Map<
       string,
-      { pov: string; day: number; chapters: string[] }
+      { pov: string; day: number; chapters: { id: string; label: string }[] }
     >();
 
     placed.forEach(node => {
@@ -2119,31 +2176,63 @@ function App() {
       const booking = bookings.get(key);
 
       if (booking) {
-        booking.chapters.push(node.data.label);
+        booking.chapters.push({ id: node.id, label: node.data.label });
         return;
       }
 
       bookings.set(key, {
         pov,
         day: node.data.chapterDay ?? 0,
-        chapters: [node.data.label],
+        chapters: [{ id: node.id, label: node.data.label }],
       });
     });
 
     bookings.forEach(booking => {
       if (booking.chapters.length < 2) return;
 
-      warnings.push(
+      warnings.push([
         `${
           castNames.get(booking.pov) ?? 'A cast member in the trash'
-        } is the POV of ${booking.chapters.length} chapters on Day ${
-          booking.day
-        }: ${booking.chapters.join(', ')}.`
-      );
+        } is the POV of ${booking.chapters.length} chapters on Day ${booking.day}: `,
+        ...commaList(booking.chapters),
+        '.',
+      ]);
     });
 
     return warnings;
   }, [chapterNodes, castNames]);
+
+  // A flag leads somewhere: the chapter it names opens its details, and the row
+  // is brought into view and lit for a moment so the warning is answered where
+  // it was raised.
+  const revealChapter = (chapterId: string) => {
+    const node = chapterNodes.find(candidate => candidate.id === chapterId);
+
+    if (!node) return;
+
+    startChapterEdit(node);
+
+    document
+      .querySelector(`[data-chapter-id="${chapterId}"]`)
+      ?.scrollIntoView?.({ block: 'nearest' });
+
+    setRevealedChapterId(chapterId);
+
+    if (revealTimer.current != null) window.clearTimeout(revealTimer.current);
+
+    revealTimer.current = window.setTimeout(() => {
+      setRevealedChapterId(null);
+      revealTimer.current = null;
+    }, 1200);
+  };
+
+  // A timer left behind by a flag must not reach into an unmounted panel.
+  useEffect(
+    () => () => {
+      if (revealTimer.current != null) window.clearTimeout(revealTimer.current);
+    },
+    []
+  );
 
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
@@ -5305,7 +5394,11 @@ function App() {
                       {chapterNodes.map((node, index) => (
                         <li
                           key={node.id}
-                          className="chapter-row"
+                          className={
+                            revealedChapterId === node.id
+                              ? 'chapter-row chapter-row-revealed'
+                              : 'chapter-row'
+                          }
                           data-chapter-id={node.id}
                         >
                           <div className="chapter-row-main">
@@ -5656,8 +5749,28 @@ function App() {
                           </span>
                         </div>
                         <ul>
-                          {chapterContinuity.map((warning, index) => (
-                            <li key={`${index}-${warning}`}>{warning}</li>
+                          {chapterContinuity.map((parts, index) => (
+                            <li
+                              key={`${index}-${parts
+                                .map(part => (typeof part === 'string' ? part : part.text))
+                                .join('')}`}
+                            >
+                              {parts.map((part, partIndex) =>
+                                typeof part === 'string' ? (
+                                  <React.Fragment key={partIndex}>{part}</React.Fragment>
+                                ) : (
+                                  <button
+                                    key={partIndex}
+                                    type="button"
+                                    className="chapter-continuity-link"
+                                    title="Open this chapter's details"
+                                    onClick={() => revealChapter(part.id)}
+                                  >
+                                    {part.text}
+                                  </button>
+                                )
+                              )}
+                            </li>
                           ))}
                         </ul>
                       </section>

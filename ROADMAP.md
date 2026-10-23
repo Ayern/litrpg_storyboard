@@ -43,7 +43,8 @@ the next begins.
 - **In-world time is a day and a typed label.** A chapter can name its POV, its
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
-  is flagged only when both labels can be read that way. Chapters are still
+  is flagged only when both labels can be read that way, and a time with no day
+  is flagged so it is not lost. Chapters are still
   reordered with buttons rather than by dragging in the list, so "where is Rook
   at chapter 9?" is answered by the timeline, not by a search.
 - **No continuity checking.** Nothing warns that a character is in two places, a
@@ -261,12 +262,15 @@ list that orders chapters by day, and inside a day by the time when the label
 reads as a clock or a day part (an unreadable label waits after them, in reading
 order), names each POV, and counts the chapters with no day yet; the story bible
 carries the same timeline and reads the labels the same way. A **Continuity**
-panel below it lists advisory flags — chapters with no POV, a chapter whose day
-goes backwards in reading order, a chapter whose time goes backwards inside one
-day, two chapters placed at the same moment (labels that resolve to the same
-minute, quoted as written), and one cast member named as the POV of two chapters
-on the same day — and says nothing when the chapters agree. Remaining: cast in two places at once across different days,
-and moments that can only be described in words. **M**
+panel below it lists advisory flags — chapters with no POV, a chapter that names
+a time but no day, a chapter whose day goes backwards in reading order, a
+chapter whose time goes backwards inside one day, two chapters placed at the
+same moment (labels that resolve to the same minute, quoted as written), and one
+cast member named as the POV of two chapters on the same day — and says nothing
+when the chapters agree. Each chapter a flag names is a link that opens its
+details and brings its row into view, lit briefly to show where the scroll
+landed. Remaining: cast in two places at once across different days, and moments
+that can only be described in words. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
 member (`character_progress`, unique on character + chapter), entered in a small

@@ -64,16 +64,19 @@ POV is recorded by name (and is not revertible, because the link is stored as an
 id).
 
 **Continuity** — below the timeline, the Chapters tab lists what looks
-inconsistent: a chapter with no POV, a chapter whose day goes backwards in
-reading order, a chapter whose time goes backwards inside one day, two chapters
-placed at the same moment, and one cast member named as the POV of two chapters
-on the same day. A time is only compared when both labels read as a time of day,
-so "after the fire" is never guessed at. Two chapters collide when their labels
-resolve to the same minute, whether they were written the same way or not —
-"Dusk" and "7:00 pm" are one moment — and the flag quotes them as written. The
-flags are advisory — nothing is blocked, and the list only appears when there is
-something to say — and a chapter with no day yet is left out of the timing checks
-rather than being given one.
+inconsistent: a chapter with no POV, a chapter that names a time but no day,
+a chapter whose day goes backwards in reading order, a chapter whose time goes
+backwards inside one day, two chapters placed at the same moment, and one cast
+member named as the POV of two chapters on the same day. A time is only compared
+when both labels read as a time of day, so "after the fire" is never guessed at.
+Two chapters collide when their labels resolve to the same minute, whether they
+were written the same way or not — "Dusk" and "7:00 pm" are one moment — and the
+flag quotes them as written. The flags are advisory — nothing is blocked, and the
+list only appears when there is something to say — and a chapter with no day yet
+is left out of the timing checks rather than being given one. A time label on
+such a chapter is named, so it is not silently lost. Every chapter a flag names
+is a link: clicking it opens that chapter's details, brings its row into view and
+lights it for a moment, so the warning leads to the thing it is about.
 
 **Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
 row opens a panel with **Add note**, **Edit** and **Delete**. There is no
@@ -447,10 +450,10 @@ page that arrives late, and what it says when a filter matches nothing.
   such as `18:40` or `6:40 pm`, or a day part such as dawn, morning, noon,
   afternoon, dusk or night (with "early" or "late" nudging an hour). Anything
   else — "after the fire" — is stored and shown but never compared, so a scene it
-  really follows is not flagged. There is no calendar, a time with no day is
-  stored but cannot be placed, and a shared moment is caught only when both
-  labels read as a time of day — two chapters that both say "after the fire" are
-  not compared.
+  really follows is not flagged. There is no calendar; a time with no day is
+  stored and flagged, but cannot be placed until a day is typed. A shared moment
+  is caught only when both labels read as a time of day — two chapters that both
+  say "after the fire" are not compared.
 - **Only chapters have these fields.** POV, a day and a time belong to chapters, and
   chapters are reordered with the ↑/↓ buttons rather than by dragging in the
   list. Deleting a chapter leaves its position empty until something is moved

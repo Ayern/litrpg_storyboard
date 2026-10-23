@@ -894,16 +894,57 @@ describe('chapter notes', () => {
 });
 
 describe('chapter continuity', () => {
+  // A flag's words, whichever elements carry them, so an assertion does not
+  // depend on which chapter names happen to be links.
+  function flags(panel: HTMLElement) {
+    return [...panel.querySelectorAll('li')].map(item => item.textContent);
+  }
+
   it('names the chapters that have no POV', async () => {
     await openChapters();
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText('3 chapters have no POV: One, Two, Three.')
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain('3 chapters have no POV: One, Two, Three.');
+    // Every name in the sentence is a way to the chapter it names.
+    expect(within(panel).getByRole('button', { name: 'One' })).toBeInTheDocument();
     // The flags are advisory, and the panel says so rather than blocking a save.
     expect(within(panel).getByText(/1 to check · advisory/)).toBeInTheDocument();
+  });
+
+  it('flags a time label with no day to place it on', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 1;
+    rows[2].chapter_pov = 'c2';
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_time = 'Dusk';
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(flags(panel)).toContain('1 chapter has a time but no day: Three.');
+    expect(within(panel).getByText(/1 to check · advisory/)).toBeInTheDocument();
+  });
+
+  it('groups the chapters that name a time but no day', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_time = 'after the fire';
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 2;
+    rows[3].chapter_time = 'Noon';
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    // A label that reads as no time still names a time: the missing day is the
+    // problem, and the chapter placed on a day is left alone.
+    expect(flags(panel)).toContain('2 chapters have a time but no day: One, Two.');
   });
 
   it('flags a day that goes backwards in reading order', async () => {
@@ -919,9 +960,7 @@ describe('chapter continuity', () => {
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText('“Two” goes back to Day 2 after “One” on Day 5.')
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain('“Two” goes back to Day 2 after “One” on Day 5.');
   });
 
   it('flags one cast member looking after two chapters on the same day', async () => {
@@ -937,9 +976,7 @@ describe('chapter continuity', () => {
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText('Rook is the POV of 2 chapters on Day 3: One, Three.')
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain('Rook is the POV of 2 chapters on Day 3: One, Three.');
   });
 
   it('flags a time that goes backwards inside one day', async () => {
@@ -958,9 +995,9 @@ describe('chapter continuity', () => {
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText('“Two” goes back to Morning after “One” at Dusk on Day 4.')
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain(
+      '“Two” goes back to Morning after “One” at Dusk on Day 4.'
+    );
     // A label that reads as no time at all is not compared, so Three is silent.
     expect(within(panel).queryByText(/“Three”/)).not.toBeInTheDocument();
   });
@@ -978,9 +1015,7 @@ describe('chapter continuity', () => {
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText('“One” and “Two” are both at Dusk on Day 3.')
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain('“One” and “Two” are both at Dusk on Day 3.');
   });
 
   it('flags labels the clock reads as the same moment but that are written apart', async () => {
@@ -999,11 +1034,47 @@ describe('chapter continuity', () => {
 
     const panel = screen.getByRole('region', { name: 'Continuity' });
 
-    expect(
-      within(panel).getByText(
-        '“One” at Dusk, “Two” at 19:00 and “Three” at 7:00 pm happen at the same moment on Day 3.'
-      )
-    ).toBeInTheDocument();
+    expect(flags(panel)).toContain(
+      '“One” at Dusk, “Two” at 19:00 and “Three” at 7:00 pm happen at the same moment on Day 3.'
+    );
+  });
+
+  it('opens the chapter a flag names, and brings its row into view', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 4;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 4;
+    rows[2].chapter_time = 'Morning';
+
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    const user = await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+    await user.click(within(panel).getByRole('button', { name: '“Two”' }));
+
+    // The chapter's own details open, ready to be corrected where the flag was.
+    expect(screen.getByLabelText('Day')).toHaveValue(4);
+    expect(screen.getByLabelText('Time')).toHaveValue('Morning');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(document.querySelector('[data-chapter-id="n3"]')).toHaveClass(
+      'chapter-row-revealed'
+    );
+
+    // The glow is a nudge, not a permanent state.
+    await waitFor(
+      () =>
+        expect(document.querySelector('[data-chapter-id="n3"]')).not.toHaveClass(
+          'chapter-row-revealed'
+        ),
+      { timeout: 2500 }
+    );
   });
 
   it('says nothing when the chapters agree', async () => {
@@ -1014,6 +1085,8 @@ describe('chapter continuity', () => {
     rows[2].chapter_day = 2;
     rows[3].chapter_pov = 'c1';
     rows[3].chapter_day = 3;
+    // Whitespace is no time at all, so it does not ask for a day.
+    rows[0].chapter_time = '   ';
 
     await openChapters();
 

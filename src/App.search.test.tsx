@@ -693,7 +693,10 @@ describe('the canvas search', () => {
 
     await user.click(noteResult);
 
-    expect(await screen.findByText('Cinder Keep')).toBeInTheDocument();
+    // Scoped to the list: the chapter is also named by a continuity flag here.
+    expect(
+      within(await screen.findByRole('list', { name: 'Chapters' })).getByText('Cinder Keep')
+    ).toBeInTheDocument();
     expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes');
 
     const panel = document.querySelector('.chapter-notes');
