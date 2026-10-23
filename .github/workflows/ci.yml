@@ -71,6 +71,24 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # The point of the split is that this crate pulls in nothing graphical, which
+      # is what let this job drop its 61 MB apt install. If a GUI dependency creeps
+      # back, say so in seconds instead of failing later with a linker error about
+      # a missing webkit2gtk. Dev-dependencies are checked too: `cargo test` builds
+      # them, so one there would break the job exactly the same way.
+      - name: Check the database crate has no GUI dependency
+        run: |
+          set -euo pipefail
+          gui='^(tauri|wry|webkit2gtk|javascriptcore|gtk|gdk|soup|glib|rsvg|libappindicator)'
+          # Kept separate from the grep so a resolution failure cannot look like
+          # "no GUI crates found".
+          tree=$(cargo tree -p litrpg-db --edges normal,dev,build --prefix none)
+          if grep -E "$gui" <<<"$tree"; then
+            echo "::error::litrpg-db now depends on the crate above, so its tests would need the platform GUI packages back"
+            exit 1
+          fi
+          echo "litrpg-db links no Tauri, wry, GTK or WebKitGTK crate ($(wc -l <<<"$tree") crates in its tree)"
+
       - name: Run database tests
         run: cargo test -p litrpg-db
 
