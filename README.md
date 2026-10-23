@@ -187,7 +187,9 @@ cast comes next — level, rank and XP where they exist, the description, then t
 stats and attributes as a plain list — followed by the other cards grouped by
 kind. Character cards are left out because the cast section already carries their
 sheet. Headings are numbered and nothing is written in app jargon, so the file can
-be pasted into whatever you draft in.
+be pasted into whatever you draft in. **Copy bible** puts the same text on the
+clipboard without writing a file, for pasting straight into a document; the
+window declares only the clipboard write permission, not read.
 
 **Import** — restores one of those snapshots as a **new** story. Every id is
 remapped, so importing the same file twice gives two independent stories and
@@ -351,7 +353,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, export, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -370,10 +372,12 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 42 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 43 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
-  `dialog:default` permission is declared in `capabilities/default.json`.
+  `dialog:default` permission is declared in `capabilities/default.json`, and the
+  outline's copy action uses `tauri-plugin-clipboard-manager` with only
+  `clipboard-manager:allow-write-text`.
 
 ## Limitations
 
@@ -387,10 +391,11 @@ page that arrives late, and what it says when a filter matches nothing.
   yet, and chapters are reordered with the ↑/↓ buttons rather than by dragging in
   the list. Deleting a chapter leaves its position empty until something is moved
   or **Renumber** is pressed; that is shown in the tab, not repaired silently.
-- **The story bible is a file, not the clipboard.** It is written beside the JSON
-  exports, and it carries only what the app models: chapters with arcs and counts,
-  the cast with their sheets, and the other cards. POV, in-world time, skills and
-  inventory have no fields yet, so they cannot appear in it.
+- **The story bible carries only what the app models.** The file and the clipboard
+  hold the same Markdown: chapters with arcs and counts, the cast with their
+  sheets, and the other cards. POV, in-world time, skills and inventory have no
+  fields yet, so they cannot appear in it. Copying needs the clipboard write
+  permission; if the platform refuses it, the error strip says so.
 - **Word counts are typed, not measured.** There is no manuscript to count, so the
   total is the sum of the numbers entered; a chapter without a target contributes
   words to the total but nothing to the target, which is why the tab says how many

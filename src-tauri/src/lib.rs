@@ -501,6 +501,18 @@ fn export_story_markdown(
     Ok(path.display().to_string())
 }
 
+/// The Markdown a clipboard copy needs: the same text the saved file holds, so
+/// the two cannot drift.
+#[tauri::command]
+fn story_bible_markdown(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<String, String> {
+    db.story_bible(&story_id)
+        .map(|bible| bible.markdown)
+        .map_err(|e| e.to_string())
+}
+
 /// Restores a story from a JSON export as a new copy. The path comes from the file
 /// dialog, and every id is remapped, so an import never overwrites anything.
 #[tauri::command]
@@ -557,6 +569,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| -> Result<(), Box<dyn std::error::Error>> {
             let path = resolve_db_path(app.handle())?;
             // Copies the file before opening it, so the copy is the state on disk
@@ -620,6 +633,7 @@ pub fn run() {
             restore_backup,
             export_story_json,
             export_story_markdown,
+            story_bible_markdown,
             import_story_json,
         ])
         .run(tauri::generate_context!())

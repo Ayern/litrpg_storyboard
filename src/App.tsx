@@ -14,6 +14,7 @@ import type { Edge, Node, NodeProps } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
 interface Story {
   id: string;
@@ -744,6 +745,7 @@ function App() {
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -1356,6 +1358,13 @@ function App() {
     const timer = setTimeout(() => setExportStatus(null), 8000);
     return () => clearTimeout(timer);
   }, [exportStatus]);
+
+  // A copied outline is a smaller event than a file, so its note is shorter.
+  useEffect(() => {
+    if (!copyNotice) return;
+    const timer = setTimeout(() => setCopyNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [copyNotice]);
 
   // Characters are refreshed whenever the tab is opened or the story changes.
   useEffect(() => {
@@ -2767,6 +2776,26 @@ function App() {
     }
   };
 
+  // The same text the file holds, so copying and saving cannot say different
+  // things; the Markdown is read from the database rather than the last file.
+  const copyStoryBible = async () => {
+    if (!currentStory) return;
+    setActionError(null);
+    setCopyNotice(null);
+
+    try {
+      const markdown: string = await invoke('story_bible_markdown', {
+        storyId: currentStory.id,
+      });
+
+      await writeText(markdown);
+      setCopyNotice('Story bible copied to the clipboard');
+    } catch (e) {
+      console.error('Failed to copy the story bible:', e);
+      setActionError(`Could not copy the story bible: ${String(e)}`);
+    }
+  };
+
   const openBackups = async () => {
     setBackupsOpen(true);
     setConfirmRestore(null);
@@ -3845,6 +3874,11 @@ function App() {
                 {restoreNotice}
               </span>
             )}
+            {copyNotice && (
+              <span className="history-notice" role="status">
+                {copyNotice}
+              </span>
+            )}
             <button
               className="backups-button"
               title="Restore an earlier copy of the whole database"
@@ -3867,6 +3901,13 @@ function App() {
                   onClick={() => void exportStoryBible()}
                 >
                   Story bible
+                </button>
+                <button
+                  className="export-button"
+                  title="Copy the same Markdown outline to the clipboard"
+                  onClick={() => void copyStoryBible()}
+                >
+                  Copy bible
                 </button>
                 <span className="current-story">{currentStory.title}</span>
               </>

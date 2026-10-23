@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
 
-const { invokeMock, flowMock } = vi.hoisted(() => ({
+const { invokeMock, flowMock, writeTextMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   flowMock: { setCenter: vi.fn(), getZoom: vi.fn(() => 1) },
+  writeTextMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: writeTextMock }));
 
 vi.mock('reactflow', async () => {
   const React = await import('react');
@@ -79,12 +81,17 @@ let stories: (typeof story)[] = [];
 let markdownPath = '';
 let markdownError: string | null = null;
 let jsonPath = '';
+let bibleMarkdown = '';
 
 beforeEach(() => {
   stories = [story];
   markdownPath = 'C:\\data\\exports\\ledger-story-bible.md';
   markdownError = null;
   jsonPath = 'C:\\data\\exports\\ledger.json';
+  bibleMarkdown = '# Ledger\n\n## Chapters\n\n### 1. Opening\n';
+
+  writeTextMock.mockReset();
+  writeTextMock.mockImplementation(async () => {});
 
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string) => {
@@ -101,6 +108,8 @@ beforeEach(() => {
         return markdownPath;
       case 'export_story_json':
         return jsonPath;
+      case 'story_bible_markdown':
+        return bibleMarkdown;
       default:
         return null;
     }
@@ -151,6 +160,31 @@ describe('the story bible export', () => {
       await screen.findByText(/Could not write the story bible: the exports folder is read-only/i)
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Story bible' })).toBeEnabled();
+  });
+
+  it('copies the same outline to the clipboard without writing a file', async () => {
+    const user = await openApp();
+
+    await user.click(screen.getByRole('button', { name: 'Copy bible' }));
+
+    expect(invokeMock).toHaveBeenCalledWith('story_bible_markdown', {
+      storyId: 'story-1',
+    });
+    await waitFor(() => expect(writeTextMock).toHaveBeenCalledWith(bibleMarkdown));
+    expect(await screen.findByText('Story bible copied to the clipboard')).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith('export_story_markdown', expect.anything());
+  });
+
+  it('says why the clipboard copy failed, and does not claim it worked', async () => {
+    const user = await openApp();
+
+    writeTextMock.mockRejectedValueOnce('the clipboard is locked');
+    await user.click(screen.getByRole('button', { name: 'Copy bible' }));
+
+    expect(
+      await screen.findByText(/Could not copy the story bible: the clipboard is locked/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Story bible copied to the clipboard')).not.toBeInTheDocument();
   });
 
   it('offers nothing to export when no story is open', async () => {

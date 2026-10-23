@@ -298,9 +298,9 @@ opens with the title and logline, then chapters in reading order with their arc,
 words against target and notes, followed by a story total; the cast comes next
 with level, rank, XP, description, stats and attributes, then the other cards
 grouped by kind. Character cards are omitted so a sheet is never written twice,
-and no app jargon reaches the file. Remaining: POV and in-world time (item 8),
-skills and inventory (phase 3), open threads, and copy-to-clipboard beside
-save-to-disk. **M**
+and no app jargon reaches the file. **Copy bible** puts the same Markdown on the
+clipboard, so both routes carry identical text. Remaining: POV and in-world time
+(item 8), skills and inventory (phase 3), and open threads. **M**
 
 ### Phase 5 — make it feel inevitable
 
