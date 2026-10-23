@@ -37,31 +37,42 @@ beside its type on the canvas, both directions of a move are recorded in the
 history, and a move is undone like any canvas change. Cards that are not chapters
 are never numbered.
 
-**Chapter arcs, counts, POV and days** — a chapter can also name the arc it
+**Chapter arcs, counts, POV, days and times** — a chapter can also name the arc it
 belongs to, record the words written against an optional target, say whose point
-of view it is told from, and sit on an in-world day. **Edit** on its row opens
-Arc / Words / Target / POV / Day in place; `Enter` saves, `Escape` closes without
-writing. A blank arc, target, POV or day stores nothing, while a count of zero is
-kept — "no count" and "nothing written" are different facts. The POV picker lists
-the story's live cast, and the day is a whole number from 0 up; there is no
-calendar, so a story can count "days since the System arrived" instead of dating
-anything. Both show on the row and the day places the chapter on the **Timeline**
-below the list, which orders chapters by day rather than by chapter number and
-names each one's POV. Chapters sharing a day keep their reading order, and a
-chapter with no day stays off the timeline while the panel counts how many are
-waiting for one. The top of the tab totals the counts across the chapters, adds
-up the targets that exist (and says how many chapters have one), and fills a bar
-against that total. These numbers are the author's: nothing reads a manuscript to
-work them out. Each field that changes is a history entry of its own, so an arc, a
-count or a day can be put back from the Audit tab; a POV is recorded by name (and
-is not revertible, because the link is stored as an id).
+of view it is told from, and sit on an in-world day at a time of day. **Edit** on
+its row opens Arc / Words / Target / POV / Day / Time in place; `Enter` saves,
+`Escape` closes without writing. A blank arc, target, POV, day or time stores
+nothing, while a count of zero is kept — "no count" and "nothing written" are
+different facts. The POV picker lists the story's live cast, and the day is a
+whole number from 0 up; there is no calendar, so a story can count "days since
+the System arrived" instead of dating anything. The time is free text — "Dusk",
+"18:40", "after the fire" — kept in the author's own words. POV, day and time
+show on the row, and the day places the chapter on the **Timeline** below the
+list, which orders
+chapters by day rather than by chapter number and names each one's POV. Inside a
+day, chapters whose time reads as a clock or a day part (dawn, morning, noon,
+afternoon, dusk, night, with "early" or "late" nudging an hour) are ordered by
+it; a label that reads as neither keeps its reading order instead of being
+guessed at. A chapter with no day stays off the timeline while the panel counts
+how many are waiting for one. The top of the tab totals the counts across the
+chapters, adds up the targets that exist (and says how many chapters have one),
+and fills a bar against that total. These numbers are the author's: nothing reads
+a manuscript to work them out. Each field that changes is a history entry of its
+own, so an arc, a count, a day or a time can be put back from the Audit tab; a
+POV is recorded by name (and is not revertible, because the link is stored as an
+id).
 
 **Continuity** — below the timeline, the Chapters tab lists what looks
 inconsistent: a chapter with no POV, a chapter whose day goes backwards in
-reading order, and one cast member named as the POV of two chapters on the same
-day. The flags are advisory — nothing is blocked, and the list only appears when
-there is something to say — and a chapter with no day yet is left out of the
-timing checks rather than being given one.
+reading order, a chapter whose time goes backwards inside one day, two chapters
+placed at the same moment, and one cast member named as the POV of two chapters
+on the same day. A time is only compared when both labels read as a time of day,
+so "after the fire" is never guessed at. Two chapters collide when their labels
+resolve to the same minute, whether they were written the same way or not —
+"Dusk" and "7:00 pm" are one moment — and the flag quotes them as written. The
+flags are advisory — nothing is blocked, and the list only appears when there is
+something to say — and a chapter with no day yet is left out of the timing checks
+rather than being given one.
 
 **Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
 row opens a panel with **Add note**, **Edit** and **Delete**. There is no
@@ -221,7 +232,7 @@ its words against the target and its notes — the chapter card's own notes as a
 paragraph, then the chapter's notes as a bulleted list under **Notes**, keeping
 line breaks inside a note; a one-line story total follows the chapter list, and a
 **Timeline** section lists the chapters that have a day in time order with their
-POV. The cast comes next — level, rank and XP where they exist, the description,
+time label and POV. The cast comes next — level, rank and XP where they exist, the description,
 then the stats and attributes as a plain list — followed by the other cards
 grouped by kind. Character cards are left out because the cast section already carries their
 sheet. Headings are numbered and nothing is written in app jargon, so the file can
@@ -346,7 +357,9 @@ afterwards is numbered when it is created. Version 8 added `chapter_arc`,
 which is different from a word count of zero. Version 9 added `chapter_pov` and
 `chapter_day`; an older chapter is unplaced and has no point of view until one is
 set. Version 10 added `nodes.parent_node_id`, which is NULL on everything but a
-note, so an existing story simply has no notes until one is added.
+note, so an existing story simply has no notes until one is added. Version 11
+added `chapter_time`, the free-text time of day; an older chapter has none until
+one is typed, which is different from a time that was cleared.
 
 | Table | Contents |
 | --- | --- |
@@ -354,7 +367,7 @@ note, so an existing story simply has no notes until one is added.
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id) and `chapter_day`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -394,7 +407,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, POV and timeline, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, POV, in-world days and times, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -428,16 +441,21 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
-- **In-world time is a day number, not a clock.** There is no time of day, no
-  calendar and no ordering within a day beyond reading order, so two scenes at
-  the same moment cannot be told apart. Nothing flags a chapter that jumps
-  backwards in time or a cast member placed in two places on one day.
-- **Only chapters have these fields.** POV and a day belong to chapters, and
+- **In-world time is a day and a typed label, not a clock.** A chapter's time is
+  free text, and only labels that read as a time of day are ordered: a clock time
+  such as `18:40` or `6:40 pm`, or a day part such as dawn, morning, noon,
+  afternoon, dusk or night (with "early" or "late" nudging an hour). Anything
+  else — "after the fire" — is stored and shown but never compared, so a scene it
+  really follows is not flagged. There is no calendar, a time with no day is
+  stored but cannot be placed, and a shared moment is caught only when both
+  labels read as a time of day — two chapters that both say "after the fire" are
+  not compared.
+- **Only chapters have these fields.** POV, a day and a time belong to chapters, and
   chapters are reordered with the ↑/↓ buttons rather than by dragging in the
   list. Deleting a chapter leaves its position empty until something is moved
   or **Renumber** is pressed; that is shown in the tab, not repaired silently.
 - **The story bible carries only what the app models.** The file and the clipboard
-  hold the same Markdown: chapters with arcs, days, POV and counts, a timeline,
+  hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
   the cast with their sheets, and the other cards. Skills and inventory have no
   fields yet, so they cannot appear in it. Copying needs the clipboard write
   permission; if the platform refuses it, the error strip says so.

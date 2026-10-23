@@ -101,6 +101,7 @@ interface NodeRow {
   chapter_target: number | null;
   chapter_pov: string | null;
   chapter_day: number | null;
+  chapter_time: string | null;
   parent_node_id: string | null;
 }
 
@@ -129,6 +130,7 @@ function nodeRow(
     chapter_target: null,
     chapter_pov: null,
     chapter_day: null,
+    chapter_time: null,
     parent_node_id: null,
   };
 }
@@ -270,6 +272,7 @@ beforeEach(() => {
         row.chapter_target = args.target ?? null;
         row.chapter_pov = args.pov ?? null;
         row.chapter_day = args.day ?? null;
+        row.chapter_time = args.time ?? null;
         return { ...row };
       }
       default:
@@ -505,6 +508,7 @@ describe('chapter arcs and word counts', () => {
       target: 2500,
       pov: null,
       day: null,
+      time: null,
       user: 'You',
     });
 
@@ -539,6 +543,7 @@ describe('chapter arcs and word counts', () => {
       target: null,
       pov: null,
       day: null,
+      time: null,
       user: 'You',
     });
 
@@ -563,6 +568,7 @@ describe('chapter arcs and word counts', () => {
       target: 2000,
       pov: null,
       day: null,
+      time: null,
       user: 'You',
     });
 
@@ -675,6 +681,28 @@ describe('chapter POV and in-world days', () => {
     expect(screen.getByText('3 placed')).toBeInTheDocument();
   });
 
+  it('orders the chapters that share a day by their time of day', async () => {
+    rows[0].chapter_day = 4; // One, chapter 1
+    rows[0].chapter_time = 'Evening';
+    rows[2].chapter_day = 4; // Two, chapter 2
+    rows[2].chapter_time = '7:30 am';
+    rows[3].chapter_day = 4; // Three, chapter 3
+    rows[3].chapter_time = 'after the fire';
+
+    await openChapters();
+
+    const timeline = screen.getByRole('list', { name: 'Chapter timeline' });
+    const placed = within(timeline).getAllByRole('listitem');
+
+    // 7:30am comes before Evening, and the label no clock can read keeps its
+    // place in reading order rather than being guessed at.
+    expect(placed.map(row => within(row).getByText(/^(One|Two|Three)$/).textContent)).toEqual([
+      'Two',
+      'One',
+      'Three',
+    ]);
+  });
+
   it('leaves a chapter without a day off the timeline and says how many are waiting', async () => {
     rows[0].chapter_day = 1;
 
@@ -726,6 +754,30 @@ describe('chapter POV and in-world days', () => {
     ).toBeInTheDocument();
     expect(lastCall('set_chapter_details')).toBeUndefined();
     expect(screen.getByLabelText('Day')).toHaveValue(-1);
+  });
+
+  it('saves a time of day as the author typed it', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.type(screen.getByLabelText('Time'), '  Dusk, after the fire ');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toEqual({
+      nodeId: 'n1',
+      arc: 'The Vault',
+      words: 1200,
+      target: 2000,
+      pov: null,
+      day: null,
+      time: 'Dusk, after the fire',
+      user: 'You',
+    });
+
+    await waitFor(() => {
+      const [one] = rowsInList();
+      expect(within(one).getByText('Dusk, after the fire')).toBeInTheDocument();
+    });
   });
 });
 
@@ -871,6 +923,70 @@ describe('chapter continuity', () => {
     ).toBeInTheDocument();
   });
 
+  it('flags a time that goes backwards inside one day', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 4;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 4;
+    rows[2].chapter_time = 'Morning';
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 4;
+    rows[3].chapter_time = 'after the fire';
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText('“Two” goes back to Morning after “One” at Dusk on Day 4.')
+    ).toBeInTheDocument();
+    // A label that reads as no time at all is not compared, so Three is silent.
+    expect(within(panel).queryByText(/“Three”/)).not.toBeInTheDocument();
+  });
+
+  it('flags two chapters written at the same time on the same day', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 3;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 3;
+    rows[2].chapter_time = 'dusk';
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText('“One” and “Two” are both at Dusk on Day 3.')
+    ).toBeInTheDocument();
+  });
+
+  it('flags labels the clock reads as the same moment but that are written apart', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 3;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 3;
+    rows[2].chapter_time = '19:00';
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 3;
+    rows[3].chapter_time = '7:00 pm';
+
+    await openChapters();
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+
+    expect(
+      within(panel).getByText(
+        '“One” at Dusk, “Two” at 19:00 and “Three” at 7:00 pm happen at the same moment on Day 3.'
+      )
+    ).toBeInTheDocument();
+  });
+
   it('says nothing when the chapters agree', async () => {
     withCast();
     rows[0].chapter_pov = 'c1';
@@ -879,6 +995,23 @@ describe('chapter continuity', () => {
     rows[2].chapter_day = 2;
     rows[3].chapter_pov = 'c1';
     rows[3].chapter_day = 3;
+
+    await openChapters();
+
+    expect(screen.queryByRole('region', { name: 'Continuity' })).not.toBeInTheDocument();
+  });
+
+  it('leaves a shared time alone across days, and a label no clock can read', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 3;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 4;
+    rows[2].chapter_time = 'Dusk';
+    rows[3].chapter_pov = 'c1';
+    rows[3].chapter_day = 4;
+    rows[3].chapter_time = 'after the fire';
 
     await openChapters();
 

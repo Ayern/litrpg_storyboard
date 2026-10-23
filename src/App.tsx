@@ -132,6 +132,8 @@ type NodeData = {
   // own link, and the in-world day it happens on. Both optional.
   chapterPov?: string | null;
   chapterDay?: number | null;
+  // When inside that day, in the author's own words: “Dusk”, “18:40”.
+  chapterTime?: string | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -368,6 +370,7 @@ function toFlowNode(row: any): Node<NodeData> {
       chapterTarget: row.chapter_target ?? null,
       chapterPov: row.chapter_pov ?? null,
       chapterDay: row.chapter_day ?? null,
+      chapterTime: row.chapter_time ?? null,
     },
   };
 }
@@ -603,6 +606,7 @@ const fieldLabels: Record<string, string> = {
   xp_to_next: 'XP to next',
   chapter_pov: 'POV',
   chapter_day: 'in-world day',
+  chapter_time: 'time of day',
 };
 
 // The chapter list's one-sentence warning. Positions start at 1, so a story
@@ -629,6 +633,70 @@ function describeChapterIssues(issues: {
   }
 
   return `The reading order needs attention: ${parts.join('; ')}.`;
+}
+
+// A chapter's time is free text, so comparing two of them means reading the
+// label as a clock first: “18:40”, “6:40 pm”, or one of the day parts writers
+// reach for, optionally qualified (“late evening”, “just before dawn”). A label
+// that reads as neither — “after the fire” — gets no order at all and is left
+// where reading order put it, rather than guessed at.
+const DAY_PARTS: [RegExp, number][] = [
+  [/\bmidnight\b/, 0],
+  [/\bdawn\b|\bsunrise\b|\bfirst light\b/, 6 * 60],
+  [/\bmorning\b/, 9 * 60],
+  [/\bnoon\b|\bmidday\b/, 12 * 60],
+  [/\bafternoon\b/, 14 * 60 + 30],
+  [/\bdusk\b|\bsunset\b|\bevening\b/, 19 * 60],
+  [/\bnight\b|\bnightfall\b|\bafter dark\b/, 21 * 60],
+];
+
+const DAY_PART_NUDGES: [RegExp, number][] = [
+  [/\bearly\b|\bbefore\b/, -60],
+  [/\blate\b|\bafter\b|\bdeep\b/, 60],
+];
+
+/** A label's place in the day, in minutes from midnight, or null when it does
+ * not read as a time of day. */
+function timeOfDay(label?: string | null): number | null {
+  if (!label) return null;
+
+  const text = label.trim().toLowerCase();
+
+  const clock = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/);
+  const hourOnly = text.match(/^(\d{1,2})\s*(am|pm)$/);
+
+  if (clock || hourOnly) {
+    const hour = Number((clock ?? hourOnly)?.[1]);
+    const minute = clock ? Number(clock[2]) : 0;
+    const meridiem = (clock?.[3] ?? hourOnly?.[2]) as 'am' | 'pm' | undefined;
+
+    if (hour > (meridiem ? 12 : 23) || minute > 59) return null;
+
+    // 12am is midnight and 12pm is noon; every other hour simply shifts.
+    const wrapped = meridiem ? (hour % 12) + (meridiem === 'pm' ? 12 : 0) : hour;
+
+    return wrapped * 60 + minute;
+  }
+
+  let best: { at: number; minutes: number } | null = null;
+
+  for (const [pattern, minutes] of DAY_PARTS) {
+    const hit = pattern.exec(text);
+
+    if (hit && (best === null || hit.index < best.at)) {
+      best = { at: hit.index, minutes };
+    }
+  }
+
+  if (best === null) return null;
+
+  const nudge = DAY_PART_NUDGES.reduce(
+    (offset, [pattern, minutes]) => (pattern.test(text) ? offset + minutes : offset),
+    0
+  );
+
+  // Clamped to the day so “late night” does not spill into tomorrow.
+  return Math.min(23 * 60 + 59, Math.max(0, best.minutes + nudge));
 }
 
 function entityLabel(entry: AuditEntry): string {
@@ -752,6 +820,7 @@ function App() {
   const [chapterTargetDraft, setChapterTargetDraft] = useState('');
   const [chapterPovDraft, setChapterPovDraft] = useState('');
   const [chapterDayDraft, setChapterDayDraft] = useState('');
+  const [chapterTimeDraft, setChapterTimeDraft] = useState('');
 
   // The plain-text notes kept with each chapter, and the one panel that is open.
   const [chapterNotes, setChapterNotes] = useState<ChapterNote[]>([]);
@@ -1802,6 +1871,7 @@ function App() {
           chapterTarget: newDbNode.chapter_target ?? null,
           chapterPov: newDbNode.chapter_pov ?? null,
           chapterDay: newDbNode.chapter_day ?? null,
+          chapterTime: newDbNode.chapter_time ?? null,
         },
       };
 
@@ -1908,14 +1978,23 @@ function App() {
   const chapterTimeline = useMemo(() => {
     return chapterNodes
       .filter(node => node.data.chapterDay != null)
-      .sort(
-        (left, right) =>
-          (left.data.chapterDay ?? 0) - (right.data.chapterDay ?? 0)
-      );
+      .sort((left, right) => {
+        const day = (left.data.chapterDay ?? 0) - (right.data.chapterDay ?? 0);
+
+        if (day !== 0) return day;
+
+        // Inside a day, only labels that read as a time can be ordered. The rest
+        // keep their reading order, because the sort is stable.
+        const leftTime = timeOfDay(left.data.chapterTime);
+        const rightTime = timeOfDay(right.data.chapterTime);
+
+        return leftTime == null || rightTime == null ? 0 : leftTime - rightTime;
+      });
   }, [chapterNodes]);
 
   // Continuity is advisory: nothing here blocks a save. It names what looks
-  // inconsistent — a chapter with no POV, a day that goes backwards, or one cast
+  // inconsistent — a chapter with no POV, a day that goes backwards, a time that
+  // goes backwards inside a day, two chapters at the same moment, or one cast
   // member in two chapters on the same day — and leaves the decision to the
   // author.
   const chapterContinuity = useMemo(() => {
@@ -1942,8 +2021,84 @@ function App() {
         warnings.push(
           `“${after.data.label}” goes back to Day ${after.data.chapterDay} after “${before.data.label}” on Day ${before.data.chapterDay}.`
         );
+        continue;
       }
+
+      // Inside one day the same reading order should move forward through the
+      // day too. Only labels that read as a time of day are compared; the author
+      // may write “after the fire” and mean something no clock can check.
+      if (before.data.chapterDay !== after.data.chapterDay) continue;
+
+      const beforeTime = timeOfDay(before.data.chapterTime);
+      const afterTime = timeOfDay(after.data.chapterTime);
+
+      if (beforeTime == null || afterTime == null || afterTime >= beforeTime) {
+        continue;
+      }
+
+      warnings.push(
+        `“${after.data.label}” goes back to ${after.data.chapterTime} after “${before.data.label}” at ${before.data.chapterTime} on Day ${after.data.chapterDay}.`
+      );
     }
+
+    // Two chapters cannot happen at the same moment on the same day. Only labels
+    // that read as a time of day can collide, so “after the fire” is left alone.
+    const moments = new Map<
+      string,
+      { day: number; chapters: { label: string; time: string }[] }
+    >();
+
+    placed.forEach(node => {
+      const minutes = timeOfDay(node.data.chapterTime);
+
+      if (minutes == null) return;
+
+      const key = `${node.data.chapterDay}::${minutes}`;
+      const chapter = {
+        label: node.data.label,
+        time: (node.data.chapterTime ?? '').trim(),
+      };
+      const moment = moments.get(key);
+
+      if (moment) {
+        moment.chapters.push(chapter);
+        return;
+      }
+
+      moments.set(key, { day: node.data.chapterDay ?? 0, chapters: [chapter] });
+    });
+
+    // “One, Two and Three” rather than a bare comma list, so a warning reads as
+    // a sentence.
+    const andList = (parts: string[]) =>
+      parts.length < 2
+        ? (parts[0] ?? '')
+        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+
+    moments.forEach(moment => {
+      if (moment.chapters.length < 2) return;
+
+      // The same wording written twice is one moment said once; labels that only
+      // mean the same time to a clock (“Dusk” and “7:00 pm”) are quoted apart.
+      const writtenTheSame = moment.chapters.every(
+        chapter => chapter.time.toLowerCase() === moment.chapters[0].time.toLowerCase()
+      );
+
+      if (writtenTheSame) {
+        warnings.push(
+          `${andList(moment.chapters.map(chapter => `“${chapter.label}”`))} ${
+            moment.chapters.length === 2 ? 'are both' : 'are all'
+          } at ${moment.chapters[0].time} on Day ${moment.day}.`
+        );
+        return;
+      }
+
+      warnings.push(
+        `${andList(
+          moment.chapters.map(chapter => `“${chapter.label}” at ${chapter.time}`)
+        )} happen at the same moment on Day ${moment.day}.`
+      );
+    });
 
     // One cast member cannot be the point of view of two chapters on one day.
     const bookings = new Map<
@@ -2107,6 +2262,7 @@ function App() {
     );
     setChapterPovDraft(node.data.chapterPov ?? '');
     setChapterDayDraft(node.data.chapterDay != null ? String(node.data.chapterDay) : '');
+    setChapterTimeDraft(node.data.chapterTime ?? '');
   };
 
   const saveChapterDetails = async () => {
@@ -2142,6 +2298,7 @@ function App() {
         target,
         pov: chapterPovDraft || null,
         day,
+        time: chapterTimeDraft.trim() || null,
         user: actor,
       });
 
@@ -2157,6 +2314,7 @@ function App() {
                   chapterTarget: updated.chapter_target ?? null,
                   chapterPov: updated.chapter_pov ?? null,
                   chapterDay: updated.chapter_day ?? null,
+                  chapterTime: updated.chapter_time ?? null,
                 },
               }
             : node
@@ -5167,6 +5325,11 @@ function App() {
                                 Day {node.data.chapterDay}
                               </span>
                             )}
+                            {node.data.chapterTime && (
+                              <span className="chapter-time" title="Time of day">
+                                {node.data.chapterTime}
+                              </span>
+                            )}
                             <span className="chapter-words">
                               {formatChapterWords(
                                 node.data.chapterWords,
@@ -5175,7 +5338,7 @@ function App() {
                             </span>
                             <button
                               aria-label={`Edit ${node.data.label} details`}
-                              title="Set the arc and the word count"
+                              title="Set the arc, the day, the time and the word count"
                               onClick={() => startChapterEdit(node)}
                               disabled={chapterBusy}
                             >
@@ -5288,9 +5451,22 @@ function App() {
                                   }}
                                 />
                               </label>
+                              <label>
+                                Time
+                                <input
+                                  placeholder="Dusk"
+                                  title="When inside the day, in your own words: Dusk, 18:40, after the fire"
+                                  value={chapterTimeDraft}
+                                  onChange={(e) => setChapterTimeDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void saveChapterDetails();
+                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                  }}
+                                />
+                              </label>
                               <div className="chapter-details-actions">
                                 <button
-                                  title="Save the arc and the word counts"
+                                  title="Save the arc, the day, the time and the word counts"
                                   onClick={() => void saveChapterDetails()}
                                   disabled={chapterBusy}
                                 >
@@ -5439,6 +5615,11 @@ function App() {
                               <span className="chapter-timeline-day">
                                 Day {node.data.chapterDay}
                               </span>
+                              {node.data.chapterTime && (
+                                <span className="chapter-timeline-time">
+                                  {node.data.chapterTime}
+                                </span>
+                              )}
                               {node.data.chapterSeq != null && (
                                 <span className="chapter-timeline-seq">
                                   #{node.data.chapterSeq}

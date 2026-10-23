@@ -1246,6 +1246,17 @@ body {
   white-space: nowrap;
 }
 
+/* A chapter's time of day, in the author's words, so it is set small and quiet
+   beside the day rather than competing with it. */
+.chapter-time {
+  font-size: 10px;
+  color: #8fbf8f;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chapter-details-actions {
   display: flex;
   gap: 6px;
@@ -1427,6 +1438,14 @@ body {
   color: #8fbf8f;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.chapter-timeline-time {
+  color: #c9b98a;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chapter-timeline-seq {

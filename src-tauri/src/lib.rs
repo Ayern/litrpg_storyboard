@@ -231,8 +231,8 @@ fn set_chapter_order(
         .map_err(|e| e.to_string())
 }
 
-/// Saves a chapter's arc and its words against a target. Nothing is derived:
-/// these are the numbers the author typed.
+/// Saves a chapter's arc, its in-world day and time, and its words against a
+/// target. Nothing is derived: these are the numbers the author typed.
 #[tauri::command]
 fn set_chapter_details(
     db: tauri::State<'_, Db>,
@@ -242,9 +242,10 @@ fn set_chapter_details(
     target: Option<i64>,
     pov: Option<String>,
     day: Option<i64>,
+    time: Option<String>,
     user: String,
 ) -> Result<Node, String> {
-    db.set_chapter_details(&node_id, arc, words, target, pov, day, user)
+    db.set_chapter_details(&node_id, arc, words, target, pov, day, time, user)
         .map_err(|e| e.to_string())
 }
 
