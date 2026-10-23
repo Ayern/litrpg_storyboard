@@ -706,14 +706,30 @@ describe('chapter arcs and word counts', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    // The safe answer is focused, so a stray Enter keeps the edit.
+    expect(within(prompt).getByRole('button', { name: 'Keep editing' })).toHaveFocus();
+
     await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
 
     expect(
       screen.queryByRole('alertdialog', { name: 'Unsaved chapter changes' })
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText('Words')).toHaveValue(80099);
+    // And answering gives the keyboard back to the form.
+    expect(screen.getByLabelText('Arc')).toHaveFocus();
 
-    // A second Cancel asks again; this time the edit is dropped.
+    // A second Cancel asks again, and Escape dismisses that question without
+    // touching the form.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.keyboard('{Escape}');
+
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved chapter changes' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Words')).toHaveValue(80099);
+    expect(screen.getByLabelText('Arc')).toHaveFocus();
+
+    // A third Cancel asks once more; this time the edit is dropped.
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     await user.click(
       within(
@@ -1000,6 +1016,7 @@ describe('chapter notes', () => {
     expect(
       within(prompt).getByText('Discard your changes to this note?')
     ).toBeInTheDocument();
+    expect(within(prompt).getByRole('button', { name: 'Keep editing' })).toHaveFocus();
     expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
 
     await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
@@ -1096,9 +1113,11 @@ describe('chapter notes', () => {
     ).toBeInTheDocument();
 
     await user.keyboard('{Escape}');
+
     expect(
       screen.queryByRole('alertdialog', { name: 'Unsaved note changes' })
     ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Edit note in One')).toHaveFocus();
     expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
 
     // Escape again asks once more, and Discard closes the editor without writing.

@@ -836,6 +836,15 @@ function App() {
   // The drafts the open form started with, so an untouched form is known to be
   // clean even when its values are not what the saved chapter holds.
   const chapterOpenedDrafts = useRef<string[] | null>(null);
+  // Where focus goes when a question appears, so the keyboard is on the answer
+  // rather than left in the field the question is about.
+  const chapterKeepEditingRef = useRef<HTMLButtonElement | null>(null);
+  const noteKeepEditingRef = useRef<HTMLButtonElement | null>(null);
+  // Where the keyboard goes back to once a question is answered, so dismissing it
+  // does not leave focus on a button that is about to disappear.
+  const chapterArcInputRef = useRef<HTMLInputElement | null>(null);
+  const noteEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const noteAddRef = useRef<HTMLTextAreaElement | null>(null);
   const [chapterArcDraft, setChapterArcDraft] = useState('');
   const [chapterWordsDraft, setChapterWordsDraft] = useState('');
   const [chapterTargetDraft, setChapterTargetDraft] = useState('');
@@ -2271,9 +2280,21 @@ function App() {
     return true;
   };
 
+  // Answering a question returns the keyboard to the field it was about.
+  const dismissChapterPrompt = () => {
+    setChapterFormPrompt(null);
+    chapterArcInputRef.current?.focus();
+  };
+
   // Closing the form is the other way to lose a draft, so it asks the same
-  // question when there is something to lose.
+  // question when there is something to lose. A second Escape dismisses the
+  // question, as it does for a note.
   const requestChapterClose = () => {
+    if (chapterFormPrompt) {
+      dismissChapterPrompt();
+      return;
+    }
+
     if (chapterDraftIsDirty()) {
       setChapterFormPrompt({ kind: 'close' });
       return;
@@ -2391,6 +2412,16 @@ function App() {
   useEffect(() => {
     if (openNotesChapterId == null) setNotePrompt(null);
   }, [openNotesChapterId]);
+
+  // A question takes the keyboard with it: the safe answer is already focused, so
+  // Enter keeps the work instead of discarding it.
+  useEffect(() => {
+    if (chapterFormPrompt) chapterKeepEditingRef.current?.focus();
+  }, [chapterFormPrompt]);
+
+  useEffect(() => {
+    if (notePrompt) noteKeepEditingRef.current?.focus();
+  }, [notePrompt]);
 
   // Closing the form drops the question with it.
   useEffect(() => {
@@ -2685,12 +2716,17 @@ function App() {
     open();
   };
 
+  const dismissNotePrompt = () => {
+    setNotePrompt(null);
+    (editingNoteId != null ? noteEditorRef.current : noteAddRef.current)?.focus();
+  };
+
   // Cancelling an edit closes the editor rather than the panel, and asks first
   // when the note has been changed. A second Escape is the answer to the
   // question: it dismisses it, the same as Keep editing.
   const requestNoteEditCancel = () => {
     if (notePrompt) {
-      setNotePrompt(null);
+      dismissNotePrompt();
       return;
     }
 
@@ -5769,6 +5805,7 @@ function App() {
                               <label>
                                 Arc
                                 <input
+                                  ref={chapterArcInputRef}
                                   autoFocus
                                   placeholder="No arc"
                                   value={chapterArcDraft}
@@ -5879,6 +5916,12 @@ function App() {
                               className="chapter-details-prompt"
                               role="alertdialog"
                               aria-label="Unsaved chapter changes"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') {
+                                  e.stopPropagation();
+                                  dismissChapterPrompt();
+                                }
+                              }}
                             >
                               <p>
                                 {chapterFormPrompt.kind === 'open'
@@ -5915,8 +5958,9 @@ function App() {
                                   </button>
                                 )}
                                 <button
+                                  ref={chapterKeepEditingRef}
                                   title="Stay on this chapter with the edits as they are"
-                                  onClick={() => setChapterFormPrompt(null)}
+                                  onClick={dismissChapterPrompt}
                                 >
                                   Keep editing
                                 </button>
@@ -5932,7 +5976,7 @@ function App() {
                                 // the focus was left when it appeared.
                                 if (e.key === 'Escape' && notePrompt) {
                                   e.stopPropagation();
-                                  setNotePrompt(null);
+                                  dismissNotePrompt();
                                 }
                               }}
                             >
@@ -5951,8 +5995,9 @@ function App() {
                                       Discard and continue
                                     </button>
                                     <button
+                                      ref={noteKeepEditingRef}
                                       title="Stay with the note as it is"
-                                      onClick={() => setNotePrompt(null)}
+                                      onClick={dismissNotePrompt}
                                     >
                                       Keep editing
                                     </button>
@@ -5969,6 +6014,7 @@ function App() {
                                     }`}
                                   >
                                     <textarea
+                                      ref={noteEditorRef}
                                       className="chapter-note-editor"
                                       aria-label={`Edit note in ${node.data.label}`}
                                       autoFocus
@@ -6037,6 +6083,7 @@ function App() {
                               {editingNoteId === null && (
                                 <div className="chapter-note-add">
                                   <textarea
+                                    ref={noteAddRef}
                                     aria-label={`New note for ${node.data.label}`}
                                     placeholder="A note for this chapter"
                                     title="Ctrl+Enter adds the note"

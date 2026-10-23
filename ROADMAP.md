@@ -274,7 +274,7 @@ when the chapters agree. Each chapter a flag names is a link that opens its
 details and brings its row into view, lit briefly to show where the scroll
 landed. Editing a chapter is guarded too: opening another chapter, **Cancel**,
 `Escape`, another tab or story, or a search result asks before an unsaved draft
-is dropped. Remaining: cast in two places at once across different days, and
+is dropped, and a second `Escape` dismisses that question. Remaining: cast in two places at once across different days, and
 moments that can only be described in words. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast

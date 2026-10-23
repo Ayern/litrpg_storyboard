@@ -43,13 +43,15 @@ of view it is told from, and sit on an in-world day at a time of day. **Edit** o
 its row opens Arc / Words / Target / POV / Day / Time in place; `Enter` saves,
 `Escape` or **Cancel** closes without writing, asking first when anything has
 been changed. Switching to another tab or story, or following a search result
-away from the form, asks the same question before the edit is dropped. A blank
-arc, target, POV, day or time stores nothing, while a count of zero is kept —
-"no count" and "nothing written" are different facts. The POV picker lists the
-story's live cast, and the day is a whole number from 0 up; there is no
-calendar, so a story can count "days since the System arrived" instead of dating
-anything. The time is free text — "Dusk",
-"18:40", "after the fire" — kept in the author's own words. POV, day and time
+away from the form, asks the same question before the edit is dropped. A question
+puts focus on **Keep editing**, and answering gives the keyboard back to the
+field; a second `Escape` dismisses it without touching the form. A blank arc,
+target, POV, day or time stores nothing, while a count of zero is kept — "no
+count" and "nothing written" are different facts. The POV picker lists the
+story's live cast, and the day is a whole number from 0 up; there is no calendar,
+so a story can count "days since the System arrived" instead of dating anything.
+The time is free text — "Dusk", "18:40", "after the fire" — kept in the author's
+own words. POV, day and time
 show on the row, and the day places the chapter on the **Timeline** below the
 list, which orders chapters by day rather than by chapter number and names each
 one's POV. Inside a day, chapters whose time reads as a clock or a day part
