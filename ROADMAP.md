@@ -246,9 +246,12 @@ notes: **Notes** on the row opens a panel to add, edit and delete them, each not
 kept as a `note` node off the board, named in the trash and the history by its
 first line, carried by export and import, printed under its chapter in the story
 bible, found by the search palette (which opens the chapter's panel on the note),
-and trashed and purged with its chapter. Remaining: dragging rows to reorder them
-(the ↑/↓ buttons do the job meanwhile), and any formatting at all in a note.
-**M**
+and trashed and purged with its chapter. Closing the panel, moving it to another
+chapter, switching stories, following a search result away, or cancelling the
+editor with **Cancel** or `Escape` asks before an unsaved note draft is dropped;
+a second `Escape` dismisses that question.
+Remaining: dragging rows to reorder them (the ↑/↓ buttons do the job meanwhile),
+and any formatting at all in a note. **M**
 
 **8. POV and in-world time.** **Started.** Migration v9 gives chapters
 `chapter_pov` (a live cast id, named in the history and cleared when its cast
@@ -269,10 +272,10 @@ same moment (labels that resolve to the same minute, quoted as written), and one
 cast member named as the POV of two chapters on the same day — and says nothing
 when the chapters agree. Each chapter a flag names is a link that opens its
 details and brings its row into view, lit briefly to show where the scroll
-landed. Editing a chapter is guarded too: opening another chapter, **Cancel** or
-`Escape` asks before an unsaved draft is dropped. Remaining: cast in two places
-at once across different days, and moments that can only be described in
-words. **M**
+landed. Editing a chapter is guarded too: opening another chapter, **Cancel**,
+`Escape`, another tab or story, or a search result asks before an unsaved draft
+is dropped. Remaining: cast in two places at once across different days, and
+moments that can only be described in words. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
 member (`character_progress`, unique on character + chapter), entered in a small

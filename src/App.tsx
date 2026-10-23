@@ -824,10 +824,14 @@ function App() {
   const [revealedChapterId, setRevealedChapterId] = useState<string | null>(null);
   const revealTimer = useRef<number | null>(null);
   // The question the open form is waiting on: opening another chapter while this
-  // one has unsaved edits, or closing the form and losing them. One state, so the
-  // two questions can never be asked at once.
+  // one has unsaved edits, closing the form, or navigating away from it — a tab,
+  // a story, a search result. One state, so two questions can never be asked at
+  // once.
   const [chapterFormPrompt, setChapterFormPrompt] = useState<
-    { kind: 'open'; id: string } | { kind: 'close' } | null
+    | { kind: 'open'; id: string }
+    | { kind: 'close' }
+    | { kind: 'leave'; message: string; go: () => void }
+    | null
   >(null);
   // The drafts the open form started with, so an untouched form is known to be
   // clean even when its values are not what the saved chapter holds.
@@ -850,6 +854,11 @@ function App() {
   // The note a search result pointed at, marked for a moment after it is opened.
   const [matchedNoteId, setMatchedNoteId] = useState<string | null>(null);
   const noteHighlightRef = useRef<number | null>(null);
+  // Closing the note panel or moving it to another chapter is a way to lose a
+  // half-written note, so it asks first, in the panel where the typing is.
+  const [notePrompt, setNotePrompt] = useState<{ message: string; go: () => void } | null>(
+    null
+  );
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
@@ -2273,6 +2282,59 @@ function App() {
     setEditingChapterId(null);
   };
 
+  // Leaving the form behind — another tab, another story, a search result — asks
+  // the same question, then does what was asked.
+  const requestChapterLeave = (message: string, go: () => void) => {
+    if (chapterDraftIsDirty()) {
+      setChapterFormPrompt({ kind: 'leave', message, go });
+      return;
+    }
+
+    go();
+  };
+
+  const requestTab = (tab: typeof selectedTab) => {
+    if (tab === selectedTab) return;
+
+    // Only leaving the tab with the form is a question; coming back to it, or
+    // moving between the other tabs, is not.
+    if (selectedTab !== 'chapters') {
+      setSelectedTab(tab);
+      return;
+    }
+
+    requestChapterLeave('Leave Chapters and drop these changes?', () =>
+      setSelectedTab(tab)
+    );
+  };
+
+  const requestStory = (story: Story) => {
+    if (story.id === currentStory?.id) {
+      void loadStory(story);
+      return;
+    }
+
+    const openStory = () => {
+      setChapterFormPrompt(null);
+      setNotePrompt(null);
+      setEditingChapterId(null);
+      void loadStory(story);
+    };
+
+    // A note draft lives in the notes panel, so its question is asked there. The
+    // same answer drops a chapter edit too, if both were open.
+    if (noteDraftIsDirty()) {
+      setChapterFormPrompt(null);
+      setNotePrompt({
+        message: `Open “${story.title}” and drop these changes?`,
+        go: openStory,
+      });
+      return;
+    }
+
+    requestChapterLeave(`Open “${story.title}” and drop these changes?`, openStory);
+  };
+
   // A flag leads somewhere: the chapter it names opens its details, and the row
   // is brought into view and lit for a moment so the warning is answered where
   // it was raised.
@@ -2305,6 +2367,18 @@ function App() {
     setEditingChapterId(null);
   };
 
+  // The answer when the form was being left behind: drop the drafts, then go
+  // where the author asked to go.
+  const leaveChapterForm = () => {
+    if (chapterFormPrompt?.kind !== 'leave') return;
+
+    const go = chapterFormPrompt.go;
+
+    setChapterFormPrompt(null);
+    setEditingChapterId(null);
+    go();
+  };
+
   // A timer left behind by a flag must not reach into an unmounted panel.
   useEffect(
     () => () => {
@@ -2312,6 +2386,11 @@ function App() {
     },
     []
   );
+
+  // Closing the note panel drops the question with it.
+  useEffect(() => {
+    if (openNotesChapterId == null) setNotePrompt(null);
+  }, [openNotesChapterId]);
 
   // Closing the form drops the question with it.
   useEffect(() => {
@@ -2515,14 +2594,47 @@ function App() {
     }
   };
 
-  // Notes are shown one chapter at a time, so opening another closes this one and
-  // drops whatever was half-typed for it.
-  const toggleChapterNotes = (chapterId: string) => {
-    setEditingNoteId(null);
-    setNoteDraft('');
+  // Whether the note panel holds something not yet saved: an edited note whose
+  // text has changed, or a new note that has been typed into.
+  const noteDraftIsDirty = () => {
+    if (editingNoteId != null) {
+      const saved = chapterNotes.find(note => note.id === editingNoteId);
+
+      return saved != null && noteEditDraft !== saved.text;
+    }
+
+    return noteDraft.trim() !== '';
+  };
+
+  const requestNoteLeave = (go: () => void) => {
+    if (!noteDraftIsDirty()) {
+      go();
+      return;
+    }
+
     setNoteError(null);
-    setMatchedNoteId(null);
-    setOpenNotesChapterId(previous => (previous === chapterId ? null : chapterId));
+    setNotePrompt({
+      message:
+        editingNoteId != null
+          ? 'Discard your changes to this note?'
+          : 'Discard this new note?',
+      go,
+    });
+  };
+
+  // Notes are shown one chapter at a time. Opening another or closing this one
+  // asks first when there is typing to lose.
+  const toggleChapterNotes = (chapterId: string) => {
+    const closing = openNotesChapterId === chapterId;
+
+    requestNoteLeave(() => {
+      setEditingNoteId(null);
+      setNoteDraft('');
+      setNoteError(null);
+      setMatchedNoteId(null);
+      setNotePrompt(null);
+      setOpenNotesChapterId(closing ? null : chapterId);
+    });
   };
 
   const addNote = async (chapterId: string) => {
@@ -2554,9 +2666,60 @@ function App() {
   };
 
   const startNoteEdit = (note: ChapterNote) => {
-    setNoteError(null);
-    setEditingNoteId(note.id);
-    setNoteEditDraft(note.text);
+    if (editingNoteId === note.id) return;
+
+    const open = () => {
+      setNoteError(null);
+      setEditingNoteId(note.id);
+      setNoteEditDraft(note.text);
+      setNotePrompt(null);
+    };
+
+    // Editing another note is a move within the panel, and only an edited note
+    // holds a draft that the move would drop.
+    if (editingNoteId != null) {
+      requestNoteLeave(open);
+      return;
+    }
+
+    open();
+  };
+
+  // Cancelling an edit closes the editor rather than the panel, and asks first
+  // when the note has been changed. A second Escape is the answer to the
+  // question: it dismisses it, the same as Keep editing.
+  const requestNoteEditCancel = () => {
+    if (notePrompt) {
+      setNotePrompt(null);
+      return;
+    }
+
+    const closeEditor = () => {
+      setEditingNoteId(null);
+      setNoteEditDraft('');
+      setNotePrompt(null);
+    };
+
+    if (editingNoteId != null && noteDraftIsDirty()) {
+      setNoteError(null);
+      setNotePrompt({
+        message: 'Discard your changes to this note?',
+        go: closeEditor,
+      });
+      return;
+    }
+
+    closeEditor();
+  };
+
+  // The answer to the note prompt: drop the draft and do what was asked.
+  const discardNoteDraft = () => {
+    if (!notePrompt) return;
+
+    const go = notePrompt.go;
+
+    setNotePrompt(null);
+    go();
   };
 
   const saveNoteEdit = async () => {
@@ -2705,13 +2868,53 @@ function App() {
   // Every result is a destination: a card opens in the inspector on its board, a
   // cast member opens their sheet, a connection opens the edge editor at its
   // midpoint, and a story result opens that story.
-  const chooseSearchResult = async (result: SearchResult) => {
+  const chooseSearchResult = async (result: SearchResult, skipDraftGuard = false) => {
     const targetStory = stories.find(story => story.id === result.storyId) ?? null;
+    const targetTab =
+      result.kind === 'cast' ? 'characters' : result.kind === 'note' ? 'chapters' : 'graph';
+    const changingStory = targetStory != null && targetStory.id !== currentStory?.id;
+
+    // A result can leave an open chapter form or a half-written note behind, so
+    // it asks first. Closing the palette happens either way; the result is
+    // followed once answered.
+    if (
+      !skipDraftGuard &&
+      (chapterDraftIsDirty() || noteDraftIsDirty()) &&
+      (changingStory || targetTab !== 'chapters')
+    ) {
+      closeCanvasSearch();
+
+      const message =
+        changingStory && targetStory
+          ? `Open “${targetStory.title}” and drop these changes?`
+          : 'Leave Chapters and drop these changes?';
+
+      // The answer drops every draft this panel could be holding, then the
+      // result is followed with the question already behind it.
+      const go = () => {
+        setChapterFormPrompt(null);
+        setNotePrompt(null);
+        setEditingChapterId(null);
+        setEditingNoteId(null);
+        setNoteEditDraft('');
+        setNoteDraft('');
+        setNoteError(null);
+        setMatchedNoteId(null);
+        void chooseSearchResult(result, true);
+      };
+
+      if (noteDraftIsDirty()) {
+        setChapterFormPrompt(null);
+        setNotePrompt({ message, go });
+      } else {
+        setChapterFormPrompt({ kind: 'leave', message, go });
+      }
+
+      return;
+    }
 
     closeCanvasSearch();
-    setSelectedTab(
-      result.kind === 'cast' ? 'characters' : result.kind === 'note' ? 'chapters' : 'graph'
-    );
+    setSelectedTab(targetTab);
 
     if (result.kind === 'story') {
       if (targetStory) await loadStory(targetStory);
@@ -4657,7 +4860,7 @@ function App() {
               <div
                 key={story.id}
                 className={`story-item ${currentStory?.id === story.id ? 'active' : ''}`}
-                onClick={() => !isRenaming && loadStory(story)}
+                onClick={() => !isRenaming && requestStory(story)}
               >
                 {isRenaming ? (
                   <input
@@ -4741,35 +4944,35 @@ function App() {
             <button
               className={selectedTab === 'graph' ? 'active' : ''}
               title="The story's idea graph"
-              onClick={() => setSelectedTab('graph')}
+              onClick={() => requestTab('graph')}
             >
               Graph
             </button>
             <button
               className={selectedTab === 'chapters' ? 'active' : ''}
               title="Put the chapters in reading order and add a new one"
-              onClick={() => setSelectedTab('chapters')}
+              onClick={() => requestTab('chapters')}
             >
               Chapters
             </button>
             <button
               className={selectedTab === 'characters' ? 'active' : ''}
               title="Manage the cast, their stats and attributes"
-              onClick={() => setSelectedTab('characters')}
+              onClick={() => requestTab('characters')}
             >
               Characters
             </button>
             <button
               className={selectedTab === 'audit' ? 'active' : ''}
               title="See every recorded change and revert an edit"
-              onClick={() => setSelectedTab('audit')}
+              onClick={() => requestTab('audit')}
             >
               Audit Log
             </button>
             <button
               className={selectedTab === 'trash' ? 'active' : ''}
               title="Restore something deleted, or delete it for good"
-              onClick={() => setSelectedTab('trash')}
+              onClick={() => requestTab('trash')}
             >
               Trash
             </button>
@@ -5684,7 +5887,9 @@ function App() {
                                         candidate => candidate.id === chapterFormPrompt.id
                                       )?.data.label ?? 'another chapter'
                                     }” and drop these changes?`
-                                  : 'Close this chapter and drop these changes?'}
+                                  : chapterFormPrompt.kind === 'close'
+                                    ? 'Close this chapter and drop these changes?'
+                                    : chapterFormPrompt.message}
                               </p>
                               <div className="chapter-details-prompt-actions">
                                 {chapterFormPrompt.kind === 'open' ? (
@@ -5694,12 +5899,19 @@ function App() {
                                   >
                                     Discard and open
                                   </button>
-                                ) : (
+                                ) : chapterFormPrompt.kind === 'close' ? (
                                   <button
                                     title="Close the form and lose these edits"
                                     onClick={closeChapterForm}
                                   >
                                     Discard changes
+                                  </button>
+                                ) : (
+                                  <button
+                                    title="Leave this chapter and lose these edits"
+                                    onClick={leaveChapterForm}
+                                  >
+                                    Discard and continue
                                   </button>
                                 )}
                                 <button
@@ -5713,7 +5925,41 @@ function App() {
                           )}
 
                           {openNotesChapterId === node.id && (
-                            <div className="chapter-notes">
+                            <div
+                              className="chapter-notes"
+                              onKeyDown={(e) => {
+                                // Escape is how the question is dismissed, wherever
+                                // the focus was left when it appeared.
+                                if (e.key === 'Escape' && notePrompt) {
+                                  e.stopPropagation();
+                                  setNotePrompt(null);
+                                }
+                              }}
+                            >
+                              {notePrompt && (
+                                <div
+                                  className="chapter-details-prompt"
+                                  role="alertdialog"
+                                  aria-label="Unsaved note changes"
+                                >
+                                  <p>{notePrompt.message}</p>
+                                  <div className="chapter-details-prompt-actions">
+                                    <button
+                                      title="Drop this note and continue"
+                                      onClick={discardNoteDraft}
+                                    >
+                                      Discard and continue
+                                    </button>
+                                    <button
+                                      title="Stay with the note as it is"
+                                      onClick={() => setNotePrompt(null)}
+                                    >
+                                      Keep editing
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
                               {(notesByChapter.get(node.id) ?? []).map(note =>
                                 editingNoteId === note.id ? (
                                   <div
@@ -5729,7 +5975,7 @@ function App() {
                                       value={noteEditDraft}
                                       onChange={(e) => setNoteEditDraft(e.target.value)}
                                       onKeyDown={(e) => {
-                                        if (e.key === 'Escape') setEditingNoteId(null);
+                                        if (e.key === 'Escape') requestNoteEditCancel();
                                         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                                           void saveNoteEdit();
                                         }
@@ -5745,7 +5991,7 @@ function App() {
                                       </button>
                                       <button
                                         title="Leave the note as it was"
-                                        onClick={() => setEditingNoteId(null)}
+                                        onClick={requestNoteEditCancel}
                                       >
                                         Cancel
                                       </button>

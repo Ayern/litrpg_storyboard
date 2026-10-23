@@ -42,11 +42,13 @@ belongs to, record the words written against an optional target, say whose point
 of view it is told from, and sit on an in-world day at a time of day. **Edit** on
 its row opens Arc / Words / Target / POV / Day / Time in place; `Enter` saves,
 `Escape` or **Cancel** closes without writing, asking first when anything has
-been changed. A blank arc, target, POV, day or time stores nothing, while a
-count of zero is kept — "no count" and "nothing written" are
-different facts. The POV picker lists the story's live cast, and the day is a
-whole number from 0 up; there is no calendar, so a story can count "days since
-the System arrived" instead of dating anything. The time is free text — "Dusk",
+been changed. Switching to another tab or story, or following a search result
+away from the form, asks the same question before the edit is dropped. A blank
+arc, target, POV, day or time stores nothing, while a count of zero is kept —
+"no count" and "nothing written" are different facts. The POV picker lists the
+story's live cast, and the day is a whole number from 0 up; there is no
+calendar, so a story can count "days since the System arrived" instead of dating
+anything. The time is free text — "Dusk",
 "18:40", "after the fire" — kept in the author's own words. POV, day and time
 show on the row, and the day places the chapter on the **Timeline** below the
 list, which orders chapters by day rather than by chapter number and names each
@@ -80,7 +82,8 @@ is a link: clicking it opens that chapter's details, brings its row into view an
 lights it for a moment, so the warning leads to the thing it is about. If the
 open form holds unsaved edits, the switch waits: the row asks whether to discard
 them and open the other chapter, or keep editing, rather than dropping them
-silently. **Cancel** and `Escape` ask the same question before closing the form.
+silently. **Cancel** and `Escape` ask the same question before closing the form,
+and so do a tab switch, another story and a search result.
 
 **Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
 row opens a panel with **Add note**, **Edit** and **Delete**. There is no
@@ -94,7 +97,11 @@ chapter's panel with the note marked rather than a card on the canvas. Deleting 
 note moves it to the trash, and trashing a chapter takes its notes with it —
 restoring the chapter brings them back, while a note trashed on its own waits in
 the trash until its chapter is live again. The row's button counts the notes
-under it.
+under it. Closing the panel or moving it to another chapter asks before a
+half-written note, or an edit that has not been saved, is dropped, and so does
+switching stories or following a search result that would leave the note behind.
+**Cancel** and `Escape` in the note editor ask before closing just that editor,
+and a second `Escape` dismisses the question and leaves the editor as it was.
 
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword

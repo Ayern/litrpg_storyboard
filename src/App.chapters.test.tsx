@@ -164,6 +164,31 @@ const cast = [
   },
 ];
 
+const otherStory = {
+  id: 'story-2',
+  title: 'Ashes',
+  description: null,
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+};
+
+// A second, empty story, so the sidebar has somewhere else to go.
+function withOtherStory() {
+  const fallback = invokeMock.getMockImplementation();
+
+  invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
+    const args = (rawArgs ?? {}) as Record<string, any>;
+
+    if (command === 'get_all_stories') return [story, otherStory];
+    if (command === 'get_graph_nodes' && args.storyId === otherStory.id) return [];
+    if (command === 'get_graph_edges' && args.storyId === otherStory.id) return [];
+    if (command === 'get_characters' && args.storyId === otherStory.id) return [];
+    if (command === 'get_story_character_stats' && args.storyId === otherStory.id) return [];
+    if (command === 'get_chapter_notes' && args.storyId === otherStory.id) return [];
+    return fallback?.(command, rawArgs);
+  });
+}
+
 function withCast() {
   const fallback = invokeMock.getMockImplementation();
 
@@ -629,6 +654,50 @@ describe('chapter arcs and word counts', () => {
     expect(lastCall('set_chapter_details')).toBeUndefined();
   });
 
+  it('asks before leaving the Chapters tab with an edit open', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.type(screen.getByLabelText('Arc'), ' and more');
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    expect(
+      within(prompt).getByText('Leave Chapters and drop these changes?')
+    ).toBeInTheDocument();
+    // The tab has not moved while the question is open.
+    expect(screen.getByRole('list', { name: 'Chapters' })).toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('button', { name: 'Discard and continue' }));
+
+    expect(screen.queryByRole('list', { name: 'Chapters' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('canvas')).toBeInTheDocument();
+  });
+
+  it('asks before switching stories with an edit open', async () => {
+    withOtherStory();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.type(screen.getByLabelText('Arc'), ' and more');
+
+    await user.click(screen.getByText('Ashes', { selector: '.story-title' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    expect(
+      within(prompt).getByText('Open “Ashes” and drop these changes?')
+    ).toBeInTheDocument();
+    expect(document.querySelector('.story-item.active')).toHaveTextContent('Ledger');
+
+    await user.click(within(prompt).getByRole('button', { name: 'Discard and continue' }));
+
+    await waitFor(() =>
+      expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes')
+    );
+    expect(screen.queryByLabelText('Arc')).not.toBeInTheDocument();
+  });
+
   it('asks before Cancel drops an edit, and can stay in the form', async () => {
     const user = await openChapters();
 
@@ -910,6 +979,150 @@ describe('chapter notes', () => {
 
     expect(await screen.findByText('The vault answers')).toBeInTheDocument();
     expect(screen.queryByText('Rook owes the vault')).not.toBeInTheDocument();
+  });
+
+  it('asks before closing the panel with an unsaved note edit', async () => {
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Edit the note Rook owes the vault' })
+    );
+
+    const editor = screen.getByLabelText('Edit note in One');
+    await user.clear(editor);
+    await user.type(editor, 'The vault answers');
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved note changes' });
+    expect(
+      within(prompt).getByText('Discard your changes to this note?')
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
+
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
+
+    expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
+    expect(lastCall('update_chapter_note')).toBeUndefined();
+
+    // Closing again and answering takes the panel away without writing.
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      within(
+        screen.getByRole('alertdialog', { name: 'Unsaved note changes' })
+      ).getByRole('button', { name: 'Discard and continue' })
+    );
+
+    expect(screen.queryByLabelText('Edit note in One')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rook owes the vault')).not.toBeInTheDocument();
+    expect(lastCall('update_chapter_note')).toBeUndefined();
+  });
+
+  it('asks before moving a half-typed note to another chapter', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.type(screen.getByLabelText('New note for One'), 'Rook owls');
+
+    await user.click(screen.getByRole('button', { name: 'Notes for Two' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved note changes' });
+    expect(within(prompt).getByText('Discard this new note?')).toBeInTheDocument();
+    expect(screen.getByLabelText('New note for One')).toHaveValue('Rook owls');
+
+    await user.click(within(prompt).getByRole('button', { name: 'Discard and continue' }));
+
+    expect(screen.queryByLabelText('New note for One')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('New note for Two')).toHaveValue('');
+    expect(lastCall('add_chapter_note')).toBeUndefined();
+  });
+
+  it('asks before switching stories with a half-typed note', async () => {
+    withOtherStory();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.type(screen.getByLabelText('New note for One'), 'Rook owls');
+
+    await user.click(screen.getByText('Ashes', { selector: '.story-title' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved note changes' });
+    expect(
+      within(prompt).getByText('Open “Ashes” and drop these changes?')
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('New note for One')).toHaveValue('Rook owls');
+    expect(document.querySelector('.story-item.active')).toHaveTextContent('Ledger');
+
+    await user.click(within(prompt).getByRole('button', { name: 'Discard and continue' }));
+
+    await waitFor(() =>
+      expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes')
+    );
+    expect(screen.queryByLabelText('New note for One')).not.toBeInTheDocument();
+    expect(lastCall('add_chapter_note')).toBeUndefined();
+  });
+
+  it('asks before Cancel or Escape drops an edited note', async () => {
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Edit the note Rook owes the vault' })
+    );
+
+    const editor = screen.getByLabelText('Edit note in One');
+    await user.clear(editor);
+    await user.type(editor, 'The vault answers');
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved note changes' });
+    expect(
+      within(prompt).getByText('Discard your changes to this note?')
+    ).toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
+
+    // Escape asks the question, and a second Escape is the answer: it dismisses
+    // the question and leaves the editor exactly as it was.
+    await user.click(screen.getByLabelText('Edit note in One'));
+    await user.keyboard('{Escape}');
+    expect(
+      screen.getByRole('alertdialog', { name: 'Unsaved note changes' })
+    ).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved note changes' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
+
+    // Escape again asks once more, and Discard closes the editor without writing.
+    await user.keyboard('{Escape}');
+    await user.click(
+      within(
+        screen.getByRole('alertdialog', { name: 'Unsaved note changes' })
+      ).getByRole('button', { name: 'Discard and continue' })
+    );
+
+    expect(screen.queryByLabelText('Edit note in One')).not.toBeInTheDocument();
+    expect(screen.getByText('Rook owes the vault')).toBeInTheDocument();
+    expect(lastCall('update_chapter_note')).toBeUndefined();
+
+    // An untouched editor closes on Escape without asking.
+    await user.click(
+      screen.getByRole('button', { name: 'Edit the note Rook owes the vault' })
+    );
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByLabelText('Edit note in One')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved note changes' })
+    ).not.toBeInTheDocument();
   });
 
   it('moves a note to the trash and takes it off the chapter', async () => {

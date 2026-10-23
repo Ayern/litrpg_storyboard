@@ -1330,6 +1330,11 @@ body {
   background: #202021;
 }
 
+/* The panel already has padding, so its prompt needs no margin of its own. */
+.chapter-notes .chapter-details-prompt {
+  margin: 0;
+}
+
 .chapter-note {
   display: flex;
   flex-direction: column;
