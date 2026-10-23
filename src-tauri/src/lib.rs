@@ -470,6 +470,37 @@ fn export_story_json(
     Ok(path.display().to_string())
 }
 
+/// Writes a Markdown story bible beside the JSON exports and returns the path it
+/// wrote. It is the hand-off for drafting elsewhere, so it carries only words.
+#[tauri::command]
+fn export_story_markdown(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<String, String> {
+    let bible = db.story_bible(&story_id).map_err(|e| e.to_string())?;
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve the app data directory: {e}"))?
+        .join("exports");
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!(
+        "{}-story-bible-{stamp}.md",
+        slugify(&bible.title)
+    ));
+
+    std::fs::write(&path, bible.markdown)
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+
+    Ok(path.display().to_string())
+}
+
 /// Restores a story from a JSON export as a new copy. The path comes from the file
 /// dialog, and every id is remapped, so an import never overwrites anything.
 #[tauri::command]
@@ -588,6 +619,7 @@ pub fn run() {
             list_backups,
             restore_backup,
             export_story_json,
+            export_story_markdown,
             import_story_json,
         ])
         .run(tauri::generate_context!())

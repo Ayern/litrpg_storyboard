@@ -2750,6 +2750,23 @@ function App() {
     }
   };
 
+  // The hand-off for drafting elsewhere: Markdown, not a snapshot of the app.
+  const exportStoryBible = async () => {
+    if (!currentStory) return;
+    setActionError(null);
+    setExportStatus(null);
+
+    try {
+      const path: string = await invoke('export_story_markdown', {
+        storyId: currentStory.id,
+      });
+      setExportStatus(path);
+    } catch (e) {
+      console.error('Failed to write the story bible:', e);
+      setActionError(`Could not write the story bible: ${String(e)}`);
+    }
+  };
+
   const openBackups = async () => {
     setBackupsOpen(true);
     setConfirmRestore(null);
@@ -3843,6 +3860,13 @@ function App() {
                   onClick={exportStory}
                 >
                   Export JSON
+                </button>
+                <button
+                  className="export-button"
+                  title="Write a Markdown outline of the chapters, cast and cards"
+                  onClick={() => void exportStoryBible()}
+                >
+                  Story bible
                 </button>
                 <span className="current-story">{currentStory.title}</span>
               </>

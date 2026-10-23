@@ -293,11 +293,14 @@ written vs drafted (a small status on chapter nodes), word totals, the cast with
 levels, recent history, trash count, and what changed last. Read-only and cheap
 to compute. **M**
 
-**16. Story-bible export.** A Markdown file beside the JSON export: title and
-logline, chapters in order with POV, in-world time, notes and word counts, cast
-sheets with stats, skills and inventory, and open threads. Copy-to-clipboard as
-well as save-to-disk. This is the artefact a writer pastes into their drafting
-tool, so it must be plain, ordered and free of app jargon. **M**
+**16. Story-bible export.** **Started.** A Markdown file beside the JSON export
+opens with the title and logline, then chapters in reading order with their arc,
+words against target and notes, followed by a story total; the cast comes next
+with level, rank, XP, description, stats and attributes, then the other cards
+grouped by kind. Character cards are omitted so a sheet is never written twice,
+and no app jargon reaches the file. Remaining: POV and in-world time (item 8),
+skills and inventory (phase 3), open threads, and copy-to-clipboard beside
+save-to-disk. **M**
 
 ### Phase 5 — make it feel inevitable
 

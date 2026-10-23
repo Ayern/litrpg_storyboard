@@ -1745,6 +1745,220 @@ impl Db {
         })
     }
 
+    /// A plain Markdown outline for a drafting tool: chapters in reading order
+    /// with their arc and counts, the cast with their sheets, then the other
+    /// cards. Deliberately free of app jargon — it is written to be pasted into
+    /// another program, not read back by this one.
+    pub fn story_bible(&self, story_id: &str) -> DbResult<StoryBible> {
+        let story = self
+            .get_story(story_id)?
+            .ok_or(DbError::NotFound("story"))?;
+        let nodes = self.list_nodes(story_id)?;
+        let characters = self.list_characters(story_id)?;
+        let stats = self.list_story_stats(story_id)?;
+
+        let mut lines: Vec<String> = vec![format!("# {}", story.title)];
+
+        if let Some(description) = story
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|description| !description.is_empty())
+        {
+            lines.push(String::new());
+            lines.push(description.to_string());
+        }
+
+        let mut chapters: Vec<&Node> = nodes
+            .iter()
+            .filter(|node| node.node_type == "chapter")
+            .collect();
+        chapters.sort_by(|left, right| {
+            left.chapter_seq
+                .unwrap_or(i64::MAX)
+                .cmp(&right.chapter_seq.unwrap_or(i64::MAX))
+                .then_with(|| left.created_at.cmp(&right.created_at))
+        });
+
+        if !chapters.is_empty() {
+            lines.push(String::new());
+            lines.push("## Chapters".to_string());
+
+            let words: i64 = chapters.iter().filter_map(|node| node.chapter_words).sum();
+            let targets: Vec<i64> = chapters
+                .iter()
+                .filter_map(|node| node.chapter_target)
+                .collect();
+
+            if words > 0 || !targets.is_empty() {
+                let mut total = format!(
+                    "{} words in {} chapters",
+                    grouped(words),
+                    chapters.len()
+                );
+
+                if !targets.is_empty() {
+                    total.push_str(&format!(
+                        "; {} targeted across {} of them",
+                        grouped(targets.iter().sum()),
+                        targets.len()
+                    ));
+                }
+
+                total.push('.');
+
+                lines.push(String::new());
+                lines.push(format!("*{total}*"));
+            }
+
+            for chapter in chapters {
+                lines.push(String::new());
+                lines.push(match chapter.chapter_seq {
+                    Some(sequence) => format!("### {sequence}. {}", chapter.label),
+                    None => format!("### {}", chapter.label),
+                });
+
+                let mut facts: Vec<String> = Vec::new();
+
+                if let Some(arc) = chapter
+                    .chapter_arc
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|arc| !arc.is_empty())
+                {
+                    facts.push(format!("**Arc:** {arc}"));
+                }
+
+                match (chapter.chapter_words, chapter.chapter_target) {
+                    (Some(words), Some(target)) => {
+                        facts.push(format!("**Words:** {} of {}", grouped(words), grouped(target)))
+                    }
+                    (Some(words), None) => facts.push(format!("**Words:** {}", grouped(words))),
+                    (None, Some(target)) => {
+                        facts.push(format!("**Target:** {} words", grouped(target)))
+                    }
+                    (None, None) => {}
+                }
+
+                if !facts.is_empty() {
+                    lines.push(String::new());
+                    lines.push(facts.join(" · "));
+                }
+
+                if let Some(notes) = chapter
+                    .content
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|notes| !notes.is_empty())
+                {
+                    lines.push(String::new());
+                    lines.push(notes.to_string());
+                }
+            }
+        }
+
+        if !characters.is_empty() {
+            lines.push(String::new());
+            lines.push("## Cast".to_string());
+
+            for character in &characters {
+                lines.push(String::new());
+                lines.push(format!("### {}", character.name));
+
+                let mut facts = vec![format!("Level {}", character.level)];
+
+                if let Some(rank) = character
+                    .rank
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|rank| !rank.is_empty())
+                {
+                    facts.push(format!("Rank {rank}"));
+                }
+
+                if let Some(target) = character.xp_to_next {
+                    facts.push(format!(
+                        "{} XP of {}",
+                        grouped(character.xp),
+                        grouped(target)
+                    ));
+                } else if character.xp > 0 {
+                    facts.push(format!("{} XP", grouped(character.xp)));
+                }
+
+                lines.push(String::new());
+                lines.push(facts.join(" · "));
+
+                if let Some(description) = character
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|description| !description.is_empty())
+                {
+                    lines.push(String::new());
+                    lines.push(description.to_string());
+                }
+
+                let own_stats: Vec<&CharacterStat> = stats
+                    .iter()
+                    .filter(|stat| stat.character_id == character.id)
+                    .collect();
+                let attributes = self.list_attributes(&character.id)?;
+
+                if !own_stats.is_empty() || !attributes.is_empty() {
+                    lines.push(String::new());
+
+                    for stat in own_stats {
+                        lines.push(format!("- {}: {}", stat.stat_name, stat.value));
+                    }
+
+                    for attribute in attributes {
+                        lines.push(format!("- {}: {}", attribute.attr_name, attribute.value));
+                    }
+                }
+            }
+        }
+
+        // Character cards are left out on purpose: the cast section already
+        // carries their sheet, and repeating the card would say it twice.
+        let mut others: Vec<&Node> = nodes
+            .iter()
+            .filter(|node| node.node_type != "chapter" && node.node_type != "character")
+            .collect();
+        others.sort_by(|left, right| {
+            left.node_type
+                .cmp(&right.node_type)
+                .then_with(|| left.label.to_lowercase().cmp(&right.label.to_lowercase()))
+        });
+
+        if !others.is_empty() {
+            lines.push(String::new());
+            lines.push("## Other cards".to_string());
+
+            for node in others {
+                lines.push(String::new());
+                lines.push(format!("### {}", node.label));
+                lines.push(String::new());
+                lines.push(format!("*{}*", node.node_type));
+
+                if let Some(notes) = node
+                    .content
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|notes| !notes.is_empty())
+                {
+                    lines.push(String::new());
+                    lines.push(notes.to_string());
+                }
+            }
+        }
+
+        Ok(StoryBible {
+            title: story.title,
+            markdown: format!("{}\n", lines.join("\n")),
+        })
+    }
+
     // ===== STORY MAINTENANCE =====
 
     /// Renames a story. Renaming to the name it already has is not a change, so
@@ -3564,6 +3778,29 @@ pub struct AuditPage {
 
 /// Upper bound on one window of history, so a bad caller cannot ask for everything.
 const MAX_AUDIT_PAGE: i64 = 500;
+
+/// The Markdown outline of a story, with the title used to name the file.
+#[derive(Debug, Clone)]
+pub struct StoryBible {
+    pub title: String,
+    pub markdown: String,
+}
+
+/// Thousands separators without a locale, so the same story writes the same
+/// file on every machine.
+fn grouped(value: i64) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+
+    grouped
+}
 
 /// A complete, self-contained snapshot of one story.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -6493,6 +6730,116 @@ mod tests {
         assert!(db
             .set_chapter_details(&idea.id, Some("Arc".into()), None, None, "Ada".into())
             .is_err());
+    }
+
+    #[test]
+    fn the_story_bible_reads_as_an_outline_for_another_program() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story(
+                "Ledger".into(),
+                Some("A vault, a warder, and the debt between them.".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let make = |label: &str, node_type: &str, content: Option<String>| {
+            db.create_node(
+                story.id.clone(),
+                node_type.into(),
+                label.into(),
+                content,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap()
+        };
+
+        let opening = make("Opening", "chapter", None);
+        db.update_node(
+            &opening.id,
+            "Opening".into(),
+            Some("The gates open.".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.set_chapter_details(
+            &opening.id,
+            Some("The Vault".into()),
+            Some(1200),
+            Some(2000),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let second = make("Second", "chapter", None);
+        db.set_chapter_details(&second.id, None, Some(300), None, "Ada".into())
+            .unwrap();
+
+        let rook = db
+            .create_character(
+                story.id.clone(),
+                "Rook".into(),
+                Some("A warder.".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        db.set_character_progress(
+            &rook.id,
+            3,
+            250,
+            Some("Copper".into()),
+            Some(1000),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_or_update_stat(rook.id.clone(), "HP".into(), 20, None, "Ada".into())
+            .unwrap();
+        db.add_or_update_attribute(
+            rook.id.clone(),
+            "Class".into(),
+            "Warden".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        make("Blackgate", "location", Some("A gate that remembers.".into()));
+        // A character card is not repeated: the cast section carries the sheet.
+        make("Rook", "character", Some("The card.".into()));
+
+        let bible = db.story_bible(&story.id).unwrap();
+        let markdown = &bible.markdown;
+
+        assert_eq!(bible.title, "Ledger");
+        assert!(markdown.starts_with("# Ledger\n\nA vault, a warder, and the debt between them."));
+        assert!(markdown.ends_with('\n'));
+
+        let chapters = markdown.find("## Chapters").unwrap();
+        let cast = markdown.find("## Cast").unwrap();
+        let cards = markdown.find("## Other cards").unwrap();
+        assert!(chapters < cast && cast < cards);
+
+        let first = markdown.find("### 1. Opening").unwrap();
+        let next = markdown.find("### 2. Second").unwrap();
+        assert!(first < next);
+
+        assert!(markdown.contains("**Arc:** The Vault · **Words:** 1,200 of 2,000"));
+        assert!(markdown.contains("**Words:** 300"));
+        assert!(markdown.contains("The gates open."));
+        assert!(markdown.contains("*1,500 words in 2 chapters; 2,000 targeted across 1 of them.*"));
+
+        assert!(markdown.contains("### Rook"));
+        assert_eq!(markdown.matches("### Rook").count(), 1);
+        assert!(markdown.contains("Level 3 · Rank Copper · 250 XP of 1,000"));
+        assert!(markdown.contains("A warder."));
+        assert!(markdown.contains("- HP: 20"));
+        assert!(markdown.contains("- Class: Warden"));
+
+        assert!(markdown.contains("### Blackgate"));
+        assert!(markdown.contains("*location*"));
+        assert!(markdown.contains("A gate that remembers."));
+        assert!(!markdown.contains("The card."));
     }
 
     #[test]
