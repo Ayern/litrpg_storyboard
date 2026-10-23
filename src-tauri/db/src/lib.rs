@@ -4,8 +4,10 @@ use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 
 /// Settings key holding the trash retention window, in days.
@@ -29,6 +31,8 @@ pub type DbResult<T> = Result<T, DbError>;
 #[derive(Debug)]
 pub enum DbError {
     Sqlite(rusqlite::Error),
+    /// Reading, copying or replacing the database file itself.
+    Io(std::io::Error),
     /// A previous panic happened while the connection was locked. Reported instead
     /// of panicking again, which with `panic = "abort"` would kill the app.
     Poisoned,
@@ -44,10 +48,17 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
+impl From<std::io::Error> for DbError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Sqlite(error) => write!(f, "{error}"),
+            Self::Io(error) => write!(f, "{error}"),
             Self::Poisoned => write!(f, "database connection is in a poisoned state"),
             Self::NotFound(what) => write!(f, "{what} not found"),
             Self::Invalid(message) => write!(f, "{message}"),
@@ -56,6 +67,24 @@ impl std::fmt::Display for DbError {
 }
 
 impl std::error::Error for DbError {}
+
+/// The written order of a backup, read from its name: the `YYYYMMDD-HHMMSS`
+/// timestamp, then the suffix that tells apart two copies from the same second.
+fn backup_stamp(name: &str, prefix: &str) -> (String, u64) {
+    let rest = name.strip_prefix(prefix).unwrap_or(name);
+    let rest = rest.strip_suffix(".db").unwrap_or(rest);
+
+    // Fifteen characters is the whole timestamp; anything after that is the
+    // suffix the writer added to avoid overwriting a copy from the same second.
+    if rest.len() > 15 && rest.as_bytes()[15] == b'-' {
+        (
+            rest[..15].to_string(),
+            rest[16..].parse::<u64>().unwrap_or(0),
+        )
+    } else {
+        (rest.to_string(), 0)
+    }
+}
 
 /// Owns the single SQLite connection and hands it out under a lock.
 ///
@@ -121,6 +150,165 @@ impl Db {
 
     fn conn(&self) -> DbResult<MutexGuard<'_, Connection>> {
         self.conn.lock().map_err(|_| DbError::Poisoned)
+    }
+
+    // ===== BACKUPS =====
+
+    /// The copies this app has written beside the database, newest first.
+    ///
+    /// Only files named the way [`snapshots`] names them are listed, so anything
+    /// else in the folder is left out rather than offered for restore.
+    pub fn list_backups(&self) -> DbResult<Vec<BackupInfo>> {
+        let Some(db_path) = self.path.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let folder = snapshots::snapshot_dir(db_path);
+        if !folder.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let stem = db_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("storyboard");
+        let prefix = format!("{stem}-");
+
+        let mut copies: Vec<((String, u64), std::time::SystemTime, BackupInfo)> = Vec::new();
+
+        for entry in fs::read_dir(&folder)? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+
+            if !name.starts_with(&prefix) || !name.ends_with(".db") || !path.is_file() {
+                continue;
+            }
+
+            let metadata = entry.metadata()?;
+            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+
+            copies.push((
+                backup_stamp(name, &prefix),
+                modified,
+                BackupInfo {
+                    file_name: name.to_string(),
+                    created_at: chrono::DateTime::<Utc>::from(modified).to_rfc3339(),
+                    size_bytes: metadata.len(),
+                },
+            ));
+        }
+
+        // The name is what orders them: two copies in the same second can carry
+        // the same filesystem timestamp, but the second one gets a suffix.
+        copies.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.cmp(&left.1))
+                .then_with(|| right.2.file_name.cmp(&left.2.file_name))
+        });
+
+        Ok(copies.into_iter().map(|(_, _, info)| info).collect())
+    }
+
+    /// Puts a copy back in place of the live database and reopens it.
+    ///
+    /// The copy is staged and opened before the live file is touched, so a
+    /// damaged backup cannot cost anything. Just before the swap the current
+    /// state is copied as well, which is what makes a restore itself reversible
+    /// from the same dialog.
+    pub fn restore_backup(&self, file_name: &str, keep: usize) -> DbResult<()> {
+        let db_path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| DbError::Invalid("this database is not on disk".to_string()))?;
+
+        let stem = db_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("storyboard");
+        let prefix = format!("{stem}-");
+
+        // A plain file name from this app's folder: no directory parts, so a
+        // crafted name cannot reach any other file.
+        let named_like_a_backup = Path::new(file_name).components().count() == 1
+            && file_name.starts_with(&prefix)
+            && file_name.ends_with(".db");
+
+        if !named_like_a_backup {
+            return Err(DbError::Invalid(
+                "that is not one of this app's backups".to_string(),
+            ));
+        }
+
+        let source = snapshots::snapshot_dir(db_path).join(file_name);
+        if !source.is_file() {
+            return Err(DbError::NotFound("backup"));
+        }
+
+        // Staged beside the database, then opened: a bad or old file is found
+        // before anything has been replaced, and migrations run on the copy.
+        let staged = db_path.with_extension("restoring");
+        fs::copy(&source, &staged)?;
+
+        let prepared = (|| -> DbResult<()> {
+            let conn = Connection::open(&staged)?;
+            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            migrate(&conn)?;
+            Ok(())
+        })();
+
+        if let Err(error) = prepared {
+            let _ = fs::remove_file(&staged);
+            return Err(error);
+        }
+
+        // Close the live connection before the file under it changes. Until the
+        // replacement is open, the database holds an empty in-memory stand-in.
+        let mut guard = self.conn()?;
+        let placeholder = Connection::open_in_memory()?;
+        let previous = std::mem::replace(&mut *guard, placeholder);
+        drop(previous);
+
+        let swapped = (|| -> DbResult<()> {
+            // The state about to be replaced is copied first: a closed file is
+            // a consistent one, and the copy is the way back.
+            snapshots::snapshot(db_path, keep)?;
+
+            fs::copy(&staged, db_path)?;
+
+            // Journal files belong to the database that was just replaced.
+            let _ = fs::remove_file(db_path.with_extension("db-wal"));
+            let _ = fs::remove_file(db_path.with_extension("db-shm"));
+
+            let conn = Connection::open(db_path)?;
+            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            migrate(&conn)?;
+            *guard = conn;
+
+            Ok(())
+        })();
+
+        let _ = fs::remove_file(&staged);
+
+        if let Err(error) = swapped {
+            // Get a working connection back if the file is still readable; the
+            // copy taken above is the fallback when it is not.
+            if let Ok(conn) = Connection::open(db_path) {
+                let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+                let _ = migrate(&conn);
+                *guard = conn;
+            }
+
+            return Err(DbError::Invalid(format!(
+                "the backup could not be put in place: {error}"
+            )));
+        }
+
+        Ok(())
     }
 
     // ===== STORY OPERATIONS =====
@@ -2697,6 +2885,15 @@ pub struct DeletedItem {
     pub deleted_at: String,
 }
 
+/// One copy of the database, as the backups dialog lists it.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct BackupInfo {
+    pub file_name: String,
+    /// When the copy was written, in RFC 3339 (UTC).
+    pub created_at: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Story {
     pub id: String,
@@ -5202,6 +5399,93 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(before, 0, "the copy is what was on disk before migrating");
+    }
+
+    fn backup_scratch(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("litrpg-backups-{name}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("storyboard.db");
+        (dir, path)
+    }
+
+    #[test]
+    fn lists_this_database_s_backups_newest_first() {
+        let (_dir, path) = backup_scratch("list");
+        let db = Db::open(&path).unwrap();
+        db.create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        let first = snapshots::snapshot(&path, 10).unwrap().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let second = snapshots::snapshot(&path, 10).unwrap().unwrap();
+
+        // The folder is the user's, so something else in it is not a backup.
+        std::fs::write(snapshots::snapshot_dir(&path).join("notes.txt"), "mine").unwrap();
+
+        let backups = db.list_backups().unwrap();
+        let names: Vec<&str> = backups.iter().map(|backup| backup.file_name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                second.file_name().unwrap().to_str().unwrap(),
+                first.file_name().unwrap().to_str().unwrap(),
+            ]
+        );
+        assert!(backups.iter().all(|backup| backup.size_bytes > 0));
+        assert!(backups.iter().all(|backup| !backup.created_at.is_empty()));
+    }
+
+    #[test]
+    fn restoring_a_copy_replaces_the_contents_and_copies_what_it_replaced() {
+        let (_dir, path) = backup_scratch("restore");
+        let db = Db::open(&path).unwrap();
+        db.create_story("One".into(), None, "Ada".into())
+            .unwrap();
+
+        let copy = snapshots::snapshot(&path, 10).unwrap().unwrap();
+        let file_name = copy.file_name().unwrap().to_str().unwrap().to_string();
+
+        db.create_story("Two".into(), None, "Ada".into())
+            .unwrap();
+        assert_eq!(db.list_stories().unwrap().len(), 2);
+
+        db.restore_backup(&file_name, 10).unwrap();
+
+        let stories = db.list_stories().unwrap();
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].title, "One");
+
+        // The state that was replaced was copied before it went, so the restore
+        // can itself be walked back from the same dialog.
+        assert!(db.list_backups().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn refuses_foreign_names_and_files_that_are_not_databases() {
+        let (_dir, path) = backup_scratch("refuse");
+        let db = Db::open(&path).unwrap();
+        db.create_story("Kept".into(), None, "Ada".into())
+            .unwrap();
+
+        // No directory parts, and only names this app writes.
+        assert!(matches!(
+            db.restore_backup("../storyboard.db", 10),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(db.restore_backup("storyboard.db", 10).is_err());
+
+        let folder = snapshots::snapshot_dir(&path);
+        std::fs::create_dir_all(&folder).unwrap();
+
+        let corrupt = folder.join("storyboard-corrupt.db");
+        std::fs::write(&corrupt, "this is not a database").unwrap();
+
+        assert!(db.restore_backup("storyboard-corrupt.db", 10).is_err());
+
+        // Nothing was replaced, and the failed attempt left no staging file.
+        assert_eq!(db.list_stories().unwrap().len(), 1);
+        assert!(!path.with_extension("restoring").exists());
     }
 
     /// Retention deletes for real, so the launch order matters: the copy taken

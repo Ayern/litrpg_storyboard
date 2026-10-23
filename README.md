@@ -148,6 +148,14 @@ nothing that already exists is touched; a title collision becomes
 `<title> (imported)`. Graph connections, attribute values and the original history
 come across, and the restore is all-or-nothing.
 
+**Backups** — the Backups button lists the copies written at each launch, newest
+first, with when each was written, its size and its file name. Restoring one asks
+first, copies the current state into a new backup, then replaces the database and
+loads the stories from it again; the session's undo history and any unsaved drafts
+are dropped, because they describe rows that no longer exist. The chosen file is
+opened and migrated before anything is replaced, so a damaged or foreign file
+leaves the current data untouched.
+
 **Current user** — remembered between launches and used to attribute every change.
 This is a name, not an identity; see [Limitations](#limitations).
 
@@ -160,7 +168,8 @@ This is a name, not an identity; see [Limitations](#limitations).
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/com.chris.litrpg-storyboard-tracker/storyboard.db` |
 
 Exports go to an `exports` folder beside the database, named
-`<story-slug>-<timestamp>.json`.
+`<story-slug>-<timestamp>.json`. Launch copies live in `snapshots` beside the
+database and are listed by the Backups dialog.
 
 Earlier builds stored the database at `%APPDATA%\litrpg_storyboard\storyboard.db`.
 On first launch the app copies that file to the new location if — and only if — the
@@ -327,11 +336,10 @@ page that arrives late, and what it says when a filter matches nothing.
   means an item deleted 40 days ago goes the next time the app starts, not the
   moment it turns 40 days old — a long-running session keeps everything until it
   is restarted. Nothing is ever purged while the app is closed.
-- **Recovery is a file copy, not a button.** Every launch copies the database into
-  a `snapshots` folder beside it, before the schema is migrated, and keeps the last
-  ten. A bad import, a wrong deletion or a migration that went wrong can be undone
-  by putting an older copy back, but nothing in the app does that for you, and
-  anything done since the last launch is not in a copy.
+- **Backups are taken at launch, not at every change.** A copy is written when the
+  app starts (and just before a restore), so work done during the current session
+  is not in the list; Export is the deliberate snapshot. Restoring replaces
+  everything, including the trash, and the undo history starts again from there.
 - **Import always creates a copy.** There is no way to overwrite or merge into an
   existing story, so restoring over a damaged one leaves the original in place to
   delete by hand.

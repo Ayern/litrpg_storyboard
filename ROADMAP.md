@@ -197,11 +197,13 @@ change rather than a correction of an old entry. Not covered, and stated in the
 README: character and story edits, stats and attributes, import, and the Trash
 tab. **L**
 
-**5. Backups you can restore.** The app already copies the database to
-`snapshots/` at every launch and keeps ten; nothing puts one back. Add a Backups
-dialog that lists them with date and size, and a Restore that snapshots the
-current state first, closes the connection, copies the chosen file into place and
-reloads. Never delete a snapshot behind the user's back. **M**
+**5. Backups you can restore.** **Done.** The Backups dialog lists the launch
+copies newest first with date, size and file name, and restores one behind a
+confirmation. The chosen file is copied to a staging file, opened and migrated
+before anything is replaced; the live connection is then closed, the current
+state is copied into a new backup, and the database is replaced and reopened. The
+UI drops its undo history and drafts and reads the stories again. Only names this
+app writes are accepted, so a crafted path or a foreign file is refused. **M**
 
 ### Phase 2 — the LitRPG sheet
 

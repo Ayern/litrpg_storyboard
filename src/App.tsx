@@ -23,6 +23,13 @@ interface Story {
   updated_at: string;
 }
 
+// One copy of the database, as the backups dialog lists it.
+interface BackupInfo {
+  file_name: string;
+  created_at: string;
+  size_bytes: number;
+}
+
 // Whether the history says one entry's earlier value can still be written back.
 // Worked out by the database when the page is read, against the value the field
 // holds now — so the tab can tell before it is clicked. Keep in step with
@@ -490,6 +497,12 @@ function formatWhen(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // What the button says when a revert is not on offer. The words name the reason
 // in the space the action would take; the full sentence is in its tooltip.
 const revertLabels: Record<RevertState, string> = {
@@ -718,6 +731,17 @@ function App() {
   const [trashNotice, setTrashNotice] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
 
+  // The launch copies beside the database, and the dialog that lists them.
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [backupsLoading, setBackupsLoading] = useState(false);
+  const [backupsError, setBackupsError] = useState<string | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [restoringFile, setRestoringFile] = useState<string | null>(null);
+  // Kept apart from the undo notice: loading a story clears that one, and this
+  // one is written just as the restored story is being loaded.
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+
   // Initialize DB and load stories
   useEffect(() => {
     const init = async () => {
@@ -862,8 +886,8 @@ function App() {
   // shortcut is not swallowed on another tab where the browser's find is fine.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      // While the shortcut list is up it is the only thing the keys act on.
-      if (selectedTab !== 'graph' || !currentStory || shortcutsOpen) return;
+      // While a modal is up, the keys it owns are the only ones that act.
+      if (selectedTab !== 'graph' || !currentStory || shortcutsOpen || backupsOpen) return;
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -884,7 +908,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedTab, currentStory, searchOpen, shortcutsOpen]);
+  }, [selectedTab, currentStory, searchOpen, shortcutsOpen, backupsOpen]);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -929,7 +953,7 @@ function App() {
         target?.isContentEditable ||
         ['input', 'textarea', 'select'].includes(target?.tagName?.toLowerCase() ?? '');
 
-      if (typing || shortcutsOpen) return;
+      if (typing || shortcutsOpen || backupsOpen) return;
 
       const key = event.key.toLowerCase();
 
@@ -948,7 +972,25 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undoLast, redoLast, shortcutsOpen]);
+  }, [undoLast, redoLast, shortcutsOpen, backupsOpen]);
+
+  // The backups dialog is modal: Escape closes it, but not while a restore is
+  // already running.
+  useEffect(() => {
+    if (!backupsOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || restoringFile) return;
+
+      event.preventDefault();
+      setBackupsOpen(false);
+      setConfirmRestore(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [backupsOpen, restoringFile]);
 
   // A notice about an undo is useful for a moment, then it is just stale text.
   useEffect(() => {
@@ -957,6 +999,13 @@ function App() {
     const timer = setTimeout(() => setHistoryNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [historyNotice]);
+
+  useEffect(() => {
+    if (!restoreNotice) return;
+
+    const timer = setTimeout(() => setRestoreNotice(null), 8000);
+    return () => clearTimeout(timer);
+  }, [restoreNotice]);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -2352,6 +2401,68 @@ function App() {
     }
   };
 
+  const openBackups = async () => {
+    setBackupsOpen(true);
+    setConfirmRestore(null);
+    setBackupsError(null);
+    setBackupsLoading(true);
+
+    try {
+      const list = await invoke<BackupInfo[]>('list_backups');
+      setBackups(list);
+    } catch (e) {
+      console.error('Failed to list backups:', e);
+      setBackupsError(`Could not read the backups: ${String(e)}`);
+    } finally {
+      setBackupsLoading(false);
+    }
+  };
+
+  // Restoring replaces the file under the whole app. Everything read from the old
+  // one is dropped and read again, and the session's undo history goes with it,
+  // because it describes rows that no longer exist.
+  const restoreBackup = async (file: BackupInfo) => {
+    setRestoringFile(file.file_name);
+    setBackupsError(null);
+
+    try {
+      await invoke('restore_backup', { fileName: file.file_name });
+
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setHistoryDepth({ undo: 0, redo: 0 });
+      nodeDraftsRef.current = {};
+      otherStoryIndexRef.current = {};
+      setOtherStoryIndex({});
+
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setSelectedCharacterId(null);
+      setClosePrompt(false);
+      setNodes([]);
+      setEdges([]);
+      setCharacters([]);
+      setCastStats({});
+      setAuditEntries([]);
+      setAuditTotal(0);
+      setTrash([]);
+      setDeletedStories([]);
+
+      const restored: Story[] = await invoke('get_all_stories');
+      setCurrentStory(null);
+      setStories(restored);
+
+      setConfirmRestore(null);
+      setBackupsOpen(false);
+      setRestoreNotice(`Restored the copy from ${formatWhen(file.created_at)}`);
+    } catch (e) {
+      console.error('Failed to restore a backup:', e);
+      setBackupsError(`Could not restore that copy: ${String(e)}`);
+    } finally {
+      setRestoringFile(null);
+    }
+  };
+
   // Only one editor is open at a time: picking a node closes the connection
   // editor, because both occupy the same corner of the canvas.
   const selectNode = useCallback(
@@ -3266,6 +3377,18 @@ function App() {
                 {historyNotice}
               </span>
             )}
+            {restoreNotice && (
+              <span className="history-notice" role="status">
+                {restoreNotice}
+              </span>
+            )}
+            <button
+              className="backups-button"
+              title="Restore an earlier copy of the whole database"
+              onClick={() => void openBackups()}
+            >
+              Backups
+            </button>
             {currentStory && (
               <>
                 <button
@@ -4522,6 +4645,102 @@ function App() {
             <p className="shortcuts-hint">
               Press {shortcutKeys.help} any time to bring this list back.
             </p>
+          </div>
+        </div>
+      )}
+
+      {backupsOpen && (
+        <div
+          className="shortcuts-backdrop"
+          role="presentation"
+          onClick={() => !restoringFile && setBackupsOpen(false)}
+        >
+          <div
+            className="backups"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Backups"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="shortcuts-head">
+              <h2>Backups</h2>
+              <button
+                className="shortcuts-close"
+                aria-label="Close backups"
+                title="Close this dialog (Esc)"
+                onClick={() => setBackupsOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="shortcuts-intro">
+              A copy of the whole database is written each time the app starts, and the
+              newest ten are kept. Restoring one replaces every story in this window;
+              the state it replaces is copied first, so a restore can be walked back
+              from this same list.
+            </p>
+
+            {backupsLoading && <p className="backups-empty">Reading the backups…</p>}
+
+            {backupsError && (
+              <div className="backups-error" role="alert">
+                {backupsError}
+              </div>
+            )}
+
+            {!backupsLoading && !backupsError && backups.length === 0 && (
+              <p className="backups-empty">
+                No copies yet. One is written each time the app starts.
+              </p>
+            )}
+
+            {backups.length > 0 && (
+              <ul className="backup-list" aria-label="Database backups">
+                {backups.map(backup => (
+                  <li key={backup.file_name} className="backup-item">
+                    <div className="backup-when">
+                      {formatWhen(backup.created_at)}
+                      <span className="backup-meta">
+                        {formatBytes(backup.size_bytes)} · {backup.file_name}
+                      </span>
+                    </div>
+
+                    {confirmRestore === backup.file_name ? (
+                      <div className="backup-confirm">
+                        <span>Replace everything with this copy?</span>
+                        <button
+                          title="Replace the database with this copy; a copy of what is here now is taken first"
+                          onClick={() => void restoreBackup(backup)}
+                          disabled={restoringFile !== null}
+                        >
+                          {restoringFile === backup.file_name
+                            ? 'Restoring…'
+                            : 'Restore this copy'}
+                        </button>
+                        <button
+                          title="Keep the current data"
+                          onClick={() => setConfirmRestore(null)}
+                          disabled={restoringFile !== null}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        title={`Replace the database with the copy from ${formatWhen(
+                          backup.created_at
+                        )}`}
+                        onClick={() => setConfirmRestore(backup.file_name)}
+                        disabled={restoringFile !== null}
+                      >
+                        Restore
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}

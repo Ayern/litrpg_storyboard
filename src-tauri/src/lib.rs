@@ -1,6 +1,6 @@
 use litrpg_db::{
-    AuditPage, Character, CharacterAttribute, CharacterStat, Db, DeletedItem, Edge, Node, Story,
-    StoryExport,
+    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterStat, Db, DeletedItem, Edge, Node,
+    Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -431,6 +431,20 @@ fn import_story_json(
     db.import_story(export, user).map_err(|e| e.to_string())
 }
 
+/// The launch copies of the database, newest first, for the backups dialog.
+#[tauri::command]
+fn list_backups(db: tauri::State<'_, Db>) -> Result<Vec<BackupInfo>, String> {
+    db.list_backups().map_err(|e| e.to_string())
+}
+
+/// Puts one of those copies back in place and reopens the database from it. The
+/// state it replaces is copied first, so the restore itself can be undone.
+#[tauri::command]
+fn restore_backup(db: tauri::State<'_, Db>, file_name: String) -> Result<(), String> {
+    db.restore_backup(&file_name, SNAPSHOTS_TO_KEEP)
+        .map_err(|e| e.to_string())
+}
+
 /// Turns a title into a safe file name: "The Long Walk" becomes "the-long-walk".
 fn slugify(title: &str) -> String {
     let mut slug = String::new();
@@ -512,6 +526,8 @@ pub fn run() {
             purge_deleted,
             get_trash_retention,
             set_trash_retention,
+            list_backups,
+            restore_backup,
             export_story_json,
             import_story_json,
         ])
