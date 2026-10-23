@@ -60,10 +60,29 @@ jobs:
 
       # The tauri crate links against webkit and gtk, which the runner does not
       # ship. `cargo test --lib` needs them even though no window is opened.
+      #
+      # Normally this takes ~25s, but the runner's Ubuntu mirror has stalled
+      # twice now -- 751s and 1667s for the same 104 MB -- while the tests it
+      # installs for run in four seconds. apt gives a silent connection 30s
+      # before abandoning that file (measured: 60s per source, as it tries
+      # InRelease and then Release) and retries a failed file three times, so one
+      # dead mirror becomes a chain of multi-minute gaps. Shorter timeout, more
+      # retries, and a cap on the step: a dead mirror should cost minutes, not
+      # half an hour.
       - name: Install Tauri system dependencies
+        timeout-minutes: 8
+        env:
+          # Nothing here should wait for a prompt; fail loudly if a package wants
+          # to ask something instead of sitting there until the timeout.
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt_opts=(
+            -o Acquire::Retries=5
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+          )
+          sudo apt-get "${apt_opts[@]}" update
+          sudo apt-get "${apt_opts[@]}" install -y \
             build-essential \
             curl \
             wget \
