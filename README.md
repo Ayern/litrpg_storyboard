@@ -56,6 +56,20 @@ work them out. Each field that changes is a history entry of its own, so an arc,
 count or a day can be put back from the Audit tab; a POV is recorded by name (and
 is not revertible, because the link is stored as an id).
 
+**Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
+row opens a panel with **Add note**, **Edit** and **Delete**. There is no
+formatting and no manuscript — a note is exactly the text typed into it, shown
+under the chapter it belongs to, and `Ctrl`/`Cmd`+`Enter` adds or saves one. A
+note is stored as a `note` node with a parent pointer, which is what lets it
+appear in the trash, name itself in the history by its first line, travel in an
+export, sit under the chapter's heading in the story bible and be found by the
+search palette. It is deliberately kept off the graph: a result opens the
+chapter's panel with the note marked rather than a card on the canvas. Deleting a
+note moves it to the trash, and trashing a chapter takes its notes with it —
+restoring the chapter brings them back, while a note trashed on its own waits in
+the trash until its chapter is live again. The row's button counts the notes
+under it.
+
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
 the label, add or change its notes, and save. Only the fields you actually changed
@@ -99,18 +113,23 @@ unlinked. This is HTML5 drag and drop, which is why the window sets
 WebView2's and swallow the drag events on Windows. Nothing in the app uses
 Tauri's own drop handler — import goes through a file dialog.
 
-**Finding anything** — `Ctrl+F` on the Graph tab opens a search palette over the
-canvas (the Search button does the same). A query is matched against a node's
+**Finding anything** — `Ctrl+F` on the Graph or Chapters tab opens a search
+palette (the Search buttons do the same). On the Graph tab it floats over the
+canvas; on the Chapters tab it sits above the reading order, so a note can be
+found without going back to the board first. A query is matched against a node's
 label, notes, type and linked cast member; a character's name and description;
-both ends of a connection and its label or relation type; and every story by
-title, description or the cards inside it — other stories' boards are read when
-the palette opens, so a word can be found without opening the story that holds
-it. Matches in the open story are outlined on the board as the query is typed,
-and the first eight results are listed. `↑`/`↓` move through them, `Enter` goes
-to the chosen one, and `Esc` closes the palette. A node opens in the inspector, a
-cast member opens their sheet, a connection opens its editor centered on it, and
-a story result opens that story. The filter row under the query narrows the list
-to one kind, and the count follows the filter.
+both ends of a connection and its label or relation type; the text of every
+chapter note; and every story by title, description or the cards inside it —
+other stories' boards and notes are read when the palette opens, so a word can be
+found without opening the story that holds it. A result whose own name matched
+is listed before one found only by its notes, description, relation or cast
+member. Matches in the open story are outlined on the board as the query is
+typed, and the first eight results are listed. `↑`/`↓` move through them, `Enter`
+goes to the chosen one, and `Esc` closes the palette. A node opens in the
+inspector, a cast member opens their sheet, a connection opens its editor centered
+on it, a note opens the Chapters tab with its chapter's panel expanded and the
+note marked for a moment, and a story result opens that story. The filter row
+under the query narrows the list to one kind, and the count follows the filter.
 
 **Editing a connection** — click an edge to open the same kind of editor for its
 label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
@@ -191,11 +210,13 @@ attributes, graph and full history — beside the database, under
 **Story bible** — writes a Markdown file beside the JSON exports,
 `exports/<story-slug>-story-bible-<timestamp>.md`. It opens with the title and
 logline, then the chapters in reading order, each with its arc, its day, its POV,
-its words against the target and its notes; a one-line story total follows the
-chapter list, and a **Timeline** section lists the chapters that have a day in
-time order with their POV. The cast comes next — level, rank and XP where they exist, the description, then the
-stats and attributes as a plain list — followed by the other cards grouped by
-kind. Character cards are left out because the cast section already carries their
+its words against the target and its notes — the chapter card's own notes as a
+paragraph, then the chapter's notes as a bulleted list under **Notes**, keeping
+line breaks inside a note; a one-line story total follows the chapter list, and a
+**Timeline** section lists the chapters that have a day in time order with their
+POV. The cast comes next — level, rank and XP where they exist, the description,
+then the stats and attributes as a plain list — followed by the other cards
+grouped by kind. Character cards are left out because the cast section already carries their
 sheet. Headings are numbered and nothing is written in app jargon, so the file can
 be pasted into whatever you draft in. **Copy bible** puts the same text on the
 clipboard without writing a file, for pasting straight into a document; the
@@ -317,7 +338,8 @@ afterwards is numbered when it is created. Version 8 added `chapter_arc`,
 `chapter_words` and `chapter_target`; an older chapter starts with none of them,
 which is different from a word count of zero. Version 9 added `chapter_pov` and
 `chapter_day`; an older chapter is unplaced and has no point of view until one is
-set.
+set. Version 10 added `nodes.parent_node_id`, which is NULL on everything but a
+note, so an existing story simply has no notes until one is added.
 
 | Table | Contents |
 | --- | --- |
@@ -325,7 +347,7 @@ set.
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id) and `chapter_day`, `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id) and `chapter_day`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -475,12 +497,14 @@ point so it stops drawing the vanished badge.
 - **Shortcuts are fixed, not rebindable.** What the reference lists is the whole
   set of keyboard routes; customising them is not supported.
 - **Search is a plain substring match.** Case is ignored, but `rk` does not find
-  `Rook` and there is no ranking beyond the order results are gathered in: the
-  open story first (nodes, cast, connections), then the other stories, each
-  starting with its title. The palette is captured on the Graph tab only, and the
-  keyboard reaches the first eight results. Another story's board is read when
-  the palette opens and kept for the session; it is dropped when that story has
-  been open and left, so edits are never searched from a stale copy.
+  `Rook`. Results are ranked into two bands — a name or title match first, then
+  everything found by its notes, description, relation or cast member — and
+  inside a band they keep the order they were gathered in: the open story first
+  (nodes, chapter notes, cast, connections), then the other stories, each
+  starting with its title. The palette is captured on the Graph and Chapters tabs
+  only, and the keyboard reaches the first eight results. Another story's board is
+  read when the palette opens and kept for the session; it is dropped when that
+  story has been open and left, so edits are never searched from a stale copy.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every

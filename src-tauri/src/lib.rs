@@ -248,6 +248,38 @@ fn set_chapter_details(
         .map_err(|e| e.to_string())
 }
 
+/// The notes of every chapter, oldest first. They are not on the board, so the
+/// Chapters tab reads them separately.
+#[tauri::command]
+fn get_chapter_notes(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Node>, String> {
+    db.list_chapter_notes(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Adds a plain-text note under a chapter. The label is taken from its first
+/// line so the trash and the history can name it.
+#[tauri::command]
+fn add_chapter_note(
+    db: tauri::State<'_, Db>,
+    chapter_id: String,
+    text: String,
+    user: String,
+) -> Result<Node, String> {
+    db.add_chapter_note(&chapter_id, text, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_chapter_note(
+    db: tauri::State<'_, Db>,
+    id: String,
+    text: String,
+    user: String,
+) -> Result<Node, String> {
+    db.update_note(&id, text, user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_story_character_stats(
     db: tauri::State<'_, Db>,
@@ -613,6 +645,9 @@ pub fn run() {
             get_graph_nodes,
             set_chapter_order,
             set_chapter_details,
+            get_chapter_notes,
+            add_chapter_note,
+            update_chapter_note,
             get_story_character_stats,
             update_graph_node_position,
             update_graph_node,

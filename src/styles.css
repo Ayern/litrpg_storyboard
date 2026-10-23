@@ -343,6 +343,17 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
+/* The same palette on the Chapters tab: in the flow of the page above the list
+   rather than floating over a canvas. */
+.canvas-search.inline {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-width: none;
+  margin: 0 0 14px;
+  box-sizing: border-box;
+}
+
 .canvas-search-input {
   width: 100%;
   padding: 6px 8px;
@@ -424,6 +435,11 @@ body {
 .canvas-search-kind.story {
   background: #37304a;
   color: #c3b3f2;
+}
+
+.canvas-search-kind.note {
+  background: #3a3527;
+  color: #dcc79a;
 }
 
 .canvas-search-filters {
@@ -1019,6 +1035,18 @@ body {
   cursor: not-allowed;
 }
 
+/* Searching is not the tab's main action, so it does not wear the primary colour. */
+.chapter-creator button.chapter-search-button {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+}
+
+.chapter-creator button.chapter-search-button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
 .chapter-warning {
   display: flex;
   align-items: center;
@@ -1237,6 +1265,96 @@ body {
 .chapter-details-actions button:hover:not(:disabled) {
   background: #37373d;
   color: #fff;
+}
+
+.chapter-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid #333;
+  background: #202021;
+}
+
+.chapter-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  background: #242425;
+  border: 1px solid #343434;
+  border-radius: 4px;
+}
+
+.chapter-note.matched {
+  border-color: #7ac47a;
+  box-shadow: 0 0 0 1px rgba(122, 196, 122, 0.35);
+}
+
+.chapter-note-text {
+  font-size: 12px;
+  color: #d4d4d4;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chapter-note-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.chapter-note-actions button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.chapter-note-actions button:hover:not(:disabled) {
+  background: #37373d;
+  color: #fff;
+}
+
+.chapter-notes-empty {
+  font-size: 11px;
+  color: #888;
+}
+
+.chapter-note-editor,
+.chapter-note-add textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  resize: vertical;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chapter-note-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.chapter-note-add button {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.chapter-note-add button:hover:not(:disabled) {
+  background: #37373d;
+  color: #fff;
+}
+
+.chapter-note-error {
+  font-size: 11px;
+  color: #ff9a9a;
 }
 
 .chapter-row button {

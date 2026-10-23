@@ -153,7 +153,7 @@ const SEARCH_RESULTS_SHOWN = 8;
 // What the palette can find. A card is not the only thing worth searching for:
 // the cast, the connections and the other boards are all destinations, and the
 // kind is what the filter row narrows to.
-type SearchKind = 'node' | 'cast' | 'link' | 'story';
+type SearchKind = 'node' | 'cast' | 'link' | 'note' | 'story';
 
 const searchKindFilters: {
   value: 'all' | SearchKind;
@@ -165,6 +165,7 @@ const searchKindFilters: {
   { value: 'node', label: 'Nodes', noun: 'nodes', title: 'Show only cards on the boards' },
   { value: 'cast', label: 'Cast', noun: 'cast members', title: 'Show only characters in the cast lists' },
   { value: 'link', label: 'Links', noun: 'connections', title: 'Show only connections between cards' },
+  { value: 'note', label: 'Notes', noun: 'notes', title: 'Show only notes kept with chapters' },
   { value: 'story', label: 'Stories', noun: 'stories', title: 'Show only other stories' },
 ];
 
@@ -186,6 +187,13 @@ interface SearchResult {
   content: string | null;
   edgeLabel: string;
   edgeRelation: string;
+  // A note is reached through the chapter that holds it, so the result carries
+  // both the chapter and the text that found it.
+  chapterId: string | null;
+  chapterLabel: string | null;
+  // 0 when the query matched the name the result is listed by, 1 when it only
+  // matched what surrounds it. Name matches are listed first.
+  rank: number;
 }
 
 // Another story's board, read when the palette opens so its nodes can be found
@@ -208,18 +216,31 @@ interface IndexedEdge {
   relation_type: string | null;
 }
 
+interface IndexedNote {
+  id: string;
+  chapter_id: string | null;
+  text: string;
+}
+
 interface StoryIndex {
   nodes: IndexedNode[];
   characters: Character[];
   edges: IndexedEdge[];
+  notes: IndexedNote[];
 }
 
 const searchResultTitles: Record<SearchKind, string> = {
   node: 'Open this node on its board',
   cast: "Open this character's sheet",
   link: "Open this connection's editor",
+  note: "Open this chapter's notes",
   story: 'Open this story',
 };
+
+// The line a note is listed by: its first, with the rest left to the panel.
+function noteFirstLine(text: string): string {
+  return text.split('\n')[0].trim();
+}
 
 // What sits on the right of a result: whose character a card belongs to, both
 // ends of a connection, or the story it lives in when that is not the open one.
@@ -232,6 +253,16 @@ function searchResultTag(result: SearchResult, openStoryId: string | undefined):
 
   if (result.kind === 'link' || result.kind === 'cast') {
     return elsewhere ? result.storyTitle : result.detail;
+  }
+
+  // A note says which chapter holds it, since that is where choosing it lands,
+  // and names the story too when it is not the open one.
+  if (result.kind === 'note') {
+    const chapter = result.chapterLabel;
+
+    if (!chapter) return elsewhere ? result.storyTitle : null;
+
+    return elsewhere ? `${chapter} · ${result.storyTitle}` : chapter;
   }
 
   return null;
@@ -341,6 +372,22 @@ function toFlowNode(row: any): Node<NodeData> {
   };
 }
 
+// A note kept with a chapter. It is stored as a node, but the row shows only
+// what a note needs: its text and the chapter it hangs under.
+interface ChapterNote {
+  id: string;
+  chapterId: string;
+  text: string;
+}
+
+function toChapterNote(row: any): ChapterNote {
+  return {
+    id: row.id,
+    chapterId: row.parent_node_id ?? '',
+    text: row.content ?? '',
+  };
+}
+
 // Plain digits with thousands separators, so a story total reads at a glance.
 function formatCount(value: number): string {
   return value.toLocaleString('en-US');
@@ -405,7 +452,10 @@ const shortcutGroups: {
   {
     title: 'Search',
     keys: [
-      { keys: shortcutKeys.search, action: 'Open the search palette (Graph tab)' },
+      {
+        keys: shortcutKeys.search,
+        action: 'Open the search palette (Graph and Chapters tabs)',
+      },
       { keys: shortcutKeys.choose, action: 'Move through the results' },
       { keys: shortcutKeys.enter, action: 'Go to the chosen result' },
       { keys: shortcutKeys.escape, action: 'Close the palette' },
@@ -703,6 +753,18 @@ function App() {
   const [chapterPovDraft, setChapterPovDraft] = useState('');
   const [chapterDayDraft, setChapterDayDraft] = useState('');
 
+  // The plain-text notes kept with each chapter, and the one panel that is open.
+  const [chapterNotes, setChapterNotes] = useState<ChapterNote[]>([]);
+  const [openNotesChapterId, setOpenNotesChapterId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteEditDraft, setNoteEditDraft] = useState('');
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  // The note a search result pointed at, marked for a moment after it is opened.
+  const [matchedNoteId, setMatchedNoteId] = useState<string | null>(null);
+  const noteHighlightRef = useRef<number | null>(null);
+
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
   const [nodeContentDraft, setNodeContentDraft] = useState('');
@@ -777,7 +839,10 @@ function App() {
   // name. It is not tied to a tab, because most of the routes are not either.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // The search palette, opened with Ctrl+F while the graph is showing.
+  // The search palette, opened with Ctrl+F on the Graph and Chapters tabs.
+  // A pan asked for while the board was not on screen, applied when it mounts.
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
@@ -883,7 +948,14 @@ function App() {
     redoStackRef.current = [];
     setHistoryDepth({ undo: 0, redo: 0 });
     setHistoryNotice(null);
-    
+
+    // A note panel belongs to the story it was opened in, so a switch closes it.
+    setOpenNotesChapterId(null);
+    setEditingNoteId(null);
+    setNoteDraft('');
+    setNoteError(null);
+    setMatchedNoteId(null);
+
     try {
       const dbNodes: any[] = await invoke('get_graph_nodes', { storyId: story.id });
       const dbEdges: any[] = await invoke('get_graph_edges', { storyId: story.id });
@@ -893,12 +965,14 @@ function App() {
 
       // The cast rail and the cards' badges both read from here, so the cast and
       // its numbers are loaded with the graph rather than on another tab.
-      const [cast, stats] = await Promise.all([
+      const [cast, stats, notes] = await Promise.all([
         invoke<Character[]>('get_characters', { storyId: story.id }),
         invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
+        invoke<any[]>('get_chapter_notes', { storyId: story.id }),
       ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
+      setChapterNotes((notes ?? []).map(toChapterNote));
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -1001,12 +1075,19 @@ function App() {
     }
   }, [stories, currentStory, loadStory]);
 
-  // Ctrl+F opens the canvas search only while the graph is on screen, so the
-  // shortcut is not swallowed on another tab where the browser's find is fine.
+  // Ctrl+F opens the search palette on the two tabs that show the story, so the
+  // shortcut is not swallowed where the browser's find is fine.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // While a modal is up, the keys it owns are the only ones that act.
-      if (selectedTab !== 'graph' || !currentStory || shortcutsOpen || backupsOpen) return;
+      if (
+        (selectedTab !== 'graph' && selectedTab !== 'chapters') ||
+        !currentStory ||
+        shortcutsOpen ||
+        backupsOpen
+      ) {
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -1170,13 +1251,26 @@ function App() {
 
     Promise.all(
       missing.map(async story => {
-        const [nodes, characters, edges] = await Promise.all([
+        const [nodes, characters, edges, notes] = await Promise.all([
           invoke<IndexedNode[]>('get_graph_nodes', { storyId: story.id }),
           invoke<Character[]>('get_characters', { storyId: story.id }),
           invoke<IndexedEdge[]>('get_graph_edges', { storyId: story.id }),
+          invoke<any[]>('get_chapter_notes', { storyId: story.id }),
         ]);
 
-        return [story.id, { nodes, characters, edges }] as const;
+        return [
+          story.id,
+          {
+            nodes,
+            characters,
+            edges,
+            notes: (notes ?? []).map(note => ({
+              id: note.id,
+              chapter_id: note.parent_node_id ?? null,
+              text: note.content ?? '',
+            })),
+          },
+        ] as const;
       })
     )
       .then(entries => {
@@ -1669,6 +1763,7 @@ function App() {
       // it up would let a node from the old story be edited from this one.
       setNodes([]);
       setEdges([]);
+      setChapterNotes([]);
       setSelectedNodeId(null);
     } catch (e) {
       console.error('Failed to create story:', e);
@@ -1796,6 +1891,20 @@ function App() {
   // Time order, which is not always reading order. A chapter without a day is
   // left off rather than quietly given one; the note above the list counts them.
   // The sort is stable, so chapters sharing a day keep their reading order.
+  // The notes grouped by the chapter they belong to, so a row can show its count
+  // without scanning the whole list.
+  const notesByChapter = useMemo(() => {
+    const grouped = new Map<string, ChapterNote[]>();
+
+    for (const note of chapterNotes) {
+      grouped.set(note.chapterId, [...(grouped.get(note.chapterId) ?? []), note]);
+    }
+
+    return grouped;
+  }, [chapterNotes]);
+
+  const noteCount = (chapterId: string) => notesByChapter.get(chapterId)?.length ?? 0;
+
   const chapterTimeline = useMemo(() => {
     return chapterNodes
       .filter(node => node.data.chapterDay != null)
@@ -1991,6 +2100,127 @@ function App() {
     }
   };
 
+  // Notes are shown one chapter at a time, so opening another closes this one and
+  // drops whatever was half-typed for it.
+  const toggleChapterNotes = (chapterId: string) => {
+    setEditingNoteId(null);
+    setNoteDraft('');
+    setNoteError(null);
+    setMatchedNoteId(null);
+    setOpenNotesChapterId(previous => (previous === chapterId ? null : chapterId));
+  };
+
+  const addNote = async (chapterId: string) => {
+    const text = noteDraft.trim();
+
+    if (!text) {
+      setNoteError('A note needs some text.');
+      return;
+    }
+
+    setNoteBusy(true);
+    setNoteError(null);
+
+    try {
+      const created: any = await invoke('add_chapter_note', {
+        chapterId,
+        text,
+        user: actor,
+      });
+
+      setChapterNotes(previous => [...previous, toChapterNote(created)]);
+      setNoteDraft('');
+    } catch (e) {
+      console.error('Failed to add a note:', e);
+      setNoteError(`Could not add the note: ${String(e)}`);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  const startNoteEdit = (note: ChapterNote) => {
+    setNoteError(null);
+    setEditingNoteId(note.id);
+    setNoteEditDraft(note.text);
+  };
+
+  const saveNoteEdit = async () => {
+    if (!editingNoteId) return;
+
+    const text = noteEditDraft.trim();
+
+    if (!text) {
+      setNoteError('A note needs some text.');
+      return;
+    }
+
+    setNoteBusy(true);
+    setNoteError(null);
+
+    try {
+      const updated: any = await invoke('update_chapter_note', {
+        id: editingNoteId,
+        text,
+        user: actor,
+      });
+      const row = toChapterNote(updated);
+
+      setChapterNotes(previous =>
+        previous.map(note => (note.id === row.id ? row : note))
+      );
+      setEditingNoteId(null);
+    } catch (e) {
+      console.error('Failed to save a note:', e);
+      setNoteError(`Could not save the note: ${String(e)}`);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  // Deleting a note moves it to the trash, like a card: the Trash tab can bring it
+  // back for as long as the retention window lasts.
+  const deleteNote = async (note: ChapterNote) => {
+    setNoteBusy(true);
+    setNoteError(null);
+
+    try {
+      await invoke('delete_node', { id: note.id, user: actor });
+
+      setChapterNotes(previous => previous.filter(entry => entry.id !== note.id));
+      setEditingNoteId(previous => (previous === note.id ? null : previous));
+    } catch (e) {
+      console.error('Failed to delete a note:', e);
+      setNoteError(`Could not delete the note: ${String(e)}`);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  // A search result for a note opens the chapter it lives in and marks the note
+  // for a moment, so the found text does not have to be hunted for in the list.
+  const openChapterNotes = (chapterId: string, noteId: string | null) => {
+    // An edit in progress in another chapter keeps its draft: the panel hides it
+    // rather than throwing the typing away.
+    setNoteError(null);
+    setOpenNotesChapterId(chapterId);
+    setMatchedNoteId(noteId);
+
+    if (noteHighlightRef.current !== null) {
+      window.clearTimeout(noteHighlightRef.current);
+    }
+    noteHighlightRef.current = window.setTimeout(() => {
+      setMatchedNoteId(null);
+      noteHighlightRef.current = null;
+    }, 2400);
+
+    // The tab is rendered by now, but the row still has to be scrolled to.
+    setTimeout(() => {
+      document
+        .querySelector(`[data-chapter-id="${chapterId}"]`)
+        ?.scrollIntoView?.({ block: 'nearest' });
+    }, 0);
+  };
+
   // Which node the pointer is over, read from the card the event landed on.
   // React Flow puts `data-id` on each node's wrapper, so no geometry is needed.
   const nodeUnderPointer = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2038,9 +2268,20 @@ function App() {
 
   // A board zoomed out further than 1 would arrive too small to read, so the pan
   // never goes below that.
+  // The board is unmounted on the other tabs, so a result chosen there has to
+  // wait for it to come back before it can be centred on. Until then the pan is
+  // parked, and the board applies it as soon as it initializes.
+  useEffect(() => {
+    if (selectedTab !== 'graph') flowRef.current = null;
+  }, [selectedTab]);
+
   const panCanvas = (x: number, y: number) => {
     const instance = flowRef.current;
-    if (!instance) return;
+
+    if (!instance) {
+      pendingPanRef.current = { x, y };
+      return;
+    }
 
     const zoom = Math.max(instance.getZoom?.() ?? 1, 1);
     instance.setCenter(x, y, { zoom, duration: 300 });
@@ -2053,7 +2294,9 @@ function App() {
     const targetStory = stories.find(story => story.id === result.storyId) ?? null;
 
     closeCanvasSearch();
-    setSelectedTab(result.kind === 'cast' ? 'characters' : 'graph');
+    setSelectedTab(
+      result.kind === 'cast' ? 'characters' : result.kind === 'note' ? 'chapters' : 'graph'
+    );
 
     if (result.kind === 'story') {
       if (targetStory) await loadStory(targetStory);
@@ -2076,6 +2319,14 @@ function App() {
           .querySelector(`[data-character-id="${result.targetId}"]`)
           ?.scrollIntoView?.({ block: 'nearest' });
       }, 0);
+      return;
+    }
+
+    if (result.kind === 'note') {
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+
+      if (result.chapterId) openChapterNotes(result.chapterId, result.targetId);
       return;
     }
 
@@ -2484,6 +2735,7 @@ function App() {
           setCurrentStory(null);
           setNodes([]);
           setEdges([]);
+          setChapterNotes([]);
         }
       }
     } catch (e) {
@@ -2879,6 +3131,7 @@ function App() {
       setClosePrompt(false);
       setNodes([]);
       setEdges([]);
+      setChapterNotes([]);
       setCharacters([]);
       setCastStats({});
       setAuditEntries([]);
@@ -3321,13 +3574,15 @@ function App() {
   // A search looks at everything a result is made of — a card's label, notes,
   // type and cast member; a character's name and description; both ends of a
   // connection; a story's title and description — so it can be found the way a
-  // person remembers it rather than only by its exact name.
+  // person remembers it rather than only by its exact name. A result whose
+  // name matched is listed before one found only by its notes or description.
   const searchResults = useMemo<SearchResult[]>(() => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return [];
 
-    const hits = (values: (string | null | undefined)[]) =>
-      values.some(value => typeof value === 'string' && value.toLowerCase().includes(term));
+    const matches = (value: string | null | undefined) =>
+      typeof value === 'string' && value.toLowerCase().includes(term);
+    const hits = (values: (string | null | undefined)[]) => values.some(matches);
     const wants = (kind: SearchKind) => searchKind === 'all' || searchKind === kind;
 
     const result = (
@@ -3351,6 +3606,9 @@ function App() {
       content: null,
       edgeLabel: '',
       edgeRelation: '',
+      chapterId: null,
+      chapterLabel: null,
+      rank: 1,
       ...extra,
     });
 
@@ -3378,9 +3636,30 @@ function App() {
             characterName,
             detail: node.data.content ?? null,
             content: node.data.content ?? null,
+            rank: matches(node.data.label) ? 0 : 1,
             // A node's position is its top-left, so the pan aims at its middle.
             x: node.position.x + 70,
             y: node.position.y + 20,
+          })
+        );
+      });
+    }
+
+    if (wants('note')) {
+      chapterNotes.forEach(note => {
+        const chapterLabel = labelOf.get(note.chapterId);
+
+        // A note whose chapter is not on the board has nowhere to open.
+        if (!chapterLabel || !hits([note.text])) return;
+
+        const label = noteFirstLine(note.text);
+
+        results.push(
+          result('note', openStory, note.id, label, {
+            chapterId: note.chapterId,
+            chapterLabel,
+            detail: note.text,
+            rank: matches(label) ? 0 : 1,
           })
         );
       });
@@ -3393,6 +3672,7 @@ function App() {
         results.push(
           result('cast', openStory, character.id, character.name, {
             detail: character.description,
+            rank: matches(character.name) ? 0 : 1,
           })
         );
       });
@@ -3415,6 +3695,7 @@ function App() {
             detail: `${source} → ${target}`,
             edgeLabel,
             edgeRelation,
+            rank: matches(edgeLabel) ? 0 : 1,
             x: from && to ? (from.x + to.x) / 2 : 0,
             y: from && to ? (from.y + to.y) / 2 : 0,
           })
@@ -3434,11 +3715,35 @@ function App() {
         results.push(
           result('story', { id: story.id, title: story.title }, story.id, story.title, {
             detail: story.description,
+            rank: matches(story.title) ? 0 : 1,
           })
         );
       }
 
       if (!index) return;
+
+      const storyLabels = new Map(index.nodes.map(node => [node.id, node.label]));
+
+      if (wants('note')) {
+        index.notes.forEach(note => {
+          const chapterLabel = note.chapter_id
+            ? storyLabels.get(note.chapter_id) ?? null
+            : null;
+
+          if (!chapterLabel || !hits([note.text])) return;
+
+          const label = noteFirstLine(note.text);
+
+          results.push(
+            result('note', story, note.id, label, {
+              chapterId: note.chapter_id,
+              chapterLabel,
+              detail: note.text,
+              rank: matches(label) ? 0 : 1,
+            })
+          );
+        });
+      }
 
       if (wants('node')) {
         index.nodes.forEach(node => {
@@ -3454,6 +3759,7 @@ function App() {
               characterName,
               detail: node.content,
               content: node.content,
+              rank: matches(node.label) ? 0 : 1,
               x: node.pos_x + 70,
               y: node.pos_y + 20,
             })
@@ -3468,13 +3774,13 @@ function App() {
           results.push(
             result('cast', story, character.id, character.name, {
               detail: character.description,
+              rank: matches(character.name) ? 0 : 1,
             })
           );
         });
       }
 
       if (wants('link')) {
-        const storyLabels = new Map(index.nodes.map(node => [node.id, node.label]));
         const storyPositions = new Map(
           index.nodes.map(node => [node.id, { x: node.pos_x, y: node.pos_y }])
         );
@@ -3495,6 +3801,7 @@ function App() {
               detail: `${source} → ${target}`,
               edgeLabel,
               edgeRelation,
+              rank: matches(edgeLabel) ? 0 : 1,
               x: from && to ? (from.x + to.x) / 2 : 0,
               y: from && to ? (from.y + to.y) / 2 : 0,
             })
@@ -3503,8 +3810,20 @@ function App() {
       }
     });
 
-    return results;
-  }, [searchTerm, searchKind, nodes, characters, edges, stories, currentStory, otherStoryIndex]);
+    // Name matches first. The sort is stable, so within each band the results
+    // keep the order they were gathered in: the open story before the others.
+    return results.sort((left, right) => left.rank - right.rank);
+  }, [
+    searchTerm,
+    searchKind,
+    nodes,
+    chapterNotes,
+    characters,
+    edges,
+    stories,
+    currentStory,
+    otherStoryIndex,
+  ]);
 
   // Only the open board is outlined: a result in another story is not on screen
   // until it is chosen, which opens that story.
@@ -3737,6 +4056,140 @@ function App() {
       cancelled = true;
     };
   }, [inspectorCharacter]);
+
+  // One palette, placed on two tabs: over the canvas and above the chapter list.
+  // Only one tab renders at a time, so there is never a second copy of it.
+  const renderSearchPalette = (placement: 'overlay' | 'inline') =>
+    searchOpen && (
+      <div
+        className={`canvas-search${placement === 'inline' ? ' inline' : ''}`}
+        role="dialog"
+        aria-label="Search the storyboard"
+      >
+        <input
+          ref={searchInputRef}
+          className="canvas-search-input"
+          type="search"
+          aria-label="Search everything"                        title="Cards, cast, connections, chapter notes and other stories; Enter goes to the chosen one"
+                        placeholder="Node, cast member, connection, note or story"
+          value={searchTerm}
+          onChange={event => {
+            setSearchTerm(event.target.value);
+            setSearchIndex(0);
+          }}
+          onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              closeCanvasSearch();
+            }
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              moveSearchSelection(1);
+            }
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              moveSearchSelection(-1);
+            }
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              const match =
+                searchResults[Math.min(searchIndex, searchResults.length - 1)];
+              if (match) void chooseSearchResult(match);
+            }
+          }}
+        />
+
+        <div
+          className="canvas-search-filters"
+          role="group"
+          aria-label="Filter by kind"
+        >
+          {searchKindFilters.map(filter => (
+            <button
+              key={filter.value}
+              type="button"
+              className={`canvas-search-filter${
+                searchKind === filter.value ? ' active' : ''
+              }`}
+              aria-pressed={searchKind === filter.value}
+              title={filter.title}
+              onClick={() => {
+                setSearchKind(filter.value);
+                setSearchIndex(0);
+              }}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+
+        {searchTerm.trim() ? (
+          searchResults.length === 0 ? (
+            <p className="canvas-search-empty">
+              {searchKind === 'all'
+                ? `Nothing matches “${searchTerm.trim()}”.`
+                : `No ${
+                    searchKindFilters.find(filter => filter.value === searchKind)
+                      ?.noun
+                  } match “${searchTerm.trim()}”.`}
+            </p>
+          ) : (
+            <div className="canvas-search-results">
+              {searchResults.slice(0, SEARCH_RESULTS_SHOWN).map((entry, index) => {
+                const tag = searchResultTag(entry, currentStory?.id);
+
+                return (
+                  <button
+                    type="button"
+                    key={entry.key}
+                    className={`canvas-search-result${
+                      index === searchIndex ? ' active' : ''
+                    }`}
+                    title={searchResultTitles[entry.kind]}
+                    onMouseEnter={() => setSearchIndex(index)}
+                    onClick={() => void chooseSearchResult(entry)}
+                  >
+                    {entry.kind === 'node' ? (
+                      <span className={`legend ${entry.nodeType ?? 'misc'}`}>
+                        {entry.nodeType ?? 'node'}
+                      </span>
+                    ) : (
+                      <span className={`canvas-search-kind ${entry.kind}`}>
+                        {entry.kind}
+                      </span>
+                    )}
+                    <span className="canvas-search-label">{entry.label}</span>
+                    {tag && <span className="canvas-search-tag">{tag}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )
+        ) : (
+          <p className="canvas-search-empty">
+            Type to find a node, a cast member, a connection, a chapter
+            note or another story.
+          </p>
+        )}
+
+        <div className="canvas-search-hint">
+          {searchTerm.trim() &&
+            `${searchResults.length} ${
+              searchResults.length === 1 ? 'match' : 'matches'
+            } · `}
+          ↑↓ choose · Enter go · Esc close
+        </div>
+
+        {otherStoryLoading && (
+          <div className="canvas-search-hint">Searching the other stories…</div>
+        )}
+        {otherStoryError && (
+          <div className="canvas-search-error">
+            Some stories could not be searched.
+          </div>
+        )}
+      </div>
+    );
 
   return (
     <div className="app-container">
@@ -4034,7 +4487,7 @@ function App() {
                   </button>
                   <button
                     className="search-button"
-                    title={`Find a node, a cast member, a connection or another story (${shortcutKeys.search})`}
+                    title={`Find a card, a cast member, a connection, a note or a story (${shortcutKeys.search})`}
                     onClick={() => {
                       setSearchOpen(true);
                       setSearchIndex(0);
@@ -4121,142 +4574,20 @@ function App() {
                     }}
                     onDrop={dropCastMember}
                   >
-                  {searchOpen && (
-                    <div
-                      className="canvas-search"
-                      role="dialog"
-                      aria-label="Search the storyboard"
-                    >
-                      <input
-                        ref={searchInputRef}
-                        className="canvas-search-input"
-                        type="search"
-                        aria-label="Search everything"
-                        title="Nodes, cast, connections and other stories; Enter goes to the chosen one"
-                        placeholder="Node, cast member, connection or story"
-                        value={searchTerm}
-                        onChange={event => {
-                          setSearchTerm(event.target.value);
-                          setSearchIndex(0);
-                        }}
-                        onKeyDown={event => {
-                          if (event.key === 'Escape') {
-                            event.preventDefault();
-                            closeCanvasSearch();
-                          }
-                          if (event.key === 'ArrowDown') {
-                            event.preventDefault();
-                            moveSearchSelection(1);
-                          }
-                          if (event.key === 'ArrowUp') {
-                            event.preventDefault();
-                            moveSearchSelection(-1);
-                          }
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            const match =
-                              searchResults[Math.min(searchIndex, searchResults.length - 1)];
-                            if (match) void chooseSearchResult(match);
-                          }
-                        }}
-                      />
-
-                      <div
-                        className="canvas-search-filters"
-                        role="group"
-                        aria-label="Filter by kind"
-                      >
-                        {searchKindFilters.map(filter => (
-                          <button
-                            key={filter.value}
-                            type="button"
-                            className={`canvas-search-filter${
-                              searchKind === filter.value ? ' active' : ''
-                            }`}
-                            aria-pressed={searchKind === filter.value}
-                            title={filter.title}
-                            onClick={() => {
-                              setSearchKind(filter.value);
-                              setSearchIndex(0);
-                            }}
-                          >
-                            {filter.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {searchTerm.trim() ? (
-                        searchResults.length === 0 ? (
-                          <p className="canvas-search-empty">
-                            {searchKind === 'all'
-                              ? `Nothing matches “${searchTerm.trim()}”.`
-                              : `No ${
-                                  searchKindFilters.find(filter => filter.value === searchKind)
-                                    ?.noun
-                                } match “${searchTerm.trim()}”.`}
-                          </p>
-                        ) : (
-                          <div className="canvas-search-results">
-                            {searchResults.slice(0, SEARCH_RESULTS_SHOWN).map((entry, index) => {
-                              const tag = searchResultTag(entry, currentStory?.id);
-
-                              return (
-                                <button
-                                  type="button"
-                                  key={entry.key}
-                                  className={`canvas-search-result${
-                                    index === searchIndex ? ' active' : ''
-                                  }`}
-                                  title={searchResultTitles[entry.kind]}
-                                  onMouseEnter={() => setSearchIndex(index)}
-                                  onClick={() => void chooseSearchResult(entry)}
-                                >
-                                  {entry.kind === 'node' ? (
-                                    <span className={`legend ${entry.nodeType ?? 'misc'}`}>
-                                      {entry.nodeType ?? 'node'}
-                                    </span>
-                                  ) : (
-                                    <span className={`canvas-search-kind ${entry.kind}`}>
-                                      {entry.kind}
-                                    </span>
-                                  )}
-                                  <span className="canvas-search-label">{entry.label}</span>
-                                  {tag && <span className="canvas-search-tag">{tag}</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )
-                      ) : (
-                        <p className="canvas-search-empty">
-                          Type to find a node, a cast member, a connection or another story.
-                        </p>
-                      )}
-
-                      <div className="canvas-search-hint">
-                        {searchTerm.trim() &&
-                          `${searchResults.length} ${
-                            searchResults.length === 1 ? 'match' : 'matches'
-                          } · `}
-                        ↑↓ choose · Enter go · Esc close
-                      </div>
-
-                      {otherStoryLoading && (
-                        <div className="canvas-search-hint">Searching the other stories…</div>
-                      )}
-                      {otherStoryError && (
-                        <div className="canvas-search-error">
-                          Some stories could not be searched.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {renderSearchPalette('overlay')}
                   <ReactFlow
                     nodes={canvasNodes}
                     edges={edges}
                     nodeTypes={flowNodeTypes}
                     onInit={instance => {
                       flowRef.current = instance;
+
+                      // A pan asked for on another tab waited for this moment.
+                      const pending = pendingPanRef.current;
+                      if (pending) {
+                        pendingPanRef.current = null;
+                        panCanvas(pending.x, pending.y);
+                      }
                     }}
                     onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
@@ -4637,6 +4968,7 @@ function App() {
               <div className="empty-state">Load a story to put its chapters in order</div>
             ) : (
               <div className="chapters-layout">
+                {renderSearchPalette('inline')}
                 <div className="chapters-header">
                   <div>
                     <h3 className="chapters-heading">Reading order</h3>
@@ -4661,6 +4993,18 @@ function App() {
                       disabled={!newChapterTitle.trim() || chapterBusy}
                     >
                       New chapter
+                    </button>
+                    <button
+                      type="button"
+                      className="chapter-search-button"
+                      title={`Find a card, a cast member, a connection, a note or a story (${shortcutKeys.search})`}
+                      onClick={() => {
+                        setSearchOpen(true);
+                        setSearchIndex(0);
+                        setSearchKind('all');
+                      }}
+                    >
+                      Search
                     </button>
                   </div>
                 </div>
@@ -4725,7 +5069,11 @@ function App() {
 
                     <ol className="chapter-list" aria-label="Chapters">
                       {chapterNodes.map((node, index) => (
-                        <li key={node.id} className="chapter-row">
+                        <li
+                          key={node.id}
+                          className="chapter-row"
+                          data-chapter-id={node.id}
+                        >
                           <div className="chapter-row-main">
                             <span className="chapter-number">
                               {node.data.chapterSeq ?? '—'}
@@ -4760,6 +5108,16 @@ function App() {
                               disabled={chapterBusy}
                             >
                               Edit
+                            </button>
+                            <button
+                              aria-label={`Notes for ${node.data.label}`}
+                              title="Plain-text notes kept with this chapter"
+                              onClick={() => toggleChapterNotes(node.id)}
+                              disabled={chapterBusy}
+                            >
+                              {noteCount(node.id) > 0
+                                ? `Notes (${noteCount(node.id)})`
+                                : 'Notes'}
                             </button>
                             <button
                               aria-label={`Move ${node.data.label} earlier`}
@@ -4873,6 +5231,112 @@ function App() {
                                   Cancel
                                 </button>
                               </div>
+                            </div>
+                          )}
+
+                          {openNotesChapterId === node.id && (
+                            <div className="chapter-notes">
+                              {(notesByChapter.get(node.id) ?? []).map(note =>
+                                editingNoteId === note.id ? (
+                                  <div
+                                    key={note.id}
+                                    className={`chapter-note${
+                                      note.id === matchedNoteId ? ' matched' : ''
+                                    }`}
+                                  >
+                                    <textarea
+                                      className="chapter-note-editor"
+                                      aria-label={`Edit note in ${node.data.label}`}
+                                      autoFocus
+                                      value={noteEditDraft}
+                                      onChange={(e) => setNoteEditDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Escape') setEditingNoteId(null);
+                                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                                          void saveNoteEdit();
+                                        }
+                                      }}
+                                    />
+                                    <div className="chapter-note-actions">
+                                      <button
+                                        title="Save this note (Ctrl+Enter)"
+                                        onClick={() => void saveNoteEdit()}
+                                        disabled={noteBusy}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        title="Leave the note as it was"
+                                        onClick={() => setEditingNoteId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div
+                                    key={note.id}
+                                    className={`chapter-note${
+                                      note.id === matchedNoteId ? ' matched' : ''
+                                    }`}
+                                  >
+                                    <div className="chapter-note-text">{note.text}</div>
+                                    <div className="chapter-note-actions">
+                                      <button
+                                        aria-label={`Edit the note ${note.text.split('\n')[0]}`}
+                                        title="Edit this note"
+                                        onClick={() => startNoteEdit(note)}
+                                        disabled={noteBusy}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        aria-label={`Delete the note ${note.text.split('\n')[0]}`}
+                                        title="Move this note to the trash"
+                                        onClick={() => void deleteNote(note)}
+                                        disabled={noteBusy}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              )}
+
+                              {noteCount(node.id) === 0 && (
+                                <div className="chapter-notes-empty">
+                                  No notes yet — a note is plain text, kept with the
+                                  chapter.
+                                </div>
+                              )}
+
+                              {editingNoteId === null && (
+                                <div className="chapter-note-add">
+                                  <textarea
+                                    aria-label={`New note for ${node.data.label}`}
+                                    placeholder="A note for this chapter"
+                                    title="Ctrl+Enter adds the note"
+                                    value={noteDraft}
+                                    onChange={(e) => setNoteDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                                        void addNote(node.id);
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    title="Add this note to the chapter"
+                                    onClick={() => void addNote(node.id)}
+                                    disabled={noteBusy || !noteDraft.trim()}
+                                  >
+                                    Add note
+                                  </button>
+                                </div>
+                              )}
+
+                              {noteError && (
+                                <div className="chapter-note-error">{noteError}</div>
+                              )}
                             </div>
                           )}
                         </li>

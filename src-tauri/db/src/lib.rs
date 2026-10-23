@@ -24,7 +24,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -932,6 +932,7 @@ impl Db {
             chapter_target: None,
             chapter_pov: None,
             chapter_day: None,
+            parent_node_id: None,
         })
     }
 
@@ -1007,7 +1008,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
                  FROM nodes WHERE id = ?1",
                 params![id],
                 node_row,
@@ -1152,20 +1153,147 @@ impl Db {
         Ok(updated)
     }
 
+    /// The board's cards: every live node of a story except notes. A note lives
+    /// in a chapter row rather than on the canvas, so it is read by
+    /// [`Db::list_chapter_notes`] instead.
     pub fn list_nodes(&self, story_id: &str) -> DbResult<Vec<Node>> {
-        let guard = self.conn()?;
-        let mut stmt = guard.prepare(
+        self.list_story_nodes(story_id, false)
+    }
+
+    /// Every live note of a story, oldest first. The caller groups them by the
+    /// chapter in `parent_node_id`; one read serves the whole list.
+    pub fn list_chapter_notes(&self, story_id: &str) -> DbResult<Vec<Node>> {
+        self.list_story_nodes(story_id, true)
+    }
+
+    fn list_story_nodes(&self, story_id: &str, notes: bool) -> DbResult<Vec<Node>> {
+        // The two reads differ only in which side of the note line they want.
+        let sql = if notes {
             "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
                     n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq,
-                    n.chapter_arc, n.chapter_words, n.chapter_target, n.chapter_pov, n.chapter_day
+                    n.chapter_arc, n.chapter_words, n.chapter_target, n.chapter_pov, n.chapter_day,
+                    n.parent_node_id
              FROM nodes n JOIN stories s ON s.id = n.story_id
-             WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
-             ORDER BY n.created_at",
-        )?;
+             WHERE n.story_id = ?1 AND n.node_type = 'note'
+               AND n.deleted_at IS NULL AND s.deleted_at IS NULL
+             ORDER BY n.created_at"
+        } else {
+            "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
+                    n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq,
+                    n.chapter_arc, n.chapter_words, n.chapter_target, n.chapter_pov, n.chapter_day,
+                    n.parent_node_id
+             FROM nodes n JOIN stories s ON s.id = n.story_id
+             WHERE n.story_id = ?1 AND n.node_type <> 'note'
+               AND n.deleted_at IS NULL AND s.deleted_at IS NULL
+             ORDER BY n.created_at"
+        };
 
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(sql)?;
         let rows = stmt.query_map(params![story_id], node_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Adds a note under a chapter. A note is a node with `node_type = 'note'`
+    /// and a parent pointer, so the history, the trash and the export carry it
+    /// like anything else; it is simply not on the board. The label is the note's
+    /// first line, which is what the trash and the history have to show.
+    pub fn add_chapter_note(
+        &self,
+        chapter_id: &str,
+        text: String,
+        user: String,
+    ) -> DbResult<Node> {
+        let body = note_body(text)?;
+        let label = note_label(&body);
+        let timestamp = now();
+        let id = Uuid::new_v4().to_string();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = writable_chapter(&tx, chapter_id)?;
+
+        tx.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y,
+                                created_by, created_at, updated_at, parent_node_id)
+             VALUES (?1, ?2, 'note', ?3, ?4, 0, 0, ?5, ?6, ?6, ?7)",
+            params![&id, &story_id, &label, &body, &user, &timestamp, chapter_id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "node",
+                entity_id: &id,
+                action: "create",
+                field_changed: None,
+                old_value: None,
+                new_value: Some(label),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        read_node(&guard, &id)?.ok_or(DbError::NotFound("node"))
+    }
+
+    /// Rewrites a note's text. Its label follows the first line, so the trash and
+    /// the history keep naming it by what it now says; the text itself is the
+    /// change the history records.
+    pub fn update_note(&self, id: &str, text: String, user: String) -> DbResult<Node> {
+        let body = note_body(text)?;
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
+                 FROM nodes WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                node_row,
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("node"))?;
+
+        if existing.node_type != "note" {
+            return Err(DbError::Invalid(
+                "only a note is edited with note text".to_string(),
+            ));
+        }
+
+        if existing.content.as_deref() == Some(body.as_str()) {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE nodes SET label = ?1, content = ?2, updated_at = ?3 WHERE id = ?4",
+            params![note_label(&body), &body, &timestamp, id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&existing.story_id),
+                entity_type: "node",
+                entity_id: id,
+                action: "update",
+                field_changed: Some("content"),
+                old_value: existing.content.clone(),
+                new_value: Some(body),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        read_node(&guard, id)?.ok_or(DbError::NotFound("node"))
     }
 
     /// Puts the live chapters of a story in the given reading order, numbering
@@ -1240,7 +1368,7 @@ impl Db {
             let mut stmt = tx.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y,
                         created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
                  FROM nodes
                  WHERE story_id = ?1 AND node_type = 'chapter' AND deleted_at IS NULL
                  ORDER BY chapter_seq, created_at",
@@ -1299,7 +1427,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
                  FROM nodes WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 node_row,
@@ -1764,7 +1892,7 @@ impl Db {
         let nodes = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
+                        chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
                  FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
             let rows = stmt.query_map(params![story_id], node_row)?;
@@ -1806,9 +1934,9 @@ impl Db {
     }
 
     /// A plain Markdown outline for a drafting tool: chapters in reading order
-    /// with their arc and counts, the cast with their sheets, then the other
-    /// cards. Deliberately free of app jargon — it is written to be pasted into
-    /// another program, not read back by this one.
+    /// with their arc, counts and notes, the cast with their sheets, then the
+    /// other cards. Deliberately free of app jargon — it is written to be pasted
+    /// into another program, not read back by this one.
     pub fn story_bible(&self, story_id: &str) -> DbResult<StoryBible> {
         let story = self
             .get_story(story_id)?
@@ -1816,6 +1944,21 @@ impl Db {
         let nodes = self.list_nodes(story_id)?;
         let characters = self.list_characters(story_id)?;
         let stats = self.list_story_stats(story_id)?;
+        // The notes are nodes of their own, kept off the board, so they are read
+        // separately and filed under the chapter that holds them.
+        let chapter_notes = self.list_chapter_notes(story_id)?;
+        let notes_by_chapter: std::collections::HashMap<&str, Vec<&Node>> = {
+            let mut grouped: std::collections::HashMap<&str, Vec<&Node>> =
+                std::collections::HashMap::new();
+
+            for note in &chapter_notes {
+                if let Some(chapter_id) = note.parent_node_id.as_deref() {
+                    grouped.entry(chapter_id).or_default().push(note);
+                }
+            }
+
+            grouped
+        };
         let pov_names: std::collections::HashMap<&str, &str> = characters
             .iter()
             .map(|character| (character.id.as_str(), character.name.as_str()))
@@ -1929,6 +2072,22 @@ impl Db {
                 {
                     lines.push(String::new());
                     lines.push(notes.to_string());
+                }
+
+                // The chapter's own notes, in the order they were written. The
+                // label heads the list once rather than repeating on every line.
+                if let Some(notes) = notes_by_chapter.get(chapter.id.as_str()) {
+                    let items: Vec<String> = notes
+                        .iter()
+                        .flat_map(|note| note_markdown(note.content.as_deref().unwrap_or("")))
+                        .collect();
+
+                    if !items.is_empty() {
+                        lines.push(String::new());
+                        lines.push("**Notes**".to_string());
+                        lines.push(String::new());
+                        lines.extend(items);
+                    }
                 }
             }
         }
@@ -2246,6 +2405,40 @@ impl Db {
                 changed_by: &user,
             },
         )?;
+
+        // A chapter's notes go with it, under the same timestamp, so restoring
+        // the chapter can bring them back and a purge takes them too.
+        let notes = {
+            let mut stmt = tx.prepare(
+                "SELECT id, label FROM nodes
+                 WHERE parent_node_id = ?1 AND deleted_at IS NULL",
+            )?;
+            let rows = stmt.query_map(params![id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        for (note_id, note_label) in notes {
+            tx.execute(
+                "UPDATE nodes SET deleted_at = ?2 WHERE id = ?1",
+                params![&note_id, &timestamp],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "node",
+                    entity_id: &note_id,
+                    action: "soft_delete",
+                    field_changed: None,
+                    old_value: Some(note_label),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
 
         for (edge_id, source_id, target_id) in attached {
             tx.execute(
@@ -2838,7 +3031,7 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT story_id, label, deleted_at FROM nodes
+                "SELECT story_id, label, deleted_at, node_type, parent_node_id FROM nodes
                   WHERE id = ?1 AND deleted_at IS NOT NULL",
                 params![id],
                 |row| {
@@ -2846,14 +3039,45 @@ impl Db {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
             .optional()?;
 
-        let Some((story_id, label, timestamp)) = existing else {
+        let Some((story_id, label, timestamp, node_type, parent_node_id)) = existing else {
             return Ok(());
         };
+
+        // A note belongs to a chapter, so it cannot come back before the chapter
+        // does: that would leave it live with nowhere to be shown.
+        if node_type == "note" {
+            let chapter_state = match parent_node_id {
+                Some(chapter_id) => tx
+                    .query_row(
+                        "SELECT deleted_at FROM nodes WHERE id = ?1",
+                        params![&chapter_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()?,
+                None => None,
+            };
+
+            match chapter_state {
+                Some(None) => {}
+                Some(Some(_)) => {
+                    return Err(DbError::Invalid(
+                        "restore the chapter before its notes".to_string(),
+                    ))
+                }
+                None => {
+                    return Err(DbError::Invalid(
+                        "that note's chapter is no longer there".to_string(),
+                    ))
+                }
+            }
+        }
 
         let attached = {
             let mut stmt = tx.prepare(
@@ -2889,6 +3113,40 @@ impl Db {
                 changed_by: &user,
             },
         )?;
+
+        // The notes the chapter took with it come back with it. A note trashed on
+        // its own carries a different timestamp and stays where it is.
+        let notes = {
+            let mut stmt = tx.prepare(
+                "SELECT id, label FROM nodes
+                 WHERE parent_node_id = ?1 AND deleted_at = ?2",
+            )?;
+            let rows = stmt.query_map(params![id, &timestamp], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        for (note_id, note_label) in notes {
+            tx.execute(
+                "UPDATE nodes SET deleted_at = NULL WHERE id = ?1",
+                params![&note_id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "node",
+                    entity_id: &note_id,
+                    action: "restore",
+                    field_changed: None,
+                    old_value: Some(note_label),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
 
         for (edge_id, source_id, target_id) in attached {
             tx.execute(
@@ -3139,6 +3397,9 @@ impl Db {
             ));
         };
 
+        // The chapter is gone, so its notes go with it rather than lingering in
+        // the trash with nothing left to attach to.
+        tx.execute("DELETE FROM nodes WHERE parent_node_id = ?1", params![id])?;
         tx.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
 
         log_audit(
@@ -3543,6 +3804,33 @@ impl Db {
             }
         }
 
+        // A note is shown under its chapter, so a file that lost the chapter
+        // cannot be restored as it was.
+        for node in export
+            .nodes
+            .iter()
+            .filter(|node| node.parent_node_id.is_some())
+        {
+            let parent = node
+                .parent_node_id
+                .as_ref()
+                .and_then(|id| export.nodes.iter().find(|other| &other.id == id));
+
+            match parent {
+                Some(parent) if parent.node_type == "chapter" => {}
+                Some(_) => {
+                    return Err(DbError::Invalid(
+                        "a note points at something that is not a chapter".to_string(),
+                    ))
+                }
+                None => {
+                    return Err(DbError::Invalid(
+                        "a note points at a chapter the file does not contain".to_string(),
+                    ))
+                }
+            }
+        }
+
         tx.execute(
             "INSERT INTO stories (id, title, description, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -3631,8 +3919,8 @@ impl Db {
 
             tx.execute(
                 "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                                    chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                                    chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     &nodes[&node.id],
                     &story_id,
@@ -3656,6 +3944,9 @@ impl Db {
                     // link so the copy does not point at the source story's row.
                     node.chapter_pov.as_ref().and_then(|id| characters.get(id)),
                     node.chapter_day,
+                    // A note's chapter is remapped like every other node, so the
+                    // copy holds together without pointing at the source story.
+                    node.parent_node_id.as_ref().and_then(|id| nodes.get(id)).cloned(),
                 ],
             )?;
         }
@@ -3858,6 +4149,10 @@ pub struct Node {
     /// The in-world day the chapter happens on; NULL when it is not placed yet.
     #[serde(default)]
     pub chapter_day: Option<i64>,
+    /// The chapter a note belongs to. NULL on everything else, including a
+    /// chapter; absent from exports written before schema v10.
+    #[serde(default)]
+    pub parent_node_id: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -4509,14 +4804,99 @@ fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
         chapter_target: row.get(14)?,
         chapter_pov: row.get(15)?,
         chapter_day: row.get(16)?,
+        parent_node_id: row.get(17)?,
     })
+}
+
+/// The text of a note, trimmed. An empty note is refused rather than stored, so
+/// nothing on the board has a blank line where a note should be.
+fn note_body(text: String) -> DbResult<String> {
+    let body = text.trim().to_string();
+
+    if body.is_empty() {
+        return Err(DbError::Invalid("a note needs some text".to_string()));
+    }
+
+    Ok(body)
+}
+
+/// One note as Markdown list lines: the first line follows the bullet and the
+/// rest are indented, so a note that uses line breaks stays a single item.
+fn note_markdown(body: &str) -> Vec<String> {
+    if body.trim().is_empty() {
+        return Vec::new();
+    }
+
+    body.lines()
+        .enumerate()
+        .map(|(index, line)| {
+            let text = line.trim_end();
+
+            match (index, text.is_empty()) {
+                (0, _) => format!("- {text}"),
+                (_, true) => "  ".to_string(),
+                (_, false) => format!("  {text}"),
+            }
+        })
+        .collect()
+}
+
+/// A note's label: its first line, shortened. The full text stays in `content`.
+fn note_label(body: &str) -> String {
+    let first = body.lines().next().unwrap_or("").trim();
+    let mut label: String = first.chars().take(60).collect();
+
+    if first.chars().count() > 60 {
+        label.push('…');
+    }
+
+    label
+}
+
+/// Checks that a note's chapter is live and answers the story it belongs to, so
+/// a note can never be filed under a chapter of another story or one in the
+/// trash.
+fn writable_chapter(conn: &Connection, chapter_id: &str) -> DbResult<String> {
+    let found = conn
+        .query_row(
+            "SELECT story_id, node_type, deleted_at FROM nodes WHERE id = ?1",
+            params![chapter_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    let Some((story_id, node_type, deleted_at)) = found else {
+        return Err(DbError::Invalid(
+            "that chapter is no longer in this story".to_string(),
+        ));
+    };
+
+    if node_type != "chapter" {
+        return Err(DbError::Invalid(
+            "a note can only belong to a chapter".to_string(),
+        ));
+    }
+
+    if deleted_at.is_some() {
+        return Err(DbError::Invalid(
+            "a note cannot be added to a chapter in the trash".to_string(),
+        ));
+    }
+
+    Ok(story_id)
 }
 
 /// One node as stored, live or in the trash.
 fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
     conn.query_row(
         "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
-                chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day
+                chapter_arc, chapter_words, chapter_target, chapter_pov, chapter_day, parent_node_id
          FROM nodes WHERE id = ?1",
         params![id],
         node_row,
@@ -4656,6 +5036,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
 
     if version < 9 {
         conn.execute_batch(MIGRATION_009)?;
+    }
+
+    if version < 10 {
+        conn.execute_batch(MIGRATION_010)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -4846,6 +5230,16 @@ const MIGRATION_008: &str = "
 const MIGRATION_009: &str = "
     ALTER TABLE nodes ADD COLUMN chapter_pov TEXT;
     ALTER TABLE nodes ADD COLUMN chapter_day INTEGER;
+";
+
+/// Schema v10: a note belongs to a chapter.
+///
+/// A note is an ordinary node with `node_type = 'note'`, so the history, the
+/// trash and the export already carry it. The parent is the chapter whose row it
+/// is shown under. Not a foreign key, for the same reason the cast link is not:
+/// a trashed chapter keeps its notes until both are purged.
+const MIGRATION_010: &str = "
+    ALTER TABLE nodes ADD COLUMN parent_node_id TEXT;
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -6578,7 +6972,7 @@ mod tests {
             .unwrap()
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, SCHEMA_VERSION);
 
         let characters = db.list_characters("s1").unwrap();
         assert_eq!(characters[0].level, 1);
@@ -7077,6 +7471,209 @@ mod tests {
     }
 
     #[test]
+    fn a_note_belongs_to_a_chapter_and_stays_off_the_board() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Opening".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "An idea".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let note = db
+            .add_chapter_note(
+                &chapter.id,
+                "  Rook owes the vault\nand the warder knows it  ".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(note.node_type, "note");
+        assert_eq!(note.parent_node_id.as_deref(), Some(chapter.id.as_str()));
+        assert_eq!(
+            note.content.as_deref(),
+            Some("Rook owes the vault\nand the warder knows it")
+        );
+        // The label is the first line, which is what the trash and the history
+        // name the note by.
+        assert_eq!(note.label, "Rook owes the vault");
+
+        // The board is unchanged: a note is read for its chapter row instead.
+        assert!(db
+            .list_nodes(&story.id)
+            .unwrap()
+            .iter()
+            .all(|node| node.id != note.id));
+        let notes = db.list_chapter_notes(&story.id).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, note.id);
+
+        let edited = db
+            .update_note(&note.id, "The vault answers".into(), "Ada".into())
+            .unwrap();
+        assert_eq!(edited.label, "The vault answers");
+
+        // The history records the text itself, not the derived label.
+        let page = db
+            .get_audit_page(Some(&story.id), Some("node"), Some(&note.id), 50, 0)
+            .unwrap();
+        let edit = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("content"))
+            .unwrap();
+        assert_eq!(edit.old_value.as_deref(), Some("Rook owes the vault\nand the warder knows it"));
+        assert_eq!(edit.new_value.as_deref(), Some("The vault answers"));
+
+        // An empty note is refused, and a note only belongs to a chapter.
+        assert!(db
+            .add_chapter_note(&chapter.id, "   \n  ".into(), "Ada".into())
+            .is_err());
+        assert!(db
+            .add_chapter_note(&card.id, "Not here".into(), "Ada".into())
+            .is_err());
+        assert!(db
+            .update_note(&card.id, "Not here".into(), "Ada".into())
+            .is_err());
+
+        // A trashed chapter takes no new notes: the note would have nowhere to
+        // be shown until the chapter came back.
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(db
+            .add_chapter_note(&chapter.id, "Too late".into(), "Ada".into())
+            .is_err());
+    }
+
+    #[test]
+    fn a_chapter_takes_its_notes_to_the_trash_and_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Opening".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let kept = db
+            .add_chapter_note(&chapter.id, "Goes with the chapter".into(), "Ada".into())
+            .unwrap();
+        let loose = db
+            .add_chapter_note(&chapter.id, "Trashed on its own".into(), "Ada".into())
+            .unwrap();
+        db.delete_node(&loose.id, "Ada".into()).unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(db.list_chapter_notes(&story.id).unwrap().is_empty());
+
+        let trashed: Vec<String> = db
+            .list_deleted(Some(&story.id))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert!(trashed.contains(&chapter.id));
+        assert!(trashed.contains(&kept.id));
+        assert!(trashed.contains(&loose.id));
+
+        // A note cannot come back before the chapter that holds it.
+        assert!(db.restore_node(&loose.id, "Ada".into()).is_err());
+
+        db.restore_node(&chapter.id, "Ada".into()).unwrap();
+        let live: Vec<String> = db
+            .list_chapter_notes(&story.id)
+            .unwrap()
+            .into_iter()
+            .map(|note| note.id)
+            .collect();
+        assert_eq!(live, vec![kept.id.clone()]);
+
+        db.restore_node(&loose.id, "Ada".into()).unwrap();
+        assert_eq!(db.list_chapter_notes(&story.id).unwrap().len(), 2);
+
+        // Purging the chapter takes the notes with it, since there would be
+        // nothing left for them to belong to.
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(db.list_chapter_notes(&story.id).unwrap().is_empty());
+        assert!(db
+            .list_deleted(Some(&story.id))
+            .unwrap()
+            .iter()
+            .all(|item| item.id != kept.id && item.id != loose.id));
+    }
+
+    #[test]
+    fn notes_travel_with_a_story() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Opening".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let note = db
+            .add_chapter_note(&chapter.id, "Rook owes the vault".into(), "Ada".into())
+            .unwrap();
+
+        let imported = db
+            .import_story(db.export_story(&story.id).unwrap(), "Ada".into())
+            .unwrap();
+        let copied_chapter = db
+            .list_nodes(&imported.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.node_type == "chapter")
+            .unwrap();
+        let copied = db.list_chapter_notes(&imported.id).unwrap();
+        assert_eq!(copied.len(), 1);
+        assert_ne!(copied[0].id, note.id, "the copy gets its own ids");
+        assert_eq!(
+            copied[0].parent_node_id.as_deref(),
+            Some(copied_chapter.id.as_str())
+        );
+
+        // A file whose note has lost its chapter cannot be restored faithfully.
+        let mut broken = db.export_story(&story.id).unwrap();
+        broken.nodes.retain(|node| node.id != chapter.id);
+        assert!(db.import_story(broken, "Ada".into()).is_err());
+    }
+
+    #[test]
     fn the_story_bible_reads_as_an_outline_for_another_program() {
         let db = Db::open_in_memory().unwrap();
         let story = db
@@ -7173,6 +7770,21 @@ mod tests {
         )
         .unwrap();
 
+        db.add_chapter_note(
+            &opening.id,
+            "Rook owes the vault.\nThe warder knows it.".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_chapter_note(
+            &opening.id,
+            "The gate opens on its own.".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_chapter_note(&second.id, "Told after the fact.".into(), "Ada".into())
+            .unwrap();
+
         make("Blackgate", "location", Some("A gate that remembers.".into()));
         // A character card is not repeated: the cast section carries the sheet.
         make("Rook", "character", Some("The card.".into()));
@@ -7204,6 +7816,18 @@ mod tests {
         assert_eq!(markdown.matches("## Timeline").count(), 1);
         assert!(markdown.contains("The gates open."));
         assert!(markdown.contains("*1,500 words in 2 chapters; 2,000 targeted across 1 of them.*"));
+
+        // Each chapter's notes sit under that chapter's heading, in the order they
+        // were written, and a note that runs to a second line stays one item.
+        assert_eq!(markdown.matches("**Notes**").count(), 2);
+        let notes_heading = markdown.find("**Notes**").unwrap();
+        assert!(first < notes_heading && notes_heading < next);
+        assert!(markdown.contains(
+            "**Notes**\n\n- Rook owes the vault.\n  The warder knows it.\n- The gate opens on its own."
+        ));
+        assert!(markdown.find("- Told after the fact.").unwrap() > next);
+        // Notes belong after the chapter's facts, not before them.
+        assert!(notes_heading > markdown.find("**Arc:** The Vault").unwrap());
 
         assert!(markdown.contains("### Rook"));
         assert_eq!(markdown.matches("### Rook").count(), 1);

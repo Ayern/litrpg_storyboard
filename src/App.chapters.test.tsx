@@ -101,6 +101,7 @@ interface NodeRow {
   chapter_target: number | null;
   chapter_pov: string | null;
   chapter_day: number | null;
+  parent_node_id: string | null;
 }
 
 function nodeRow(
@@ -128,6 +129,7 @@ function nodeRow(
     chapter_target: null,
     chapter_pov: null,
     chapter_day: null,
+    parent_node_id: null,
   };
 }
 
@@ -171,6 +173,18 @@ function withCast() {
 
 let rows: NodeRow[] = [];
 
+// The notes kept with chapters. Each hangs off one chapter row.
+let notes: NodeRow[] = [];
+
+function seedNotes(...seeded: { id: string; chapter: string; text: string }[]) {
+  notes = seeded.map(note =>
+    Object.assign(nodeRow(note.id, 'note', note.text.split('\n')[0], null), {
+      content: note.text,
+      parent_node_id: note.chapter,
+    })
+  );
+}
+
 const chaptersInOrder = () =>
   rows
     .filter(node => node.node_type === 'chapter')
@@ -183,6 +197,8 @@ beforeEach(() => {
     { ...nodeRow('n3', 'chapter', 'Two', 2, '2026-10-22T12:02:00Z'), chapter_arc: 'The Vault', chapter_words: 800, chapter_target: 2000 },
     nodeRow('n4', 'chapter', 'Three', 3, '2026-10-22T12:03:00Z'),
   ];
+
+  notes = [];
 
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -221,6 +237,29 @@ beforeEach(() => {
           if (row) row.chapter_seq = index + 1;
         });
         return chaptersInOrder().map(row => ({ ...row }));
+      }
+      case 'get_chapter_notes':
+        return notes.map(note => ({ ...note }));
+      case 'add_chapter_note': {
+        const text = String(args.text);
+        const created = Object.assign(
+          nodeRow(`note-${notes.length + 1}`, 'note', text.split('\n')[0].trim(), null),
+          { content: text, parent_node_id: args.chapterId }
+        );
+        notes = [...notes, created];
+        return { ...created };
+      }
+      case 'update_chapter_note': {
+        const note = notes.find(candidate => candidate.id === args.id);
+        if (!note) return null;
+
+        note.content = args.text;
+        note.label = String(args.text).split('\n')[0].trim();
+        return { ...note };
+      }
+      case 'delete_node': {
+        notes = notes.filter(note => note.id !== args.id);
+        return true;
       }
       case 'set_chapter_details': {
         const row = rows.find(candidate => candidate.id === args.nodeId);
@@ -687,5 +726,98 @@ describe('chapter POV and in-world days', () => {
     ).toBeInTheDocument();
     expect(lastCall('set_chapter_details')).toBeUndefined();
     expect(screen.getByLabelText('Day')).toHaveValue(-1);
+  });
+});
+
+describe('chapter notes', () => {
+  it('adds a plain-text note and shows it under its chapter', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+
+    expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('New note for One'), 'Rook owes the vault');
+    await user.click(screen.getByRole('button', { name: 'Add note' }));
+
+    expect(lastCall('add_chapter_note')).toEqual({
+      chapterId: 'n1',
+      text: 'Rook owes the vault',
+      user: 'You',
+    });
+
+    expect(await screen.findByText('Rook owes the vault')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Notes for One' })).toHaveTextContent(
+      'Notes (1)'
+    );
+
+    // The box empties so the next note can be typed straight away.
+    expect(screen.getByLabelText('New note for One')).toHaveValue('');
+  });
+
+  it('keeps each chapter to its own notes', async () => {
+    seedNotes(
+      { id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' },
+      { id: 'note-2', chapter: 'n3', text: 'The warder bargains' }
+    );
+
+    const user = await openChapters();
+
+    expect(screen.getByRole('button', { name: 'Notes for One' })).toHaveTextContent(
+      'Notes (1)'
+    );
+    expect(screen.getByRole('button', { name: 'Notes for Two' })).toHaveTextContent(
+      'Notes (1)'
+    );
+    expect(screen.getByRole('button', { name: 'Notes for Three' })).toHaveTextContent('Notes');
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+
+    expect(screen.getByText('Rook owes the vault')).toBeInTheDocument();
+    expect(screen.queryByText('The warder bargains')).not.toBeInTheDocument();
+  });
+
+  it('edits a note and refuses to save one with nothing in it', async () => {
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Edit the note Rook owes the vault' })
+    );
+
+    const editor = screen.getByLabelText('Edit note in One');
+    await user.clear(editor);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(screen.getByText('A note needs some text.')).toBeInTheDocument();
+    expect(lastCall('update_chapter_note')).toBeUndefined();
+
+    await user.type(editor, 'The vault answers');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('update_chapter_note')).toEqual({
+      id: 'note-1',
+      text: 'The vault answers',
+      user: 'You',
+    });
+
+    expect(await screen.findByText('The vault answers')).toBeInTheDocument();
+    expect(screen.queryByText('Rook owes the vault')).not.toBeInTheDocument();
+  });
+
+  it('moves a note to the trash and takes it off the chapter', async () => {
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Delete the note Rook owes the vault' })
+    );
+
+    expect(lastCall('delete_node')).toEqual({ id: 'note-1', user: 'You' });
+    expect(screen.queryByText('Rook owes the vault')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Notes for One' })).toHaveTextContent('Notes');
+    expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
   });
 });

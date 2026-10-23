@@ -195,10 +195,41 @@ const connection = {
   updated_at: '2026-10-22T12:00:00Z',
 };
 
+// A chapter note. It is found by words that appear nowhere else, so a test can
+// be sure which result it clicked.
+const chapterNote = {
+  id: 'note-1',
+  story_id: story.id,
+  node_type: 'note',
+  label: 'Rook owes the vault.',
+  content: 'Rook owes the vault.\nThe warder knows it.',
+  pos_x: 0,
+  pos_y: 0,
+  created_by: 'Ada',
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+  character_id: null,
+  parent_node_id: 'n1',
+};
+
+// A note in the story that is not open, hanging off its chapter card.
+const otherNote = {
+  ...chapterNote,
+  id: 'note-21',
+  story_id: otherStory.id,
+  label: 'Wren hides the ledger.',
+  content: 'Wren hides the ledger.',
+  parent_node_id: 'n21',
+};
+
 let edges: unknown[] = [];
+let notes: unknown[] = [];
+let otherNotes: unknown[] = [];
 
 beforeEach(() => {
   edges = [];
+  notes = [];
+  otherNotes = [];
   flowMock.setCenter.mockReset();
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, args?: { storyId?: string }) => {
@@ -217,6 +248,8 @@ beforeEach(() => {
         return [];
       case 'get_characters':
         return otherBoard ? otherCast : cast;
+      case 'get_chapter_notes':
+        return otherBoard ? otherNotes : notes;
       default:
         return null;
     }
@@ -282,12 +315,13 @@ describe('the canvas search', () => {
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
     await user.type(await screen.findByLabelText('Search everything'), 'vault');
 
-    // The first match is the chapter, which mentions the vault in its notes.
+    // Both cards mention the vault, but only one is named after it, so the card
+    // whose name matched is listed first and takes the Enter key.
     await waitFor(() => expect(hitIds(container)).toEqual(['n1', 'n3']));
     await user.keyboard('{Enter}');
 
     await waitFor(() =>
-      expect(flowMock.setCenter).toHaveBeenCalledWith(70, 20, { zoom: 1, duration: 300 })
+      expect(flowMock.setCenter).toHaveBeenCalledWith(70, 220, { zoom: 1, duration: 300 })
     );
 
     expect(screen.queryByRole('dialog', { name: 'Search the storyboard' })).not.toBeInTheDocument();
@@ -295,7 +329,7 @@ describe('the canvas search', () => {
       within(screen.getByRole('complementary', { name: 'Node inspector' })).getByLabelText(
         'Label'
       )
-    ).toHaveValue('Opening');
+    ).toHaveValue('Vault');
   });
 
   it('walks the matches with the arrow keys before choosing one', async () => {
@@ -307,15 +341,33 @@ describe('the canvas search', () => {
     await user.type(input, 'vault');
     await user.keyboard('{ArrowDown}{Enter}');
 
+    // One step past the name match is the chapter that mentions the vault.
     await waitFor(() =>
-      expect(flowMock.setCenter).toHaveBeenCalledWith(70, 220, { zoom: 1, duration: 300 })
+      expect(flowMock.setCenter).toHaveBeenCalledWith(70, 20, { zoom: 1, duration: 300 })
     );
 
     expect(
       within(screen.getByRole('complementary', { name: 'Node inspector' })).getByLabelText(
         'Label'
       )
-    ).toHaveValue('Vault');
+    ).toHaveValue('Opening');
+  });
+
+  it('lists name matches before results found only in their notes', async () => {
+    notes = [chapterNote];
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'vault');
+
+    // The card named Vault and the note whose first line names it come first;
+    // the chapter that only mentions the word in its notes comes last.
+    const labels = Array.from(
+      searchDialog().querySelectorAll('.canvas-search-label')
+    ).map(entry => entry.textContent);
+
+    expect(labels).toEqual(['Vault', 'Rook owes the vault.', 'Opening']);
   });
 
   it('finds a node by whose cast member it is', async () => {
@@ -502,5 +554,149 @@ describe('the canvas search', () => {
 
     expect(await screen.findByText('Cinder Keep')).toBeInTheDocument();
     expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes');
+  });
+
+  it('opens from the Chapters tab and finds a note there', async () => {
+    notes = [chapterNote];
+    const user = userEvent.setup();
+    await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'Chapters' }));
+    await screen.findByRole('heading', { name: 'Reading order' });
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+
+    const input = await screen.findByLabelText('Search everything');
+    expect(input).toHaveFocus();
+
+    await user.type(input, 'owes');
+    await user.click(resultButtons('note')[0]);
+
+    // The panel opens where it already is, so no tab has to change underfoot.
+    expect(screen.getByRole('button', { name: 'Chapters' })).toHaveClass('active');
+    expect(document.querySelector('.chapter-notes')).toHaveTextContent(
+      'The warder knows it.'
+    );
+  });
+
+  it('opens a card from the Chapters tab and still centres the board on it', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'Chapters' }));
+    await screen.findByRole('heading', { name: 'Reading order' });
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'vault');
+
+    const locationResult = resultButtons('node').find(button =>
+      button.textContent?.includes('Vault')
+    );
+    expect(locationResult).toBeDefined();
+    await user.click(locationResult as HTMLElement);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Graph' })).toHaveClass('active')
+    );
+
+    // The pan was parked while the board was off screen, and applied on mount.
+    expect(flowMock.setCenter).toHaveBeenCalledWith(70, 220, { zoom: 1, duration: 300 });
+    expect(
+      within(screen.getByRole('complementary', { name: 'Node inspector' })).getByLabelText(
+        'Label'
+      )
+    ).toHaveValue('Vault');
+  });
+
+  it('offers a Search button on the Chapters tab', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'Chapters' }));
+    await user.click(await screen.findByRole('button', { name: 'Search' }));
+
+    expect(screen.getByRole('dialog', { name: 'Search the storyboard' })).toBeInTheDocument();
+  });
+
+  it('leaves Ctrl+F to the browser on tabs without the palette', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Search the storyboard' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('finds a chapter note and opens it under its chapter', async () => {
+    notes = [chapterNote];
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'owes');
+
+    // The words are only in the note, and the result names the chapter it is in.
+    const [noteResult] = resultButtons('note');
+    expect(noteResult).toHaveTextContent('Rook owes the vault.');
+    expect(noteResult).toHaveTextContent('Opening');
+
+    await user.click(noteResult);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Chapters' })).toHaveClass('active')
+    );
+
+    // The chapter's panel opens on the note, and the note is marked so it is not
+    // hunted for in a list of them.
+    const panel = document.querySelector('.chapter-notes');
+    expect(panel).toHaveTextContent('The warder knows it.');
+    expect(document.querySelector('.chapter-note.matched')).not.toBeNull();
+  });
+
+  it('narrows the palette to notes only', async () => {
+    notes = [chapterNote];
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'vault');
+
+    await waitFor(() => expect(resultButtons('note')).toHaveLength(1));
+    expect(resultButtons('node').length).toBeGreaterThan(0);
+
+    await user.click(within(searchDialog()).getByRole('button', { name: 'Notes' }));
+
+    expect(screen.getByText('1 match', { exact: false })).toBeInTheDocument();
+    expect(resultButtons('note')).toHaveLength(1);
+    expect(resultButtons('node')).toHaveLength(0);
+  });
+
+  it('finds a note in another story and opens that story on its chapter', async () => {
+    otherNotes = [otherNote];
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'hides');
+
+    const [noteResult] = await waitFor(
+      () => {
+        const found = resultButtons('note');
+        expect(found[0]).toHaveTextContent('Ashes');
+        return found;
+      },
+      { timeout: 2000 }
+    );
+
+    await user.click(noteResult);
+
+    expect(await screen.findByText('Cinder Keep')).toBeInTheDocument();
+    expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes');
+
+    const panel = document.querySelector('.chapter-notes');
+    expect(panel).toHaveTextContent('Wren hides the ledger.');
   });
 });

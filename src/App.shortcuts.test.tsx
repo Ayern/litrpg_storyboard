@@ -135,7 +135,9 @@ describe('the keyboard reference', () => {
     // The routes for searching are listed with the key that the Search button
     // itself names, so the two cannot disagree.
     expect(within(dialog).getByText('Search')).toBeInTheDocument();
-    expect(within(dialog).getByText('Open the search palette (Graph tab)')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Open the search palette (Graph and Chapters tabs)')
+    ).toBeInTheDocument();
     const key = within(dialog).getByText('Ctrl+F');
     expect(screen.getByRole('button', { name: 'Search' }).getAttribute('title')).toContain(
       key.textContent

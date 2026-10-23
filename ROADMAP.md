@@ -164,12 +164,15 @@ honest: **S** is a short session, **M** a solid one, **L** several.
 
 ### Phase 0 — closing the promises
 
-**1. Find anything.** **Done.** `Ctrl+F` reaches nodes, cast members, connections
-and the other stories, whose boards are read when the palette opens; choosing a
-result opens the inspector, the character sheet, the connection editor or the
+**1. Find anything.** **Done.** `Ctrl+F` on the Graph and Chapters tabs reaches
+nodes, chapter notes, cast members, connections and the other stories, whose
+boards and notes are read when the palette opens; choosing a result opens the
+inspector, the chapter's notes, the character sheet, the connection editor or the
 story. A filter row narrows the list by kind, and the eight-result keyboard limit
-and the count stay. Two follow-ups are noted in the README: results are not
-ranked, and the palette is still captured on the Graph tab only.
+and the count stay. Results are ranked into two bands: a card, note, cast member,
+connection or story whose own name matched is listed before one found only by its
+notes, description, relation or cast member, with the gathering order kept inside
+each band.
 
 **2. Shortcut reference.** **Done.** A `?` overlay groups every keyboard route by
 where it works, reached from a `?` button beside the current-user field or the
@@ -236,7 +239,13 @@ validated as whole numbers (zero written, no target below 1), with a story total
 that sums the counts and the targets that exist and a bar against them. Every
 changed field is revertible from the history. Export and import carry the
 numbers and the counts, numbering an older file's chapters in its own order.
-Remaining: dragging rows to reorder them; the ↑/↓ buttons do the job meanwhile.
+Migration v10 adds `nodes.parent_node_id`, so a chapter can hold plain-text
+notes: **Notes** on the row opens a panel to add, edit and delete them, each note
+kept as a `note` node off the board, named in the trash and the history by its
+first line, carried by export and import, printed under its chapter in the story
+bible, found by the search palette (which opens the chapter's panel on the note),
+and trashed and purged with its chapter. Remaining: dragging rows to reorder them
+(the ↑/↓ buttons do the job meanwhile), and any formatting at all in a note.
 **M**
 
 **8. POV and in-world time.** **Started.** Migration v9 gives chapters
