@@ -130,6 +130,8 @@ beforeEach(() => {
             updated_at: '2026-10-22T12:00:00Z',
           },
         ];
+      case 'get_story_character_stats':
+        return [];
       case 'get_character_stats':
         return [
           {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactFlow, {
   Controls,
   Background,
@@ -102,6 +102,10 @@ type NodeData = {
   createdBy: string;
   // The cast member this node points at, stored as an id on the node itself.
   characterId?: string | null;
+  // The linked cast member's name and numbers, put here when the canvas is
+  // drawn so the card can show them without reading the database itself.
+  characterName?: string | null;
+  characterStats?: CharacterStat[];
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -113,17 +117,51 @@ function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
 }
 
+// How many numbers a card has room for before it starts counting.
+const NODE_STAT_BADGES = 2;
+
 // The card a node is drawn as. Its type is both the colour of its edge and the
 // word above the label, so a board reads at a glance instead of every note
-// looking the same. The handles keep a node connectable from either side.
+// looking the same. A linked node also carries its cast member's numbers, so a
+// board of characters shows who is ahead without opening anybody. The handles
+// keep a node connectable from either side.
 function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const kind = isNodeType(data.nodeType) ? data.nodeType : 'misc';
+  const stats = data.characterStats ?? [];
+  const shown = stats.slice(0, NODE_STAT_BADGES);
+  const hidden = stats.length - shown.length;
+  const linked = Boolean(data.characterId);
 
   return (
     <div className={`graph-node ${kind}`}>
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
       <span className="graph-node-kind">{kind}</span>
       <span className="graph-node-label">{data.label}</span>
+      {linked && (
+        <span
+          className="graph-node-cast"
+          title={
+            stats.length > 0
+              ? stats.map(stat => `${stat.stat_name} ${stat.value}`).join(' · ')
+              : undefined
+          }
+        >
+          {data.characterName && data.characterName !== data.label && (
+            <span className="graph-node-cast-name">{data.characterName}</span>
+          )}
+          {shown.map(stat => (
+            <span className="graph-node-stat" key={stat.id}>
+              {stat.stat_name} {stat.value}
+            </span>
+          ))}
+          {hidden > 0 && <span className="graph-node-stat more">+{hidden}</span>}
+          {stats.length === 0 && (
+            <span className="graph-node-cast-empty">
+              {data.characterName ? 'no stats yet' : 'cast member in the trash'}
+            </span>
+          )}
+        </span>
+      )}
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} />
     </div>
   );
@@ -133,6 +171,28 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
 const flowNodeTypes = { default: GraphNode };
 
 const USER_KEY = 'litrpg.currentUser';
+
+// The drag payload a cast card carries. A MIME type of our own keeps a dropped
+// file or a link from being mistaken for a cast member.
+const CAST_DRAG_TYPE = 'application/x-litrpg-character';
+
+// One stat list per character, from the story-wide read.
+function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[]> {
+  const grouped: Record<string, CharacterStat[]> = {};
+
+  for (const stat of stats) {
+    if (!grouped[stat.character_id]) grouped[stat.character_id] = [];
+    grouped[stat.character_id].push(stat);
+  }
+
+  // The badges are a short list of the same numbers everywhere, so the order is
+  // decided here rather than by whatever order the read happened to return.
+  for (const stat of Object.values(grouped)) {
+    stat.sort((a, b) => a.stat_name.localeCompare(b.stat_name));
+  }
+
+  return grouped;
+}
 
 const trashKindLabels: Record<string, string> = {
   story: 'Story',
@@ -343,6 +403,14 @@ function App() {
   const [characterStats, setCharacterStats] = useState<CharacterStat[]>([]);
   const [characterAttributes, setCharacterAttributes] = useState<CharacterAttribute[]>([]);
 
+  // Every live cast member's stats, which is what the cards on the canvas show.
+  // Kept here rather than fetched per card so one read covers the whole board.
+  const [castStats, setCastStats] = useState<Record<string, CharacterStat[]>>({});
+  // The cast card being dragged, used to show the canvas as a drop target.
+  const [draggingCastId, setDraggingCastId] = useState<string | null>(null);
+  // React Flow's instance, for turning a drop's screen point into canvas space.
+  const flowRef = useRef<any>(null);
+
   const [newAttributeName, setNewAttributeName] = useState('');
   const [newAttributeValue, setNewAttributeValue] = useState('');
   const [editingAttributeId, setEditingAttributeId] = useState<string | null>(null);
@@ -423,10 +491,14 @@ function App() {
       setNodes(flowNodes);
       setEdges(flowEdges);
 
-      // The inspector ties a character node to the cast by name, so the cast has
-      // to be at hand while the canvas is open, not only on the Characters tab.
-      const cast: Character[] = await invoke('get_characters', { storyId: story.id });
+      // The cast rail and the cards' badges both read from here, so the cast and
+      // its numbers are loaded with the graph rather than on another tab.
+      const [cast, stats] = await Promise.all([
+        invoke<Character[]>('get_characters', { storyId: story.id }),
+        invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
+      ]);
       setCharacters(cast);
+      setCastStats(statsByCharacter(stats));
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -791,6 +863,12 @@ function App() {
         setDeletedStories(previous => previous.filter(other => other.id !== item.id));
       } else {
         setTrash(previous => previous.filter(other => other.id !== item.id));
+
+        // Purging a cast member clears every node linked to it, so the graph is
+        // re-read instead of being left pointing at a row that no longer exists.
+        if (item.kind === 'character' && currentStory) {
+          await loadStory(currentStory);
+        }
       }
     } catch (e) {
       console.error('Failed to delete permanently:', e);
@@ -913,6 +991,66 @@ function App() {
       setNewNodeLabel('');
     } catch (e) {
       console.error('Failed to create node:', e);
+    }
+  };
+
+  // Dropping a cast card makes a character node already pointing at that cast
+  // member, at the point it was dropped. Creation and link are one command, so a
+  // refused link leaves no stray node behind.
+  const dropCastMember = async (event: React.DragEvent<HTMLDivElement>) => {
+    const characterId = event.dataTransfer.getData(CAST_DRAG_TYPE);
+    setDraggingCastId(null);
+
+    if (!characterId || !currentStory) return;
+    event.preventDefault();
+
+    const character = characters.find(candidate => candidate.id === characterId);
+    if (!character) return;
+
+    const position = flowRef.current
+      ? flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : { x: event.clientX, y: event.clientY };
+
+    setActionError(null);
+
+    try {
+      const created: any = await invoke('create_graph_node', {
+        storyId: currentStory.id,
+        nodeType: 'character',
+        label: character.name,
+        content: null,
+        posX: position.x,
+        posY: position.y,
+        createdBy: actor,
+        characterId: character.id,
+      });
+
+      setNodes(nds => [
+        ...nds,
+        {
+          id: created.id,
+          type: 'default',
+          position,
+          data: {
+            label: created.label,
+            nodeType: created.node_type,
+            content: created.content,
+            createdBy: created.created_by,
+            characterId: created.character_id ?? character.id,
+          },
+        },
+      ]);
+
+      // Opening it is what makes the drop feel finished: the numbers are in the
+      // inspector, and the link can be changed without hunting for the node.
+      setSelectedEdgeId(null);
+      setNodeEditError(null);
+      setSelectedNodeId(created.id);
+      setNodeLabelDraft(created.label);
+      setNodeContentDraft(created.content ?? '');
+    } catch (e) {
+      console.error('Failed to drop a cast member onto the canvas:', e);
+      setActionError(`Could not add ${character.name} to the canvas: ${String(e)}`);
     }
   };
 
@@ -1104,6 +1242,21 @@ function App() {
     }
   };
 
+  // A saved stat has to reach the cards on the canvas too, whichever tab it was
+  // edited from, or a badge would go on showing the number it replaced.
+  const rememberStat = (stat: CharacterStat) => {
+    setCastStats(previous => {
+      const current = previous[stat.character_id] ?? [];
+
+      return {
+        ...previous,
+        [stat.character_id]: [...current.filter(other => other.id !== stat.id), stat].sort(
+          (a, b) => a.stat_name.localeCompare(b.stat_name)
+        ),
+      };
+    });
+  };
+
   const startStatEdit = (stat: CharacterStat) => {
     setEditingStatId(stat.id);
     setStatValueDraft(String(stat.value));
@@ -1134,6 +1287,7 @@ function App() {
           a.stat_name.localeCompare(b.stat_name)
         )
       );
+      rememberStat(updated);
       setEditingStatId(null);
     } catch (e) {
       console.error('Failed to save stat:', e);
@@ -1170,6 +1324,7 @@ function App() {
           a.stat_name.localeCompare(b.stat_name)
         )
       );
+      rememberStat(saved);
       setNewStatName('');
       setNewStatValue('');
     } catch (e) {
@@ -1551,6 +1706,7 @@ function App() {
           a.stat_name.localeCompare(b.stat_name)
         )
       );
+      rememberStat(updated);
       setInspectorStatId(null);
       setInspectorError(null);
     } catch (e) {
@@ -1612,6 +1768,27 @@ function App() {
     !retentionChoices.some(choice => choice.value === String(retentionDays))
       ? [...retentionChoices, { value: String(retentionDays), label: `${retentionDays} days` }]
       : retentionChoices;
+
+  // The canvas gets the nodes plus their cast member's name and numbers. Only
+  // linked nodes are rebuilt, so the rest keep their identity across a render.
+  const canvasNodes = useMemo(() => {
+    const castById = new Map(characters.map(character => [character.id, character]));
+
+    return nodes.map(node => {
+      const characterId = node.data.characterId;
+
+      if (!characterId) return node;
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          characterName: castById.get(characterId)?.name ?? null,
+          characterStats: castStats[characterId] ?? [],
+        },
+      };
+    });
+  }, [nodes, characters, castStats]);
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -1866,11 +2043,70 @@ function App() {
                   <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
                 </div>
                 <div className="graph-body">
-                  <div className="graph-canvas">
+                  <aside className="cast-rail" aria-label="Cast">
+                    <div className="cast-rail-title">Cast</div>
+
+                    {characters.length === 0 ? (
+                      <p className="cast-rail-hint">
+                        No cast yet — add someone on the Characters tab.
+                      </p>
+                    ) : (
+                      <>
+                        {characters.map(character => (
+                          <div
+                            key={character.id}
+                            className={`cast-chip ${
+                              draggingCastId === character.id ? 'dragging' : ''
+                            }`}
+                            draggable
+                            title={`Drag ${character.name} onto the canvas`}
+                            onDragStart={event => {
+                              event.dataTransfer.setData(CAST_DRAG_TYPE, character.id);
+                              event.dataTransfer.effectAllowed = 'copy';
+                              setDraggingCastId(character.id);
+                            }}
+                            onDragEnd={() => setDraggingCastId(null)}
+                          >
+                            <span className="cast-chip-name">{character.name}</span>
+                            {(castStats[character.id] ?? []).length > 0 && (
+                              <span className="cast-chip-stats">
+                                {(castStats[character.id] ?? [])
+                                  .slice(0, NODE_STAT_BADGES)
+                                  .map(stat => `${stat.stat_name} ${stat.value}`)
+                                  .join(' · ')}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                        <p className="cast-rail-hint">
+                          Drag a cast member onto the canvas to make a linked node.
+                        </p>
+                      </>
+                    )}
+                  </aside>
+                  <div
+                    className={`graph-canvas${draggingCastId ? ' drop-ready' : ''}`}
+                    onDragOver={event => {
+                      // The payload type says what is in the air even if the state
+                      // update from the drag has not landed yet.
+                      if (
+                        !draggingCastId &&
+                        !event.dataTransfer.types.includes(CAST_DRAG_TYPE)
+                      ) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'copy';
+                    }}
+                    onDrop={dropCastMember}
+                  >
                   <ReactFlow
-                    nodes={nodes}
+                    nodes={canvasNodes}
                     edges={edges}
                     nodeTypes={flowNodeTypes}
+                    onInit={instance => {
+                      flowRef.current = instance;
+                    }}
                     onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}

@@ -171,14 +171,32 @@ fn create_graph_node(
     pos_x: f64,
     pos_y: f64,
     created_by: String,
+    character_id: Option<String>,
 ) -> Result<Node, String> {
-    db.create_node(story_id, node_type, label, content, pos_x, pos_y, created_by)
-        .map_err(|e| e.to_string())
+    db.create_node_with_character(
+        story_id,
+        node_type,
+        label,
+        content,
+        pos_x,
+        pos_y,
+        created_by,
+        character_id,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_graph_nodes(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Node>, String> {
     db.list_nodes(&story_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_character_stats(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterStat>, String> {
+    db.list_story_stats(&story_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -476,6 +494,7 @@ pub fn run() {
             delete_character_attribute,
             create_graph_node,
             get_graph_nodes,
+            get_story_character_stats,
             update_graph_node_position,
             update_graph_node,
             set_node_character,

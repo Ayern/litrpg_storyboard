@@ -40,6 +40,17 @@ it, and the drawer keeps its own copy of the numbers so editing from the canvas 
 not disturb what the Characters tab has selected. Link changes are history entries
 of their own, recorded as the names on either side.
 
+**Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
+canvas. Drag a card onto the board and it becomes a `character` node already
+linked to that cast member, placed where the pointer was released, with the
+inspector opened on it. A linked node draws its cast member's numbers as badges —
+the first two by name, then a count of the rest, with all of them in the tooltip —
+so the board answers who is ahead without opening anybody. The badges follow edits
+made in the drawer or on the Characters tab. The canvas is outlined while a card
+is in the air, the drop is a single write that either makes a linked node or
+nothing, and a node whose cast member is in the trash says so rather than looking
+unlinked.
+
 **Editing a connection** — click an edge to open the same kind of editor for its
 label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
 change is recorded per field like a node edit. The canvas shows the label when
@@ -222,7 +233,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, inspector, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, inspector, cast drag-and-drop, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -241,7 +252,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 33 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 34 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -282,7 +293,11 @@ page that arrives late, and what it says when a filter matches nothing.
 - **A link survives its cast member going to the trash.** Trashing a character keeps
 the links, so restoring it brings them back; the drawer says the link is to a cast
 member that is not in the live cast. Purging the character clears the links first,
-and each cleared node gets its own history entry.
+and each cleared node gets its own history entry — the canvas is re-read at that
+point so it stops drawing the vanished badge.
+- **Dragging a cast card needs a pointer.** The rail uses the platform's
+  drag-and-drop, which a touch screen does not drive; the picker in the drawer
+  makes the same link without dragging.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.

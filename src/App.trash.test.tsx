@@ -87,6 +87,7 @@ beforeEach(() => {
       case 'get_graph_nodes':
       case 'get_graph_edges':
       case 'get_characters':
+      case 'get_story_character_stats':
         return [];
       case 'get_trash':
         return args.storyId ? storyTrash : deletedStories;
@@ -183,6 +184,13 @@ describe('trash tab', () => {
 
     const purge = calls.find(call => call.command === 'purge_deleted');
     expect(purge?.args).toEqual({ id: 'char-1', kind: 'character', user: 'You' });
+
+    // The nodes that pointed at her are unlinked now, so the canvas is re-read
+    // rather than left showing a link to a row that is gone.
+    const purgeAt = calls.findIndex(call => call.command === 'purge_deleted');
+    expect(
+      calls.slice(purgeAt).some(call => call.command === 'get_graph_nodes')
+    ).toBe(true);
 
     await waitFor(() =>
       expect(screen.queryByText('Rook')).not.toBeInTheDocument()

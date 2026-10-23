@@ -106,6 +106,7 @@ beforeEach(() => {
         ];
       case 'get_graph_edges':
       case 'get_characters':
+      case 'get_story_character_stats':
         return [];
       default:
         return null;

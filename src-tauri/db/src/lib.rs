@@ -412,6 +412,35 @@ impl Db {
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
+    /// Every stat of every live cast member in a story, in one read. The canvas
+    /// draws all of a story's linked nodes at once, so asking per character would
+    /// be one round trip per card.
+    pub fn list_story_stats(&self, story_id: &str) -> DbResult<Vec<CharacterStat>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT s.id, s.character_id, s.stat_name, s.value, s.notes, s.created_at, s.updated_at
+             FROM character_stats s
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY s.stat_name",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], |row| {
+            Ok(CharacterStat {
+                id: row.get(0)?,
+                character_id: row.get(1)?,
+                stat_name: row.get(2)?,
+                value: row.get(3)?,
+                notes: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
     // ===== ATTRIBUTE OPERATIONS =====
     //
     // Attributes are named text values ("Class" = "Rogue", "Aura" = "Ember").
@@ -606,16 +635,38 @@ impl Db {
         pos_y: f64,
         created_by: String,
     ) -> DbResult<Node> {
+        self.create_node_with_character(
+            story_id, node_type, label, content, pos_x, pos_y, created_by, None,
+        )
+    }
+
+    /// Creates a node that may already point at a cast member — what dropping a
+    /// cast card on the canvas does. The link is checked exactly as
+    /// `set_node_character` checks it, before anything is written, so a drop
+    /// either makes a linked node or nothing at all.
+    pub fn create_node_with_character(
+        &self,
+        story_id: String,
+        node_type: String,
+        label: String,
+        content: Option<String>,
+        pos_x: f64,
+        pos_y: f64,
+        created_by: String,
+        character_id: Option<String>,
+    ) -> DbResult<Node> {
         let id = Uuid::new_v4().to_string();
         let timestamp = now();
 
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
+        let character_name = linkable_character_name(&tx, &story_id, character_id.as_deref())?;
+
         tx.execute(
             "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
-            params![&id, &story_id, &node_type, &label, &content, pos_x, pos_y, &created_by, &timestamp, &timestamp],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![&id, &story_id, &node_type, &label, &content, pos_x, pos_y, &created_by, &timestamp, &timestamp, &character_id],
         )?;
 
         log_audit(
@@ -632,6 +683,25 @@ impl Db {
             },
         )?;
 
+        // The link is part of the creation, not a second edit: the history says
+        // the node arrived pointing at someone. `create` has nothing to revert
+        // to, so this entry follows the same rule as the node's own creation.
+        if let Some(name) = character_name {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "node",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("character"),
+                    old_value: None,
+                    new_value: Some(name),
+                    changed_by: &created_by,
+                },
+            )?;
+        }
+
         tx.commit()?;
 
         Ok(Node {
@@ -645,9 +715,7 @@ impl Db {
             created_by,
             created_at: timestamp.clone(),
             updated_at: timestamp,
-            // A node starts unlinked; the inspector is where it is pointed at
-            // someone, which gives that change its own history entry.
-            character_id: None,
+            character_id,
         })
     }
 
@@ -821,46 +889,9 @@ impl Db {
             ));
         }
 
-        // Everything the new link has to be checked against, read before anything
-        // is written, so a refusal leaves the node exactly as it was.
-        let next_name = match &character_id {
-            None => None,
-            Some(id) => {
-                let (character_story, name, character_deleted_at) = tx
-                    .query_row(
-                        "SELECT story_id, name, deleted_at FROM characters WHERE id = ?1",
-                        params![id],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, Option<String>>(2)?,
-                            ))
-                        },
-                    )
-                    .optional()?
-                    .ok_or_else(|| {
-                        DbError::Invalid(
-                            "that cast member is no longer in the database".to_string(),
-                        )
-                    })?;
-
-                if character_deleted_at.is_some() {
-                    return Err(DbError::Invalid(
-                        "that cast member is in the trash; restore it before linking nodes to it"
-                            .to_string(),
-                    ));
-                }
-
-                if character_story != story_id {
-                    return Err(DbError::Invalid(
-                        "a node can only be linked to a cast member of its own story".to_string(),
-                    ));
-                }
-
-                Some(name)
-            }
-        };
+        // Checked before anything is written, so a refusal leaves the node exactly
+        // as it was.
+        let next_name = linkable_character_name(&tx, &story_id, character_id.as_deref())?;
 
         // Re-selecting the same cast member is not a change, and writes nothing.
         if previous == character_id {
@@ -3318,6 +3349,51 @@ fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
         node_row,
     )
     .optional()
+}
+
+/// Checks that a cast member can be linked to a node in `story_id`, and answers
+/// the name the history should record. `None` needs no checks because there is
+/// nothing to point at. Both the link setter and the creator go through here, so
+/// a drop and a picker refusal say the same thing.
+fn linkable_character_name(
+    conn: &Connection,
+    story_id: &str,
+    character_id: Option<&str>,
+) -> DbResult<Option<String>> {
+    let Some(id) = character_id else {
+        return Ok(None);
+    };
+
+    let (character_story, name, deleted_at) = conn
+        .query_row(
+            "SELECT story_id, name, deleted_at FROM characters WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            DbError::Invalid("that cast member is no longer in the database".to_string())
+        })?;
+
+    if deleted_at.is_some() {
+        return Err(DbError::Invalid(
+            "that cast member is in the trash; restore it before linking nodes to it".to_string(),
+        ));
+    }
+
+    if character_story != story_id {
+        return Err(DbError::Invalid(
+            "a node can only be linked to a cast member of its own story".to_string(),
+        ));
+    }
+
+    Ok(Some(name))
 }
 
 fn log_audit(conn: &Connection, record: AuditRecord<'_>) -> SqliteResult<()> {
@@ -6062,5 +6138,123 @@ mod tests {
             Some(characters[0].id.as_str()),
             "the copy points at the copied cast member, not the original"
         );
+    }
+
+    #[test]
+    fn a_node_can_be_created_already_linked_to_a_cast_member() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        let node = db
+            .create_node_with_character(
+                story.id.clone(),
+                "character".into(),
+                "Rook".into(),
+                None,
+                12.5,
+                40.0,
+                "Ada".into(),
+                Some(character.id.clone()),
+            )
+            .unwrap();
+
+        assert_eq!(node.character_id.as_deref(), Some(character.id.as_str()));
+        assert_eq!(
+            db.list_nodes(&story.id).unwrap()[0]
+                .character_id
+                .as_deref(),
+            Some(character.id.as_str()),
+            "the link is stored, not just returned"
+        );
+
+        // One creation, and one entry that says who it arrived pointing at —
+        // not a creation followed by a separate link edit.
+        let entries = db
+            .get_audit_log(Some(&story.id), Some("node"), Some(&node.id), 50)
+            .unwrap();
+        assert!(entries.iter().all(|entry| entry.action != "update"));
+        assert!(entries.iter().any(|entry| {
+            entry.action == "create"
+                && entry.field_changed.as_deref() == Some("character")
+                && entry.old_value.is_none()
+                && entry.new_value.as_deref() == Some("Rook")
+        }));
+    }
+
+    #[test]
+    fn a_linked_node_is_refused_through_the_trash_and_across_stories() {
+        let db = Db::open_in_memory().unwrap();
+        let first = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let second = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let theirs = db
+            .create_character(second.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let ours = db
+            .create_character(first.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        let create = |character_id: Option<String>| {
+            db.create_node_with_character(
+                first.id.clone(),
+                "character".into(),
+                "Dropped".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+                character_id,
+            )
+        };
+
+        let error = create(Some(theirs.id.clone())).unwrap_err().to_string();
+        assert!(error.contains("own story"), "{error}");
+
+        db.delete_character(&ours.id, "Ada".into()).unwrap();
+        let error = create(Some(ours.id.clone())).unwrap_err().to_string();
+        assert!(error.contains("in the trash"), "{error}");
+
+        let error = create(Some("nobody".into())).unwrap_err().to_string();
+        assert!(error.contains("no longer in the database"), "{error}");
+
+        // Every refusal rolled back whole: no half-made node is left behind.
+        assert!(db.list_nodes(&first.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_story_reads_all_of_its_live_cast_stats_in_one_go() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let other = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let wren = db
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let trashed = db
+            .create_character(story.id.clone(), "Ghost".into(), None, "Ada".into())
+            .unwrap();
+        let elsewhere = db
+            .create_character(other.id.clone(), "Faraway".into(), None, "Ada".into())
+            .unwrap();
+
+        db.add_or_update_stat(rook.id.clone(), "Level".into(), 4, None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(wren.id.clone(), "Level".into(), 9, None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(trashed.id.clone(), "Level".into(), 1, None, "Ada".into())
+            .unwrap();
+        db.add_or_update_stat(elsewhere.id.clone(), "Level".into(), 2, None, "Ada".into())
+            .unwrap();
+        db.delete_character(&trashed.id, "Ada".into()).unwrap();
+
+        let stats = db.list_story_stats(&story.id).unwrap();
+
+        assert_eq!(stats.len(), 2, "only the live cast of this story");
+        assert!(stats.iter().all(|stat| stat.character_id != trashed.id));
+        assert!(stats.iter().any(|stat| stat.character_id == wren.id && stat.value == 9));
     }
 }
