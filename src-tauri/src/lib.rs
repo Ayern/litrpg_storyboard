@@ -231,6 +231,21 @@ fn set_chapter_order(
         .map_err(|e| e.to_string())
 }
 
+/// Saves a chapter's arc and its words against a target. Nothing is derived:
+/// these are the numbers the author typed.
+#[tauri::command]
+fn set_chapter_details(
+    db: tauri::State<'_, Db>,
+    node_id: String,
+    arc: Option<String>,
+    words: Option<i64>,
+    target: Option<i64>,
+    user: String,
+) -> Result<Node, String> {
+    db.set_chapter_details(&node_id, arc, words, target, user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_story_character_stats(
     db: tauri::State<'_, Db>,
@@ -551,6 +566,7 @@ pub fn run() {
             create_graph_node,
             get_graph_nodes,
             set_chapter_order,
+            set_chapter_details,
             get_story_character_stats,
             update_graph_node_position,
             update_graph_node,

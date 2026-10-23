@@ -24,7 +24,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -927,6 +927,9 @@ impl Db {
             updated_at: timestamp,
             character_id,
             chapter_seq,
+            chapter_arc: None,
+            chapter_words: None,
+            chapter_target: None,
         })
     }
 
@@ -1001,7 +1004,8 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                        chapter_arc, chapter_words, chapter_target
                  FROM nodes WHERE id = ?1",
                 params![id],
                 node_row,
@@ -1150,7 +1154,8 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
-                    n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq
+                    n.created_by, n.created_at, n.updated_at, n.character_id, n.chapter_seq,
+                    n.chapter_arc, n.chapter_words, n.chapter_target
              FROM nodes n JOIN stories s ON s.id = n.story_id
              WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
              ORDER BY n.created_at",
@@ -1232,7 +1237,8 @@ impl Db {
         let chapters = {
             let mut stmt = tx.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y,
-                        created_by, created_at, updated_at, character_id, chapter_seq
+                        created_by, created_at, updated_at, character_id, chapter_seq,
+                        chapter_arc, chapter_words, chapter_target
                  FROM nodes
                  WHERE story_id = ?1 AND node_type = 'chapter' AND deleted_at IS NULL
                  ORDER BY chapter_seq, created_at",
@@ -1244,6 +1250,132 @@ impl Db {
         tx.commit()?;
 
         Ok(chapters)
+    }
+
+    /// Saves the arc and the word counts a chapter carries.
+    ///
+    /// Only a live chapter has these fields, so another kind of node is refused
+    /// rather than quietly storing numbers no screen would show. The counts are
+    /// the author's: the app does not read a manuscript to work them out.
+    pub fn set_chapter_details(
+        &self,
+        id: &str,
+        arc: Option<String>,
+        words: Option<i64>,
+        target: Option<i64>,
+        user: String,
+    ) -> DbResult<Node> {
+        if words.is_some_and(|count| count < 0) {
+            return Err(DbError::Invalid(
+                "a word count cannot be negative".to_string(),
+            ));
+        }
+
+        if target.is_some_and(|count| count < 1) {
+            return Err(DbError::Invalid(
+                "a word target must be at least 1".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let arc = arc
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                        chapter_arc, chapter_words, chapter_target
+                 FROM nodes WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                node_row,
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("node"))?;
+
+        if existing.node_type != "chapter" {
+            return Err(DbError::Invalid(
+                "only a chapter has an arc or word counts".to_string(),
+            ));
+        }
+
+        let arc_changed = existing.chapter_arc != arc;
+        let words_changed = existing.chapter_words != words;
+        let target_changed = existing.chapter_target != target;
+
+        if !arc_changed && !words_changed && !target_changed {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE nodes SET chapter_arc = ?1, chapter_words = ?2, chapter_target = ?3,
+                    updated_at = ?4
+             WHERE id = ?5",
+            params![&arc, words, target, &timestamp, id],
+        )?;
+
+        // One entry per field that changed, including a value being cleared: the
+        // history should say the target was removed, not that nothing happened.
+        if arc_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_arc"),
+                    old_value: existing.chapter_arc.clone(),
+                    new_value: arc.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if words_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_words"),
+                    old_value: existing.chapter_words.map(|value| value.to_string()),
+                    new_value: words.map(|value| value.to_string()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if target_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "node",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("chapter_target"),
+                    old_value: existing.chapter_target.map(|value| value.to_string()),
+                    new_value: target.map(|value| value.to_string()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(Node {
+            chapter_arc: arc,
+            chapter_words: words,
+            chapter_target: target,
+            updated_at: timestamp,
+            ..existing
+        })
     }
 
     // ===== EDGE OPERATIONS =====
@@ -1571,7 +1703,8 @@ impl Db {
 
         let nodes = {
             let mut stmt = guard.prepare(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                        chapter_arc, chapter_words, chapter_target
                  FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
             let rows = stmt.query_map(params![story_id], node_row)?;
@@ -3147,8 +3280,9 @@ impl Db {
             };
 
             tx.execute(
-                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                                    chapter_arc, chapter_words, chapter_target)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     &nodes[&node.id],
                     &story_id,
@@ -3165,6 +3299,9 @@ impl Db {
                     // source story's row.
                     node.character_id.as_ref().and_then(|id| characters.get(id)),
                     chapter_seq,
+                    &node.chapter_arc,
+                    node.chapter_words,
+                    node.chapter_target,
                 ],
             )?;
         }
@@ -3348,6 +3485,18 @@ pub struct Node {
     /// that is not a chapter, and absent from exports written before schema v7.
     #[serde(default)]
     pub chapter_seq: Option<i64>,
+    /// The arc a chapter belongs to, the author's own label. Optional, and only
+    /// meaningful on a chapter.
+    #[serde(default)]
+    pub chapter_arc: Option<String>,
+    /// Words written and the author's target for them. Both optional: a chapter
+    /// can be counted without a target, and a target can be set before any words
+    /// exist. The app never counts words in a manuscript; these are the numbers
+    /// the author types.
+    #[serde(default)]
+    pub chapter_words: Option<i64>,
+    #[serde(default)]
+    pub chapter_target: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -3639,6 +3788,15 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
         ("node", "content") => optional_text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
         ("node", "chapter_seq") => {
             optional_number_spec("nodes", "chapter_seq", NODE_FROM, OWN_LIVE)
+        }
+        ("node", "chapter_arc") => {
+            optional_text_spec("nodes", "chapter_arc", NODE_FROM, OWN_LIVE, true)
+        }
+        ("node", "chapter_words") => {
+            optional_number_spec("nodes", "chapter_words", NODE_FROM, OWN_LIVE)
+        }
+        ("node", "chapter_target") => {
+            optional_number_spec("nodes", "chapter_target", NODE_FROM, OWN_LIVE)
         }
         ("node", "position") => RevertSpec {
             table: "nodes",
@@ -3959,13 +4117,17 @@ fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
         updated_at: row.get(9)?,
         character_id: row.get(10)?,
         chapter_seq: row.get(11)?,
+        chapter_arc: row.get(12)?,
+        chapter_words: row.get(13)?,
+        chapter_target: row.get(14)?,
     })
 }
 
 /// One node as stored, live or in the trash.
 fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
     conn.query_row(
-        "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq
+        "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
+                chapter_arc, chapter_words, chapter_target
          FROM nodes WHERE id = ?1",
         params![id],
         node_row,
@@ -4082,6 +4244,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
 
     if version < 7 {
         conn.execute_batch(MIGRATION_007)?;
+    }
+
+    if version < 8 {
+        conn.execute_batch(MIGRATION_008)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -4254,6 +4420,16 @@ const MIGRATION_007: &str = "
           AND earlier.node_type = 'chapter'
           AND earlier.rowid <= nodes.rowid
     ) WHERE node_type = 'chapter';
+";
+
+/// Schema v8: a chapter can name its arc and record its words against a target.
+///
+/// Nothing is backfilled: an older chapter has no arc and no counts until the
+/// author types them, and a count of zero is not the same as no count at all.
+const MIGRATION_008: &str = "
+    ALTER TABLE nodes ADD COLUMN chapter_arc TEXT;
+    ALTER TABLE nodes ADD COLUMN chapter_words INTEGER;
+    ALTER TABLE nodes ADD COLUMN chapter_target INTEGER;
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -5986,7 +6162,7 @@ mod tests {
             .unwrap()
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let characters = db.list_characters("s1").unwrap();
         assert_eq!(characters[0].level, 1);
@@ -6050,6 +6226,13 @@ mod tests {
         assert_eq!(sequence("n1"), Some(1));
         assert_eq!(sequence("n3"), Some(2));
         assert_eq!(sequence("n2"), None, "only a chapter has a place in the book");
+
+        // v8 adds the arc and the counts; an old chapter starts without either.
+        for node in &nodes {
+            assert_eq!(node.chapter_arc, None);
+            assert_eq!(node.chapter_words, None);
+            assert_eq!(node.chapter_target, None);
+        }
     }
 
     #[test]
@@ -6211,6 +6394,105 @@ mod tests {
         sequences.sort();
 
         assert_eq!(sequences, vec![Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn a_chapter_keeps_its_arc_and_counts_and_only_a_chapter_has_them() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        let make = |label: &str, node_type: &str| {
+            db.create_node(
+                story.id.clone(),
+                node_type.into(),
+                label.into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap()
+        };
+
+        let chapter = make("One", "chapter");
+        let idea = make("Idea", "idea");
+
+        let saved = db
+            .set_chapter_details(
+                &chapter.id,
+                Some("  The Vault ".into()),
+                Some(1200),
+                Some(2000),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(saved.chapter_arc.as_deref(), Some("The Vault"));
+        assert_eq!(saved.chapter_words, Some(1200));
+        assert_eq!(saved.chapter_target, Some(2000));
+
+        let page = db
+            .get_audit_page(Some(&story.id), Some("node"), Some(&chapter.id), 50, 0)
+            .unwrap();
+        for field in ["chapter_arc", "chapter_words", "chapter_target"] {
+            assert!(
+                page.entries
+                    .iter()
+                    .any(|entry| entry.field_changed.as_deref() == Some(field)),
+                "{field} should be in the history"
+            );
+        }
+
+        // A count can be put back from the history, including back to no count.
+        let words_entry = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("chapter_words"))
+            .unwrap();
+        assert!(db.revert_change(&words_entry.id, "Ada".into()).unwrap());
+        let reverted = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == chapter.id)
+            .unwrap();
+        assert_eq!(reverted.chapter_words, None);
+        assert_eq!(reverted.chapter_arc.as_deref(), Some("The Vault"));
+
+        // The arc, the counts and their clearing survive an export and import.
+        let imported = db
+            .import_story(db.export_story(&story.id).unwrap(), "Ada".into())
+            .unwrap();
+        let copy = db
+            .list_nodes(&imported.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.label == "One")
+            .unwrap();
+        assert_eq!(copy.chapter_arc.as_deref(), Some("The Vault"));
+        assert_eq!(copy.chapter_words, None);
+        assert_eq!(copy.chapter_target, Some(2000));
+
+        let cleared = db
+            .set_chapter_details(&chapter.id, None, Some(0), None, "Ada".into())
+            .unwrap();
+        assert_eq!(cleared.chapter_arc, None);
+        assert_eq!(cleared.chapter_words, Some(0), "zero is a count, not an absence");
+        assert_eq!(cleared.chapter_target, None);
+
+        // Counts are the author's, but they still have to make sense, and a card
+        // that is not a chapter has no place to keep them.
+        assert!(db
+            .set_chapter_details(&chapter.id, None, Some(-1), None, "Ada".into())
+            .is_err());
+        assert!(db
+            .set_chapter_details(&chapter.id, None, None, Some(0), "Ada".into())
+            .is_err());
+        assert!(db
+            .set_chapter_details(&idea.id, Some("Arc".into()), None, None, "Ada".into())
+            .is_err());
     }
 
     #[test]

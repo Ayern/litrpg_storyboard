@@ -123,6 +123,10 @@ type NodeData = {
   characterLevel?: number | null;
   // Where a chapter sits in the reading order; null on every other kind.
   chapterSeq?: number | null;
+  // A chapter's arc and the words written against a target, all optional.
+  chapterArc?: string | null;
+  chapterWords?: number | null;
+  chapterTarget?: number | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -323,8 +327,28 @@ function toFlowNode(row: any): Node<NodeData> {
       characterId: row.character_id ?? null,
       characterLevel: null,
       chapterSeq: row.chapter_seq ?? null,
+      chapterArc: row.chapter_arc ?? null,
+      chapterWords: row.chapter_words ?? null,
+      chapterTarget: row.chapter_target ?? null,
     },
   };
+}
+
+// Plain digits with thousands separators, so a story total reads at a glance.
+function formatCount(value: number): string {
+  return value.toLocaleString('en-US');
+}
+
+// What a chapter row says about its words. A target without a count reads as
+// zero of that target rather than hiding the target.
+function formatChapterWords(
+  words: number | null | undefined,
+  target: number | null | undefined
+): string {
+  if (words == null && target == null) return 'No word count';
+  if (target == null) return `${formatCount(words ?? 0)} words`;
+
+  return `${formatCount(words ?? 0)} / ${formatCount(target)} words`;
 }
 
 // The canvas shows one string for a connection, but the two fields stay separate
@@ -661,6 +685,12 @@ function App() {
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [chapterError, setChapterError] = useState<string | null>(null);
   const [chapterBusy, setChapterBusy] = useState(false);
+
+  // The arc and word counts, edited one chapter at a time in the list.
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  const [chapterArcDraft, setChapterArcDraft] = useState('');
+  const [chapterWordsDraft, setChapterWordsDraft] = useState('');
+  const [chapterTargetDraft, setChapterTargetDraft] = useState('');
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
@@ -1653,6 +1683,9 @@ function App() {
           createdBy: newDbNode.created_by,
           characterId: newDbNode.character_id ?? null,
           chapterSeq: newDbNode.chapter_seq ?? null,
+          chapterArc: newDbNode.chapter_arc ?? null,
+          chapterWords: newDbNode.chapter_words ?? null,
+          chapterTarget: newDbNode.chapter_target ?? null,
         },
       };
 
@@ -1707,6 +1740,30 @@ function App() {
 
     return { duplicates, missing, unnumbered };
   }, [chapterNodes]);
+
+  // The story total: every count the author has entered, and the sum of the
+  // targets that exist — a chapter without one contributes no target rather than
+  // pretending its words were uncounted for.
+  const chapterTotals = useMemo(() => {
+    const words = chapterNodes.reduce(
+      (sum, node) => sum + (node.data.chapterWords ?? 0),
+      0
+    );
+    const targets = chapterNodes
+      .map(node => node.data.chapterTarget)
+      .filter((target): target is number => target != null);
+
+    return {
+      words,
+      target: targets.length > 0 ? targets.reduce((sum, target) => sum + target, 0) : null,
+      targeted: targets.length,
+    };
+  }, [chapterNodes]);
+
+  const chapterWordsPercent =
+    chapterTotals.target && chapterTotals.target > 0
+      ? Math.min(100, Math.round((chapterTotals.words / chapterTotals.target) * 100))
+      : 0;
 
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
@@ -1812,6 +1869,71 @@ function App() {
     } catch (e) {
       console.error('Failed to add a chapter:', e);
       setChapterError(`Could not add a chapter: ${String(e)}`);
+    } finally {
+      setChapterBusy(false);
+    }
+  };
+
+  const startChapterEdit = (node: { id: string; data: NodeData }) => {
+    setChapterError(null);
+    setEditingChapterId(node.id);
+    setChapterArcDraft(node.data.chapterArc ?? '');
+    setChapterWordsDraft(
+      node.data.chapterWords != null ? String(node.data.chapterWords) : ''
+    );
+    setChapterTargetDraft(
+      node.data.chapterTarget != null ? String(node.data.chapterTarget) : ''
+    );
+  };
+
+  const saveChapterDetails = async () => {
+    if (!editingChapterId) return;
+
+    const words = chapterWordsDraft.trim() === '' ? null : Number(chapterWordsDraft);
+    const target = chapterTargetDraft.trim() === '' ? null : Number(chapterTargetDraft);
+
+    if (words !== null && (!Number.isInteger(words) || words < 0)) {
+      setChapterError('A word count is a whole number, 0 or more.');
+      return;
+    }
+
+    if (target !== null && (!Number.isInteger(target) || target < 1)) {
+      setChapterError('A word target is a whole number above 0, or blank.');
+      return;
+    }
+
+    setChapterBusy(true);
+    setChapterError(null);
+
+    try {
+      const updated: any = await invoke('set_chapter_details', {
+        nodeId: editingChapterId,
+        arc: chapterArcDraft.trim() || null,
+        words,
+        target,
+        user: actor,
+      });
+
+      setNodes(previous =>
+        previous.map(node =>
+          node.id === updated.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  chapterArc: updated.chapter_arc ?? null,
+                  chapterWords: updated.chapter_words ?? null,
+                  chapterTarget: updated.chapter_target ?? null,
+                },
+              }
+            : node
+        )
+      );
+
+      setEditingChapterId(null);
+    } catch (e) {
+      console.error('Failed to save chapter details:', e);
+      setChapterError(`Could not save the arc and counts: ${String(e)}`);
     } finally {
       setChapterBusy(false);
     }
@@ -4457,32 +4579,151 @@ function App() {
                     No chapters yet — add one here, or add a chapter card on the Graph tab.
                   </div>
                 ) : (
-                  <ol className="chapter-list" aria-label="Chapters">
-                    {chapterNodes.map((node, index) => (
-                      <li key={node.id} className="chapter-row">
-                        <span className="chapter-number">
-                          {node.data.chapterSeq ?? '—'}
+                  <>
+                    <div className="chapter-totals">
+                      <div className="chapter-totals-head">
+                        <span className="chapter-totals-count">
+                          {formatCount(chapterTotals.words)}{' '}
+                          {chapterTotals.words === 1 ? 'word' : 'words'}
+                          {chapterTotals.target != null &&
+                            ` of ${formatCount(chapterTotals.target)}`}
                         </span>
-                        <span className="chapter-label">{node.data.label}</span>
-                        <button
-                          aria-label={`Move ${node.data.label} earlier`}
-                          title="Move this chapter one place earlier"
-                          onClick={() => moveChapter(node.id, -1)}
-                          disabled={index === 0 || chapterBusy}
+                        <span className="chapter-totals-note">
+                          {chapterNodes.length} chapter
+                          {chapterNodes.length === 1 ? '' : 's'}
+                          {chapterTotals.target != null &&
+                          chapterTotals.targeted < chapterNodes.length
+                            ? ` · ${chapterTotals.targeted} with a target`
+                            : ''}
+                        </span>
+                      </div>
+
+                      {chapterTotals.target != null && (
+                        <div
+                          className="chapter-total-bar"
+                          role="progressbar"
+                          aria-label="Story word count"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={chapterWordsPercent}
                         >
-                          ↑
-                        </button>
-                        <button
-                          aria-label={`Move ${node.data.label} later`}
-                          title="Move this chapter one place later"
-                          onClick={() => moveChapter(node.id, 1)}
-                          disabled={index === chapterNodes.length - 1 || chapterBusy}
-                        >
-                          ↓
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
+                          <div
+                            className="chapter-total-fill"
+                            style={{ width: `${chapterWordsPercent}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <ol className="chapter-list" aria-label="Chapters">
+                      {chapterNodes.map((node, index) => (
+                        <li key={node.id} className="chapter-row">
+                          <div className="chapter-row-main">
+                            <span className="chapter-number">
+                              {node.data.chapterSeq ?? '—'}
+                            </span>
+                            <span className="chapter-label">{node.data.label}</span>
+                            {node.data.chapterArc && (
+                              <span className="chapter-arc" title="Arc">
+                                {node.data.chapterArc}
+                              </span>
+                            )}
+                            <span className="chapter-words">
+                              {formatChapterWords(
+                                node.data.chapterWords,
+                                node.data.chapterTarget
+                              )}
+                            </span>
+                            <button
+                              aria-label={`Edit ${node.data.label} details`}
+                              title="Set the arc and the word count"
+                              onClick={() => startChapterEdit(node)}
+                              disabled={chapterBusy}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              aria-label={`Move ${node.data.label} earlier`}
+                              title="Move this chapter one place earlier"
+                              onClick={() => moveChapter(node.id, -1)}
+                              disabled={index === 0 || chapterBusy}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              aria-label={`Move ${node.data.label} later`}
+                              title="Move this chapter one place later"
+                              onClick={() => moveChapter(node.id, 1)}
+                              disabled={index === chapterNodes.length - 1 || chapterBusy}
+                            >
+                              ↓
+                            </button>
+                          </div>
+
+                          {editingChapterId === node.id && (
+                            <div className="chapter-details-form">
+                              <label>
+                                Arc
+                                <input
+                                  autoFocus
+                                  placeholder="No arc"
+                                  value={chapterArcDraft}
+                                  onChange={(e) => setChapterArcDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void saveChapterDetails();
+                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                  }}
+                                />
+                              </label>
+                              <label>
+                                Words
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={chapterWordsDraft}
+                                  onChange={(e) => setChapterWordsDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void saveChapterDetails();
+                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                  }}
+                                />
+                              </label>
+                              <label>
+                                Target
+                                <input
+                                  type="number"
+                                  min={1}
+                                  placeholder="None"
+                                  value={chapterTargetDraft}
+                                  onChange={(e) => setChapterTargetDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void saveChapterDetails();
+                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                  }}
+                                />
+                              </label>
+                              <div className="chapter-details-actions">
+                                <button
+                                  title="Save the arc and the word counts"
+                                  onClick={() => void saveChapterDetails()}
+                                  disabled={chapterBusy}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  title="Leave this chapter as it was"
+                                  onClick={() => setEditingChapterId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </>
                 )}
               </div>
             )}

@@ -1063,12 +1063,17 @@ body {
 
 .chapter-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
+  flex-direction: column;
   background: #252526;
   border: 1px solid #333;
   border-radius: 4px;
+}
+
+.chapter-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
 }
 
 .chapter-number {
@@ -1088,6 +1093,121 @@ body {
   white-space: nowrap;
   font-size: 13px;
   color: #ddd;
+}
+
+.chapter-arc {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.16);
+  color: #cdbcfc;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-words {
+  font-size: 11px;
+  color: #9a9a9a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chapter-totals {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.chapter-totals-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chapter-totals-count {
+  font-size: 15px;
+  color: #ddd;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-totals-note {
+  font-size: 11px;
+  color: #888;
+}
+
+.chapter-total-bar {
+  margin-top: 8px;
+  height: 6px;
+  background: #1b1b1c;
+  border: 1px solid #3c3c3c;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.chapter-total-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4c8b4c, #7ac47a);
+  transition: width 120ms ease-out;
+}
+
+.chapter-details-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 8px 10px 9px;
+  border-top: 1px solid #333;
+}
+
+.chapter-details-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #888;
+}
+
+.chapter-details-form input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+  width: 110px;
+}
+
+.chapter-details-form label:first-child input {
+  width: 220px;
+}
+
+.chapter-details-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.chapter-details-actions button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chapter-details-actions button:hover:not(:disabled) {
+  background: #37373d;
+  color: #fff;
 }
 
 .chapter-row button {

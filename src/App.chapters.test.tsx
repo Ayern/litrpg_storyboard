@@ -96,6 +96,9 @@ interface NodeRow {
   updated_at: string;
   character_id: string | null;
   chapter_seq: number | null;
+  chapter_arc: string | null;
+  chapter_words: number | null;
+  chapter_target: number | null;
 }
 
 function nodeRow(
@@ -118,6 +121,9 @@ function nodeRow(
     updated_at: createdAt,
     character_id: null,
     chapter_seq: seq,
+    chapter_arc: null,
+    chapter_words: null,
+    chapter_target: null,
   };
 }
 
@@ -130,9 +136,9 @@ const chaptersInOrder = () =>
 
 beforeEach(() => {
   rows = [
-    nodeRow('n1', 'chapter', 'One', 1, '2026-10-22T12:00:00Z'),
+    { ...nodeRow('n1', 'chapter', 'One', 1, '2026-10-22T12:00:00Z'), chapter_arc: 'The Vault', chapter_words: 1200, chapter_target: 2000 },
     nodeRow('n2', 'idea', 'Idea', null, '2026-10-22T12:01:00Z'),
-    nodeRow('n3', 'chapter', 'Two', 2, '2026-10-22T12:02:00Z'),
+    { ...nodeRow('n3', 'chapter', 'Two', 2, '2026-10-22T12:02:00Z'), chapter_arc: 'The Vault', chapter_words: 800, chapter_target: 2000 },
     nodeRow('n4', 'chapter', 'Three', 3, '2026-10-22T12:03:00Z'),
   ];
 
@@ -173,6 +179,15 @@ beforeEach(() => {
           if (row) row.chapter_seq = index + 1;
         });
         return chaptersInOrder().map(row => ({ ...row }));
+      }
+      case 'set_chapter_details': {
+        const row = rows.find(candidate => candidate.id === args.nodeId);
+        if (!row) return null;
+
+        row.chapter_arc = args.arc ?? null;
+        row.chapter_words = args.words ?? null;
+        row.chapter_target = args.target ?? null;
+        return { ...row };
       }
       default:
         return null;
@@ -361,5 +376,153 @@ describe('the chapter list', () => {
       screen.getByText(/No chapters yet — add one here, or add a chapter card on the Graph tab/i)
     ).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Chapters' })).not.toBeInTheDocument();
+  });
+});
+
+describe('chapter arcs and word counts', () => {
+  it('shows each arc and count, and the story total', async () => {
+    await openChapters();
+
+    const [one, , three] = rowsInList();
+    expect(within(one).getByText('The Vault')).toBeInTheDocument();
+    expect(within(one).getByText('1,200 / 2,000 words')).toBeInTheDocument();
+    expect(within(three).getByText('No word count')).toBeInTheDocument();
+
+    expect(screen.getByText('2,000 words of 4,000')).toBeInTheDocument();
+    expect(screen.getByText(/3 chapters · 2 with a target/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Story word count' })).toHaveAttribute(
+      'aria-valuenow',
+      '50'
+    );
+  });
+
+  it('saves an arc, a count and a target from the row', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+
+    const arc = screen.getByLabelText('Arc');
+    await user.clear(arc);
+    await user.type(arc, 'The Deep');
+
+    const words = screen.getByLabelText('Words');
+    await user.clear(words);
+    await user.type(words, '1500');
+
+    const target = screen.getByLabelText('Target');
+    await user.clear(target);
+    await user.type(target, '2500');
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toEqual({
+      nodeId: 'n1',
+      arc: 'The Deep',
+      words: 1500,
+      target: 2500,
+      user: 'You',
+    });
+
+    await waitFor(() => {
+      const [one] = rowsInList();
+      expect(within(one).getByText('The Deep')).toBeInTheDocument();
+      expect(within(one).getByText('1,500 / 2,500 words')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByLabelText('Arc')).not.toBeInTheDocument();
+    expect(screen.getByText('2,300 words of 4,500')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Story word count' })).toHaveAttribute(
+      'aria-valuenow',
+      '51'
+    );
+  });
+
+  it('clears the arc and the target but keeps a count of zero', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Three details' }));
+
+    const words = screen.getByLabelText('Words');
+    await user.type(words, '400');
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toEqual({
+      nodeId: 'n4',
+      arc: null,
+      words: 400,
+      target: null,
+      user: 'You',
+    });
+
+    await waitFor(() => {
+      const three = rowsInList()[2];
+      expect(within(three).getByText('400 words')).toBeInTheDocument();
+    });
+
+    // The target still only covers two of the three chapters.
+    expect(screen.getByText('2,400 words of 4,000')).toBeInTheDocument();
+    expect(screen.getByText(/3 chapters · 2 with a target/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.clear(screen.getByLabelText('Arc'));
+    await user.clear(screen.getByLabelText('Words'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('set_chapter_details')).toEqual({
+      nodeId: 'n1',
+      arc: null,
+      words: null,
+      target: 2000,
+      user: 'You',
+    });
+
+    await waitFor(() => {
+      const one = rowsInList()[0];
+      expect(within(one).getByText('0 / 2,000 words')).toBeInTheDocument();
+    });
+  });
+
+  it('refuses a target of zero without calling the database', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+    const target = screen.getByLabelText('Target');
+    await user.clear(target);
+    await user.type(target, '0');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      screen.getByText('A word target is a whole number above 0, or blank.')
+    ).toBeInTheDocument();
+    expect(lastCall('set_chapter_details')).toBeUndefined();
+    expect(screen.getByLabelText('Target')).toHaveValue(0);
+  });
+
+  it('keeps the form open and says why when the save fails', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    invokeMock.mockImplementationOnce(async () => {
+      throw 'the database is locked';
+    });
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText(/Could not save the arc and counts: the database is locked/i)
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Words')).toBeInTheDocument();
+  });
+
+  it('leaves the chapter alone when the form is cancelled', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+    await user.type(screen.getByLabelText('Words'), '99');
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByLabelText('Words')).not.toBeInTheDocument();
+    expect(within(rowsInList()[1]).getByText('800 / 2,000 words')).toBeInTheDocument();
+    expect(lastCall('set_chapter_details')).toBeUndefined();
   });
 });

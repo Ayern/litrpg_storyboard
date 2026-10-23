@@ -32,10 +32,20 @@ last), **↑**/**↓** to move one place, and **Renumber** whenever positions re
 are missing, or a chapter has none. A move writes the whole order in one command
 and renumbers the rest, so the list is 1..n unless a chapter was deleted or an
 older file was imported — and then the tab says which positions are empty or
-doubled rather than renumbering behind your back. A chapter card shows `Ch. N` beside its
-type on the canvas, both directions of a move are recorded in the history, and a
-move is undone like any canvas change. Cards that are not chapters are never
-numbered.
+doubled rather than renumbering behind your back. A chapter card shows `Ch. N`
+beside its type on the canvas, both directions of a move are recorded in the
+history, and a move is undone like any canvas change. Cards that are not chapters
+are never numbered.
+
+**Chapter arcs and word counts** — a chapter can also name the arc it belongs to
+and record the words written against an optional target. **Edit** on its row opens
+Arc / Words / Target in place; `Enter` saves, `Escape` closes without writing. A
+blank arc or target stores nothing, while a count of zero is kept — "no count" and
+"nothing written" are different facts. The top of the tab totals the counts across
+the chapters, adds up the targets that exist (and says how many chapters have
+one), and fills a bar against that total. These numbers are the author's: nothing
+reads a manuscript to work them out. Each field that changes is a history entry of
+its own, so an arc or a count can be put back from the Audit tab.
 
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
@@ -280,7 +290,9 @@ unlinked and are pointed at a cast member from the inspector. Version 6 added
 level 1 and 0 XP, and no level is inferred from a stat that happened to be called
 "Level". Version 7 added `nodes.chapter_seq`, numbering existing chapter cards by
 the order they were created; every other card holds NULL, and a chapter made
-afterwards is numbered when it is created.
+afterwards is numbered when it is created. Version 8 added `chapter_arc`,
+`chapter_words` and `chapter_target`; an older chapter starts with none of them,
+which is different from a word count of zero.
 
 | Table | Contents |
 | --- | --- |
@@ -288,7 +300,7 @@ afterwards is numbered when it is created.
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, `chapter_seq` for a chapter's place in the reading order, `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words` and `chapter_target`, `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -347,7 +359,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 40 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 41 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -360,11 +372,15 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
-- **Only chapters have a reading order.** Arcs, POV, in-world time and word
-  counts are not modelled yet, and chapters are reordered with the ↑/↓ buttons
-  rather than by dragging in the list. Deleting a chapter leaves its position
-  empty until something is moved or **Renumber** is pressed; that is shown in the
-  tab, not repaired silently.
+- **Only chapters have these fields.** POV and in-world time are not modelled
+  yet, and chapters are reordered with the ↑/↓ buttons rather than by dragging in
+  the list. Deleting a chapter leaves its position empty until something is moved
+  or **Renumber** is pressed; that is shown in the tab, not repaired silently.
+- **Word counts are typed, not measured.** There is no manuscript to count, so the
+  total is the sum of the numbers entered; a chapter without a target contributes
+  words to the total but nothing to the target, which is why the tab says how many
+  chapters have one. A target is a per-chapter number, not a share of the story
+  total.
 - **Progression is recorded, not calculated.** Nothing checks that experience is
   below the target, that a level-up is earned, or that a rank only rises: the
   fields hold whatever the author typed, and leveling up just adds one. The bar
@@ -411,11 +427,12 @@ point so it stops drawing the vanished badge.
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
 - **Undo covers the canvas, not every screen.** Character names, progression,
-  stats and attributes, story rename and delete, import, and actions in the Trash
-  tab are not on the undo stack; for recorded fields the Audit tab's revert is the
-  way back. The stack is per session and holds 50 steps, so restarting the app or
-  switching stories empties it. A level-up is recorded as its own action and is
-  not revertible from the Audit tab either: type the previous level back in.
+  stats and attributes, chapter arcs and word counts, story rename and delete,
+  import, and actions in the Trash tab are not on the undo stack; for recorded
+  fields the Audit tab's revert is the way back. The stack is per session and
+  holds 50 steps, so restarting the app or switching stories empties it. A
+  level-up is recorded as its own action and is not revertible from the Audit tab
+  either: type the previous level back in.
 - **Unsaved drafts live in memory.** A half-written label or note survives
   switching nodes, closing the drawer and switching stories, but not restarting
   the app; nothing is written to disk until Save is pressed.
