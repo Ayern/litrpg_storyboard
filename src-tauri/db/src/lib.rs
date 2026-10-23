@@ -3046,6 +3046,64 @@ mod tests {
         assert!(db.list_deleted(Some(&kept.id)).unwrap().is_empty());
     }
 
+    /// The command layer dispatches on these four strings, so a rename here has
+    /// to be a deliberate change on both sides rather than a silent no-op.
+    #[test]
+    fn the_trash_reports_the_four_kinds_the_commands_understand() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Kinds".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let node = db
+            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let other = db
+            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .unwrap();
+        let edge = db
+            .create_edge(story.id.clone(), node.id.clone(), other.id.clone(), None, None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+        db.delete_edge(&edge.id, "Ada".into()).unwrap();
+        db.delete_story(&story.id, "Ada".into()).unwrap();
+
+        let kinds: Vec<String> = db
+            .list_deleted(Some(&story.id))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.kind)
+            .collect();
+        assert!(kinds.contains(&"character".to_string()));
+        assert!(kinds.contains(&"edge".to_string()));
+
+        let stories = db.list_deleted(None).unwrap();
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].kind, "story");
+
+        // A deleted node is listed too, once the story is back.
+        db.restore_story(&story.id, "Ada".into()).unwrap();
+        db.delete_node(&node.id, "Ada".into()).unwrap();
+        let kinds: Vec<String> = db
+            .list_deleted(Some(&story.id))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.kind)
+            .collect();
+        assert!(kinds.contains(&"node".to_string()));
+
+        // And every one of those four can be restored by the name it reported.
+        for item in db.list_deleted(Some(&story.id)).unwrap() {
+            match item.kind.as_str() {
+                "character" => db.restore_character(&item.id, "Ada".into()).unwrap(),
+                "node" => db.restore_node(&item.id, "Ada".into()).unwrap(),
+                "edge" => {}
+                other => panic!("the trash reported an unknown kind: {other}"),
+            }
+        }
+    }
+
     #[test]
     fn restoring_a_story_leaves_separately_deleted_items_in_the_trash() {
         let db = Db::open_in_memory().unwrap();
