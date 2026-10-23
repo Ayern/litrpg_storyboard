@@ -2256,6 +2256,11 @@ function App() {
   // the drafts it opened with, rather than with the stored chapter, means typing
   // a value and undoing it leaves the form clean.
   const chapterDraftIsDirty = () => {
+    // A closed form holds no draft. Saving closes it and leaves the baseline it
+    // opened with behind, so comparing against that would call saved work dirty
+    // and block every tab with a question that has no form left to show it in.
+    if (editingChapterId == null) return false;
+
     const opened = chapterOpenedDrafts.current;
 
     if (!opened) return false;

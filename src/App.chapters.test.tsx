@@ -825,6 +825,23 @@ describe('chapter POV and in-world days', () => {
     expect(within(placed[0]).getByText('Rook')).toBeInTheDocument();
   });
 
+  // Saving closes the form, so nothing is left to lose. Clicking another tab must
+  // go there, rather than raise a question that has no form to show it in.
+  it('leaves the tabs free once a day is saved', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.type(screen.getByLabelText('Day'), '3');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(screen.queryByLabelText('Day')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+
+    expect(screen.queryByRole('list', { name: 'Chapters' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('canvas')).toBeInTheDocument();
+  });
+
   it('orders the timeline by day rather than by chapter number', async () => {
     rows[0].chapter_day = 3; // One, chapter 1
     rows[2].chapter_day = 2; // Two, chapter 2
@@ -1555,6 +1572,23 @@ describe('quitting the app', () => {
     const user = await openChapters();
 
     await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+
+    const event = await requestWindowClose();
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved changes before quitting' })
+    ).not.toBeInTheDocument();
+  });
+
+  // A saved form is not a draft, so closing the window after a save must not ask.
+  it('lets a window close after the chapter edit was saved', async () => {
+    asDesktopWindow();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    await user.type(screen.getByLabelText('Day'), '3');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     const event = await requestWindowClose();
 
