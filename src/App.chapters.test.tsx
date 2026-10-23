@@ -609,16 +609,51 @@ describe('chapter arcs and word counts', () => {
     expect(screen.getByLabelText('Words')).toBeInTheDocument();
   });
 
-  it('leaves the chapter alone when the form is cancelled', async () => {
+  it('asks before Escape drops an edit, and leaves the chapter alone when discarded', async () => {
     const user = await openChapters();
 
     await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
     await user.type(screen.getByLabelText('Words'), '99');
     await user.keyboard('{Escape}');
 
+    // Escape no longer throws the edit away on its own.
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    expect(
+      within(prompt).getByText('Close this chapter and drop these changes?')
+    ).toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('button', { name: 'Discard changes' }));
+
     expect(screen.queryByLabelText('Words')).not.toBeInTheDocument();
     expect(within(rowsInList()[1]).getByText('800 / 2,000 words')).toBeInTheDocument();
     expect(lastCall('set_chapter_details')).toBeUndefined();
+  });
+
+  it('asks before Cancel drops an edit, and can stay in the form', async () => {
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+    await user.type(screen.getByLabelText('Words'), '99');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
+
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved chapter changes' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Words')).toHaveValue(80099);
+
+    // A second Cancel asks again; this time the edit is dropped.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(
+      within(
+        screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' })
+      ).getByRole('button', { name: 'Discard changes' })
+    );
+
+    expect(screen.queryByLabelText('Words')).not.toBeInTheDocument();
+    expect(within(rowsInList()[1]).getByText('800 / 2,000 words')).toBeInTheDocument();
   });
 });
 
@@ -1075,6 +1110,55 @@ describe('chapter continuity', () => {
         ),
       { timeout: 2500 }
     );
+  });
+
+  it('asks before dropping an unsaved edit for the chapter a flag names', async () => {
+    withCast();
+    rows[0].chapter_pov = 'c1';
+    rows[0].chapter_day = 4;
+    rows[0].chapter_time = 'Dusk';
+    rows[2].chapter_pov = 'c2';
+    rows[2].chapter_day = 4;
+    rows[2].chapter_time = 'Morning';
+
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit One details' }));
+    const day = within(rowsInList()[0]).getByLabelText('Day');
+    await user.clear(day);
+    await user.type(day, '9');
+
+    const panel = screen.getByRole('region', { name: 'Continuity' });
+    await user.click(within(panel).getByRole('button', { name: '“Two”' }));
+
+    // Nothing switched yet: the open form keeps the unsaved day, and the
+    // question is asked in the row where the edits are.
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' });
+    expect(
+      within(prompt).getByText('Open “Two” and drop these changes?')
+    ).toBeInTheDocument();
+    expect(within(rowsInList()[0]).getByLabelText('Day')).toHaveValue(9);
+    expect(within(rowsInList()[1]).queryByLabelText('Day')).not.toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
+
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved chapter changes' })
+    ).not.toBeInTheDocument();
+    expect(within(rowsInList()[0]).getByLabelText('Day')).toHaveValue(9);
+
+    // Asking again and answering opens the chapter, with its own values.
+    await user.click(within(panel).getByRole('button', { name: '“Two”' }));
+    await user.click(
+      within(screen.getByRole('alertdialog', { name: 'Unsaved chapter changes' })).getByRole(
+        'button',
+        { name: 'Discard and open' }
+      )
+    );
+
+    expect(within(rowsInList()[1]).getByLabelText('Day')).toHaveValue(4);
+    expect(within(rowsInList()[1]).getByLabelText('Time')).toHaveValue('Morning');
+    expect(within(rowsInList()[0]).queryByLabelText('Day')).not.toBeInTheDocument();
   });
 
   it('says nothing when the chapters agree', async () => {

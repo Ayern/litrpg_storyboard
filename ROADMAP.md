@@ -269,8 +269,10 @@ same moment (labels that resolve to the same minute, quoted as written), and one
 cast member named as the POV of two chapters on the same day — and says nothing
 when the chapters agree. Each chapter a flag names is a link that opens its
 details and brings its row into view, lit briefly to show where the scroll
-landed. Remaining: cast in two places at once across different days, and moments
-that can only be described in words. **M**
+landed. Editing a chapter is guarded too: opening another chapter, **Cancel** or
+`Escape` asks before an unsaved draft is dropped. Remaining: cast in two places
+at once across different days, and moments that can only be described in
+words. **M**
 
 **9. Progression ledger.** A per-chapter record of level and XP for each cast
 member (`character_progress`, unique on character + chapter), entered in a small

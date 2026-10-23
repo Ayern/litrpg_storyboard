@@ -823,6 +823,15 @@ function App() {
   // the row the scroll landed on.
   const [revealedChapterId, setRevealedChapterId] = useState<string | null>(null);
   const revealTimer = useRef<number | null>(null);
+  // The question the open form is waiting on: opening another chapter while this
+  // one has unsaved edits, or closing the form and losing them. One state, so the
+  // two questions can never be asked at once.
+  const [chapterFormPrompt, setChapterFormPrompt] = useState<
+    { kind: 'open'; id: string } | { kind: 'close' } | null
+  >(null);
+  // The drafts the open form started with, so an untouched form is known to be
+  // clean even when its values are not what the saved chapter holds.
+  const chapterOpenedDrafts = useRef<string[] | null>(null);
   const [chapterArcDraft, setChapterArcDraft] = useState('');
   const [chapterWordsDraft, setChapterWordsDraft] = useState('');
   const [chapterTargetDraft, setChapterTargetDraft] = useState('');
@@ -2202,16 +2211,7 @@ function App() {
     return warnings;
   }, [chapterNodes, castNames]);
 
-  // A flag leads somewhere: the chapter it names opens its details, and the row
-  // is brought into view and lit for a moment so the warning is answered where
-  // it was raised.
-  const revealChapter = (chapterId: string) => {
-    const node = chapterNodes.find(candidate => candidate.id === chapterId);
-
-    if (!node) return;
-
-    startChapterEdit(node);
-
+  const focusChapterRow = (chapterId: string) => {
     document
       .querySelector(`[data-chapter-id="${chapterId}"]`)
       ?.scrollIntoView?.({ block: 'nearest' });
@@ -2226,6 +2226,85 @@ function App() {
     }, 1200);
   };
 
+  // Whether the open form holds anything that has not been saved. Comparing with
+  // the drafts it opened with, rather than with the stored chapter, means typing
+  // a value and undoing it leaves the form clean.
+  const chapterDraftIsDirty = () => {
+    const opened = chapterOpenedDrafts.current;
+
+    if (!opened) return false;
+
+    return [
+      chapterArcDraft,
+      chapterWordsDraft,
+      chapterTargetDraft,
+      chapterPovDraft,
+      chapterDayDraft,
+      chapterTimeDraft,
+    ].some((draft, index) => draft !== opened[index]);
+  };
+
+  // Opens a chapter's details. When another chapter's form has unsaved drafts the
+  // switch waits for an answer instead of dropping them, which is what a flag or
+  // another row's Edit button used to do silently. Answers whether the details
+  // are now open on that chapter.
+  const openChapterDetails = (node: { id: string; data: NodeData }) => {
+    if (editingChapterId === node.id) return true;
+
+    if (editingChapterId != null && chapterDraftIsDirty()) {
+      setChapterError(null);
+      setChapterFormPrompt({ kind: 'open', id: node.id });
+      return false;
+    }
+
+    setChapterFormPrompt(null);
+    startChapterEdit(node);
+    return true;
+  };
+
+  // Closing the form is the other way to lose a draft, so it asks the same
+  // question when there is something to lose.
+  const requestChapterClose = () => {
+    if (chapterDraftIsDirty()) {
+      setChapterFormPrompt({ kind: 'close' });
+      return;
+    }
+
+    setEditingChapterId(null);
+  };
+
+  // A flag leads somewhere: the chapter it names opens its details, and the row
+  // is brought into view and lit for a moment so the warning is answered where
+  // it was raised.
+  const revealChapter = (chapterId: string) => {
+    const node = chapterNodes.find(candidate => candidate.id === chapterId);
+
+    if (!node || !openChapterDetails(node)) return;
+
+    focusChapterRow(chapterId);
+  };
+
+  // The answer to the prompt: drop the open drafts and go where the flag pointed.
+  const discardChapterEdit = () => {
+    const next =
+      chapterFormPrompt?.kind === 'open'
+        ? chapterNodes.find(candidate => candidate.id === chapterFormPrompt.id)
+        : null;
+
+    setChapterFormPrompt(null);
+
+    if (!next) return;
+
+    startChapterEdit(next);
+    focusChapterRow(next.id);
+  };
+
+  // The same answer when the form was being closed: drop the drafts and close.
+  const closeChapterForm = () => {
+    setChapterFormPrompt(null);
+    setEditingChapterId(null);
+  };
+
   // A timer left behind by a flag must not reach into an unmounted panel.
   useEffect(
     () => () => {
@@ -2233,6 +2312,11 @@ function App() {
     },
     []
   );
+
+  // Closing the form drops the question with it.
+  useEffect(() => {
+    if (editingChapterId == null) setChapterFormPrompt(null);
+  }, [editingChapterId]);
 
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
@@ -2346,16 +2430,24 @@ function App() {
   const startChapterEdit = (node: { id: string; data: NodeData }) => {
     setChapterError(null);
     setEditingChapterId(node.id);
-    setChapterArcDraft(node.data.chapterArc ?? '');
-    setChapterWordsDraft(
-      node.data.chapterWords != null ? String(node.data.chapterWords) : ''
-    );
-    setChapterTargetDraft(
-      node.data.chapterTarget != null ? String(node.data.chapterTarget) : ''
-    );
-    setChapterPovDraft(node.data.chapterPov ?? '');
-    setChapterDayDraft(node.data.chapterDay != null ? String(node.data.chapterDay) : '');
-    setChapterTimeDraft(node.data.chapterTime ?? '');
+
+    const drafts = [
+      node.data.chapterArc ?? '',
+      node.data.chapterWords != null ? String(node.data.chapterWords) : '',
+      node.data.chapterTarget != null ? String(node.data.chapterTarget) : '',
+      node.data.chapterPov ?? '',
+      node.data.chapterDay != null ? String(node.data.chapterDay) : '',
+      node.data.chapterTime ?? '',
+    ];
+
+    setChapterArcDraft(drafts[0]);
+    setChapterWordsDraft(drafts[1]);
+    setChapterTargetDraft(drafts[2]);
+    setChapterPovDraft(drafts[3]);
+    setChapterDayDraft(drafts[4]);
+    setChapterTimeDraft(drafts[5]);
+
+    chapterOpenedDrafts.current = drafts;
   };
 
   const saveChapterDetails = async () => {
@@ -5436,7 +5528,7 @@ function App() {
                             <button
                               aria-label={`Edit ${node.data.label} details`}
                               title="Set the arc, the day, the time and the word count"
-                              onClick={() => startChapterEdit(node)}
+                              onClick={() => openChapterDetails(node)}
                               disabled={chapterBusy}
                             >
                               Edit
@@ -5480,7 +5572,7 @@ function App() {
                                   onChange={(e) => setChapterArcDraft(e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                    if (e.key === 'Escape') requestChapterClose();
                                   }}
                                 />
                               </label>
@@ -5494,7 +5586,7 @@ function App() {
                                   onChange={(e) => setChapterWordsDraft(e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                    if (e.key === 'Escape') requestChapterClose();
                                   }}
                                 />
                               </label>
@@ -5508,7 +5600,7 @@ function App() {
                                   onChange={(e) => setChapterTargetDraft(e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                    if (e.key === 'Escape') requestChapterClose();
                                   }}
                                 />
                               </label>
@@ -5544,7 +5636,7 @@ function App() {
                                   onChange={(e) => setChapterDayDraft(e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                    if (e.key === 'Escape') requestChapterClose();
                                   }}
                                 />
                               </label>
@@ -5557,7 +5649,7 @@ function App() {
                                   onChange={(e) => setChapterTimeDraft(e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') setEditingChapterId(null);
+                                    if (e.key === 'Escape') requestChapterClose();
                                   }}
                                 />
                               </label>
@@ -5571,9 +5663,50 @@ function App() {
                                 </button>
                                 <button
                                   title="Leave this chapter as it was"
-                                  onClick={() => setEditingChapterId(null)}
+                                  onClick={requestChapterClose}
                                 >
                                   Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {editingChapterId === node.id && chapterFormPrompt && (
+                            <div
+                              className="chapter-details-prompt"
+                              role="alertdialog"
+                              aria-label="Unsaved chapter changes"
+                            >
+                              <p>
+                                {chapterFormPrompt.kind === 'open'
+                                  ? `Open “${
+                                      chapterNodes.find(
+                                        candidate => candidate.id === chapterFormPrompt.id
+                                      )?.data.label ?? 'another chapter'
+                                    }” and drop these changes?`
+                                  : 'Close this chapter and drop these changes?'}
+                              </p>
+                              <div className="chapter-details-prompt-actions">
+                                {chapterFormPrompt.kind === 'open' ? (
+                                  <button
+                                    title="Open the other chapter and lose these edits"
+                                    onClick={discardChapterEdit}
+                                  >
+                                    Discard and open
+                                  </button>
+                                ) : (
+                                  <button
+                                    title="Close the form and lose these edits"
+                                    onClick={closeChapterForm}
+                                  >
+                                    Discard changes
+                                  </button>
+                                )}
+                                <button
+                                  title="Stay on this chapter with the edits as they are"
+                                  onClick={() => setChapterFormPrompt(null)}
+                                >
+                                  Keep editing
                                 </button>
                               </div>
                             </div>

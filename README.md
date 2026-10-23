@@ -41,8 +41,9 @@ are never numbered.
 belongs to, record the words written against an optional target, say whose point
 of view it is told from, and sit on an in-world day at a time of day. **Edit** on
 its row opens Arc / Words / Target / POV / Day / Time in place; `Enter` saves,
-`Escape` closes without writing. A blank arc, target, POV, day or time stores
-nothing, while a count of zero is kept — "no count" and "nothing written" are
+`Escape` or **Cancel** closes without writing, asking first when anything has
+been changed. A blank arc, target, POV, day or time stores nothing, while a
+count of zero is kept — "no count" and "nothing written" are
 different facts. The POV picker lists the story's live cast, and the day is a
 whole number from 0 up; there is no calendar, so a story can count "days since
 the System arrived" instead of dating anything. The time is free text — "Dusk",
@@ -76,7 +77,10 @@ list only appears when there is something to say — and a chapter with no day y
 is left out of the timing checks rather than being given one. A time label on
 such a chapter is named, so it is not silently lost. Every chapter a flag names
 is a link: clicking it opens that chapter's details, brings its row into view and
-lights it for a moment, so the warning leads to the thing it is about.
+lights it for a moment, so the warning leads to the thing it is about. If the
+open form holds unsaved edits, the switch waits: the row asks whether to discard
+them and open the other chapter, or keep editing, rather than dropping them
+silently. **Cancel** and `Escape` ask the same question before closing the form.
 
 **Chapter notes** — a chapter can hold any number of short notes: **Notes** on its
 row opens a panel with **Add note**, **Edit** and **Delete**. There is no

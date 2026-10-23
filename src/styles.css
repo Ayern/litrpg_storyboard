@@ -1295,6 +1295,32 @@ body {
   color: #fff;
 }
 
+/* Opening another chapter while this form holds unsaved edits asks first,
+   inside the row where the edits are, rather than throwing them away. */
+.chapter-details-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 9px;
+  padding: 8px;
+  background: #322c1c;
+  border: 1px solid #6b5a2a;
+  border-radius: 4px;
+}
+
+.chapter-details-prompt p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #f0d9a8;
+}
+
+.chapter-details-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .chapter-notes {
   display: flex;
   flex-direction: column;
