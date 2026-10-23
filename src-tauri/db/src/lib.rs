@@ -24,7 +24,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -438,6 +438,10 @@ impl Db {
             story_id,
             name,
             description,
+            level: 1,
+            xp: 0,
+            rank: None,
+            xp_to_next: None,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
@@ -446,7 +450,8 @@ impl Db {
     pub fn list_characters(&self, story_id: &str) -> DbResult<Vec<Character>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT c.id, c.story_id, c.name, c.description, c.created_at, c.updated_at
+            "SELECT c.id, c.story_id, c.name, c.description, c.level, c.xp, c.rank,
+                    c.xp_to_next, c.created_at, c.updated_at
              FROM characters c JOIN stories s ON s.id = c.story_id
              WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND s.deleted_at IS NULL
              ORDER BY c.name",
@@ -458,8 +463,12 @@ impl Db {
                 story_id: row.get(1)?,
                 name: row.get(2)?,
                 description: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                level: row.get(4)?,
+                xp: row.get(5)?,
+                rank: row.get(6)?,
+                xp_to_next: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
 
@@ -1397,7 +1406,8 @@ impl Db {
 
         let characters = {
             let mut stmt = guard.prepare(
-                "SELECT id, story_id, name, description, created_at, updated_at
+                "SELECT id, story_id, name, description, level, xp, rank, xp_to_next,
+                        created_at, updated_at
                  FROM characters WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY name",
             )?;
             let rows = stmt.query_map(params![story_id], |row| {
@@ -1406,8 +1416,12 @@ impl Db {
                     story_id: row.get(1)?,
                     name: row.get(2)?,
                     description: row.get(3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
+                    level: row.get(4)?,
+                    xp: row.get(5)?,
+                    rank: row.get(6)?,
+                    xp_to_next: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
                 })
             })?;
             rows.collect::<SqliteResult<Vec<_>>>()?
@@ -1774,7 +1788,9 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT id, story_id, name, description, created_at, updated_at FROM characters WHERE id = ?1",
+                "SELECT id, story_id, name, description, level, xp, rank, xp_to_next,
+                        created_at, updated_at
+                 FROM characters WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok(Character {
@@ -1782,8 +1798,12 @@ impl Db {
                         story_id: row.get(1)?,
                         name: row.get(2)?,
                         description: row.get(3)?,
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
+                        level: row.get(4)?,
+                        xp: row.get(5)?,
+                        rank: row.get(6)?,
+                        xp_to_next: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
                     })
                 },
             )
@@ -1839,6 +1859,232 @@ impl Db {
         Ok(Character {
             name,
             description,
+            updated_at: timestamp,
+            ..existing
+        })
+    }
+
+    /// Saves progression as its own fields, recording each one that changed.
+    ///
+    /// Nothing is derived: the level, the XP and the target are whatever the
+    /// author typed, and a level is never implied by the XP total.
+    pub fn set_character_progress(
+        &self,
+        id: &str,
+        level: i64,
+        xp: i64,
+        rank: Option<String>,
+        xp_to_next: Option<i64>,
+        user: String,
+    ) -> DbResult<Character> {
+        if level < 1 {
+            return Err(DbError::Invalid("a level starts at 1".to_string()));
+        }
+
+        if xp < 0 {
+            return Err(DbError::Invalid(
+                "experience cannot be negative".to_string(),
+            ));
+        }
+
+        if xp_to_next.is_some_and(|target| target < 1) {
+            return Err(DbError::Invalid(
+                "the next level needs a positive XP target".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let rank = rank
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, name, description, level, xp, rank, xp_to_next,
+                        created_at, updated_at
+                 FROM characters WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |row| {
+                    Ok(Character {
+                        id: row.get(0)?,
+                        story_id: row.get(1)?,
+                        name: row.get(2)?,
+                        description: row.get(3)?,
+                        level: row.get(4)?,
+                        xp: row.get(5)?,
+                        rank: row.get(6)?,
+                        xp_to_next: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("character"))?;
+
+        let level_changed = existing.level != level;
+        let xp_changed = existing.xp != xp;
+        let rank_changed = existing.rank != rank;
+        let target_changed = existing.xp_to_next != xp_to_next;
+
+        if !level_changed && !xp_changed && !rank_changed && !target_changed {
+            return Ok(existing);
+        }
+
+        tx.execute(
+            "UPDATE characters SET level = ?1, xp = ?2, rank = ?3, xp_to_next = ?4,
+                    updated_at = ?5
+             WHERE id = ?6",
+            params![level, xp, &rank, xp_to_next, &timestamp, id],
+        )?;
+
+        // One entry per field, including a rank or target being cleared, which
+        // is a change with no value on one side.
+        let old_target = existing.xp_to_next.map(|value| value.to_string());
+        let new_target = xp_to_next.map(|value| value.to_string());
+        let old_level = existing.level.to_string();
+        let new_level = level.to_string();
+        let old_xp = existing.xp.to_string();
+        let new_xp = xp.to_string();
+
+        if level_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("level"),
+                    old_value: Some(old_level.clone()),
+                    new_value: Some(new_level.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if xp_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("xp"),
+                    old_value: Some(old_xp.clone()),
+                    new_value: Some(new_xp.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if rank_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("rank"),
+                    old_value: existing.rank.clone(),
+                    new_value: rank.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if target_changed {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&existing.story_id),
+                    entity_type: "character",
+                    entity_id: id,
+                    action: "update",
+                    field_changed: Some("xp_to_next"),
+                    old_value: old_target.clone(),
+                    new_value: new_target.clone(),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(Character {
+            level,
+            xp,
+            rank,
+            xp_to_next,
+            updated_at: timestamp,
+            ..existing
+        })
+    }
+
+    /// Adds one level and records it as a level-up event rather than an ordinary
+    /// edit, so the history can say what actually happened.
+    pub fn level_up_character(&self, id: &str, user: String) -> DbResult<Character> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, story_id, name, description, level, xp, rank, xp_to_next,
+                        created_at, updated_at
+                 FROM characters WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |row| {
+                    Ok(Character {
+                        id: row.get(0)?,
+                        story_id: row.get(1)?,
+                        name: row.get(2)?,
+                        description: row.get(3)?,
+                        level: row.get(4)?,
+                        xp: row.get(5)?,
+                        rank: row.get(6)?,
+                        xp_to_next: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("character"))?;
+
+        let next = existing.level + 1;
+        let old_level = existing.level.to_string();
+        let new_level = next.to_string();
+
+        tx.execute(
+            "UPDATE characters SET level = ?1, updated_at = ?2 WHERE id = ?3",
+            params![next, &timestamp, id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&existing.story_id),
+                entity_type: "character",
+                entity_id: id,
+                action: "level_up",
+                field_changed: Some("level"),
+                old_value: Some(old_level),
+                new_value: Some(new_level),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(Character {
+            level: next,
             updated_at: timestamp,
             ..existing
         })
@@ -2588,12 +2834,17 @@ impl Db {
                 }
             }
             RevertKind::Number => {
-                let value = restore
-                    .as_deref()
-                    .and_then(|text| text.parse::<i64>().ok())
-                    .ok_or_else(|| {
+                let value = match restore.as_deref() {
+                    Some(text) => Some(text.parse::<i64>().ok().ok_or_else(|| {
                         DbError::Invalid("that entry did not record a whole number".to_string())
-                    })?;
+                    })?),
+                    None if spec.nullable => None,
+                    None => {
+                        return Err(DbError::Invalid(
+                            "that entry did not record a whole number".to_string(),
+                        ))
+                    }
+                };
 
                 tx.execute(
                     &format!(
@@ -2724,13 +2975,19 @@ impl Db {
 
         for character in &export.characters {
             tx.execute(
-                "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO characters
+                 (id, story_id, name, description, level, xp, rank, xp_to_next,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     &characters[&character.id],
                     &story_id,
                     &character.name,
                     &character.description,
+                    character.level,
+                    character.xp,
+                    &character.rank,
+                    character.xp_to_next,
                     &character.created_at,
                     &character.updated_at
                 ],
@@ -2909,8 +3166,23 @@ pub struct Character {
     pub story_id: String,
     pub name: String,
     pub description: Option<String>,
+    /// Progression is the author's: no formula is applied anywhere.
+    #[serde(default = "default_level")]
+    pub level: i64,
+    #[serde(default)]
+    pub xp: i64,
+    #[serde(default)]
+    pub rank: Option<String>,
+    /// The XP that makes the next level, when the author has decided one. The
+    /// bar is drawn against it; without it the bar shows the raw total instead.
+    #[serde(default)]
+    pub xp_to_next: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn default_level() -> i64 {
+    1
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -3191,6 +3463,20 @@ fn number_spec(
     }
 }
 
+/// A number that may legitimately have been absent before the change, so an
+/// empty earlier value means the column goes back to NULL.
+fn optional_number_spec(
+    table: &'static str,
+    column: &'static str,
+    from: &'static str,
+    live: &'static str,
+) -> RevertSpec {
+    RevertSpec {
+        nullable: true,
+        ..number_spec(table, column, from, live)
+    }
+}
+
 /// The fields a history entry can put back. Anything absent — a creation, a
 /// deletion, or a field the app never records — has nothing to restore.
 fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
@@ -3203,6 +3489,16 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
         }
         ("character", "description") => {
             optional_text_spec("characters", "description", CHARACTER_FROM, OWN_LIVE, true)
+        }
+        ("character", "level") => {
+            number_spec("characters", "level", CHARACTER_FROM, OWN_LIVE)
+        }
+        ("character", "xp") => number_spec("characters", "xp", CHARACTER_FROM, OWN_LIVE),
+        ("character", "rank") => {
+            optional_text_spec("characters", "rank", CHARACTER_FROM, OWN_LIVE, true)
+        }
+        ("character", "xp_to_next") => {
+            optional_number_spec("characters", "xp_to_next", CHARACTER_FROM, OWN_LIVE)
         }
         ("character_stat", "value") => {
             number_spec("character_stats", "value", STAT_FROM, CHILD_LIVE)
@@ -3651,6 +3947,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_005)?;
     }
 
+    if version < 6 {
+        conn.execute_batch(MIGRATION_006)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -3795,6 +4095,17 @@ const MIGRATION_003: &str = "
 /// connection, which this app does not rely on.
 const MIGRATION_005: &str = "
     ALTER TABLE nodes ADD COLUMN character_id TEXT;
+";
+
+/// Schema v6: progression as its own fields rather than stats called "Level".
+///
+/// Level 1 and 0 XP are what an existing cast member starts at, which is what a
+/// character created before this schema effectively was.
+const MIGRATION_006: &str = "
+    ALTER TABLE characters ADD COLUMN level INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE characters ADD COLUMN xp INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE characters ADD COLUMN rank TEXT;
+    ALTER TABLE characters ADD COLUMN xp_to_next INTEGER;
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -5486,6 +5797,170 @@ mod tests {
         // Nothing was replaced, and the failed attempt left no staging file.
         assert_eq!(db.list_stories().unwrap().len(), 1);
         assert!(!path.with_extension("restoring").exists());
+    }
+
+    #[test]
+    fn an_older_database_gains_progression_defaults() {
+        let dir = std::env::temp_dir().join(format!("litrpg-migrate6-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("storyboard.db");
+
+        // Built at v5, the shape the previous release wrote, with a character in
+        // it that predates level and XP.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(BASE_SCHEMA).unwrap();
+            conn.execute_batch(INDEXES).unwrap();
+            conn.execute_batch(MIGRATION_002).unwrap();
+            conn.execute_batch(MIGRATION_003).unwrap();
+            conn.execute_batch(MIGRATION_004).unwrap();
+            conn.execute_batch(MIGRATION_005).unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+
+            conn.execute(
+                "INSERT INTO stories (id, title, description, created_at, updated_at)
+                 VALUES ('s1', 'Old', NULL, 'then', 'then')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+                 VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+
+        let version: i32 = db
+            .conn()
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+
+        let characters = db.list_characters("s1").unwrap();
+        assert_eq!(characters[0].level, 1);
+        assert_eq!(characters[0].xp, 0);
+        assert_eq!(characters[0].rank, None);
+        assert_eq!(characters[0].xp_to_next, None);
+    }
+
+    #[test]
+    fn progression_is_saved_field_by_field_and_level_up_is_its_own_event() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        assert_eq!(rook.level, 1, "a new character starts at level 1");
+
+        let saved = db
+            .set_character_progress(
+                &rook.id,
+                3,
+                250,
+                Some("Copper".into()),
+                Some(1000),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(saved.level, 3);
+        assert_eq!(saved.xp, 250);
+        assert_eq!(saved.rank.as_deref(), Some("Copper"));
+        assert_eq!(saved.xp_to_next, Some(1000));
+
+        let page = db
+            .get_audit_page(Some(&story.id), Some("character"), Some(&rook.id), 50, 0)
+            .unwrap();
+        let fields: Vec<&str> = page
+            .entries
+            .iter()
+            .filter_map(|entry| entry.field_changed.as_deref())
+            .collect();
+        for field in ["level", "xp", "rank", "xp_to_next"] {
+            assert!(fields.contains(&field), "{field} should be in the history");
+        }
+
+        // Progression fields are ordinary recorded edits, so the history can put
+        // them back — including a target that had no value before it was set.
+        let entry_for = |field: &str| {
+            page.entries
+                .iter()
+                .find(|entry| entry.field_changed.as_deref() == Some(field))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let level_entry = entry_for("level");
+        let target_entry = entry_for("xp_to_next");
+        assert!(db.revert_change(&level_entry, "Ada".into()).unwrap());
+        assert!(db.revert_change(&target_entry, "Ada".into()).unwrap());
+
+        let reverted = db.list_characters(&story.id).unwrap();
+        assert_eq!(reverted[0].level, 1);
+        assert_eq!(reverted[0].xp_to_next, None);
+        assert_eq!(reverted[0].rank.as_deref(), Some("Copper"));
+
+        db.set_character_progress(&rook.id, 3, 250, Some("Copper".into()), Some(1000), "Ada".into())
+            .unwrap();
+
+        let levelled = db.level_up_character(&rook.id, "Ada".into()).unwrap();
+        assert_eq!(levelled.level, 4);
+        assert_eq!(levelled.xp, 250, "levelling up does not touch XP");
+        assert_eq!(levelled.rank.as_deref(), Some("Copper"));
+
+        let page = db
+            .get_audit_page(Some(&story.id), Some("character"), Some(&rook.id), 50, 0)
+            .unwrap();
+        assert_eq!(page.entries[0].action, "level_up");
+        assert_eq!(page.entries[0].new_value.as_deref(), Some("4"));
+
+        // The numbers are the author's, but they still have to make sense.
+        assert!(db
+            .set_character_progress(&rook.id, 0, 0, None, None, "Ada".into())
+            .is_err());
+        assert!(db
+            .set_character_progress(&rook.id, 1, -5, None, None, "Ada".into())
+            .is_err());
+        assert!(db
+            .set_character_progress(&rook.id, 1, 0, None, Some(0), "Ada".into())
+            .is_err());
+    }
+
+    #[test]
+    fn an_export_carries_progression_through_an_import() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.set_character_progress(
+            &rook.id,
+            5,
+            1200,
+            Some("Iron".into()),
+            Some(2000),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let export = db.export_story(&story.id).unwrap();
+        let imported = db.import_story(export, "Ada".into()).unwrap();
+
+        let characters = db.list_characters(&imported.id).unwrap();
+        assert_eq!(characters.len(), 1);
+        assert_eq!(characters[0].level, 5);
+        assert_eq!(characters[0].xp, 1200);
+        assert_eq!(characters[0].rank.as_deref(), Some("Iron"));
+        assert_eq!(characters[0].xp_to_next, Some(2000));
     }
 
     /// Retention deletes for real, so the launch order matters: the copy taken

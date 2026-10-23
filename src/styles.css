@@ -1187,6 +1187,12 @@ body {
   cursor: pointer;
 }
 
+.character-level {
+  font-size: 11px;
+  color: #8fbf8f;
+  font-variant-numeric: tabular-nums;
+}
+
 .character-item:hover {
   background: #2a2a2b;
 }
@@ -1391,6 +1397,132 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #888;
+}
+
+/* Progression (level, rank, XP) */
+.progress-section {
+  margin-bottom: 18px;
+  padding: 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.progress-head .character-section-heading {
+  margin-bottom: 0;
+}
+
+.progress-rank {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid #4a4a4a;
+  border-radius: 999px;
+  color: #e2c68f;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-stats {
+  display: flex;
+  gap: 22px;
+  margin: 10px 0 8px;
+}
+
+.progress-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.progress-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #888;
+}
+
+.progress-stat-value {
+  font-size: 16px;
+  color: #ddd;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #1b1b1c;
+  border: 1px solid #3c3c3c;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4c8b4c, #7ac47a);
+  transition: width 120ms ease-out;
+}
+
+.progress-caption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.progress-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #888;
+}
+
+.progress-form input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.progress-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  grid-column: 1 / -1;
+}
+
+.progress-actions button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.progress-actions button:hover {
+  background: #37373d;
+  color: #fff;
 }
 
 .attribute-section {
@@ -1629,6 +1761,11 @@ body {
   color: #9ecfe6;
 }
 
+.audit-badge.level_up {
+  background: #2f4a2f;
+  color: #b7e0b7;
+}
+
 .audit-revert {
   margin-left: auto;
   background: transparent;
@@ -1822,6 +1959,16 @@ body {
 .graph-node-cast-name {
   font-size: 10px;
   color: #999;
+}
+
+.graph-node-level {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(122, 196, 122, 0.18);
+  color: #b7e0b7;
+  white-space: nowrap;
 }
 
 .graph-node-stat {

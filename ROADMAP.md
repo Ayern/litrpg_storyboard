@@ -36,9 +36,10 @@ the next begins.
   best.
 - **Unsaved edits vanish.** `Escape` or `×` closes the drawer and silently drops
   the label and notes drafts.
-- **It is a storyboard, not yet a LitRPG storyboard.** Level, XP, skills, items
-  and system messages are all just `character_stats` rows and free-text
-  attributes. Nothing understands progression.
+- **It is only part of a LitRPG storyboard.** Level, XP and rank are real
+  fields, but skills, items and system messages are still just `character_stats`
+  rows and free-text attributes, and nothing checks whether a level-up was
+  earned or a rank only rose.
 - **No structure above the node.** Chapters are cards among other cards. There is
   no reading order, no arcs, no POV, no in-world clock, no word counts — so the
   app cannot answer "what happens in chapter 12?" or "where is Rook at chapter 9?"
@@ -207,13 +208,17 @@ app writes are accepted, so a crafted path or a foreign file is refused. **M**
 
 ### Phase 2 — the LitRPG sheet
 
-**6. Level, rank and XP.** Make progression first-class instead of a stat named
-"Level": `characters.level`, `characters.xp`, `characters.rank` (nullable text
-such as `Copper → Iron`), a progress bar against an optional "XP to next", and a
-"Level up" action that adds the level and records it as an event. Show the level
-on the cast card and as the first badge on a linked node. Migration v6, snapshot
-and import updated. Do not invent a levelling formula: the numbers stay the
-author's. **M**
+**6. Level, rank and XP.** **Done.** Progression is first-class: `characters.level`,
+`characters.xp`, `characters.rank` (free text such as `Copper → Iron`) and
+`characters.xp_to_next`, added by migration v6 with level 1 and 0 XP for an
+existing character. The sheet draws a bar filled against the optional target with
+a countdown caption, **Level up** adds one level as its own recorded `level_up`
+event, and **Edit progression** saves all four fields, writing a history entry per
+field that changed. The level shows in the cast list, on the cast rail and as the
+first badge on a linked node. No formula runs anywhere: experience never rolls
+over, a target below the current XP simply fills the bar, and a rank is whatever
+was typed. Export, import and the launch copies carry the new columns, and an
+older export imports at the defaults. **M**
 
 **7. Chapter spine.** Give chapter nodes a sequence and an optional arc, add drag
 -reorder in a chapter list with "New chapter" that appends, flag duplicate and

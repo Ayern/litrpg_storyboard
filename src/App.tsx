@@ -78,6 +78,12 @@ interface Character {
   story_id: string;
   name: string;
   description: string | null;
+  // Progression, saved as its own fields. Optional here because a character from
+  // a story written by an older build has no such fields until it is read again.
+  level?: number;
+  xp?: number;
+  rank?: string | null;
+  xp_to_next?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,6 +119,8 @@ type NodeData = {
   // drawn so the card can show them without reading the database itself.
   characterName?: string | null;
   characterStats?: CharacterStat[];
+  // The linked cast member's level, drawn before the numbers.
+  characterLevel?: number | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -229,6 +237,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const shown = stats.slice(0, NODE_STAT_BADGES);
   const hidden = stats.length - shown.length;
   const linked = Boolean(data.characterId);
+  const level = data.characterLevel ?? null;
 
   return (
     <div className={`graph-node ${kind}`}>
@@ -239,11 +248,19 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
         <span
           className="graph-node-cast"
           title={
-            stats.length > 0
-              ? stats.map(stat => `${stat.stat_name} ${stat.value}`).join(' · ')
+            level !== null || stats.length > 0
+              ? [
+                  level !== null ? `Level ${level}` : null,
+                  ...stats.map(stat => `${stat.stat_name} ${stat.value}`),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               : undefined
           }
         >
+          {level !== null && (
+            <span className="graph-node-level">Lv {level}</span>
+          )}
           {data.characterName && data.characterName !== data.label && (
             <span className="graph-node-cast-name">{data.characterName}</span>
           )}
@@ -463,6 +480,7 @@ const actionLabels: Record<string, string> = {
   soft_delete: 'trash',
   purge: 'delete forever',
   revert: 'revert',
+  level_up: 'level up',
 };
 
 // Both lists the trash shows, in one round trip. Shared by the tab's first load
@@ -487,9 +505,17 @@ const retentionChoices: { value: string; label: string }[] = [
   { value: '365', label: '1 year' },
 ];
 
+// A few recorded field names are column names rather than words.
+const fieldLabels: Record<string, string> = {
+  xp: 'XP',
+  xp_to_next: 'XP to next',
+};
+
 function entityLabel(entry: AuditEntry): string {
   const base = entityLabels[entry.entity_type] ?? entry.entity_type;
-  return entry.field_changed ? `${base} (${entry.field_changed})` : base;
+  if (!entry.field_changed) return base;
+
+  return `${base} (${fieldLabels[entry.field_changed] ?? entry.field_changed})`;
 }
 
 function formatWhen(timestamp: string): string {
@@ -722,6 +748,13 @@ function App() {
   const [characterNameDraft, setCharacterNameDraft] = useState('');
   const [characterDescriptionDraft, setCharacterDescriptionDraft] = useState('');
   const [confirmDeleteCharacter, setConfirmDeleteCharacter] = useState(false);
+
+  // The progression form, open one character at a time.
+  const [editingProgress, setEditingProgress] = useState(false);
+  const [progressLevelDraft, setProgressLevelDraft] = useState('1');
+  const [progressXpDraft, setProgressXpDraft] = useState('0');
+  const [progressTargetDraft, setProgressTargetDraft] = useState('');
+  const [progressRankDraft, setProgressRankDraft] = useState('');
 
   const [trash, setTrash] = useState<DeletedItem[]>([]);
   const [deletedStories, setDeletedStories] = useState<DeletedItem[]>([]);
@@ -3116,6 +3149,7 @@ function App() {
               ...node.data,
               characterName: castById.get(characterId)?.name ?? null,
               characterStats: castStats[characterId] ?? [],
+              characterLevel: castById.get(characterId)?.level ?? null,
             }
           : node.data,
       };
@@ -3148,6 +3182,95 @@ function App() {
     if (selectedNodeId) forgetNodeDraft(selectedNodeId);
     setClosePrompt(false);
     setSelectedNodeId(null);
+  };
+
+  // What the sheet shows for the selected character.
+  const shownLevel = selectedCharacter?.level ?? 1;
+  const shownXp = selectedCharacter?.xp ?? 0;
+  const shownTarget = selectedCharacter?.xp_to_next ?? null;
+  const progressPercent =
+    shownTarget && shownTarget > 0
+      ? Math.min(100, Math.round((shownXp / shownTarget) * 100))
+      : 0;
+
+  const applyCharacterRow = (updated: Character) => {
+    setCharacters(previous =>
+      previous.map(entry => (entry.id === updated.id ? updated : entry))
+    );
+  };
+
+  // The progression form opens with the stored numbers, so a save can change one
+  // field without having to retype the others.
+  const startProgressEdit = () => {
+    if (!selectedCharacter) return;
+
+    setProgressLevelDraft(String(shownLevel));
+    setProgressXpDraft(String(shownXp));
+    setProgressTargetDraft(shownTarget ? String(shownTarget) : '');
+    setProgressRankDraft(selectedCharacter.rank ?? '');
+    setCharacterError(null);
+    setEditingProgress(true);
+  };
+
+  const saveProgress = async () => {
+    if (!selectedCharacter) return;
+
+    const level = Number(progressLevelDraft);
+    const xp = Number(progressXpDraft);
+    const target = progressTargetDraft.trim() === '' ? null : Number(progressTargetDraft);
+
+    if (!Number.isInteger(level) || level < 1) {
+      setCharacterError('A level is a whole number, 1 or more.');
+      return;
+    }
+
+    if (!Number.isInteger(xp) || xp < 0) {
+      setCharacterError('Experience is a whole number, 0 or more.');
+      return;
+    }
+
+    if (target !== null && (!Number.isInteger(target) || target < 1)) {
+      setCharacterError('XP to next is a whole number above 0, or blank.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: Character = await invoke('set_character_progress', {
+        characterId: selectedCharacter.id,
+        level,
+        xp,
+        rank: progressRankDraft.trim() || null,
+        xpToNext: target,
+        user: actor,
+      });
+
+      applyCharacterRow(updated);
+      setEditingProgress(false);
+    } catch (e) {
+      console.error('Failed to save progression:', e);
+      setCharacterError(`Could not save progression: ${String(e)}`);
+    }
+  };
+
+  // One level more, recorded as a level-up event rather than a field edit.
+  const levelUpCharacter = async () => {
+    if (!selectedCharacter) return;
+
+    setCharacterError(null);
+
+    try {
+      const updated: Character = await invoke('level_up_character', {
+        characterId: selectedCharacter.id,
+        user: actor,
+      });
+
+      applyCharacterRow(updated);
+    } catch (e) {
+      console.error('Failed to level up:', e);
+      setCharacterError(`Could not level up: ${String(e)}`);
+    }
   };
 
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
@@ -3520,14 +3643,18 @@ function App() {
                             }}
                           >
                             <span className="cast-chip-name">{character.name}</span>
-                            {(castStats[character.id] ?? []).length > 0 && (
-                              <span className="cast-chip-stats">
-                                {(castStats[character.id] ?? [])
+                            <span className="cast-chip-stats">
+                              {[
+                                // A character read from an older story may have no
+                                // level yet; the chip then shows only its numbers.
+                                ...(character.level != null
+                                  ? [`Lv ${character.level}`]
+                                  : []),
+                                ...(castStats[character.id] ?? [])
                                   .slice(0, NODE_STAT_BADGES)
-                                  .map(stat => `${stat.stat_name} ${stat.value}`)
-                                  .join(' · ')}
-                              </span>
-                            )}
+                                  .map(stat => `${stat.stat_name} ${stat.value}`),
+                              ].join(' · ')}
+                            </span>
                           </div>
                         ))}
                         <p className="cast-rail-hint">
@@ -4112,9 +4239,16 @@ function App() {
                         selectedCharacterId === character.id ? 'active' : ''
                       }`}
                       title={`Show ${character.name}'s sheet`}
-                      onClick={() => setSelectedCharacterId(character.id)}
+                      onClick={() => {
+                        setSelectedCharacterId(character.id);
+                        setEditingProgress(false);
+                      }}
                     >
                       <span className="character-name">{character.name}</span>
+                      <span className="character-level">
+                        Level {character.level ?? 1}
+                        {character.rank ? ` · ${character.rank}` : ''}
+                      </span>
                       {character.description && (
                         <span className="character-description">{character.description}</span>
                       )}
@@ -4214,6 +4348,135 @@ function App() {
                           </>
                         )}
                       </div>
+
+                      <section className="progress-section" aria-label="Progression">
+                        <div className="progress-head">
+                          <h4 className="character-section-heading">Progression</h4>
+                          <span className="progress-rank">
+                            {selectedCharacter?.rank || 'Unranked'}
+                          </span>
+                        </div>
+
+                        <div className="progress-stats">
+                          <div className="progress-stat">
+                            <span className="progress-stat-label">Level</span>
+                            <span className="progress-stat-value">{shownLevel}</span>
+                          </div>
+                          <div className="progress-stat">
+                            <span className="progress-stat-label">Experience</span>
+                            <span className="progress-stat-value">
+                              {shownTarget ? `${shownXp} / ${shownTarget}` : shownXp}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          className="progress-bar"
+                          role="progressbar"
+                          aria-label="Progress to the next level"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={progressPercent}
+                        >
+                          <div
+                            className="progress-bar-fill"
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+
+                        <div className="progress-caption">
+                          {shownTarget
+                            ? `${Math.max(0, shownTarget - shownXp)} XP to level ${shownLevel + 1}`
+                            : 'No target set — edit progression to show a bar.'}
+                        </div>
+
+                        {editingProgress ? (
+                          <div className="progress-form">
+                            <label>
+                              Level
+                              <input
+                                type="number"
+                                min={1}
+                                autoFocus
+                                value={progressLevelDraft}
+                                onChange={(e) => setProgressLevelDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveProgress();
+                                  if (e.key === 'Escape') setEditingProgress(false);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              Experience
+                              <input
+                                type="number"
+                                min={0}
+                                value={progressXpDraft}
+                                onChange={(e) => setProgressXpDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveProgress();
+                                  if (e.key === 'Escape') setEditingProgress(false);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              XP to next
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="None"
+                                value={progressTargetDraft}
+                                onChange={(e) => setProgressTargetDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveProgress();
+                                  if (e.key === 'Escape') setEditingProgress(false);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              Rank
+                              <input
+                                placeholder="Unranked"
+                                value={progressRankDraft}
+                                onChange={(e) => setProgressRankDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveProgress();
+                                  if (e.key === 'Escape') setEditingProgress(false);
+                                }}
+                              />
+                            </label>
+                            <div className="progress-actions">
+                              <button
+                                title="Save level, experience, rank and the next-level target"
+                                onClick={saveProgress}
+                              >
+                                Save
+                              </button>
+                              <button
+                                title="Leave the progression as it was"
+                                onClick={() => setEditingProgress(false)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="progress-actions">
+                            <button
+                              title="Add one level, recorded as a level-up in the audit log"
+                              onClick={levelUpCharacter}
+                            >
+                              Level up
+                            </button>
+                            <button
+                              title="Type the level, experience, rank and XP target directly"
+                              onClick={startProgressEdit}
+                            >
+                              Edit progression
+                            </button>
+                          </div>
+                        )}
+                      </section>
 
                       <div className="attribute-section">
                         <h4 className="character-section-heading">Attributes</h4>

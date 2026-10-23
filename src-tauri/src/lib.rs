@@ -110,6 +110,33 @@ fn update_character(
         .map_err(|e| e.to_string())
 }
 
+/// Saves level, XP, rank and the XP target as the author typed them. No formula
+/// runs here: the app records progression, it does not decide it.
+#[tauri::command]
+fn set_character_progress(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    level: i64,
+    xp: i64,
+    rank: Option<String>,
+    xp_to_next: Option<i64>,
+    user: String,
+) -> Result<Character, String> {
+    db.set_character_progress(&character_id, level, xp, rank, xp_to_next, user)
+        .map_err(|e| e.to_string())
+}
+
+/// One level more, recorded as a level-up rather than an ordinary field edit.
+#[tauri::command]
+fn level_up_character(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    user: String,
+) -> Result<Character, String> {
+    db.level_up_character(&character_id, user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_character(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
     db.delete_character(&id, user).map_err(|e| e.to_string())
@@ -500,6 +527,8 @@ pub fn run() {
             create_new_character,
             get_characters,
             update_character,
+            set_character_progress,
+            level_up_character,
             delete_character,
             set_character_stat,
             get_character_stats,

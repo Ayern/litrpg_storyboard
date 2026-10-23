@@ -86,8 +86,21 @@ there is one and falls back to the relation type. Only one editor is open at a
 time: selecting a node closes the connection editor and vice versa.
 
 **Characters** — a cast list per story, each with a name, an optional description,
-numeric stats and free-text attributes. Both are identified by name, so adding a
-stat or an attribute you already have updates it instead of creating a duplicate.
+progression, numeric stats and free-text attributes. Stats and attributes are
+identified by name, so adding a stat or an attribute you already have updates it
+instead of creating a duplicate. The cast list says each character's level and
+rank, and the cast rail on the Graph tab puts the level on every card.
+
+**Progression** — each character's level, experience, rank and optional "XP to
+next" are stored as their own fields rather than as a stat called "Level". The
+sheet shows the numbers under a bar filled against the XP target, and the caption
+counts down to the next level; without a target the bar stays empty and the raw
+total is shown instead. **Level up** adds one level and records it as a level-up
+event in the history; **Edit progression** types all four fields at once, saving
+only the ones that changed. Nothing is derived: experience never rolls over into
+a level, and clearing the rank or the target stores nothing rather than an empty
+string. A level starts at 1 and experience at 0, which is what the migration gives
+a character created before these fields existed.
 
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
@@ -190,7 +203,7 @@ An entry records:
 | `story_id` | Which story the change belongs to, so history can be shown per story |
 | `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
 | `entity_id` | The row that changed |
-| `action` | `create`, `update`, `revert`, `soft_delete`, `restore` or `purge` |
+| `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore` or `purge` |
 | `field_changed` | Name of the changed field, for updates and reverts |
 | `old_value` / `new_value` | Before and after, as text |
 | `changed_by` | The current user's name at the time |
@@ -236,7 +249,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `5`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `6`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -244,12 +257,15 @@ everything it already held. Version 3 added `deleted_at`, so every existing row
 migrates in the live state. Version 4 added `settings`, which starts empty — so an
 upgraded database keeps its trash forever until someone chooses otherwise. Version 5
 added `nodes.character_id`, which is NULL on every existing node: nodes start
-unlinked and are pointed at a cast member from the inspector.
+unlinked and are pointed at a cast member from the inspector. Version 6 added
+`characters.level`, `xp`, `rank` and `xp_to_next`; an existing character gains
+level 1 and 0 XP, and no level is inferred from a stat that happened to be called
+"Level".
 
 | Table | Contents |
 | --- | --- |
 | `stories` | `id`, `title`, `description`, timestamps, `deleted_at` |
-| `characters` | Belongs to a story; `name`, `description`, `deleted_at` |
+| `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, `created_by`, `deleted_at` |
@@ -292,7 +308,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -311,7 +327,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 34 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 39 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`.
@@ -324,6 +340,11 @@ page that arrives late, and what it says when a filter matches nothing.
   not a tamper-proof trail.
 - **Stats are integers only.** Non-numeric facts belong in attributes (`Class` =
   `Rogue`), which are plain text with no typing, validation or formatting.
+- **Progression is recorded, not calculated.** Nothing checks that experience is
+  below the target, that a level-up is earned, or that a rank only rises: the
+  fields hold whatever the author typed, and leveling up just adds one. The bar
+  clamps at 100% when experience passes the target rather than inventing a
+  second level, and without a target there is no bar to fill.
 - **Undoing an edit needs the field to still hold what the edit left.** Deleting
   a story, character, node or connection moves it to the Trash tab, where it can
   be restored exactly or deleted for good, and any single recorded field can be
@@ -364,11 +385,12 @@ point so it stops drawing the vanished badge.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
-- **Undo covers the canvas, not every screen.** Character names, stats and
-  attributes, story rename and delete, import, and actions in the Trash tab are
-  not on the undo stack; for recorded fields the Audit tab's revert is the way
-  back. The stack is per session and holds 50 steps, so restarting the app or
-  switching stories empties it.
+- **Undo covers the canvas, not every screen.** Character names, progression,
+  stats and attributes, story rename and delete, import, and actions in the Trash
+  tab are not on the undo stack; for recorded fields the Audit tab's revert is the
+  way back. The stack is per session and holds 50 steps, so restarting the app or
+  switching stories empties it. A level-up is recorded as its own action and is
+  not revertible from the Audit tab either: type the previous level back in.
 - **Unsaved drafts live in memory.** A half-written label or note survives
   switching nodes, closing the drawer and switching stories, but not restarting
   the app; nothing is written to disk until Save is pressed.
