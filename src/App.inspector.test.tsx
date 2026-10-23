@@ -129,6 +129,14 @@ beforeEach(() => {
             created_at: '2026-10-22T12:00:00Z',
             updated_at: '2026-10-22T12:00:00Z',
           },
+          {
+            id: 'char-2',
+            story_id: story.id,
+            name: 'Wren',
+            description: null,
+            created_at: '2026-10-22T12:00:00Z',
+            updated_at: '2026-10-22T12:00:00Z',
+          },
         ];
       case 'get_story_character_stats':
         return [];
@@ -264,6 +272,56 @@ describe('the node inspector', () => {
     const cast = within(drawer()).getByRole('region', { name: 'Cast numbers' });
     expect(within(cast).getByText('Level')).toBeInTheDocument();
     expect(within(cast).getByText('Class')).toBeInTheDocument();
+
+    // The label was never the cast member's name, so there is nothing to offer.
+    expect(within(drawer()).queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('offers to rename a node that still carries the old cast member name', async () => {
+    const user = await openNode('character: Rook');
+    const panel = drawer();
+
+    await user.selectOptions(within(panel).getByLabelText('Cast member'), 'char-2');
+
+    const offer = within(panel).getByRole('status');
+    expect(offer).toHaveTextContent('named after Rook');
+    expect(offer).toHaveTextContent('Wren');
+
+    await user.click(within(offer).getByRole('button', { name: 'Rename' }));
+
+    expect(lastCall('update_graph_node')).toEqual({
+      id: 'n2',
+      label: 'Wren',
+      content: null,
+      user: 'You',
+    });
+    expect(within(drawer()).getByLabelText('Label')).toHaveValue('Wren');
+    expect(within(drawer()).queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('keeps the old label when the rename is declined', async () => {
+    const user = await openNode('character: Rook');
+    const panel = drawer();
+
+    await user.selectOptions(within(panel).getByLabelText('Cast member'), 'char-2');
+    await user.click(within(panel).getByRole('button', { name: 'Keep label' }));
+
+    expect(within(drawer()).getByLabelText('Label')).toHaveValue('Rook');
+    expect(within(drawer()).getByLabelText('Cast member')).toHaveValue('char-2');
+    expect(within(drawer()).queryByRole('status')).not.toBeInTheDocument();
+    expect(lastCall('update_graph_node')).toBeUndefined();
+  });
+
+  it('drops the rename offer once the label is edited by hand', async () => {
+    const user = await openNode('character: Rook');
+    const panel = drawer();
+
+    await user.selectOptions(within(panel).getByLabelText('Cast member'), 'char-2');
+    expect(within(panel).getByRole('status')).toBeInTheDocument();
+
+    await user.type(within(panel).getByLabelText('Label'), ' the Bold');
+
+    expect(within(drawer()).queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('clears the link again from the same picker', async () => {

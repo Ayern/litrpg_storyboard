@@ -38,7 +38,10 @@ edited on the Characters tab. The picker saves the moment it changes, keeps show
 a link it cannot name (one whose cast member is in the trash) rather than dropping
 it, and the drawer keeps its own copy of the numbers so editing from the canvas does
 not disturb what the Characters tab has selected. Link changes are history entries
-of their own, recorded as the names on either side.
+of their own, recorded as the names on either side. When a relink leaves the node
+still named after the cast member it just left, the drawer offers to rename it to
+the new one; accepting is an ordinary label edit, recorded like any other, and
+declining leaves the author's name alone.
 
 **Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
 canvas. Drag a card onto the board and it becomes a `character` node already
@@ -302,10 +305,11 @@ point so it stops drawing the vanished badge.
 - **Dragging a cast card needs a pointer.** The rail uses the platform's
   drag-and-drop, which a touch screen does not drive; the picker in the drawer
   makes the same link without dragging.
-- **Dropping a card on a node does not rename it.** Relinking "Ghost" to Rook
-  leaves the label alone and shows both names on the card, because the label is
-  the author's; rename it in the drawer if it was only ever the old character's
-  name.
+- **Dropping a card on a node does not rename it by itself.** The drop only
+  changes the link and shows both names on the card; when the label is still the
+  old cast member's name, the drawer offers the rename, and accepting it is a
+  separate label edit in the history. The offer compares the label with the old
+  name, so both cast members have to be in the live cast for it to appear.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.

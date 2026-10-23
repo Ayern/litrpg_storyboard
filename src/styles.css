@@ -431,6 +431,26 @@ body {
   padding: 4px 6px;
 }
 
+/* A relink can leave the label named after the cast member the node just left.
+   The prompt offers the rename because the label is the author's. */
+.node-drawer-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #2b3534;
+  border: 1px solid #3d5755;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #cfe7e4;
+}
+
+.node-drawer-offer-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .node-drawer-hint {
   margin: 0;
   font-size: 12px;

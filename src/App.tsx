@@ -371,6 +371,13 @@ function App() {
   const [inspectorAttrId, setInspectorAttrId] = useState<string | null>(null);
   const [inspectorAttrValue, setInspectorAttrValue] = useState('');
   const [inspectorError, setInspectorError] = useState<string | null>(null);
+  // A relink can leave a node named after the person it no longer points at.
+  // The label is the author's, so this offers the rename instead of taking it.
+  const [renameOffer, setRenameOffer] = useState<{
+    nodeId: string;
+    from: string;
+    to: string;
+  } | null>(null);
 
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
@@ -1025,6 +1032,7 @@ function App() {
 
     setDraggingCastId(null);
     setDropTargetNodeId(null);
+    setRenameOffer(null);
 
     if (!characterId || !currentStory) return;
     event.preventDefault();
@@ -1049,6 +1057,8 @@ function App() {
         return;
       }
 
+      const previousId = target.data.characterId ?? null;
+
       try {
         const updated: any = await invoke('set_node_character', {
           nodeId: target.id,
@@ -1064,7 +1074,15 @@ function App() {
           )
         );
 
-        // Only the link changes: the label, notes and type are the author's.
+        // Only the link changes here: the label, notes and type are the
+        // author's. If the label was the old member's name, the drawer offers
+        // the rename instead of taking it.
+        offerRenameAfterRelink(
+          { id: target.id, label: target.data.label },
+          previousId,
+          character.id
+        );
+
         openNodeInspector({
           id: target.id,
           label: target.data.label,
@@ -1607,6 +1625,7 @@ function App() {
     setSelectedNodeId(node.id);
     setNodeLabelDraft(node.data.label);
     setNodeContentDraft(node.data.content ?? '');
+    setRenameOffer(null);
   }, []);
 
   const selectEdge = useCallback((_event: React.MouseEvent, edge: Edge<EdgeData>) => {
@@ -1615,6 +1634,7 @@ function App() {
     setSelectedEdgeId(edge.id);
     setEdgeLabelDraft(edge.data?.label ?? '');
     setEdgeRelationDraft(edge.data?.relationType ?? '');
+    setRenameOffer(null);
   }, []);
 
   const saveNode = async () => {
@@ -1663,6 +1683,10 @@ function App() {
             : node
         )
       );
+
+      // The label is now whatever was saved, so any pending rename offer for it
+      // was about a name that no longer exists.
+      setRenameOffer(null);
     } catch (e) {
       console.error('Failed to update node:', e);
       setNodeEditError(`Could not save node: ${String(e)}`);
@@ -1722,7 +1746,10 @@ function App() {
   const changeNodeCharacter = async (characterId: string) => {
     if (!selectedNode) return;
 
+    const previousId = selectedNode.data.characterId ?? null;
+
     setInspectorError(null);
+    setRenameOffer(null);
 
     try {
       const updated: any = await invoke('set_node_character', {
@@ -1738,9 +1765,81 @@ function App() {
             : node
         )
       );
+
+      offerRenameAfterRelink(
+        { id: selectedNode.id, label: selectedNode.data.label },
+        previousId,
+        characterId
+      );
     } catch (e) {
       console.error('Failed to link a cast member to a node:', e);
       setInspectorError(`Could not link the cast member: ${String(e)}`);
+    }
+  };
+
+  // A relink only offers a rename when the label is exactly the name the node
+  // was linked to before. Any other label was written for its own sake, and a
+  // rename would be a change nobody asked for.
+  const offerRenameAfterRelink = (
+    node: { id: string; label: string },
+    previousCharacterId: string | null,
+    characterId: string
+  ) => {
+    const previous = previousCharacterId
+      ? characters.find(entry => entry.id === previousCharacterId) ?? null
+      : null;
+    const next = characterId
+      ? characters.find(entry => entry.id === characterId) ?? null
+      : null;
+
+    if (
+      previous &&
+      next &&
+      node.label.trim() === previous.name &&
+      next.name !== node.label
+    ) {
+      setRenameOffer({ nodeId: node.id, from: previous.name, to: next.name });
+      return;
+    }
+
+    setRenameOffer(null);
+  };
+
+  // Renaming from the offer is the same write as saving the label, so the change
+  // lands in the history exactly as if it had been typed.
+  const applyRenameOffer = async () => {
+    if (!renameOffer) return;
+
+    const node = nodes.find(candidate => candidate.id === renameOffer.nodeId);
+
+    if (!node) {
+      setRenameOffer(null);
+      return;
+    }
+
+    setInspectorError(null);
+
+    try {
+      const updated: any = await invoke('update_graph_node', {
+        id: node.id,
+        label: renameOffer.to,
+        content: node.data.content ?? null,
+        user: actor,
+      });
+
+      setNodes(nds =>
+        nds.map(other =>
+          other.id === updated.id
+            ? { ...other, data: { ...other.data, label: updated.label } }
+            : other
+        )
+      );
+
+      if (selectedNodeId === node.id) setNodeLabelDraft(updated.label);
+      setRenameOffer(null);
+    } catch (e) {
+      console.error('Failed to rename a relinked node:', e);
+      setInspectorError(`Could not rename the node: ${String(e)}`);
     }
   };
 
@@ -2285,7 +2384,12 @@ function App() {
                         id="inspector-label"
                         className="node-editor-label"
                         value={nodeLabelDraft}
-                        onChange={e => setNodeLabelDraft(e.target.value)}
+                        onChange={e => {
+                          setNodeLabelDraft(e.target.value);
+                          // Typing a label is a decision of its own, so the rename
+                          // offer stops being about this node.
+                          setRenameOffer(null);
+                        }}
                         onKeyDown={e => {
                           if (e.key === 'Enter') saveNode();
                           if (e.key === 'Escape') setSelectedNodeId(null);
@@ -2338,6 +2442,19 @@ function App() {
                             </option>
                           )}
                       </select>
+
+                      {renameOffer && renameOffer.nodeId === selectedNode.id && (
+                        <div className="node-drawer-offer" role="status">
+                          <span>
+                            This node was named after {renameOffer.from}. Rename it to “
+                            {renameOffer.to}”?
+                          </span>
+                          <div className="node-drawer-offer-actions">
+                            <button onClick={applyRenameOffer}>Rename</button>
+                            <button onClick={() => setRenameOffer(null)}>Keep label</button>
+                          </div>
+                        </div>
+                      )}
 
                       {selectedNode.data.characterId && (
                         <section className="node-drawer-cast" aria-label="Cast numbers">

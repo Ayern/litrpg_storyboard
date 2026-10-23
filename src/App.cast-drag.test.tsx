@@ -240,6 +240,14 @@ beforeEach(() => {
         rows = rows.map(candidate => (candidate.id === row.id ? linked : candidate));
         return nodeRow(linked);
       }
+      case 'update_graph_node': {
+        const row = rows.find(candidate => candidate.id === args.id);
+        if (!row) return null;
+
+        const renamed = { ...row, label: args.label as string };
+        rows = rows.map(candidate => (candidate.id === row.id ? renamed : candidate));
+        return nodeRow(renamed);
+      }
       case 'get_character_attributes':
         return [];
       case 'set_character_stat': {
@@ -395,6 +403,40 @@ describe('dragging a cast member onto the canvas', () => {
     });
     expect(within(drawer()).getByLabelText('Cast member')).toHaveValue('char-1');
     expect(within(drawer()).getByLabelText('Label')).toHaveValue('Ghost');
+  });
+
+  it('offers to rename a node that was named after the member it left', async () => {
+    rows = [
+      ...rows,
+      { id: 'n2', label: 'Rook', type: 'character', characterId: 'char-1' },
+    ];
+
+    const { container, rail } = await canvasAndRail();
+    const user = userEvent.setup();
+    const chip = within(rail).getByText('Wren').closest('.cast-chip') as HTMLElement;
+    const payload = dragPayload('char-2');
+    const target = container.querySelector('.react-flow__node[data-id="n2"]') as HTMLElement;
+
+    fireEvent.dragStart(chip, { dataTransfer: payload });
+    fireEvent.dragOver(target, { dataTransfer: payload });
+    dropOn(target, payload, 10, 10);
+
+    const panel = await screen.findByRole('complementary', { name: 'Node inspector' });
+    const offer = await within(panel).findByRole('status');
+    expect(offer).toHaveTextContent('named after Rook');
+
+    await user.click(within(offer).getByRole('button', { name: 'Rename' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_graph_node')).toEqual({
+        id: 'n2',
+        label: 'Wren',
+        content: null,
+        user: 'You',
+      })
+    );
+    await waitFor(() => expect(cardFor(container, 'Wren')).toBeTruthy());
+    expect(cardFor(container, 'Rook')).toBeUndefined();
   });
 
   it('leaves a node that already points at that member alone', async () => {
