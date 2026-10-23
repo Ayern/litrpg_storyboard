@@ -408,6 +408,9 @@ function App() {
   const [castStats, setCastStats] = useState<Record<string, CharacterStat[]>>({});
   // The cast card being dragged, used to show the canvas as a drop target.
   const [draggingCastId, setDraggingCastId] = useState<string | null>(null);
+  // The node the card is hovering over: dropping there relinks it rather than
+  // making a new node, so the target is marked before the drop.
+  const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
@@ -994,12 +997,34 @@ function App() {
     }
   };
 
-  // Dropping a cast card makes a character node already pointing at that cast
-  // member, at the point it was dropped. Creation and link are one command, so a
-  // refused link leaves no stray node behind.
+  // Which node the pointer is over, read from the card the event landed on.
+  // React Flow puts `data-id` on each node's wrapper, so no geometry is needed.
+  const nodeUnderPointer = (event: React.DragEvent<HTMLDivElement>) => {
+    const wrapper = (event.target as HTMLElement | null)?.closest?.('.react-flow__node');
+    const id = wrapper?.getAttribute('data-id') ?? null;
+
+    return id && nodes.some(node => node.id === id) ? id : null;
+  };
+
+  // Opening a node is the same gesture whether it was just created or relinked.
+  const openNodeInspector = (node: { id: string; label: string; content?: string | null }) => {
+    setSelectedEdgeId(null);
+    setNodeEditError(null);
+    setSelectedNodeId(node.id);
+    setNodeLabelDraft(node.label);
+    setNodeContentDraft(node.content ?? '');
+  };
+
+  // A cast card dropped on empty canvas makes a new character node already
+  // pointing at that member, where it was dropped; dropped on a node, it points
+  // that node at the member instead of making another. Creation and link are one
+  // command, so a refused link leaves nothing behind either way.
   const dropCastMember = async (event: React.DragEvent<HTMLDivElement>) => {
     const characterId = event.dataTransfer.getData(CAST_DRAG_TYPE);
+    const targetId = nodeUnderPointer(event);
+
     setDraggingCastId(null);
+    setDropTargetNodeId(null);
 
     if (!characterId || !currentStory) return;
     event.preventDefault();
@@ -1007,11 +1032,57 @@ function App() {
     const character = characters.find(candidate => candidate.id === characterId);
     if (!character) return;
 
+    setActionError(null);
+
+    if (targetId) {
+      const target = nodes.find(node => node.id === targetId);
+      if (!target) return;
+
+      // Already pointing at this member, so the drop changes nothing; opening it
+      // still tells the person the card landed.
+      if (target.data.characterId === character.id) {
+        openNodeInspector({
+          id: target.id,
+          label: target.data.label,
+          content: target.data.content,
+        });
+        return;
+      }
+
+      try {
+        const updated: any = await invoke('set_node_character', {
+          nodeId: target.id,
+          characterId: character.id,
+          user: actor,
+        });
+
+        setNodes(nds =>
+          nds.map(node =>
+            node.id === updated.id
+              ? { ...node, data: { ...node.data, characterId: updated.character_id ?? null } }
+              : node
+          )
+        );
+
+        // Only the link changes: the label, notes and type are the author's.
+        openNodeInspector({
+          id: target.id,
+          label: target.data.label,
+          content: target.data.content,
+        });
+      } catch (e) {
+        console.error('Failed to link a cast member to a node:', e);
+        setActionError(
+          `Could not link ${character.name} to “${target.data.label}”: ${String(e)}`
+        );
+      }
+
+      return;
+    }
+
     const position = flowRef.current
       ? flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
       : { x: event.clientX, y: event.clientY };
-
-    setActionError(null);
 
     try {
       const created: any = await invoke('create_graph_node', {
@@ -1043,11 +1114,11 @@ function App() {
 
       // Opening it is what makes the drop feel finished: the numbers are in the
       // inspector, and the link can be changed without hunting for the node.
-      setSelectedEdgeId(null);
-      setNodeEditError(null);
-      setSelectedNodeId(created.id);
-      setNodeLabelDraft(created.label);
-      setNodeContentDraft(created.content ?? '');
+      openNodeInspector({
+        id: created.id,
+        label: created.label,
+        content: created.content,
+      });
     } catch (e) {
       console.error('Failed to drop a cast member onto the canvas:', e);
       setActionError(`Could not add ${character.name} to the canvas: ${String(e)}`);
@@ -1770,25 +1841,30 @@ function App() {
       : retentionChoices;
 
   // The canvas gets the nodes plus their cast member's name and numbers. Only
-  // linked nodes are rebuilt, so the rest keep their identity across a render.
+  // linked nodes and the relink target are rebuilt, so the rest keep their
+  // identity across a render.
   const canvasNodes = useMemo(() => {
     const castById = new Map(characters.map(character => [character.id, character]));
 
     return nodes.map(node => {
       const characterId = node.data.characterId;
+      const isDropTarget = node.id === dropTargetNodeId;
 
-      if (!characterId) return node;
+      if (!characterId && !isDropTarget) return node;
 
       return {
         ...node,
-        data: {
-          ...node.data,
-          characterName: castById.get(characterId)?.name ?? null,
-          characterStats: castStats[characterId] ?? [],
-        },
+        className: isDropTarget ? 'drop-target' : undefined,
+        data: characterId
+          ? {
+              ...node.data,
+              characterName: castById.get(characterId)?.name ?? null,
+              characterStats: castStats[characterId] ?? [],
+            }
+          : node.data,
       };
     });
-  }, [nodes, characters, castStats]);
+  }, [nodes, characters, castStats, dropTargetNodeId]);
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -2065,7 +2141,10 @@ function App() {
                               event.dataTransfer.effectAllowed = 'copy';
                               setDraggingCastId(character.id);
                             }}
-                            onDragEnd={() => setDraggingCastId(null)}
+                            onDragEnd={() => {
+                              setDraggingCastId(null);
+                              setDropTargetNodeId(null);
+                            }}
                           >
                             <span className="cast-chip-name">{character.name}</span>
                             {(castStats[character.id] ?? []).length > 0 && (
@@ -2097,6 +2176,17 @@ function App() {
                       }
                       event.preventDefault();
                       event.dataTransfer.dropEffect = 'copy';
+
+                      const next = nodeUnderPointer(event);
+                      setDropTargetNodeId(current => (current === next ? current : next));
+                    }}
+                    onDragLeave={event => {
+                      // `Node` here is React Flow's, so the DOM node is named in full.
+                      const next = event.relatedTarget as globalThis.Node | null;
+
+                      if (!next || !event.currentTarget.contains(next)) {
+                        setDropTargetNodeId(null);
+                      }
                     }}
                     onDrop={dropCastMember}
                   >

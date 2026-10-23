@@ -43,7 +43,11 @@ of their own, recorded as the names on either side.
 **Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
 canvas. Drag a card onto the board and it becomes a `character` node already
 linked to that cast member, placed where the pointer was released, with the
-inspector opened on it. A linked node draws its cast member's numbers as badges —
+inspector opened on it. Drop it on an existing node instead and that node is
+repointed at the cast member — it keeps its label, notes and type, and only the
+link changes; the node under the pointer is outlined while the drag is over it, so
+it is clear which of the two will happen. A linked node draws its cast member's
+numbers as badges —
 the first two by name, then a count of the rest, with all of them in the tooltip —
 so the board answers who is ahead without opening anybody. The badges follow edits
 made in the drawer or on the Characters tab. The canvas is outlined while a card
@@ -298,6 +302,10 @@ point so it stops drawing the vanished badge.
 - **Dragging a cast card needs a pointer.** The rail uses the platform's
   drag-and-drop, which a touch screen does not drive; the picker in the drawer
   makes the same link without dragging.
+- **Dropping a card on a node does not rename it.** Relinking "Ghost" to Rook
+  leaves the label alone and shows both names on the card, because the label is
+  the author's; rename it in the drawer if it was only ever the old character's
+  name.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.

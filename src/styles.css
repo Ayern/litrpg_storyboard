@@ -1271,6 +1271,13 @@ body {
   padding: 0;
 }
 
+/* A cast card hovering over a node: dropping here relinks that node instead of
+   making a new one, so the target is visible before the pointer is released. */
+.react-flow__node.drop-target .graph-node {
+  outline: 1px solid #5ec8c0;
+  outline-offset: 2px;
+}
+
 /* A node's type is its colour and its caption, so the board is readable at a
    glance. The wrapper above stays out of the way and the card is drawn here. */
 .graph-node {

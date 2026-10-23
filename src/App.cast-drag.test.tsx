@@ -19,11 +19,13 @@ vi.mock('reactflow', async () => {
     React.createElement('div', null, children as React.ReactNode);
 
   interface CanvasProps {
-    nodes?: { id: string; data: unknown }[];
+    nodes?: { id: string; data: unknown; className?: string }[];
     nodeTypes?: Record<string, React.ComponentType<Record<string, unknown>>>;
     children?: unknown;
   }
 
+  // The wrapper mirrors React Flow's own: the drop handler reads a node's id
+  // from it, and a relink target is marked with a class on it.
   const Canvas = ({ nodes = [], nodeTypes = {}, children }: CanvasProps) => {
     const Card = nodeTypes.default;
 
@@ -31,19 +33,26 @@ vi.mock('reactflow', async () => {
       'div',
       { 'data-testid': 'canvas' },
       nodes.map((node, index) =>
-        Card
-          ? React.createElement(Card, {
-              key: node.id,
-              id: node.id,
-              data: node.data,
-              isConnectable: true,
-              selected: false,
-              xPos: 0,
-              yPos: index * 40,
-              zIndex: 0,
-              dragging: false,
-            })
-          : null
+        React.createElement(
+          'div',
+          {
+            key: node.id,
+            className: `react-flow__node ${node.className ?? ''}`.trim(),
+            'data-id': node.id,
+          },
+          Card
+            ? React.createElement(Card, {
+                id: node.id,
+                data: node.data,
+                isConnectable: true,
+                selected: false,
+                xPos: 0,
+                yPos: index * 40,
+                zIndex: 0,
+                dragging: false,
+              })
+            : null
+        )
       ),
       children as React.ReactNode
     );
@@ -220,6 +229,17 @@ beforeEach(() => {
       }
       case 'get_character_stats':
         return stats.filter(stat => stat.character_id === args.characterId);
+      case 'set_node_character': {
+        const row = rows.find(candidate => candidate.id === args.nodeId);
+        if (!row) return null;
+
+        const linked = {
+          ...row,
+          characterId: (args.characterId as string | null) ?? null,
+        };
+        rows = rows.map(candidate => (candidate.id === row.id ? linked : candidate));
+        return nodeRow(linked);
+      }
       case 'get_character_attributes':
         return [];
       case 'set_character_stat': {
@@ -340,6 +360,61 @@ describe('dragging a cast member onto the canvas', () => {
     const { container } = await canvasAndRail();
 
     expect(cardFor(container, 'Ghost')).toHaveTextContent('cast member in the trash');
+  });
+
+  it('links the node a card is dropped on instead of making another', async () => {
+    const { container, rail } = await canvasAndRail();
+    const chip = within(rail).getByText('Rook').closest('.cast-chip') as HTMLElement;
+    const payload = dragPayload('char-1');
+    const target = container.querySelector('.react-flow__node[data-id="n3"]') as HTMLElement;
+
+    fireEvent.dragStart(chip, { dataTransfer: payload });
+    fireEvent.dragOver(target, { dataTransfer: payload });
+    expect(target).toHaveClass('drop-target');
+
+    // Letting go of the drag, or moving off the node, clears the marker.
+    fireEvent.dragEnd(chip, { dataTransfer: payload });
+    expect(target).not.toHaveClass('drop-target');
+
+    fireEvent.dragOver(target, { dataTransfer: payload });
+    dropOn(target, payload, 10, 10);
+
+    await waitFor(() =>
+      expect(lastCall('set_node_character')).toEqual({
+        nodeId: 'n3',
+        characterId: 'char-1',
+        user: 'You',
+      })
+    );
+    expect(lastCall('create_graph_node')).toBeUndefined();
+
+    // The node keeps its own label and gains the cast member's numbers.
+    await waitFor(() => {
+      expect(cardFor(container, 'Ghost')).toHaveTextContent('Level 4');
+      expect(cardFor(container, 'Ghost')).toHaveTextContent('Rook');
+    });
+    expect(within(drawer()).getByLabelText('Cast member')).toHaveValue('char-1');
+    expect(within(drawer()).getByLabelText('Label')).toHaveValue('Ghost');
+  });
+
+  it('leaves a node that already points at that member alone', async () => {
+    rows = [
+      ...rows,
+      { id: 'n2', label: 'Rook', type: 'character', characterId: 'char-1' },
+    ];
+
+    const { container, rail } = await canvasAndRail();
+    const chip = within(rail).getByText('Rook').closest('.cast-chip') as HTMLElement;
+    const payload = dragPayload('char-1');
+    const target = container.querySelector('.react-flow__node[data-id="n2"]') as HTMLElement;
+
+    fireEvent.dragStart(chip, { dataTransfer: payload });
+    fireEvent.dragOver(target, { dataTransfer: payload });
+    dropOn(target, payload, 10, 10);
+
+    await waitFor(() => expect(within(drawer()).getByLabelText('Label')).toHaveValue('Rook'));
+    expect(lastCall('set_node_character')).toBeUndefined();
+    expect(lastCall('create_graph_node')).toBeUndefined();
   });
 
   it('ignores a drop that carries nothing it knows', async () => {
