@@ -21,6 +21,8 @@ vi.mock('reactflow', async () => {
     Controls: () => null,
     Background: () => null,
     Panel: PassThrough,
+    Handle: () => null,
+    Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
     useNodesState: (initial: unknown[]) => [initial, () => {}, () => {}],
     useEdgesState: (initial: unknown[]) => [initial, () => {}, () => {}],

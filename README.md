@@ -16,14 +16,29 @@ touched.
 
 **Idea graph** — a pan/zoom canvas built on React Flow. Nodes have a type
 (`chapter`, `idea`, `character`, `location`, `event`, `plot`, `misc`) and can be
-connected with edges. Dragging a node saves its position. Deleting a node removes
+connected with edges. Each type draws as its own colour with the type named on the
+card, and the legend uses the same palette, so a board of a hundred notes reads by
+shape and colour before any of it is read. An unrecognised type is drawn as `misc`
+rather than unstyled. Dragging a node saves its position. Deleting a node removes
 the connections attached to it, and the node plus each removed connection are
 recorded in the history.
 
-**Editing a node** — click a node to open its editor: reword the label, add or
-change its notes, and save. Only the fields you actually changed are written, each
-as its own history entry, so rewording a label is not buried under a note edit.
-`Enter` saves and `Escape` closes the editor.
+**Editing a node** — click a node and an inspector drawer slides in beside the
+canvas, which gives up the width rather than hiding the node being edited. Reword
+the label, add or change its notes, and save. Only the fields you actually changed
+are written, each as its own history entry, so rewording a label is not buried
+under a note edit. `Enter` saves and `Escape` closes the drawer.
+
+**Cast numbers in the inspector** — any node can be pointed at a cast member with
+the picker in the drawer. The link is stored on the node as that character's id, so
+renaming either the node or the cast member leaves it alone. When it is set, the
+drawer lists that character's stats and attributes with the values as buttons: click
+one, type the new value and press `Enter`, and it is saved exactly as if it had been
+edited on the Characters tab. The picker saves the moment it changes, keeps showing
+a link it cannot name (one whose cast member is in the trash) rather than dropping
+it, and the drawer keeps its own copy of the numbers so editing from the canvas does
+not disturb what the Characters tab has selected. Link changes are history entries
+of their own, recorded as the names on either side.
 
 **Editing a connection** — click an edge to open the same kind of editor for its
 label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
@@ -43,11 +58,13 @@ still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
 **Reverting an edit** — any field change in the history can be put back, and a
-revert is itself recorded, so it can be reverted in turn. It only applies while
-the field still holds the value that entry produced: if it changed again since,
-the revert is refused and says what the field reads now, rather than quietly
-throwing the newer edit away. Creations and deletions are not revertible — the
-trash is what undoes those.
+revert is itself recorded, so it can be reverted in turn. The tab says on each
+button whether the revert is still possible — *Changed since*, *In trash*, *Gone*,
+*Already back* — with the full reason in its tooltip, so that is learned before a
+click rather than after a refusal. It only applies while the field still holds the
+value that entry produced: if it changed again since, writing the older value
+would quietly throw the newer edit away. Creations and deletions are not
+revertible — the trash is what undoes those.
 
 **Trash** — deleting a story, character, node or connection moves it here rather
 than destroying it. Restoring puts it back exactly as it was: a character returns
@@ -130,6 +147,11 @@ Behaviour worth knowing:
   replaced, which is why reverting a revert puts the original change back. The
   guard is the entry's own `new_value`: the field must still hold it, so a revert
   can never discard a later edit, and one with nothing to put back writes nothing.
+- **The button and the engine share one check.** The state shown beside an entry
+  (`revert_state`, with the sentence a refusal would give in `revert_reason`) is
+  worked out when the page is read, by the same function `revert_change` runs
+  before writing. It is derived per request, never stored, so the history cannot
+  go on claiming a revert is possible after the story has moved on.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
   it started, produces no entry and no timestamp bump.
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the
@@ -144,13 +166,15 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `4`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `5`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
 everything it already held. Version 3 added `deleted_at`, so every existing row
 migrates in the live state. Version 4 added `settings`, which starts empty — so an
-upgraded database keeps its trash forever until someone chooses otherwise.
+upgraded database keeps its trash forever until someone chooses otherwise. Version 5
+added `nodes.character_id`, which is NULL on every existing node: nodes start
+unlinked and are pointed at a cast member from the inspector.
 
 | Table | Contents |
 | --- | --- |
@@ -158,7 +182,7 @@ upgraded database keeps its trash forever until someone chooses otherwise.
 | `characters` | Belongs to a story; `name`, `description`, `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
-| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), `created_by`, `deleted_at` |
+| `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
 | `settings` | App-wide key/value pairs; currently only the trash retention window |
@@ -198,7 +222,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # audit paging, reverts and the trash tab (vitest, jsdom)
+npm test                             # canvas, inspector, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -234,7 +258,8 @@ page that arrives late, and what it says when a filter matches nothing.
   a story, character, node or connection moves it to the Trash tab, where it can
   be restored exactly or deleted for good, and any single recorded field can be
   put back from the Audit tab. That revert refuses once the field changed again,
-  so undoing an old rename means undoing the newer ones first. Creations and
+  so undoing an old rename means undoing the newer ones first — the tab marks such
+  an entry *Changed since* rather than offering a button that would be refused. Creations and
   purges cannot be reverted at all: the first is undone by deleting it, and the
   second has no row left to write to.
 - **Retention only runs at launch and when it is changed.** A window of 30 days
@@ -249,8 +274,18 @@ page that arrives late, and what it says when a filter matches nothing.
 - **Import always creates a copy.** There is no way to overwrite or merge into an
   existing story, so restoring over a damaged one leaves the original in place to
   delete by hand.
+- **A cast link is not revertible from the history.** Pointing a node at a
+  different cast member is recorded as a `character` field change, with the names on
+  either side, but the Audit tab offers no Revert for it: the recorded value is a
+  name and the column holds an id, and resolving one to the other can be ambiguous.
+  Change it with the picker instead.
+- **A link survives its cast member going to the trash.** Trashing a character keeps
+the links, so restoring it brings them back; the drawer says the link is to a cast
+member that is not in the live cast. Purging the character clears the links first,
+and each cleared node gets its own history entry.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
-  character. Attributes can be deleted one at a time.
+  character. Attributes can be deleted one at a time — deleting is done on the
+  Characters tab, not in the inspector.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every

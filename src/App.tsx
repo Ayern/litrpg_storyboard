@@ -7,8 +7,10 @@ import ReactFlow, {
   Connection,
   addEdge,
   Panel,
+  Handle,
+  Position,
 } from 'reactflow';
-import type { Edge, Node } from 'reactflow';
+import type { Edge, Node, NodeProps } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
@@ -21,6 +23,17 @@ interface Story {
   updated_at: string;
 }
 
+// Whether the history says one entry's earlier value can still be written back.
+// Worked out by the database when the page is read, against the value the field
+// holds now — so the tab can tell before it is clicked. Keep in step with
+// `RevertState` in the database crate.
+type RevertState =
+  | 'available'
+  | 'changed_since'
+  | 'in_trash'
+  | 'gone'
+  | 'already_back';
+
 interface AuditEntry {
   id: string;
   story_id: string | null;
@@ -32,6 +45,10 @@ interface AuditEntry {
   new_value: string | null;
   changed_by: string;
   changed_at: string;
+  // Absent when the entry has nothing to put back at all.
+  revert_state?: RevertState | null;
+  // What a click would be refused with, when it would be refused.
+  revert_reason?: string | null;
 }
 
 interface AuditPage {
@@ -78,12 +95,42 @@ interface CharacterAttribute {
 }
 
 // Simple type aliases for our custom node/edge data
-type NodeData = { label: string; nodeType: string; content?: string; createdBy: string };
+type NodeData = {
+  label: string;
+  nodeType: string;
+  content?: string;
+  createdBy: string;
+  // The cast member this node points at, stored as an id on the node itself.
+  characterId?: string | null;
+};
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
 // We'll use ReactFlow's internal types but cast our data
 const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
 type NodeType = typeof nodeTypes[number];
+
+function isNodeType(value: string): value is NodeType {
+  return (nodeTypes as readonly string[]).includes(value);
+}
+
+// The card a node is drawn as. Its type is both the colour of its edge and the
+// word above the label, so a board reads at a glance instead of every note
+// looking the same. The handles keep a node connectable from either side.
+function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
+  const kind = isNodeType(data.nodeType) ? data.nodeType : 'misc';
+
+  return (
+    <div className={`graph-node ${kind}`}>
+      <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
+      <span className="graph-node-kind">{kind}</span>
+      <span className="graph-node-label">{data.label}</span>
+      <Handle type="source" position={Position.Right} isConnectable={isConnectable} />
+    </div>
+  );
+}
+
+// Defined once: React Flow re-creates every node when this object changes.
+const flowNodeTypes = { default: GraphNode };
 
 const USER_KEY = 'litrpg.currentUser';
 
@@ -160,39 +207,15 @@ function formatWhen(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
-// Every field the database can put back, and which of them may legitimately be
-// empty. On the others a null `old_value` means the entry recorded nothing to
-// restore. Keep in step with `revert_spec` in the database crate.
-const revertFields = new Set([
-  'story:title',
-  'character:name',
-  'character:description',
-  'character_stat:value',
-  'character_attribute:value',
-  'node:label',
-  'node:content',
-  'node:position',
-  'edge:label',
-  'edge:relation_type',
-]);
-
-const nullableRevertFields = new Set([
-  'character:description',
-  'node:content',
-  'edge:label',
-  'edge:relation_type',
-]);
-
-// Only a change that kept an earlier value can be put back. A creation or a
-// deletion is undone elsewhere — the trash — so it gets no Revert button.
-function canRevert(entry: AuditEntry): boolean {
-  if (entry.action !== 'update' && entry.action !== 'revert') return false;
-
-  const key = `${entry.entity_type}:${entry.field_changed ?? ''}`;
-  if (!revertFields.has(key)) return false;
-
-  return nullableRevertFields.has(key) || entry.old_value !== null;
-}
+// What the button says when a revert is not on offer. The words name the reason
+// in the space the action would take; the full sentence is in its tooltip.
+const revertLabels: Record<RevertState, string> = {
+  available: 'Revert',
+  changed_since: 'Changed since',
+  in_trash: 'In trash',
+  gone: 'Gone',
+  already_back: 'Already back',
+};
 
 function AuditChange({
   entry,
@@ -203,17 +226,30 @@ function AuditChange({
   onRevert: (entry: AuditEntry) => void;
   busy: string | null;
 }) {
-  const revertButton = canRevert(entry) ? (
+  const state = entry.revert_state ?? null;
+  const blocked = state !== null && state !== 'available';
+
+  // A disabled button keeps the action where it would be and says why it is not
+  // on offer, so a reader learns that before clicking rather than after.
+  const revertButton = state === null ? null : (
     <button
       className="audit-revert"
-      aria-label={`Revert ${entry.field_changed}`}
-      title="Put this field back to what it was before this change"
+      aria-label={
+        blocked
+          ? `Revert ${entry.field_changed} — ${revertLabels[state].toLowerCase()}`
+          : `Revert ${entry.field_changed}`
+      }
+      title={
+        blocked
+          ? entry.revert_reason ?? undefined
+          : 'Put this field back to what it was before this change'
+      }
       onClick={() => onRevert(entry)}
-      disabled={busy !== null}
+      disabled={blocked || busy !== null}
     >
-      {busy === entry.id ? 'Reverting…' : 'Revert'}
+      {busy === entry.id ? 'Reverting…' : revertLabels[state]}
     </button>
-  ) : null;
+  );
 
   if (entry.action === 'update' || entry.action === 'revert') {
     return (
@@ -264,6 +300,17 @@ function App() {
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
   const [nodeContentDraft, setNodeContentDraft] = useState('');
   const [nodeEditError, setNodeEditError] = useState<string | null>(null);
+
+  // The inspector keeps its own copy of the matched cast member's numbers, so
+  // editing from the canvas never depends on what the Characters tab has
+  // selected. One row at a time is open for editing, as on that tab.
+  const [inspectorStats, setInspectorStats] = useState<CharacterStat[]>([]);
+  const [inspectorAttributes, setInspectorAttributes] = useState<CharacterAttribute[]>([]);
+  const [inspectorStatId, setInspectorStatId] = useState<string | null>(null);
+  const [inspectorStatValue, setInspectorStatValue] = useState('');
+  const [inspectorAttrId, setInspectorAttrId] = useState<string | null>(null);
+  const [inspectorAttrValue, setInspectorAttrValue] = useState('');
+  const [inspectorError, setInspectorError] = useState<string | null>(null);
 
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
@@ -355,6 +402,7 @@ function App() {
           nodeType: n.node_type,
           content: n.content,
           createdBy: n.created_by,
+          characterId: n.character_id ?? null,
         },
       }));
 
@@ -374,6 +422,12 @@ function App() {
 
       setNodes(flowNodes);
       setEdges(flowEdges);
+
+      // The inspector ties a character node to the cast by name, so the cast has
+      // to be at hand while the canvas is open, not only on the Characters tab.
+      const cast: Character[] = await invoke('get_characters', { storyId: story.id });
+      setCharacters(cast);
+
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
       setSelectedEdgeId(null);
@@ -851,6 +905,7 @@ function App() {
           nodeType: newDbNode.node_type,
           content: newDbNode.content,
           createdBy: newDbNode.created_by,
+          characterId: newDbNode.character_id ?? null,
         },
       };
 
@@ -1436,6 +1491,113 @@ function App() {
     }
   };
 
+  // The link is saved as soon as the picker changes, so the drawer never holds an
+  // unsaved link that looks applied.
+  const changeNodeCharacter = async (characterId: string) => {
+    if (!selectedNode) return;
+
+    setInspectorError(null);
+
+    try {
+      const updated: any = await invoke('set_node_character', {
+        nodeId: selectedNode.id,
+        characterId: characterId || null,
+        user: actor,
+      });
+
+      setNodes(nds =>
+        nds.map(node =>
+          node.id === updated.id
+            ? { ...node, data: { ...node.data, characterId: updated.character_id ?? null } }
+            : node
+        )
+      );
+    } catch (e) {
+      console.error('Failed to link a cast member to a node:', e);
+      setInspectorError(`Could not link the cast member: ${String(e)}`);
+    }
+  };
+
+  const startInspectorStat = (stat: CharacterStat) => {
+    setInspectorStatId(stat.id);
+    setInspectorStatValue(String(stat.value));
+    setInspectorError(null);
+  };
+
+  // Editing a stat from the canvas writes through the same command as the
+  // Characters tab, so the change is recorded exactly as if it were made there.
+  // The notes are passed back unchanged rather than being cleared.
+  const saveInspectorStat = async (stat: CharacterStat) => {
+    if (!inspectorCharacter) return;
+
+    const value = Number(inspectorStatValue);
+
+    if (!inspectorStatValue.trim() || !Number.isFinite(value)) {
+      setInspectorError('A stat value has to be a number.');
+      return;
+    }
+
+    try {
+      const updated: CharacterStat = await invoke('set_character_stat', {
+        characterId: inspectorCharacter.id,
+        statName: stat.stat_name,
+        value: Math.trunc(value),
+        notes: stat.notes,
+        user: actor,
+      });
+
+      setInspectorStats(prev =>
+        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
+          a.stat_name.localeCompare(b.stat_name)
+        )
+      );
+      setInspectorStatId(null);
+      setInspectorError(null);
+    } catch (e) {
+      console.error('Failed to save a stat from the inspector:', e);
+      setInspectorError(`Could not save stat: ${String(e)}`);
+    }
+  };
+
+  const startInspectorAttribute = (attribute: CharacterAttribute) => {
+    setInspectorAttrId(attribute.id);
+    setInspectorAttrValue(attribute.value);
+    setInspectorError(null);
+  };
+
+  const saveInspectorAttribute = async (attribute: CharacterAttribute) => {
+    if (!inspectorCharacter) return;
+
+    const value = inspectorAttrValue.trim();
+
+    if (!value) {
+      setInspectorError(
+        'An attribute needs a value — delete it on the Characters tab to remove it.'
+      );
+      return;
+    }
+
+    try {
+      const updated: CharacterAttribute = await invoke('set_character_attribute', {
+        characterId: inspectorCharacter.id,
+        attrName: attribute.attr_name,
+        value,
+        user: actor,
+      });
+
+      setInspectorAttributes(prev =>
+        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
+          a.attr_name.localeCompare(b.attr_name)
+        )
+      );
+      setInspectorAttrId(null);
+      setInspectorError(null);
+    } catch (e) {
+      console.error('Failed to save an attribute from the inspector:', e);
+      setInspectorError(`Could not save attribute: ${String(e)}`);
+    }
+  };
+
   const handleNodesChange = useCallback(
     (changes: any[]) => {
       onNodesChange(changes);
@@ -1457,6 +1619,50 @@ function App() {
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
 
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
+
+  // The node's stored link, resolved against the live cast. A link to a cast
+  // member that is not in the list is one in the trash; nothing is guessed from
+  // the node's label any more.
+  const inspectorCharacter =
+    selectedNode?.data.characterId
+      ? characters.find(character => character.id === selectedNode.data.characterId) ?? null
+      : null;
+
+  useEffect(() => {
+    if (!inspectorCharacter) {
+      setInspectorStats([]);
+      setInspectorAttributes([]);
+      setInspectorStatId(null);
+      setInspectorAttrId(null);
+      return;
+    }
+
+    const characterId = inspectorCharacter.id;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const [stats, attributes] = await Promise.all([
+          invoke<CharacterStat[]>('get_character_stats', { characterId }),
+          invoke<CharacterAttribute[]>('get_character_attributes', { characterId }),
+        ]);
+        if (cancelled) return;
+
+        setInspectorStats(stats);
+        setInspectorAttributes(attributes);
+        setInspectorError(null);
+      } catch (e) {
+        console.error('Failed to load the cast member for the inspector:', e);
+        if (!cancelled) setInspectorError(`Could not load the cast member: ${String(e)}`);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectorCharacter]);
 
   return (
     <div className="app-container">
@@ -1659,10 +1865,12 @@ function App() {
                   </button>
                   <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
                 </div>
-                <div style={{ width: '100%', height: 'calc(100% - 40px)' }}>
+                <div className="graph-body">
+                  <div className="graph-canvas">
                   <ReactFlow
                     nodes={nodes}
                     edges={edges}
+                    nodeTypes={flowNodeTypes}
                     onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
@@ -1723,45 +1931,186 @@ function App() {
                         </div>
                       </Panel>
                     )}
-                    {selectedNodeId && (
-                      <Panel position="bottom-left">
-                        <div className="node-editor">
-                          <div className="node-editor-heading">
-                            Edit node
-                            {selectedNode && (
-                              <span className={`legend ${selectedNode.data.nodeType}`}>
-                                {selectedNode.data.nodeType}
-                              </span>
-                            )}
-                          </div>
-                          <input
-                            className="node-editor-label"
-                            value={nodeLabelDraft}
-                            onChange={e => setNodeLabelDraft(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') saveNode();
-                              if (e.key === 'Escape') setSelectedNodeId(null);
-                            }}
-                          />
-                          <textarea
-                            className="node-editor-content"
-                            placeholder="Notes for this node (optional)"
-                            value={nodeContentDraft}
-                            onChange={e => setNodeContentDraft(e.target.value)}
-                          />
-                          {nodeEditError && (
-                            <div className="node-editor-error">{nodeEditError}</div>
-                          )}
-                          <div className="node-editor-actions">
-                            <button onClick={saveNode} disabled={!nodeLabelDraft.trim()}>
-                              Save
-                            </button>
-                            <button onClick={() => setSelectedNodeId(null)}>Close</button>
-                          </div>
-                        </div>
-                      </Panel>
-                    )}
                   </ReactFlow>
+                  </div>
+
+                  {selectedNode && (
+                    <aside className="node-drawer" aria-label="Node inspector">
+                      <div className="node-drawer-head">
+                        <div className="node-drawer-heading">
+                          <span className="node-drawer-title">Inspector</span>
+                          <span className={`legend ${selectedNode.data.nodeType}`}>
+                            {selectedNode.data.nodeType}
+                          </span>
+                        </div>
+                        <button
+                          className="node-drawer-close"
+                          aria-label="Close inspector"
+                          onClick={() => setSelectedNodeId(null)}
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <label className="node-drawer-label" htmlFor="inspector-label">
+                        Label
+                      </label>
+                      <input
+                        id="inspector-label"
+                        className="node-editor-label"
+                        value={nodeLabelDraft}
+                        onChange={e => setNodeLabelDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') saveNode();
+                          if (e.key === 'Escape') setSelectedNodeId(null);
+                        }}
+                      />
+
+                      <label className="node-drawer-label" htmlFor="inspector-notes">
+                        Notes
+                      </label>
+                      <textarea
+                        id="inspector-notes"
+                        className="node-editor-content"
+                        placeholder="Notes for this node (optional)"
+                        value={nodeContentDraft}
+                        onChange={e => setNodeContentDraft(e.target.value)}
+                      />
+
+                      {nodeEditError && (
+                        <div className="node-editor-error">{nodeEditError}</div>
+                      )}
+
+                      <div className="node-editor-actions">
+                        <button onClick={saveNode} disabled={!nodeLabelDraft.trim()}>
+                          Save
+                        </button>
+                        <button onClick={() => setSelectedNodeId(null)}>Close</button>
+                      </div>
+
+                      <label className="node-drawer-label" htmlFor="inspector-cast">
+                        Cast member
+                      </label>
+                      <select
+                        id="inspector-cast"
+                        className="node-drawer-select"
+                        value={selectedNode.data.characterId ?? ''}
+                        onChange={e => changeNodeCharacter(e.target.value)}
+                      >
+                        <option value="">Not linked</option>
+                        {characters.map(character => (
+                          <option key={character.id} value={character.id}>
+                            {character.name}
+                          </option>
+                        ))}
+                        {selectedNode.data.characterId &&
+                          !characters.some(
+                            character => character.id === selectedNode.data.characterId
+                          ) && (
+                            <option value={selectedNode.data.characterId}>
+                              Linked cast member (not in the cast)
+                            </option>
+                          )}
+                      </select>
+
+                      {selectedNode.data.characterId && (
+                        <section className="node-drawer-cast" aria-label="Cast numbers">
+                          {inspectorCharacter ? (
+                            <>
+                              <div className="node-drawer-section">
+                                {inspectorCharacter.name}
+                              </div>
+
+                              {inspectorStats.map(stat => (
+                                <div className="node-drawer-row" key={stat.id}>
+                                  <span className="node-drawer-key">{stat.stat_name}</span>
+                                  {inspectorStatId === stat.id ? (
+                                    <>
+                                      <input
+                                        className="node-drawer-input"
+                                        type="number"
+                                        aria-label={`${stat.stat_name} value`}
+                                        value={inspectorStatValue}
+                                        autoFocus
+                                        onChange={e => setInspectorStatValue(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') saveInspectorStat(stat);
+                                          if (e.key === 'Escape') setInspectorStatId(null);
+                                        }}
+                                      />
+                                      <button onClick={() => saveInspectorStat(stat)}>Save</button>
+                                      <button onClick={() => setInspectorStatId(null)}>
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      className="node-drawer-value"
+                                      title="Change this stat"
+                                      onClick={() => startInspectorStat(stat)}
+                                    >
+                                      {stat.value}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+
+                              {inspectorAttributes.map(attribute => (
+                                <div className="node-drawer-row" key={attribute.id}>
+                                  <span className="node-drawer-key">{attribute.attr_name}</span>
+                                  {inspectorAttrId === attribute.id ? (
+                                    <>
+                                      <input
+                                        className="node-drawer-input"
+                                        aria-label={`${attribute.attr_name} value`}
+                                        value={inspectorAttrValue}
+                                        autoFocus
+                                        onChange={e => setInspectorAttrValue(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') saveInspectorAttribute(attribute);
+                                          if (e.key === 'Escape') setInspectorAttrId(null);
+                                        }}
+                                      />
+                                      <button onClick={() => saveInspectorAttribute(attribute)}>
+                                        Save
+                                      </button>
+                                      <button onClick={() => setInspectorAttrId(null)}>
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      className="node-drawer-value"
+                                      title="Change this attribute"
+                                      onClick={() => startInspectorAttribute(attribute)}
+                                    >
+                                      {attribute.value}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+
+                              {inspectorStats.length === 0 &&
+                                inspectorAttributes.length === 0 && (
+                                  <p className="node-drawer-hint">
+                                    This cast member has no stats or attributes yet.
+                                  </p>
+                                )}
+
+                              {inspectorError && (
+                                <div className="node-editor-error">{inspectorError}</div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="node-drawer-hint">
+                              That cast member is not in this story's live cast — it is probably in
+                              the trash. Restore it on the Trash tab to see its numbers here.
+                            </p>
+                          )}
+                        </section>
+                      )}
+                    </aside>
+                  )}
                 </div>
               </>
             )}

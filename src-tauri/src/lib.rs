@@ -206,6 +206,17 @@ fn update_graph_node(
 }
 
 #[tauri::command]
+fn set_node_character(
+    db: tauri::State<'_, Db>,
+    node_id: String,
+    character_id: Option<String>,
+    user: String,
+) -> Result<Node, String> {
+    db.set_node_character(&node_id, character_id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn create_graph_edge(
     db: tauri::State<'_, Db>,
     story_id: String,
@@ -467,6 +478,7 @@ pub fn run() {
             get_graph_nodes,
             update_graph_node_position,
             update_graph_node,
+            set_node_character,
             create_graph_edge,
             update_graph_edge,
             get_graph_edges,

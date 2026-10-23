@@ -191,6 +191,178 @@ body {
   flex: 1;
   position: relative;
   background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The canvas and the inspector sit side by side, so the node being edited stays
+   in view instead of being covered by a floating box. */
+.graph-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.graph-canvas {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-drawer {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: #252526;
+  border-left: 1px solid #3c3c3c;
+  overflow-y: auto;
+  animation: drawer-in 140ms ease-out;
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.node-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-drawer-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-drawer-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #999;
+}
+
+.node-drawer-close {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.node-drawer-close:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.node-drawer-label {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.node-drawer-cast {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+
+.node-drawer-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ddd;
+}
+
+.node-drawer-note {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #777;
+}
+
+.node-drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.node-drawer-key {
+  min-width: 78px;
+  color: #bbb;
+}
+
+/* The value doubles as the button that opens it for editing. */
+.node-drawer-row .node-drawer-value {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  color: #e8e8e8;
+  border-radius: 3px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.node-drawer-row .node-drawer-value:hover {
+  border-color: #0e639c;
+}
+
+.node-drawer-row button {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #bbb;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.node-drawer-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.node-drawer-input,
+.node-drawer-select {
+  flex: 1;
+  min-width: 0;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.node-drawer-select {
+  width: 100%;
+  padding: 4px 6px;
+}
+
+.node-drawer-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8a8a8a;
 }
 
 .graph-toolbar {
@@ -257,6 +429,42 @@ body {
   border-radius: 2px;
   background: #333;
   color: #aaa;
+}
+
+/* The legend has to match the nodes, or it is a list of words rather than a key. */
+.legend.chapter {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+}
+
+.legend.idea {
+  background: rgba(242, 193, 78, 0.18);
+  color: #f2c14e;
+}
+
+.legend.character {
+  background: rgba(94, 200, 192, 0.18);
+  color: #7fdbd3;
+}
+
+.legend.location {
+  background: rgba(123, 201, 111, 0.18);
+  color: #9fdc93;
+}
+
+.legend.event {
+  background: rgba(224, 123, 123, 0.18);
+  color: #eda3a3;
+}
+
+.legend.plot {
+  background: rgba(106, 169, 240, 0.18);
+  color: #9cc4f5;
+}
+
+.legend.misc {
+  background: rgba(154, 154, 154, 0.18);
+  color: #bdbdbd;
 }
 
 /* Story row controls */
@@ -985,13 +1193,70 @@ body {
 
 /* React Flow customizations */
 .react-flow__node {
-  background: #2d2d2d;
-  border: 1px solid #555;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* A node's type is its colour and its caption, so the board is readable at a
+   glance. The wrapper above stays out of the way and the card is drawn here. */
+.graph-node {
+  --accent: #9a9a9a;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 130px;
+  padding: 6px 10px 7px;
+  background: #26262a;
+  border: 1px solid #3a3a3f;
+  border-left: 3px solid var(--accent);
   border-radius: 6px;
-  padding: 8px 10px;
-  color: #ddd;
+  color: #e8e8e8;
   font-size: 13px;
-  min-width: 120px;
+}
+
+.graph-node.chapter {
+  --accent: #a78bfa;
+}
+
+.graph-node.idea {
+  --accent: #f2c14e;
+}
+
+.graph-node.character {
+  --accent: #5ec8c0;
+}
+
+.graph-node.location {
+  --accent: #7bc96f;
+}
+
+.graph-node.event {
+  --accent: #e07b7b;
+}
+
+.graph-node.plot {
+  --accent: #6aa9f0;
+}
+
+.graph-node.misc {
+  --accent: #9a9a9a;
+}
+
+.graph-node-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.graph-node-label {
+  line-height: 1.25;
+}
+
+.react-flow__node.selected .graph-node {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .react-flow__edge-label {

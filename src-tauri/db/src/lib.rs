@@ -22,7 +22,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -613,8 +613,8 @@ impl Db {
         let tx = guard.transaction()?;
 
         tx.execute(
-            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
             params![&id, &story_id, &node_type, &label, &content, pos_x, pos_y, &created_by, &timestamp, &timestamp],
         )?;
 
@@ -645,6 +645,9 @@ impl Db {
             created_by,
             created_at: timestamp.clone(),
             updated_at: timestamp,
+            // A node starts unlinked; the inspector is where it is pointed at
+            // someone, which gives that change its own history entry.
+            character_id: None,
         })
     }
 
@@ -719,23 +722,10 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
                  FROM nodes WHERE id = ?1",
                 params![id],
-                |row| {
-                    Ok(Node {
-                        id: row.get(0)?,
-                        story_id: row.get(1)?,
-                        node_type: row.get(2)?,
-                        label: row.get(3)?,
-                        content: row.get(4)?,
-                        pos_x: row.get(5)?,
-                        pos_y: row.get(6)?,
-                        created_by: row.get(7)?,
-                        created_at: row.get(8)?,
-                        updated_at: row.get(9)?,
-                    })
-                },
+                node_row,
             )
             .optional()?
             .ok_or(DbError::NotFound("node"))?;
@@ -794,30 +784,137 @@ impl Db {
         })
     }
 
+    /// Points a node at a cast member, or clears the link with `None`.
+    ///
+    /// The link is the character's id, so renaming either side leaves it intact —
+    /// which is the whole reason it is not a name match. The history records the
+    /// names, because a reader wants to see "Rook → Wren", not two UUIDs.
+    pub fn set_node_character(
+        &self,
+        node_id: &str,
+        character_id: Option<String>,
+        user: String,
+    ) -> DbResult<Node> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let (story_id, previous, deleted_at) = tx
+            .query_row(
+                "SELECT story_id, character_id, deleted_at FROM nodes WHERE id = ?1",
+                params![node_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("node"))?;
+
+        if deleted_at.is_some() {
+            return Err(DbError::Invalid(
+                "that node is in the trash; restore it before linking a cast member".to_string(),
+            ));
+        }
+
+        // Everything the new link has to be checked against, read before anything
+        // is written, so a refusal leaves the node exactly as it was.
+        let next_name = match &character_id {
+            None => None,
+            Some(id) => {
+                let (character_story, name, character_deleted_at) = tx
+                    .query_row(
+                        "SELECT story_id, name, deleted_at FROM characters WHERE id = ?1",
+                        params![id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+                    .ok_or_else(|| {
+                        DbError::Invalid(
+                            "that cast member is no longer in the database".to_string(),
+                        )
+                    })?;
+
+                if character_deleted_at.is_some() {
+                    return Err(DbError::Invalid(
+                        "that cast member is in the trash; restore it before linking nodes to it"
+                            .to_string(),
+                    ));
+                }
+
+                if character_story != story_id {
+                    return Err(DbError::Invalid(
+                        "a node can only be linked to a cast member of its own story".to_string(),
+                    ));
+                }
+
+                Some(name)
+            }
+        };
+
+        // Re-selecting the same cast member is not a change, and writes nothing.
+        if previous == character_id {
+            return Ok(read_node(&tx, node_id)?.ok_or(DbError::NotFound("node"))?);
+        }
+
+        // The name as it reads now, so the entry says what was replaced even if
+        // that character has since been renamed or trashed.
+        let previous_name: Option<String> = match &previous {
+            Some(id) => tx
+                .query_row("SELECT name FROM characters WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?,
+            None => None,
+        };
+
+        tx.execute(
+            "UPDATE nodes SET character_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![&character_id, &timestamp, node_id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "node",
+                entity_id: node_id,
+                action: "update",
+                field_changed: Some("character"),
+                old_value: previous_name,
+                new_value: next_name,
+                changed_by: &user,
+            },
+        )?;
+
+        let updated = read_node(&tx, node_id)?.ok_or(DbError::NotFound("node"))?;
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
     pub fn list_nodes(&self, story_id: &str) -> DbResult<Vec<Node>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT n.id, n.story_id, n.node_type, n.label, n.content, n.pos_x, n.pos_y,
-                    n.created_by, n.created_at, n.updated_at
+                    n.created_by, n.created_at, n.updated_at, n.character_id
              FROM nodes n JOIN stories s ON s.id = n.story_id
              WHERE n.story_id = ?1 AND n.deleted_at IS NULL AND s.deleted_at IS NULL
              ORDER BY n.created_at",
         )?;
 
-        let rows = stmt.query_map(params![story_id], |row| {
-            Ok(Node {
-                id: row.get(0)?,
-                story_id: row.get(1)?,
-                node_type: row.get(2)?,
-                label: row.get(3)?,
-                content: row.get(4)?,
-                pos_x: row.get(5)?,
-                pos_y: row.get(6)?,
-                created_by: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![story_id], node_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
@@ -1035,7 +1132,7 @@ impl Db {
             |row| row.get(0),
         )?;
 
-        let entries = query_audit(
+        let mut entries = query_audit(
             &guard,
             story_id,
             entity_type,
@@ -1043,6 +1140,14 @@ impl Db {
             Some(limit),
             offset,
         )?;
+
+        // Each entry is checked against the value its field holds now, so the tab
+        // can say that a revert is no longer possible — and why — before a click.
+        for entry in &mut entries {
+            let check = check_revert(&guard, entry)?;
+            entry.revert_state = check.state();
+            entry.revert_reason = check.reason();
+        }
 
         Ok(AuditPage { entries, total })
     }
@@ -1134,23 +1239,10 @@ impl Db {
 
         let nodes = {
             let mut stmt = guard.prepare(
-                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at
+                "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
                  FROM nodes WHERE story_id = ?1 AND deleted_at IS NULL ORDER BY created_at",
             )?;
-            let rows = stmt.query_map(params![story_id], |row| {
-                Ok(Node {
-                    id: row.get(0)?,
-                    story_id: row.get(1)?,
-                    node_type: row.get(2)?,
-                    label: row.get(3)?,
-                    content: row.get(4)?,
-                    pos_x: row.get(5)?,
-                    pos_y: row.get(6)?,
-                    created_by: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                })
-            })?;
+            let rows = stmt.query_map(params![story_id], node_row)?;
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
@@ -1929,6 +2021,36 @@ impl Db {
             ));
         };
 
+        // A link to a row that is about to stop existing has nothing left to point
+        // at, so it goes with the character, and each node's history says the link
+        // was removed. Trashing one keeps its links: a restore brings them back.
+        let linked = {
+            let mut stmt = tx.prepare("SELECT id FROM nodes WHERE character_id = ?1")?;
+            let rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<Vec<String>>>()?
+        };
+
+        for node_id in linked {
+            tx.execute(
+                "UPDATE nodes SET character_id = NULL WHERE id = ?1",
+                params![&node_id],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "node",
+                    entity_id: &node_id,
+                    action: "update",
+                    field_changed: Some("character"),
+                    old_value: Some(name.clone()),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
         tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
 
         log_audit(
@@ -2200,107 +2322,33 @@ impl Db {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
-        let found = tx
+        let entry = tx
             .query_row(
-                "SELECT story_id, entity_type, entity_id, action, field_changed, old_value, new_value
+                "SELECT id, entity_type, entity_id, action, field_changed, old_value, new_value, changed_by, changed_at, story_id
                  FROM audit_log WHERE id = ?1",
                 params![entry_id],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<String>>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, Option<String>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
-                        row.get::<_, Option<String>>(6)?,
-                    ))
-                },
+                audit_row,
             )
             .optional()?
             .ok_or(DbError::NotFound("history entry"))?;
 
-        let (story_id, entity_type, entity_id, action, field, restore, expected) = found;
-
-        // Only an edit keeps the value it replaced. Everything else is already
-        // undone somewhere else, or cannot be undone at all.
-        match action.as_str() {
-            "update" | "revert" => {}
-            "create" => {
-                return Err(DbError::Invalid(
-                    "a creation has nothing to put back; delete it and it goes to the trash"
-                        .to_string(),
-                ))
+        // The same check the Audit tab reads its button state from, so a button
+        // that looks available cannot then be refused, or the other way round.
+        let target = match check_revert(&tx, &entry)? {
+            RevertCheck::Ready { target } => target,
+            RevertCheck::Unchanged => return Ok(false),
+            RevertCheck::Nothing { reason } | RevertCheck::Blocked { reason, .. } => {
+                return Err(DbError::Invalid(reason))
             }
-            "soft_delete" => {
-                return Err(DbError::Invalid(
-                    "a deletion is undone from the trash, not from the history".to_string(),
-                ))
-            }
-            "restore" => {
-                return Err(DbError::Invalid(
-                    "that entry is already a restore, so there is nothing to undo".to_string(),
-                ))
-            }
-            "purge" => {
-                return Err(DbError::Invalid(
-                    "that item was deleted for good, so there is nothing to put back".to_string(),
-                ))
-            }
-            other => return Err(DbError::Invalid(format!("a {other} cannot be reverted"))),
-        }
-
-        let Some(field) = field else {
-            return Err(DbError::Invalid(
-                "that entry did not record which field changed".to_string(),
-            ));
         };
 
-        let Some(spec) = revert_spec(&entity_type, &field) else {
-            return Err(DbError::Invalid(format!(
-                "a change to {entity_type} {field} has nothing to put back"
-            )));
-        };
-
-        let read = format!(
-            "SELECT {} AS value, ({}) AS live FROM {} WHERE t.id = ?1",
-            spec.current_sql(),
-            spec.live,
-            spec.from
-        );
-
-        let row = tx
-            .query_row(&read, params![&entity_id], |row| {
-                Ok((row.get::<_, Option<String>>(0)?, row.get::<_, bool>(1)?))
-            })
-            .optional()?;
-
-        let Some((current, live)) = row else {
-            return Err(DbError::Invalid(
-                "that item is no longer in the database, so there is nothing to put back"
-                    .to_string(),
-            ));
-        };
-
-        // A row in the trash would take the change with it into hiding, so it has
-        // to come back first.
-        if !live {
-            return Err(DbError::Invalid(
-                "that item is in the trash; restore it before reverting an edit".to_string(),
-            ));
-        }
-
-        if same_value(spec.kind, current.as_deref(), restore.as_deref()) {
-            return Ok(false);
-        }
-
-        if !same_value(spec.kind, current.as_deref(), expected.as_deref()) {
-            return Err(DbError::Invalid(format!(
-                "{field} changed after that entry — it now reads \"{}\", so reverting would discard that edit",
-                current.as_deref().unwrap_or("nothing")
-            )));
-        }
-
+        let RevertTarget {
+            spec,
+            restore,
+            current,
+        } = target;
+        let entity_id = &entry.entity_id;
+        let field = entry.field_changed.clone().unwrap_or_default();
         let timestamp = now();
 
         match spec.kind {
@@ -2311,12 +2359,12 @@ impl Db {
                             "UPDATE {} SET {} = ?1, updated_at = ?2 WHERE id = ?3",
                             spec.table, spec.column
                         ),
-                        params![restore, &timestamp, &entity_id],
+                        params![restore, &timestamp, entity_id],
                     )?;
                 } else {
                     tx.execute(
                         &format!("UPDATE {} SET {} = ?1 WHERE id = ?2", spec.table, spec.column),
-                        params![restore, &entity_id],
+                        params![restore, entity_id],
                     )?;
                 }
             }
@@ -2333,7 +2381,7 @@ impl Db {
                         "UPDATE {} SET {} = ?1, updated_at = ?2 WHERE id = ?3",
                         spec.table, spec.column
                     ),
-                    params![value, &timestamp, &entity_id],
+                    params![value, &timestamp, entity_id],
                 )?;
             }
             RevertKind::Point => {
@@ -2348,7 +2396,7 @@ impl Db {
                         "UPDATE {} SET {} = ?1, {} = ?2, updated_at = ?3 WHERE id = ?4",
                         spec.table, spec.column, pair
                     ),
-                    params![x, y, &timestamp, &entity_id],
+                    params![x, y, &timestamp, entity_id],
                 )?;
             }
         }
@@ -2356,9 +2404,9 @@ impl Db {
         log_audit(
             &tx,
             AuditRecord {
-                story_id: story_id.as_deref(),
-                entity_type: &entity_type,
-                entity_id: &entity_id,
+                story_id: entry.story_id.as_deref(),
+                entity_type: &entry.entity_type,
+                entity_id,
                 action: "revert",
                 field_changed: Some(field.as_str()),
                 old_value: current,
@@ -2503,8 +2551,8 @@ impl Db {
 
         for node in &export.nodes {
             tx.execute(
-                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     &nodes[&node.id],
                     &story_id,
@@ -2515,7 +2563,11 @@ impl Db {
                     node.pos_y,
                     &node.created_by,
                     &node.created_at,
-                    &node.updated_at
+                    &node.updated_at,
+                    // The linked cast member gets a new id with the rest of the story,
+                    // so the link has to be remapped or the copy would point at the
+                    // source story's row.
+                    node.character_id.as_ref().and_then(|id| characters.get(id)),
                 ],
             )?;
         }
@@ -2666,6 +2718,11 @@ pub struct Node {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+    /// The cast member this node points at, if any. Kept as an id rather than a
+    /// name, so renaming either side leaves the link alone. Absent from exports
+    /// written before schema v5, hence the default.
+    #[serde(default)]
+    pub character_id: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -2693,6 +2750,35 @@ pub struct AuditEntry {
     pub new_value: Option<String>,
     pub changed_by: String,
     pub changed_at: String,
+    /// Whether this entry can still be put back, worked out when the history is
+    /// read. Not stored: the answer changes as the story moves on, so it is
+    /// derived per request. `None` means the entry has nothing to put back at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revert_state: Option<RevertState>,
+    /// What a revert would say if it were attempted now — the same sentence the
+    /// engine refuses with — so the tab can explain itself before it is clicked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revert_reason: Option<String>,
+}
+
+/// Whether one history entry's field can still be put back.
+///
+/// The Audit tab shows this on the Revert button, so a reader learns that an edit
+/// is no longer undoable — and why — without clicking first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevertState {
+    /// The field still holds what the entry produced; the older value can be written.
+    Available,
+    /// The field moved on after this entry, so writing the older value would
+    /// discard that newer edit.
+    ChangedSince,
+    /// The row is in the trash, where the change would be hidden with it.
+    InTrash,
+    /// The row is no longer in the database, so there is nothing to write to.
+    Gone,
+    /// The field already holds the value a revert would write, so it would be a no-op.
+    AlreadyBack,
 }
 
 /// A window of history together with how many entries the filter matches in total.
@@ -2792,6 +2878,9 @@ struct RevertSpec {
     live: &'static str,
     /// Whether the table has an `updated_at` to bump.
     touched: bool,
+    /// Whether the column may be empty. On one that may not, an entry with no
+    /// earlier value recorded nothing to put back rather than an empty value.
+    nullable: bool,
     kind: RevertKind,
 }
 
@@ -2836,7 +2925,23 @@ fn text_spec(
         from,
         live,
         touched,
+        nullable: false,
         kind: RevertKind::Text,
+    }
+}
+
+/// A text field that may legitimately have been empty before the change, so an
+/// empty earlier value is a value it can go back to.
+fn optional_text_spec(
+    table: &'static str,
+    column: &'static str,
+    from: &'static str,
+    live: &'static str,
+    touched: bool,
+) -> RevertSpec {
+    RevertSpec {
+        nullable: true,
+        ..text_spec(table, column, from, live, touched)
     }
 }
 
@@ -2853,6 +2958,7 @@ fn number_spec(
         from,
         live,
         touched: true,
+        nullable: false,
         kind: RevertKind::Number,
     }
 }
@@ -2868,7 +2974,7 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
             text_spec("characters", "name", CHARACTER_FROM, OWN_LIVE, true)
         }
         ("character", "description") => {
-            text_spec("characters", "description", CHARACTER_FROM, OWN_LIVE, true)
+            optional_text_spec("characters", "description", CHARACTER_FROM, OWN_LIVE, true)
         }
         ("character_stat", "value") => {
             number_spec("character_stats", "value", STAT_FROM, CHILD_LIVE)
@@ -2881,7 +2987,7 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
             true,
         ),
         ("node", "label") => text_spec("nodes", "label", NODE_FROM, OWN_LIVE, true),
-        ("node", "content") => text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
+        ("node", "content") => optional_text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
         ("node", "position") => RevertSpec {
             table: "nodes",
             column: "pos_x",
@@ -2889,12 +2995,13 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
             from: NODE_FROM,
             live: OWN_LIVE,
             touched: true,
+            nullable: false,
             kind: RevertKind::Point,
         },
         // Connections have no `updated_at` to bump.
-        ("edge", "label") => text_spec("edges", "label", EDGE_FROM, OWN_LIVE, false),
+        ("edge", "label") => optional_text_spec("edges", "label", EDGE_FROM, OWN_LIVE, false),
         ("edge", "relation_type") => {
-            text_spec("edges", "relation_type", EDGE_FROM, OWN_LIVE, false)
+            optional_text_spec("edges", "relation_type", EDGE_FROM, OWN_LIVE, false)
         }
         _ => return None,
     })
@@ -2928,6 +3035,178 @@ fn same_value(kind: RevertKind, left: Option<&str>, right: Option<&str>) -> bool
         },
         RevertKind::Text => left == right,
     }
+}
+
+/// What one entry can still do, once its field has been read from the row.
+enum RevertCheck {
+    /// The entry has nothing to put back at all: a creation, a deletion, a purge,
+    /// a restore, or a field the app never writes back. No button is shown.
+    Nothing { reason: String },
+    /// A revert is refused until something else is done — the row is gone, in the
+    /// trash, or the field moved on.
+    Blocked {
+        state: RevertState,
+        reason: String,
+    },
+    /// The field already holds the value a revert would write.
+    Unchanged,
+    /// The older value can be written back.
+    Ready { target: RevertTarget },
+}
+
+/// The values a revert needs once its field has been read.
+struct RevertTarget {
+    spec: RevertSpec,
+    /// The value to write back, which may legitimately be empty.
+    restore: Option<String>,
+    /// What the field holds now.
+    current: Option<String>,
+}
+
+impl RevertCheck {
+    fn nothing(reason: impl Into<String>) -> Self {
+        RevertCheck::Nothing {
+            reason: reason.into(),
+        }
+    }
+
+    fn blocked(state: RevertState, reason: impl Into<String>) -> Self {
+        RevertCheck::Blocked {
+            state,
+            reason: reason.into(),
+        }
+    }
+
+    /// The state the Audit tab shows beside the entry, if it shows one at all.
+    fn state(&self) -> Option<RevertState> {
+        match self {
+            RevertCheck::Nothing { .. } => None,
+            RevertCheck::Blocked { state, .. } => Some(*state),
+            RevertCheck::Unchanged => Some(RevertState::AlreadyBack),
+            RevertCheck::Ready { .. } => Some(RevertState::Available),
+        }
+    }
+
+    /// What a click would be answered with, when the answer is not a revert.
+    fn reason(&self) -> Option<String> {
+        match self {
+            RevertCheck::Nothing { .. } | RevertCheck::Ready { .. } => None,
+            RevertCheck::Blocked { reason, .. } => Some(reason.clone()),
+            RevertCheck::Unchanged => Some(ALREADY_BACK.to_string()),
+        }
+    }
+}
+
+const ALREADY_BACK: &str =
+    "that field already holds its earlier value, so there is nothing to put back";
+
+/// Reads one entry's field and decides whether its earlier value can still be
+/// written back.
+///
+/// This is where the rules live. The Audit tab asks it about every entry it shows,
+/// and `revert_change` asks it again before writing, so a button and the engine
+/// cannot disagree about what is still possible.
+fn check_revert(conn: &Connection, entry: &AuditEntry) -> SqliteResult<RevertCheck> {
+    // Only an edit keeps the value it replaced. Everything else is undone
+    // somewhere else, or cannot be undone at all.
+    match entry.action.as_str() {
+        "update" | "revert" => {}
+        "create" => {
+            return Ok(RevertCheck::nothing(
+                "a creation has nothing to put back; delete it and it goes to the trash",
+            ))
+        }
+        "soft_delete" => {
+            return Ok(RevertCheck::nothing(
+                "a deletion is undone from the trash, not from the history",
+            ))
+        }
+        "restore" => {
+            return Ok(RevertCheck::nothing(
+                "that entry is already a restore, so there is nothing to undo",
+            ))
+        }
+        "purge" => {
+            return Ok(RevertCheck::nothing(
+                "that item was deleted for good, so there is nothing to put back",
+            ))
+        }
+        other => return Ok(RevertCheck::nothing(format!("a {other} cannot be reverted"))),
+    }
+
+    let Some(field) = entry.field_changed.as_deref() else {
+        return Ok(RevertCheck::nothing(
+            "that entry did not record which field changed",
+        ));
+    };
+
+    let Some(spec) = revert_spec(&entry.entity_type, field) else {
+        return Ok(RevertCheck::nothing(format!(
+            "a change to {} {field} has nothing to put back",
+            entry.entity_type
+        )));
+    };
+
+    // On a column that cannot be empty, an entry with no earlier value recorded
+    // nothing to put back rather than an empty value.
+    if !spec.nullable && entry.old_value.is_none() {
+        return Ok(RevertCheck::nothing(format!(
+            "that entry did not record what {field} was before it changed"
+        )));
+    }
+
+    let kind = spec.kind;
+
+    let read = format!(
+        "SELECT {} AS value, ({}) AS live FROM {} WHERE t.id = ?1",
+        spec.current_sql(),
+        spec.live,
+        spec.from
+    );
+
+    let row = conn
+        .query_row(&read, params![&entry.entity_id], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, bool>(1)?))
+        })
+        .optional()?;
+
+    let Some((current, live)) = row else {
+        return Ok(RevertCheck::blocked(
+            RevertState::Gone,
+            "that item is no longer in the database, so there is nothing to put back",
+        ));
+    };
+
+    // A row in the trash would take the change with it into hiding, so it has to
+    // come back first.
+    if !live {
+        return Ok(RevertCheck::blocked(
+            RevertState::InTrash,
+            "that item is in the trash; restore it before reverting an edit",
+        ));
+    }
+
+    if same_value(kind, current.as_deref(), entry.old_value.as_deref()) {
+        return Ok(RevertCheck::Unchanged);
+    }
+
+    if !same_value(kind, current.as_deref(), entry.new_value.as_deref()) {
+        return Ok(RevertCheck::blocked(
+            RevertState::ChangedSince,
+            format!(
+                "{field} changed after that entry — it now reads \"{}\", so reverting would discard that edit",
+                current.as_deref().unwrap_or("nothing")
+            ),
+        ));
+    }
+
+    Ok(RevertCheck::Ready {
+        target: RevertTarget {
+            spec,
+            restore: entry.old_value.clone(),
+            current,
+        },
+    })
 }
 
 fn now() -> String {
@@ -2988,22 +3267,57 @@ fn query_audit(
     }
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
-        Ok(AuditEntry {
-            id: row.get(0)?,
-            entity_type: row.get(1)?,
-            entity_id: row.get(2)?,
-            action: row.get(3)?,
-            field_changed: row.get(4)?,
-            old_value: row.get(5)?,
-            new_value: row.get(6)?,
-            changed_by: row.get(7)?,
-            changed_at: row.get(8)?,
-            story_id: row.get(9)?,
-        })
-    })?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(args), audit_row)?;
 
     rows.collect()
+}
+
+/// One row in the column order `query_audit` selects.
+fn audit_row(row: &rusqlite::Row<'_>) -> SqliteResult<AuditEntry> {
+    Ok(AuditEntry {
+        id: row.get(0)?,
+        entity_type: row.get(1)?,
+        entity_id: row.get(2)?,
+        action: row.get(3)?,
+        field_changed: row.get(4)?,
+        old_value: row.get(5)?,
+        new_value: row.get(6)?,
+        changed_by: row.get(7)?,
+        changed_at: row.get(8)?,
+        story_id: row.get(9)?,
+        // Worked out against the live row by whoever asked for the entry, not
+        // stored, so a copy of the history never carries a stale answer.
+        revert_state: None,
+        revert_reason: None,
+    })
+}
+
+/// Every node read selects its columns in this order.
+fn node_row(row: &rusqlite::Row<'_>) -> SqliteResult<Node> {
+    Ok(Node {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        node_type: row.get(2)?,
+        label: row.get(3)?,
+        content: row.get(4)?,
+        pos_x: row.get(5)?,
+        pos_y: row.get(6)?,
+        created_by: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        character_id: row.get(10)?,
+    })
+}
+
+/// One node as stored, live or in the trash.
+fn read_node(conn: &Connection, id: &str) -> SqliteResult<Option<Node>> {
+    conn.query_row(
+        "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id
+         FROM nodes WHERE id = ?1",
+        params![id],
+        node_row,
+    )
+    .optional()
 }
 
 fn log_audit(conn: &Connection, record: AuditRecord<'_>) -> SqliteResult<()> {
@@ -3058,6 +3372,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
 
     if version < 4 {
         conn.execute_batch(MIGRATION_004)?;
+    }
+
+    if version < 5 {
+        conn.execute_batch(MIGRATION_005)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -3194,6 +3512,16 @@ const MIGRATION_003: &str = "
     ALTER TABLE characters ADD COLUMN deleted_at TEXT;
     ALTER TABLE nodes ADD COLUMN deleted_at TEXT;
     ALTER TABLE edges ADD COLUMN deleted_at TEXT;
+";
+
+/// Schema v5: a node can point at a cast member.
+///
+/// Deliberately not a foreign key: a trashed character keeps its links, so
+/// restoring it brings them back, and purging one clears them explicitly. A
+/// foreign key with `ON DELETE SET NULL` would also need the pragma on for every
+/// connection, which this app does not rely on.
+const MIGRATION_005: &str = "
+    ALTER TABLE nodes ADD COLUMN character_id TEXT;
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -5358,6 +5686,148 @@ mod tests {
         assert_eq!(db.list_stories().unwrap()[0].title, "Ash");
     }
 
+    /// The state and the words the Audit tab shows for one entry, from a page.
+    fn entry_state(db: &Db, id: &str) -> (Option<RevertState>, Option<String>) {
+        let entry = db
+            .get_audit_page(None, None, None, 500, 0)
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .expect("the entry should be on the page");
+
+        (entry.revert_state, entry.revert_reason)
+    }
+
+    #[test]
+    fn the_history_says_which_edits_can_still_be_put_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let first = latest_entry(&db, "character", &character.id, "name");
+
+        db.update_character(&character.id, "Sable".into(), None, "Ada".into())
+            .unwrap();
+        let second = latest_entry(&db, "character", &character.id, "name");
+
+        // The newest edit is still undoable; the one under it was overtaken.
+        assert_eq!(entry_state(&db, &second.id).0, Some(RevertState::Available));
+
+        let (state, reason) = entry_state(&db, &first.id);
+        assert_eq!(state, Some(RevertState::ChangedSince));
+        assert!(reason.as_deref().unwrap_or_default().contains("Sable"));
+
+        // A creation has no state at all, which is what keeps its button away.
+        let creation = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "create")
+            .unwrap();
+        assert_eq!(entry_state(&db, &creation.id), (None, None));
+    }
+
+    #[test]
+    fn an_entry_whose_field_already_moved_back_is_not_offered() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+
+        assert!(
+            db.revert_change(
+                &latest_entry(&db, "character", &character.id, "name").id,
+                "Ada".into()
+            )
+            .unwrap()
+        );
+
+        // The rename is undone: its own entry now has nothing to write.
+        let rename = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "update")
+            .unwrap();
+        let (state, reason) = entry_state(&db, &rename.id);
+        assert_eq!(state, Some(RevertState::AlreadyBack));
+        assert!(reason.as_deref().unwrap_or_default().contains("already holds"));
+
+        // The revert that undid it can itself be put back.
+        let revert = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "revert")
+            .unwrap();
+        assert_eq!(entry_state(&db, &revert.id).0, Some(RevertState::Available));
+    }
+
+    #[test]
+    fn an_entry_in_the_trash_or_a_purged_one_says_why_it_cannot_be_reverted() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let rename = latest_entry(&db, "character", &character.id, "name");
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+
+        let (state, reason) = entry_state(&db, &rename.id);
+        assert_eq!(state, Some(RevertState::InTrash));
+        assert!(reason.as_deref().unwrap_or_default().contains("restore it"));
+
+        // A deletion is not something to undo here, so it gets no state either.
+        let deletion = db
+            .get_audit_log(None, Some("character"), Some(&character.id), 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "soft_delete")
+            .unwrap();
+        assert_eq!(entry_state(&db, &deletion.id), (None, None));
+
+        // Once the row is gone, the entry that described it can only say so.
+        db.purge_character(&character.id, "Ada".into()).unwrap();
+        let (state, reason) = entry_state(&db, &rename.id);
+        assert_eq!(state, Some(RevertState::Gone));
+        assert!(reason.as_deref().unwrap_or_default().contains("no longer in the database"));
+    }
+
+    #[test]
+    fn the_state_shown_is_the_answer_a_click_gets() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let first = latest_entry(&db, "character", &character.id, "name");
+        db.update_character(&character.id, "Sable".into(), None, "Ada".into())
+            .unwrap();
+
+        let (_, reason) = entry_state(&db, &first.id);
+        let error = db
+            .revert_change(&first.id, "Ada".into())
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(Some(error), reason, "the tab refuses for the reason it showed");
+    }
+
     #[test]
     fn a_version_3_database_gains_settings_without_losing_anything() {
         let conn = Connection::open_in_memory().unwrap();
@@ -5391,5 +5861,206 @@ mod tests {
             })
             .unwrap();
         assert_eq!(title, "Kept");
+    }
+
+    #[test]
+    fn a_version_4_database_gains_the_cast_link_without_losing_its_nodes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at, deleted_at)
+             VALUES ('s1', 'Kept', NULL, 'then', 'then', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y,
+                                created_by, created_at, updated_at, deleted_at)
+             VALUES ('n1', 's1', 'idea', 'Kept', NULL, 1.0, 2.0, 'Ada', 'then', 'then', NULL)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "nodes", "character_id").unwrap());
+
+        let node = read_node(&conn, "n1").unwrap().unwrap();
+        assert_eq!(node.label, "Kept");
+        assert_eq!(node.character_id, None, "an existing node starts unlinked");
+    }
+
+    fn linked_node(db: &Db, story_id: &str, character_id: &str) -> Node {
+        let node = db
+            .create_node(
+                story_id.to_string(),
+                "character".into(),
+                "Rook".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.set_node_character(&node.id, Some(character_id.to_string()), "Ada".into())
+            .unwrap()
+    }
+
+    #[test]
+    fn linking_a_node_to_a_cast_member_is_recorded_by_name() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        let node = linked_node(&db, &story.id, &character.id);
+        assert_eq!(node.character_id.as_deref(), Some(character.id.as_str()));
+
+        // The entry reads as the names, not as two ids.
+        let entry = latest_entry(&db, "node", &node.id, "character");
+        assert_eq!(entry.old_value, None);
+        assert_eq!(entry.new_value.as_deref(), Some("Rook"));
+
+        // The link follows the id, so renaming either side leaves it intact.
+        db.update_character(&character.id, "Wren".into(), None, "Ada".into())
+            .unwrap();
+        db.update_node(&node.id, "Rook the Bold".into(), None, "Ada".into())
+            .unwrap();
+
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes[0].character_id.as_deref(), Some(character.id.as_str()));
+    }
+
+    #[test]
+    fn clearing_a_link_is_recorded_and_relinking_the_same_member_writes_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let node = linked_node(&db, &story.id, &character.id);
+
+        let entries = || db.get_audit_log(None, None, None, 100).unwrap().len();
+        let before = entries();
+
+        db.set_node_character(&node.id, Some(character.id.clone()), "Ada".into())
+            .unwrap();
+        assert_eq!(entries(), before, "the same cast member is not a change");
+
+        let cleared = db
+            .set_node_character(&node.id, None, "Ada".into())
+            .unwrap();
+        assert_eq!(cleared.character_id, None);
+
+        let entry = latest_entry(&db, "node", &node.id, "character");
+        assert_eq!(entry.old_value.as_deref(), Some("Rook"));
+        assert_eq!(entry.new_value, None);
+    }
+
+    #[test]
+    fn a_link_is_refused_across_stories_and_through_the_trash() {
+        let db = Db::open_in_memory().unwrap();
+        let first = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let second = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let theirs = db
+            .create_character(second.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let ours = db
+            .create_character(first.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let node = linked_node(&db, &first.id, &ours.id);
+
+        let error = db
+            .set_node_character(&node.id, Some(theirs.id.clone()), "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("own story"), "{error}");
+
+        db.delete_character(&ours.id, "Ada".into()).unwrap();
+        let error = db
+            .set_node_character(&node.id, Some(ours.id.clone()), "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("in the trash"), "{error}");
+
+        // A link that is already there survives its cast member going to the
+        // trash, so restoring the character brings it back.
+        assert_eq!(
+            db.list_nodes(&first.id).unwrap()[0].character_id.as_deref(),
+            Some(ours.id.as_str())
+        );
+        db.restore_character(&ours.id, "Ada".into()).unwrap();
+        assert_eq!(
+            db.list_nodes(&first.id).unwrap()[0].character_id.as_deref(),
+            Some(ours.id.as_str())
+        );
+
+        db.delete_node(&node.id, "Ada".into()).unwrap();
+        let error = db
+            .set_node_character(&node.id, None, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("restore it"), "{error}");
+    }
+
+    #[test]
+    fn purging_a_character_clears_the_links_to_it() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let node = linked_node(&db, &story.id, &character.id);
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+        db.purge_character(&character.id, "Ada".into()).unwrap();
+
+        assert_eq!(db.list_nodes(&story.id).unwrap()[0].character_id, None);
+
+        // The history still says what the link was, and that it is gone now.
+        let entries = db
+            .get_audit_log(Some(&story.id), Some("node"), Some(&node.id), 50)
+            .unwrap();
+        assert!(entries.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("character")
+                && entry.old_value.as_deref() == Some("Rook")
+        }));
+    }
+
+    #[test]
+    fn an_export_carries_the_link_into_the_copy() {
+        let source = Db::open_in_memory().unwrap();
+        let story = source.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = source
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let node = linked_node(&source, &story.id, &character.id);
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(
+            export.nodes[0].character_id.as_deref(),
+            Some(character.id.as_str()),
+            "the export names the linked cast member"
+        );
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+
+        let characters = target.list_characters(&restored.id).unwrap();
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_ne!(nodes[0].id, node.id, "nodes get fresh ids");
+        assert_eq!(
+            nodes[0].character_id.as_deref(),
+            Some(characters[0].id.as_str()),
+            "the copy points at the copied cast member, not the original"
+        );
     }
 }
