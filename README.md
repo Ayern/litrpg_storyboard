@@ -58,6 +58,12 @@ is in the air, the drop is a single write that either makes a linked node or
 nothing, and a node whose cast member is in the trash says so rather than looking
 unlinked.
 
+**Finding a node** — `Ctrl+F` on the Graph tab opens a search palette over the
+canvas (the Search button does the same). It matches a node's label, notes, type
+and linked cast member, outlines every match on the board as the query is typed,
+and lists the first eight. `↑`/`↓` move through them, `Enter` pans to the node and
+opens its inspector, and `Esc` closes the palette.
+
 **Editing a connection** — click an edge to open the same kind of editor for its
 label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
 change is recorded per field like a node edit. The canvas shows the label when
@@ -67,6 +73,11 @@ time: selecting a node closes the connection editor and vice versa.
 **Characters** — a cast list per story, each with a name, an optional description,
 numeric stats and free-text attributes. Both are identified by name, so adding a
 stat or an attribute you already have updates it instead of creating a duplicate.
+
+**Help before clicking** — controls that are not self-explanatory carry a hover
+title saying what the click will do: save or discard, move to the trash or delete
+for good, relink or keep the label. These are the platform's native tooltips, so
+they appear after the system's usual hover delay rather than instantly.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
@@ -240,7 +251,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, inspector, cast drag-and-drop, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -313,6 +324,9 @@ point so it stops drawing the vanished badge.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
+- **Search covers the open graph only.** `Ctrl+F` looks at that story's node
+  labels, notes, types and linked cast members; it does not reach characters,
+  stories or connections, and it is captured only on the Graph tab.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every

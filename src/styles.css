@@ -274,12 +274,106 @@ body {
 .graph-canvas {
   flex: 1;
   min-width: 0;
+  position: relative;
 }
 
 /* Shown while a cast card is in the air, so it is clear the canvas takes it. */
 .graph-canvas.drop-ready {
   outline: 1px dashed #5ec8c0;
   outline-offset: -4px;
+}
+
+/* The canvas search floats over the board rather than shrinking it, so the
+   matches stay visible while the query is being typed. */
+.canvas-search {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: 320px;
+  max-width: calc(100% - 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: #262628;
+  border: 1px solid #454549;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.canvas-search-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: #1e1e20;
+  border: 1px solid #4a4a4f;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 13px;
+}
+
+.canvas-search-input:focus {
+  outline: 1px solid #5ec8c0;
+  border-color: #5ec8c0;
+}
+
+.canvas-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.canvas-search-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #ddd;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-search-result:hover,
+.canvas-search-result.active {
+  background: #37373d;
+}
+
+.canvas-search-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-search-cast {
+  font-size: 11px;
+  color: #8fc7c2;
+}
+
+.canvas-search-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8a8a8a;
+}
+
+.canvas-search-hint {
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+/* A node that matches what is typed in the search palette. */
+.react-flow__node.search-hit .graph-node {
+  outline: 1px dashed #f2c14e;
+  outline-offset: 2px;
 }
 
 .node-drawer {

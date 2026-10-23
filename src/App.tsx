@@ -120,6 +120,10 @@ function isNodeType(value: string): value is NodeType {
 // How many numbers a card has room for before it starts counting.
 const NODE_STAT_BADGES = 2;
 
+// The search palette lists this many; the rest are still reachable by typing
+// more of the name, and the hint says how many matched.
+const SEARCH_RESULTS_SHOWN = 8;
+
 // The card a node is drawn as. Its type is both the colour of its edge and the
 // word above the label, so a board reads at a glance instead of every note
 // looking the same. A linked node also carries its cast member's numbers, so a
@@ -418,6 +422,12 @@ function App() {
   // The node the card is hovering over: dropping there relinks it rather than
   // making a new node, so the target is marked before the drop.
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
+
+  // The canvas search palette, opened with Ctrl+F while the graph is showing.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
@@ -524,6 +534,36 @@ function App() {
       loadStory(stories[0]);
     }
   }, [stories, currentStory, loadStory]);
+
+  // Ctrl+F opens the canvas search only while the graph is on screen, so the
+  // shortcut is not swallowed on another tab where the browser's find is fine.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (selectedTab !== 'graph' || !currentStory) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        setSearchOpen(true);
+        setSearchIndex(0);
+        return;
+      }
+
+      if (event.key === 'Escape' && searchOpen) {
+        event.preventDefault();
+        setSearchOpen(false);
+        setSearchTerm('');
+        setSearchIndex(0);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedTab, currentStory, searchOpen]);
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
   // History is fetched whenever the tab is opened, the story changes or the
   // filter changes, so returning to the tab always reflects the latest changes.
@@ -925,14 +965,25 @@ function App() {
 
       {confirmPurgeId === item.id ? (
         <>
-          <button className="trash-danger" onClick={() => purgeDeleted(item)}>
+          <button
+            className="trash-danger"
+            title="Delete permanently — this cannot be undone"
+            onClick={() => purgeDeleted(item)}
+          >
             Yes, delete forever
           </button>
-          <button onClick={() => setConfirmPurgeId(null)}>Cancel</button>
+          <button title="Keep it in the trash" onClick={() => setConfirmPurgeId(null)}>
+            Cancel
+          </button>
         </>
       ) : (
         <>
-          <button onClick={() => restoreDeleted(item)}>Restore</button>
+          <button
+            title="Put it back exactly as it was"
+            onClick={() => restoreDeleted(item)}
+          >
+            Restore
+          </button>
           <button
             className="trash-danger"
             title="Delete permanently — this cannot be undone"
@@ -1020,6 +1071,28 @@ function App() {
     setSelectedNodeId(node.id);
     setNodeLabelDraft(node.label);
     setNodeContentDraft(node.content ?? '');
+  };
+
+  const closeCanvasSearch = () => {
+    setSearchOpen(false);
+    setSearchTerm('');
+    setSearchIndex(0);
+  };
+
+  // Choosing a match moves the canvas to it and opens it, so the palette is a
+  // way to arrive at a node rather than only a list of names.
+  const focusSearchResult = (node: Node<NodeData>) => {
+    setRenameOffer(null);
+    openNodeInspector({ id: node.id, label: node.data.label, content: node.data.content });
+    closeCanvasSearch();
+
+    const instance = flowRef.current;
+    if (!instance) return;
+
+    // A node's position is its top-left, so the pan aims at its middle, and a
+    // board zoomed out further than 1 would arrive too small to read.
+    const zoom = Math.max(instance.getZoom?.() ?? 1, 1);
+    instance.setCenter(node.position.x + 70, node.position.y + 20, { zoom, duration: 300 });
   };
 
   // A cast card dropped on empty canvas makes a new character node already
@@ -1939,21 +2012,59 @@ function App() {
       ? [...retentionChoices, { value: String(retentionDays), label: `${retentionDays} days` }]
       : retentionChoices;
 
-  // The canvas gets the nodes plus their cast member's name and numbers. Only
-  // linked nodes and the relink target are rebuilt, so the rest keep their
-  // identity across a render.
+  // A search looks at everything the card is made of, so a node can be found by
+  // a word in its notes or by whose cast member it is, not only its label.
+  const searchMatches = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return [];
+
+    const castById = new Map(characters.map(character => [character.id, character]));
+
+    return nodes.filter(node => {
+      const characterName = node.data.characterId
+        ? castById.get(node.data.characterId)?.name
+        : undefined;
+
+      return [node.data.label, node.data.content, node.data.nodeType, characterName]
+        .filter((value): value is string => Boolean(value))
+        .some(value => value.toLowerCase().includes(term));
+    });
+  }, [nodes, characters, searchTerm]);
+
+  const searchMatchIds = useMemo(
+    () => new Set(searchMatches.map(node => node.id)),
+    [searchMatches]
+  );
+
+  const moveSearchSelection = (delta: number) => {
+    // Only the listed results can be chosen with the keyboard, so the highlight
+    // wraps within them rather than walking into matches that are not on screen.
+    const shown = Math.min(searchMatches.length, SEARCH_RESULTS_SHOWN);
+    if (shown === 0) return;
+
+    setSearchIndex(current => (current + delta + shown) % shown);
+  };
+
+  // The canvas gets the nodes plus their cast member's name and numbers, and the
+  // classes for the relink target and the search hits. Only those nodes are
+  // rebuilt, so the rest keep their identity across a render.
   const canvasNodes = useMemo(() => {
     const castById = new Map(characters.map(character => [character.id, character]));
 
     return nodes.map(node => {
       const characterId = node.data.characterId;
-      const isDropTarget = node.id === dropTargetNodeId;
+      const classes = [
+        node.id === dropTargetNodeId ? 'drop-target' : '',
+        searchOpen && searchMatchIds.has(node.id) ? 'search-hit' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
 
-      if (!characterId && !isDropTarget) return node;
+      if (!characterId && !classes) return node;
 
       return {
         ...node,
-        className: isDropTarget ? 'drop-target' : undefined,
+        className: classes || undefined,
         data: characterId
           ? {
               ...node.data,
@@ -1963,7 +2074,7 @@ function App() {
           : node.data,
       };
     });
-  }, [nodes, characters, castStats, dropTargetNodeId]);
+  }, [nodes, characters, castStats, dropTargetNodeId, searchOpen, searchMatchIds]);
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -2023,6 +2134,7 @@ function App() {
           <label>Current User</label>
           <input
             value={currentUser}
+            title="Recorded as the person making each change in the history"
             onChange={(e) => setCurrentUser(e.target.value)}
             placeholder="Your name"
           />
@@ -2032,11 +2144,14 @@ function App() {
         <div className="story-creator">
           <input
             placeholder="New story title"
+            title="Title for the new story"
             value={newStoryTitle}
             onChange={(e) => setNewStoryTitle(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && createNewStory()}
           />
-          <button onClick={createNewStory}>Create</button>
+          <button title="Create a story with this title" onClick={createNewStory}>
+            Create
+          </button>
         </div>
 
         <button className="import-button" title="Restore a story from a JSON export" onClick={importStory}>
@@ -2082,6 +2197,7 @@ function App() {
                         <>
                           <button
                             className="danger"
+                            title="Move this story to the trash"
                             onClick={(e) => {
                               e.stopPropagation();
                               removeStory(story);
@@ -2090,6 +2206,7 @@ function App() {
                             Delete
                           </button>
                           <button
+                            title="Keep this story"
                             onClick={(e) => {
                               e.stopPropagation();
                               setConfirmDeleteStoryId(null);
@@ -2134,24 +2251,28 @@ function App() {
           <div className="tabs">
             <button
               className={selectedTab === 'graph' ? 'active' : ''}
+              title="The story's idea graph"
               onClick={() => setSelectedTab('graph')}
             >
               Graph
             </button>
             <button
               className={selectedTab === 'characters' ? 'active' : ''}
+              title="Manage the cast, their stats and attributes"
               onClick={() => setSelectedTab('characters')}
             >
               Characters
             </button>
             <button
               className={selectedTab === 'audit' ? 'active' : ''}
+              title="See every recorded change and revert an edit"
               onClick={() => setSelectedTab('audit')}
             >
               Audit Log
             </button>
             <button
               className={selectedTab === 'trash' ? 'active' : ''}
+              title="Restore something deleted, or delete it for good"
               onClick={() => setSelectedTab('trash')}
             >
               Trash
@@ -2160,7 +2281,11 @@ function App() {
           <div className="topbar-actions">
             {currentStory && (
               <>
-                <button className="export-button" onClick={exportStory}>
+                <button
+                  className="export-button"
+                  title="Write the whole story, history included, to a JSON file"
+                  onClick={exportStory}
+                >
                   Export JSON
                 </button>
                 <span className="current-story">{currentStory.title}</span>
@@ -2172,7 +2297,9 @@ function App() {
         {actionError && (
           <div className="error-strip">
             <span>{actionError}</span>
-            <button onClick={() => setActionError(null)}>Dismiss</button>
+            <button title="Hide this message" onClick={() => setActionError(null)}>
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -2185,7 +2312,11 @@ function App() {
         {importStatus && (
           <div className="status-strip" title={importStatus}>
             {importStatus}
-            <button className="status-dismiss" onClick={() => setImportStatus(null)}>
+            <button
+              className="status-dismiss"
+              title="Hide this message"
+              onClick={() => setImportStatus(null)}
+            >
               Dismiss
             </button>
           </div>
@@ -2199,6 +2330,7 @@ function App() {
               <>
                 <div className="graph-toolbar">
                   <select
+                    title="The kind of node the Add button creates"
                     value={newNodeType}
                     onChange={(e) => setNewNodeType(e.target.value as NodeType)}
                   >
@@ -2207,13 +2339,28 @@ function App() {
                     ))}
                   </select>
                   <input
+                    title="Label for the new node"
                     placeholder="Node label"
                     value={newNodeLabel}
                     onChange={(e) => setNewNodeLabel(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addNewNode()}
                   />
-                  <button onClick={addNewNode} disabled={!newNodeLabel.trim()}>
+                  <button
+                    title="Add a node of the selected type to the canvas"
+                    onClick={addNewNode}
+                    disabled={!newNodeLabel.trim()}
+                  >
                     Add Node
+                  </button>
+                  <button
+                    className="search-button"
+                    title="Find a node by label, note, type or cast member (Ctrl+F)"
+                    onClick={() => {
+                      setSearchOpen(true);
+                      setSearchIndex(0);
+                    }}
+                  >
+                    Search
                   </button>
                   <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
                 </div>
@@ -2289,6 +2436,92 @@ function App() {
                     }}
                     onDrop={dropCastMember}
                   >
+                  {searchOpen && (
+                    <div className="canvas-search" role="dialog" aria-label="Search the canvas">
+                      <input
+                        ref={searchInputRef}
+                        className="canvas-search-input"
+                        type="search"
+                        aria-label="Search nodes"
+                        title="Matching nodes are outlined on the canvas; Enter goes to one"
+                        placeholder="Label, note, type or cast member"
+                        value={searchTerm}
+                        onChange={event => {
+                          setSearchTerm(event.target.value);
+                          setSearchIndex(0);
+                        }}
+                        onKeyDown={event => {
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            closeCanvasSearch();
+                          }
+                          if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+                            moveSearchSelection(1);
+                          }
+                          if (event.key === 'ArrowUp') {
+                            event.preventDefault();
+                            moveSearchSelection(-1);
+                          }
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            const match =
+                              searchMatches[Math.min(searchIndex, searchMatches.length - 1)];
+                            if (match) focusSearchResult(match);
+                          }
+                        }}
+                      />
+
+                      {searchTerm.trim() ? (
+                        searchMatches.length === 0 ? (
+                          <p className="canvas-search-empty">
+                            No node matches “{searchTerm.trim()}”.
+                          </p>
+                        ) : (
+                          <div className="canvas-search-results">
+                            {searchMatches.slice(0, SEARCH_RESULTS_SHOWN).map((node, index) => {
+                              const character = node.data.characterId
+                                ? characters.find(entry => entry.id === node.data.characterId)
+                                : null;
+
+                              return (
+                                <button
+                                  type="button"
+                                  key={node.id}
+                                  className={`canvas-search-result${
+                                    index === searchIndex ? ' active' : ''
+                                  }`}
+                                  title={`Go to this ${node.data.nodeType} node`}
+                                  onMouseEnter={() => setSearchIndex(index)}
+                                  onClick={() => focusSearchResult(node)}
+                                >
+                                  <span className={`legend ${node.data.nodeType}`}>
+                                    {node.data.nodeType}
+                                  </span>
+                                  <span className="canvas-search-label">{node.data.label}</span>
+                                  {character && (
+                                    <span className="canvas-search-cast">{character.name}</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )
+                      ) : (
+                        <p className="canvas-search-empty">
+                          Type to find a node by its label, notes, type or cast member.
+                        </p>
+                      )}
+
+                      <div className="canvas-search-hint">
+                        {searchTerm.trim() &&
+                          `${searchMatches.length} ${
+                            searchMatches.length === 1 ? 'match' : 'matches'
+                          } · `}
+                        ↑↓ choose · Enter go · Esc close
+                      </div>
+                    </div>
+                  )}
                   <ReactFlow
                     nodes={canvasNodes}
                     edges={edges}
@@ -2310,7 +2543,15 @@ function App() {
                     <Background />
                     <Panel position="top-right">
                       <div className="node-legend">
-                        {nodeTypes.map(t => <span key={t} className={`legend ${t}`}>{t}</span>)}
+                        {nodeTypes.map(t => (
+                          <span
+                            key={t}
+                            className={`legend ${t}`}
+                            title={`${t} nodes are drawn in this colour`}
+                          >
+                            {t}
+                          </span>
+                        ))}
                       </div>
                     </Panel>
                     {selectedEdgeId && (
@@ -2350,8 +2591,15 @@ function App() {
                             <div className="node-editor-error">{edgeEditError}</div>
                           )}
                           <div className="node-editor-actions">
-                            <button onClick={saveEdge}>Save</button>
-                            <button onClick={() => setSelectedEdgeId(null)}>Close</button>
+                            <button title="Save this connection's fields" onClick={saveEdge}>
+                              Save
+                            </button>
+                            <button
+                              title="Close without saving (Esc)"
+                              onClick={() => setSelectedEdgeId(null)}
+                            >
+                              Close
+                            </button>
                           </div>
                         </div>
                       </Panel>
@@ -2371,6 +2619,7 @@ function App() {
                         <button
                           className="node-drawer-close"
                           aria-label="Close inspector"
+                          title="Close the inspector (Esc)"
                           onClick={() => setSelectedNodeId(null)}
                         >
                           ×
@@ -2412,10 +2661,19 @@ function App() {
                       )}
 
                       <div className="node-editor-actions">
-                        <button onClick={saveNode} disabled={!nodeLabelDraft.trim()}>
+                        <button
+                          title="Save the label and notes"
+                          onClick={saveNode}
+                          disabled={!nodeLabelDraft.trim()}
+                        >
                           Save
                         </button>
-                        <button onClick={() => setSelectedNodeId(null)}>Close</button>
+                        <button
+                          title="Close without saving (Esc)"
+                          onClick={() => setSelectedNodeId(null)}
+                        >
+                          Close
+                        </button>
                       </div>
 
                       <label className="node-drawer-label" htmlFor="inspector-cast">
@@ -2424,6 +2682,7 @@ function App() {
                       <select
                         id="inspector-cast"
                         className="node-drawer-select"
+                        title="Link this node to a cast member; saved as soon as you choose"
                         value={selectedNode.data.characterId ?? ''}
                         onChange={e => changeNodeCharacter(e.target.value)}
                       >
@@ -2450,8 +2709,18 @@ function App() {
                             {renameOffer.to}”?
                           </span>
                           <div className="node-drawer-offer-actions">
-                            <button onClick={applyRenameOffer}>Rename</button>
-                            <button onClick={() => setRenameOffer(null)}>Keep label</button>
+                            <button
+                              title="Use the new cast member's name as this node's label"
+                              onClick={applyRenameOffer}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              title="Leave the label as it is"
+                              onClick={() => setRenameOffer(null)}
+                            >
+                              Keep label
+                            </button>
                           </div>
                         </div>
                       )}
@@ -2481,8 +2750,16 @@ function App() {
                                           if (e.key === 'Escape') setInspectorStatId(null);
                                         }}
                                       />
-                                      <button onClick={() => saveInspectorStat(stat)}>Save</button>
-                                      <button onClick={() => setInspectorStatId(null)}>
+                                      <button
+                                        title={`Save this new ${stat.stat_name} value`}
+                                        onClick={() => saveInspectorStat(stat)}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        title="Leave the value as it was"
+                                        onClick={() => setInspectorStatId(null)}
+                                      >
                                         Cancel
                                       </button>
                                     </>
@@ -2514,10 +2791,16 @@ function App() {
                                           if (e.key === 'Escape') setInspectorAttrId(null);
                                         }}
                                       />
-                                      <button onClick={() => saveInspectorAttribute(attribute)}>
+                                      <button
+                                        title={`Save this new ${attribute.attr_name} value`}
+                                        onClick={() => saveInspectorAttribute(attribute)}
+                                      >
                                         Save
                                       </button>
-                                      <button onClick={() => setInspectorAttrId(null)}>
+                                      <button
+                                        title="Leave the value as it was"
+                                        onClick={() => setInspectorAttrId(null)}
+                                      >
                                         Cancel
                                       </button>
                                     </>
@@ -2580,7 +2863,11 @@ function App() {
                       onChange={(e) => setNewCharacterDescription(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && createCharacter()}
                     />
-                    <button onClick={createCharacter} disabled={!newCharacterName.trim()}>
+                    <button
+                      title="Add this character to the story's cast"
+                      onClick={createCharacter}
+                      disabled={!newCharacterName.trim()}
+                    >
                       Add character
                     </button>
                   </div>
@@ -2593,6 +2880,7 @@ function App() {
                       className={`character-item ${
                         selectedCharacterId === character.id ? 'active' : ''
                       }`}
+                      title={`Show ${character.name}'s sheet`}
                       onClick={() => setSelectedCharacterId(character.id)}
                     >
                       <span className="character-name">{character.name}</span>
@@ -2632,10 +2920,19 @@ function App() {
                                 if (e.key === 'Escape') setEditingCharacter(false);
                               }}
                             />
-                            <button onClick={saveCharacter} disabled={!characterNameDraft.trim()}>
+                            <button
+                              title="Save this character's name and description"
+                              onClick={saveCharacter}
+                              disabled={!characterNameDraft.trim()}
+                            >
                               Save
                             </button>
-                            <button onClick={() => setEditingCharacter(false)}>Cancel</button>
+                            <button
+                              title="Discard the edit"
+                              onClick={() => setEditingCharacter(false)}
+                            >
+                              Cancel
+                            </button>
                           </div>
                         ) : (
                           <>
@@ -2652,16 +2949,28 @@ function App() {
                             <div className="character-actions">
                               {confirmDeleteCharacter ? (
                                 <>
-                                  <button className="danger" onClick={removeCharacter}>
+                                  <button
+                                    className="danger"
+                                    title="Move this character to the trash; linked nodes keep their links"
+                                    onClick={removeCharacter}
+                                  >
                                     Delete
                                   </button>
-                                  <button onClick={() => setConfirmDeleteCharacter(false)}>
+                                  <button
+                                    title="Keep this character"
+                                    onClick={() => setConfirmDeleteCharacter(false)}
+                                  >
                                     Cancel
                                   </button>
                                 </>
                               ) : (
                                 <>
-                                  <button onClick={startCharacterEdit}>Edit</button>
+                                  <button
+                                    title="Change this character's name or description"
+                                    onClick={startCharacterEdit}
+                                  >
+                                    Edit
+                                  </button>
                                   <button
                                     title="Delete character"
                                     onClick={() => setConfirmDeleteCharacter(true)}
@@ -2701,15 +3010,26 @@ function App() {
                                       if (e.key === 'Escape') setEditingAttributeId(null);
                                     }}
                                   />
-                                  <button onClick={() => saveAttribute(attribute)}>Save</button>
-                                  <button onClick={() => setEditingAttributeId(null)}>
+                                  <button
+                                    title={`Save this new ${attribute.attr_name} value`}
+                                    onClick={() => saveAttribute(attribute)}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    title="Leave the value as it was"
+                                    onClick={() => setEditingAttributeId(null)}
+                                  >
                                     Cancel
                                   </button>
                                 </>
                               ) : (
                                 <>
                                   <span className="attribute-value">{attribute.value}</span>
-                                  <button onClick={() => startAttributeEdit(attribute)}>
+                                  <button
+                                    title={`Change this ${attribute.attr_name} value`}
+                                    onClick={() => startAttributeEdit(attribute)}
+                                  >
                                     Edit
                                   </button>
                                   <button
@@ -2739,6 +3059,7 @@ function App() {
                             onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
                           />
                           <button
+                            title="Add this attribute, or update it if the name already exists"
                             onClick={addAttribute}
                             disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
                           >
@@ -2779,14 +3100,29 @@ function App() {
                                     if (e.key === 'Escape') setEditingStatId(null);
                                   }}
                                 />
-                                <button onClick={() => saveStat(stat)}>Save</button>
-                                <button onClick={() => setEditingStatId(null)}>Cancel</button>
+                                <button
+                                  title={`Save this new ${stat.stat_name} value and notes`}
+                                  onClick={() => saveStat(stat)}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  title="Leave the value as it was"
+                                  onClick={() => setEditingStatId(null)}
+                                >
+                                  Cancel
+                                </button>
                               </>
                             ) : (
                               <>
                                 <span className="stat-value">{stat.value}</span>
                                 {stat.notes && <span className="stat-notes">{stat.notes}</span>}
-                                <button onClick={() => startStatEdit(stat)}>Edit</button>
+                                <button
+                                  title={`Change this ${stat.stat_name} value or notes`}
+                                  onClick={() => startStatEdit(stat)}
+                                >
+                                  Edit
+                                </button>
                               </>
                             )}
                           </div>
@@ -2808,7 +3144,11 @@ function App() {
                           onChange={(e) => setNewStatValue(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addStat()}
                         />
-                        <button onClick={addStat} disabled={!newStatName.trim()}>
+                        <button
+                          title="Add this stat, or update it if the name already exists"
+                          onClick={addStat}
+                          disabled={!newStatName.trim()}
+                        >
                           Add stat
                         </button>
                       </div>
@@ -2834,7 +3174,11 @@ function App() {
             {trashNotice && (
               <div className="status-strip">
                 {trashNotice}
-                <button className="status-dismiss" onClick={() => setTrashNotice(null)}>
+                <button
+                  className="status-dismiss"
+                  title="Hide this message"
+                  onClick={() => setTrashNotice(null)}
+                >
                   Dismiss
                 </button>
               </div>
@@ -2844,6 +3188,7 @@ function App() {
               <label htmlFor="trash-retention">Keep deleted items for</label>
               <select
                 id="trash-retention"
+                title="How long deleted items are kept before they are removed for good"
                 value={retentionDays === null ? 'forever' : String(retentionDays)}
                 onChange={event => changeRetention(event.target.value)}
               >
@@ -2913,6 +3258,11 @@ function App() {
                         auditFilter === filter.value ? 'audit-filter active' : 'audit-filter'
                       }
                       aria-pressed={auditFilter === filter.value}
+                      title={
+                        filter.value
+                          ? `Show only ${filter.label.toLowerCase()} changes`
+                          : 'Show every kind of change'
+                      }
                       onClick={() => setAuditFilter(filter.value)}
                     >
                       {filter.label}
@@ -2929,7 +3279,11 @@ function App() {
                 {revertError && (
                   <div className="audit-error">
                     Cannot revert that change: {revertError}{' '}
-                    <button className="status-dismiss" onClick={() => setRevertError(null)}>
+                    <button
+                      className="status-dismiss"
+                      title="Hide this message"
+                      onClick={() => setRevertError(null)}
+                    >
                       Dismiss
                     </button>
                   </div>
@@ -2938,7 +3292,11 @@ function App() {
                 {revertNotice && (
                   <div className="status-strip">
                     {revertNotice}
-                    <button className="status-dismiss" onClick={() => setRevertNotice(null)}>
+                    <button
+                      className="status-dismiss"
+                      title="Hide this message"
+                      onClick={() => setRevertNotice(null)}
+                    >
                       Dismiss
                     </button>
                   </div>
@@ -2985,6 +3343,7 @@ function App() {
                     {auditEntries.length < auditTotal && (
                       <button
                         className="audit-more"
+                        title="Load the next page of changes"
                         onClick={loadMoreAudit}
                         disabled={auditLoadingMore}
                       >
