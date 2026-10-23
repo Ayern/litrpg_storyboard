@@ -30,7 +30,12 @@ recorded in the history.
 canvas, which gives up the width rather than hiding the node being edited. Reword
 the label, add or change its notes, and save. Only the fields you actually changed
 are written, each as its own history entry, so rewording a label is not buried
-under a note edit. `Enter` saves and `Escape` closes the drawer.
+under a note edit. `Enter` saves. `Escape` or the close button closes the drawer;
+when the label or notes hold unsaved changes it asks *Save / Discard / Keep
+editing* first, and a dot beside the heading says there is something unsaved.
+Unsaved text is kept per node for the session: switching to another node keeps
+the draft quietly, and reopening that node puts the half-written label and notes
+back. Only *Discard* drops it.
 
 **Cast numbers in the inspector** — any node can be pointed at a cast member with
 the picker in the drawer. The link is stored on the node as that character's id, so
@@ -88,6 +93,13 @@ stat or an attribute you already have updates it instead of creating a duplicate
 title saying what the click will do: save or discard, move to the trash or delete
 for good, relink or keep the label. These are the platform's native tooltips, so
 they appear after the system's usual hover delay rather than instantly.
+
+**Keyboard reference** — the `?` button beside the current-user field, or the
+`?` key on any tab, opens a list of every keyboard route, grouped by where it
+works. The list is rendered from one table, and the tooltip that names a key
+reads the same table, so the help cannot describe a shortcut that no longer
+works. `?` is ignored while a field has focus (there it is a question mark), and
+the list closes on `Esc`, its close button, or a click outside it.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
@@ -334,6 +346,11 @@ point so it stops drawing the vanished badge.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
+- **Unsaved drafts live in memory.** A half-written label or note survives
+  switching nodes, closing the drawer and switching stories, but not restarting
+  the app; nothing is written to disk until Save is pressed.
+- **Shortcuts are fixed, not rebindable.** What the reference lists is the whole
+  set of keyboard routes; customising them is not supported.
 - **Search is a plain substring match.** Case is ignored, but `rk` does not find
   `Rook` and there is no ranking beyond the order results are gathered in: the
   open story first (nodes, cast, connections), then the other stories, each

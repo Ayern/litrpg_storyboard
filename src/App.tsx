@@ -263,6 +263,82 @@ const flowNodeTypes = { default: GraphNode };
 
 const USER_KEY = 'litrpg.currentUser';
 
+// The key labels the app shows. The help list and any tooltip that names a key
+// both read from here, so the two cannot describe one route differently.
+const shortcutKeys = {
+  help: '?',
+  search: 'Ctrl+F',
+  choose: '↑ ↓',
+  enter: 'Enter',
+  escape: 'Esc',
+} as const;
+
+// Every keyboard route the app actually has, written once. The overlay renders
+// this list rather than its own copy, so a key cannot be documented unless it
+// works, and the wording is the same wherever the route is mentioned.
+const shortcutGroups: {
+  title: string;
+  keys: { keys: string; action: string }[];
+}[] = [
+  {
+    title: 'Anywhere',
+    keys: [
+      { keys: shortcutKeys.help, action: 'Show or hide this list' },
+      { keys: shortcutKeys.escape, action: 'Close this list' },
+    ],
+  },
+  {
+    title: 'Search',
+    keys: [
+      { keys: shortcutKeys.search, action: 'Open the search palette (Graph tab)' },
+      { keys: shortcutKeys.choose, action: 'Move through the results' },
+      { keys: shortcutKeys.enter, action: 'Go to the chosen result' },
+      { keys: shortcutKeys.escape, action: 'Close the palette' },
+    ],
+  },
+  {
+    title: 'Graph toolbar',
+    keys: [
+      {
+        keys: shortcutKeys.enter,
+        action: 'Add the node whose label is being typed',
+      },
+    ],
+  },
+  {
+    title: 'Node inspector',
+    keys: [
+      { keys: shortcutKeys.enter, action: 'Save the label and notes' },
+      {
+        keys: shortcutKeys.escape,
+        action: 'Close the inspector while the label is focused',
+      },
+    ],
+  },
+  {
+    title: 'Connection editor',
+    keys: [
+      { keys: shortcutKeys.enter, action: 'Save the label and relation' },
+      { keys: shortcutKeys.escape, action: 'Close without saving' },
+    ],
+  },
+  {
+    title: 'Story list',
+    keys: [
+      { keys: shortcutKeys.enter, action: 'Finish renaming a story' },
+      { keys: shortcutKeys.escape, action: 'Cancel the rename' },
+    ],
+  },
+  {
+    title: 'Characters',
+    keys: [
+      { keys: shortcutKeys.enter, action: 'Add a character from the name fields' },
+      { keys: shortcutKeys.enter, action: 'Save a name being edited' },
+      { keys: shortcutKeys.escape, action: 'Cancel the name edit' },
+    ],
+  },
+];
+
 // The drag payload a cast card carries. A MIME type of our own keeps a dropped
 // file or a link from being mistaken for a cast member.
 const CAST_DRAG_TYPE = 'application/x-litrpg-character';
@@ -450,6 +526,12 @@ function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
   const [nodeContentDraft, setNodeContentDraft] = useState('');
+
+  // Unsaved label and notes, per node, for this session. Closing or switching
+  // away no longer has to discard them: reopening the node offers the text back.
+  const nodeDraftsRef = useRef<Record<string, { label: string; content: string }>>({});
+  // Whether the drawer has been asked what to do with an unsaved edit.
+  const [closePrompt, setClosePrompt] = useState(false);
   const [nodeEditError, setNodeEditError] = useState<string | null>(null);
 
   // The inspector keeps its own copy of the matched cast member's numbers, so
@@ -509,6 +591,10 @@ function App() {
   // The node the card is hovering over: dropping there relinks it rather than
   // making a new node, so the target is marked before the drop.
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
+
+  // The list of keyboard routes, opened with ? or the button beside the user
+  // name. It is not tied to a tab, because most of the routes are not either.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   // The search palette, opened with Ctrl+F while the graph is showing.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -637,7 +723,8 @@ function App() {
   // shortcut is not swallowed on another tab where the browser's find is fine.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (selectedTab !== 'graph' || !currentStory) return;
+      // While the shortcut list is up it is the only thing the keys act on.
+      if (selectedTab !== 'graph' || !currentStory || shortcutsOpen) return;
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -658,11 +745,39 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedTab, currentStory, searchOpen]);
+  }, [selectedTab, currentStory, searchOpen, shortcutsOpen]);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
+
+  // ? opens the shortcut list on any tab, but never while a field is being typed
+  // in — there it is a question mark like any other.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && shortcutsOpen) {
+        event.preventDefault();
+        setShortcutsOpen(false);
+        return;
+      }
+
+      if (event.key !== '?' || event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable ||
+        ['input', 'textarea', 'select'].includes(target?.tagName?.toLowerCase() ?? '');
+
+      if (typing) return;
+
+      event.preventDefault();
+      setShortcutsOpen(open => !open);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [shortcutsOpen]);
 
   // A story's board is kept for searching only while that story is closed. The
   // moment it is opened the screen becomes the truth, and when it is left the
@@ -1235,14 +1350,33 @@ function App() {
     return id && nodes.some(node => node.id === id) ? id : null;
   };
 
-  // Opening a node is the same gesture whether it was just created or relinked.
-  const openNodeInspector = (node: { id: string; label: string; content?: string | null }) => {
-    setSelectedEdgeId(null);
-    setNodeEditError(null);
-    setSelectedNodeId(node.id);
-    setNodeLabelDraft(node.label);
-    setNodeContentDraft(node.content ?? '');
+  const rememberNodeDraft = (id: string, draft: { label: string; content: string }) => {
+    nodeDraftsRef.current = { ...nodeDraftsRef.current, [id]: draft };
   };
+
+  const forgetNodeDraft = (id: string) => {
+    if (!nodeDraftsRef.current[id]) return;
+
+    const next = { ...nodeDraftsRef.current };
+    delete next[id];
+    nodeDraftsRef.current = next;
+  };
+
+  // Opening a node is the same gesture whether it was just created or relinked,
+  // and it is where a half-written draft comes back.
+  const openNodeInspector = useCallback(
+    (node: { id: string; label: string; content?: string | null }) => {
+      const draft = nodeDraftsRef.current[node.id];
+
+      setSelectedEdgeId(null);
+      setNodeEditError(null);
+      setSelectedNodeId(node.id);
+      setNodeLabelDraft(draft?.label ?? node.label);
+      setNodeContentDraft(draft?.content ?? node.content ?? '');
+      setClosePrompt(false);
+    },
+    []
+  );
 
   const closeCanvasSearch = () => {
     setSearchOpen(false);
@@ -1912,14 +2046,13 @@ function App() {
 
   // Only one editor is open at a time: picking a node closes the connection
   // editor, because both occupy the same corner of the canvas.
-  const selectNode = useCallback((_event: React.MouseEvent, node: Node<NodeData>) => {
-    setNodeEditError(null);
-    setSelectedEdgeId(null);
-    setSelectedNodeId(node.id);
-    setNodeLabelDraft(node.data.label);
-    setNodeContentDraft(node.data.content ?? '');
-    setRenameOffer(null);
-  }, []);
+  const selectNode = useCallback(
+    (_event: React.MouseEvent, node: Node<NodeData>) => {
+      openNodeInspector({ id: node.id, label: node.data.label, content: node.data.content });
+      setRenameOffer(null);
+    },
+    [openNodeInspector]
+  );
 
   const selectEdge = useCallback((_event: React.MouseEvent, edge: Edge<EdgeData>) => {
     setEdgeEditError(null);
@@ -1930,7 +2063,7 @@ function App() {
     setRenameOffer(null);
   }, []);
 
-  const saveNode = async () => {
+  const saveNode = async (closeAfter = false) => {
     if (!selectedNodeId) return;
 
     const label = nodeLabelDraft.trim();
@@ -1951,6 +2084,15 @@ function App() {
       currentNode.data.label === label &&
       (currentNode.data.content ?? null) === content
     ) {
+      // Nothing to write, but the field may still hold untrimmed text: the draft
+      // is settled either way, so a later close does not ask about it.
+      forgetNodeDraft(selectedNodeId);
+      setNodeLabelDraft(label);
+      setNodeContentDraft(content ?? '');
+      if (closeAfter) {
+        setClosePrompt(false);
+        setSelectedNodeId(null);
+      }
       return;
     }
 
@@ -1979,8 +2121,17 @@ function App() {
 
       // The label is now whatever was saved, so any pending rename offer for it
       // was about a name that no longer exists.
+      forgetNodeDraft(updated.id);
+      setNodeLabelDraft(updated.label);
+      setNodeContentDraft(updated.content ?? '');
       setRenameOffer(null);
+
+      if (closeAfter) {
+        setClosePrompt(false);
+        setSelectedNodeId(null);
+      }
     } catch (e) {
+      // The draft stays, so a refused save leaves the text where it was.
       console.error('Failed to update node:', e);
       setNodeEditError(`Could not save node: ${String(e)}`);
     }
@@ -2128,7 +2279,13 @@ function App() {
         )
       );
 
-      if (selectedNodeId === node.id) setNodeLabelDraft(updated.label);
+      if (selectedNodeId === node.id) {
+        setNodeLabelDraft(updated.label);
+
+        // The label is saved now; notes typed but not saved must survive it.
+        const draft = nodeDraftsRef.current[node.id];
+        if (draft) rememberNodeDraft(node.id, { label: updated.label, content: draft.content });
+      }
       setRenameOffer(null);
     } catch (e) {
       console.error('Failed to rename a relinked node:', e);
@@ -2479,6 +2636,29 @@ function App() {
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
 
+  // What the drawer's fields hold against what the node still says. A restored
+  // draft counts as unsaved, because it has not been written anywhere.
+  const nodeIsDirty =
+    selectedNode !== null &&
+    (nodeLabelDraft !== selectedNode.data.label ||
+      nodeContentDraft.trim() !== (selectedNode.data.content ?? ''));
+
+  const closeNodeInspector = () => {
+    if (nodeIsDirty) {
+      setClosePrompt(true);
+      return;
+    }
+
+    setClosePrompt(false);
+    setSelectedNodeId(null);
+  };
+
+  const discardNodeDraft = () => {
+    if (selectedNodeId) forgetNodeDraft(selectedNodeId);
+    setClosePrompt(false);
+    setSelectedNodeId(null);
+  };
+
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
 
   // The node's stored link, resolved against the live cast. A link to a cast
@@ -2529,7 +2709,17 @@ function App() {
     <div className="app-container">
       <div className="sidebar">
         <div className="user-section">
-          <label>Current User</label>
+          <div className="user-section-head">
+            <label>Current User</label>
+            <button
+              className="shortcut-button"
+              aria-label="Keyboard shortcuts"
+              title="Every keyboard route in the app (?)"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              ?
+            </button>
+          </div>
           <input
             value={currentUser}
             title="Recorded as the person making each change in the history"
@@ -2752,7 +2942,7 @@ function App() {
                   </button>
                   <button
                     className="search-button"
-                    title="Find a node, a cast member, a connection or another story (Ctrl+F)"
+                    title={`Find a node, a cast member, a connection or another story (${shortcutKeys.search})`}
                     onClick={() => {
                       setSearchOpen(true);
                       setSearchIndex(0);
@@ -3058,12 +3248,20 @@ function App() {
                           <span className={`legend ${selectedNode.data.nodeType}`}>
                             {selectedNode.data.nodeType}
                           </span>
+                          {nodeIsDirty && (
+                            <span
+                              className="node-drawer-dirty"
+                              role="img"
+                              aria-label="Unsaved changes"
+                              title="Unsaved changes"
+                            />
+                          )}
                         </div>
                         <button
                           className="node-drawer-close"
                           aria-label="Close inspector"
                           title="Close the inspector (Esc)"
-                          onClick={() => setSelectedNodeId(null)}
+                          onClick={closeNodeInspector}
                         >
                           ×
                         </button>
@@ -3077,14 +3275,21 @@ function App() {
                         className="node-editor-label"
                         value={nodeLabelDraft}
                         onChange={e => {
-                          setNodeLabelDraft(e.target.value);
+                          const label = e.target.value;
+                          setNodeLabelDraft(label);
+                          if (selectedNodeId) {
+                            rememberNodeDraft(selectedNodeId, {
+                              label,
+                              content: nodeContentDraft,
+                            });
+                          }
                           // Typing a label is a decision of its own, so the rename
                           // offer stops being about this node.
                           setRenameOffer(null);
                         }}
                         onKeyDown={e => {
                           if (e.key === 'Enter') saveNode();
-                          if (e.key === 'Escape') setSelectedNodeId(null);
+                          if (e.key === 'Escape') closeNodeInspector();
                         }}
                       />
 
@@ -3096,7 +3301,19 @@ function App() {
                         className="node-editor-content"
                         placeholder="Notes for this node (optional)"
                         value={nodeContentDraft}
-                        onChange={e => setNodeContentDraft(e.target.value)}
+                        onChange={e => {
+                          const content = e.target.value;
+                          setNodeContentDraft(content);
+                          if (selectedNodeId) {
+                            rememberNodeDraft(selectedNodeId, {
+                              label: nodeLabelDraft,
+                              content,
+                            });
+                          }
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Escape') closeNodeInspector();
+                        }}
                       />
 
                       {nodeEditError && (
@@ -3106,18 +3323,49 @@ function App() {
                       <div className="node-editor-actions">
                         <button
                           title="Save the label and notes"
-                          onClick={saveNode}
+                          onClick={() => saveNode()}
                           disabled={!nodeLabelDraft.trim()}
                         >
                           Save
                         </button>
                         <button
                           title="Close without saving (Esc)"
-                          onClick={() => setSelectedNodeId(null)}
+                          onClick={closeNodeInspector}
                         >
                           Close
                         </button>
                       </div>
+
+                      {closePrompt && (
+                        <div
+                          className="node-drawer-prompt"
+                          role="alertdialog"
+                          aria-label="Unsaved changes"
+                        >
+                          <p>Save this node's changes before closing?</p>
+                          <div className="node-drawer-prompt-actions">
+                            <button
+                              title="Save the label and notes, then close"
+                              onClick={() => saveNode(true)}
+                              disabled={!nodeLabelDraft.trim()}
+                            >
+                              Save
+                            </button>
+                            <button
+                              title="Close and drop these changes; the saved version stays"
+                              onClick={discardNodeDraft}
+                            >
+                              Discard
+                            </button>
+                            <button
+                              title="Stay here with the changes as they are"
+                              onClick={() => setClosePrompt(false)}
+                            >
+                              Keep editing
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <label className="node-drawer-label" htmlFor="inspector-cast">
                         Cast member
@@ -3803,6 +4051,64 @@ function App() {
           </div>
         )}
       </div>
+
+      {shortcutsOpen && (
+        <div
+          className="shortcuts-backdrop"
+          role="presentation"
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            className="shortcuts"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Keyboard shortcuts"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="shortcuts-head">
+              <h2>Keyboard shortcuts</h2>
+              <button
+                className="shortcuts-close"
+                aria-label="Close shortcuts"
+                title="Close this list (Esc)"
+                onClick={() => setShortcutsOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="shortcuts-intro">
+              Everything here also works by clicking. These are the routes that save a
+              trip to the mouse; on a Mac, use ⌘ wherever Ctrl is shown.
+            </p>
+
+            <div className="shortcuts-groups">
+              {shortcutGroups.map(group => (
+                <section key={group.title} className="shortcuts-group">
+                  <h3>{group.title}</h3>
+                  <dl>
+                    {group.keys.map(entry => (
+                      <div
+                        key={`${group.title}:${entry.keys}:${entry.action}`}
+                        className="shortcuts-row"
+                      >
+                        <dt>
+                          <kbd>{entry.keys}</kbd>
+                        </dt>
+                        <dd>{entry.action}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+            </div>
+
+            <p className="shortcuts-hint">
+              Press {shortcutKeys.help} any time to bring this list back.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

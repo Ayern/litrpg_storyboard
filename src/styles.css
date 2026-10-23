@@ -37,6 +37,13 @@ body {
   margin-bottom: 4px;
 }
 
+.user-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .user-section input {
   width: 100%;
   background: #1e1e1e;
@@ -45,6 +52,28 @@ body {
   padding: 6px 8px;
   font-size: 13px;
   border-radius: 4px;
+}
+
+/* The way to the keyboard reference without already knowing the ? key. */
+.shortcut-button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 50%;
+  color: #9a9a9a;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shortcut-button:hover {
+  border-color: #5ec8c0;
+  color: #dff6f3;
 }
 
 .sidebar h2 {
@@ -416,6 +445,171 @@ body {
 .canvas-search-error {
   font-size: 11px;
   color: #f0a8a8;
+}
+
+/* A draft in the drawer has not been written anywhere yet, so the heading says
+   so rather than waiting for the close prompt to mention it. */
+.node-drawer-dirty {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f2c14e;
+}
+
+/* Asked on close rather than on every keystroke: the choice is only needed when
+   the text is about to leave the screen. */
+.node-drawer-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #322c1c;
+  border: 1px solid #6b5a2a;
+  border-radius: 4px;
+}
+
+.node-drawer-prompt p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #f0d9a8;
+}
+
+.node-drawer-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-drawer-prompt-actions button {
+  padding: 3px 8px;
+  background: #1e1e1e;
+  border: 1px solid #4a4a3c;
+  border-radius: 4px;
+  color: #ddd;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.node-drawer-prompt-actions button:hover {
+  border-color: #f2c14e;
+  color: #fff;
+}
+
+/* The keyboard reference sits above every tab, since most of the routes are not
+   tied to one. Clicking the backdrop or pressing Esc closes it. */
+.shortcuts-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.shortcuts {
+  width: 100%;
+  max-width: 620px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 18px 20px 16px;
+  background: #262628;
+  border: 1px solid #454549;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcuts-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.shortcuts-close {
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: #9a9a9a;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shortcuts-close:hover {
+  color: #eee;
+}
+
+.shortcuts-intro {
+  margin: 6px 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #999;
+}
+
+.shortcuts-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 24px;
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8fc7c2;
+}
+
+.shortcuts-group dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.shortcuts-row dt {
+  flex-shrink: 0;
+}
+
+.shortcuts-row dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #c8c8c8;
+}
+
+.shortcuts-row kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  text-align: center;
+  background: #1b1b1d;
+  border: 1px solid #4a4a4f;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #e3e3e3;
+}
+
+.shortcuts-hint {
+  margin: 16px 0 0;
+  font-size: 11px;
+  color: #8a8a8a;
 }
 
 .canvas-search-empty {

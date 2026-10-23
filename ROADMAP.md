@@ -168,18 +168,22 @@ story. A filter row narrows the list by kind, and the eight-result keyboard limi
 and the count stay. Two follow-ups are noted in the README: results are not
 ranked, and the palette is still captured on the Graph tab only.
 
-**2. Shortcut reference.** A `?` overlay listing the keys per tab, plus a small
-`?` button next to the current-user field, shown once on a first run. Single
-source of truth: one table describing keys, used by both the overlay and the
-handlers, so documentation cannot drift from behaviour. **S**
+**2. Shortcut reference.** **Done.** A `?` overlay groups every keyboard route by
+where it works, reached from a `?` button beside the current-user field or the
+`?` key on any tab. The overlay renders one table, and the tooltip that names a
+key reads the same table. It does not open itself on a first run: a modal on
+launch interrupts before there is a board to act on, so the button is always
+visible instead. **S**
 
 ### Phase 1 — nothing gets lost
 
-**3. Guard unsaved edits.** Closing the drawer with a changed label or notes asks
-*Save / Discard / Keep editing*, and `Escape` with no changes closes silently.
-Keep the draft per node id for the session, so reopening the same node offers the
-half-written note back rather than a blank box. Show a dot on the drawer heading
-while it is dirty. This is the highest-value small change in the plan.
+**3. Guard unsaved edits.** **Done.** Closing the drawer with a changed label or
+notes asks *Save / Discard / Keep editing*; `Escape` with no changes closes
+silently. The draft is kept per node for the session, so switching nodes loses
+nothing and reopening offers the half-written text back. A dot beside the heading
+marks unsaved changes, and a save that writes nothing still settles the draft.
+Two follow-ups: drafts do not survive a restart, and switching nodes keeps the
+draft rather than asking, which is a deliberate choice rather than an oversight.
 **S–M**
 
 **4. Undo and redo.** `Ctrl+Z` / `Ctrl+Shift+Z` for content actions: edits,

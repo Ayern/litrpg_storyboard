@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -164,7 +164,10 @@ beforeEach(() => {
           },
         ];
       case 'update_graph_node':
-        return nodeRow({ ...find(args.id as string), label: args.label as string });
+        return {
+          ...nodeRow({ ...find(args.id as string), label: args.label as string }),
+          content: (args.content as string | null) ?? null,
+        };
       case 'set_node_character': {
         const row = find(args.nodeId as string);
         return nodeRow({ ...row, characterId: (args.characterId as string | null) ?? null });
@@ -395,5 +398,102 @@ describe('the node inspector', () => {
 
     expect(screen.queryByRole('complementary', { name: 'Node inspector' })).not.toBeInTheDocument();
     expect(lastCall('update_graph_node')).toBeUndefined();
+  });
+
+  it('asks before closing a changed node, and stays on Keep editing', async () => {
+    const user = await openNode('character: Rook');
+    const panel = drawer();
+
+    await user.type(within(panel).getByLabelText('Notes'), 'Half a thought');
+    // The heading says there is something unsaved before anything asks.
+    expect(within(panel).getByLabelText('Unsaved changes')).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole('button', { name: 'Close inspector' }));
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Unsaved changes' });
+    expect(prompt).toHaveTextContent("Save this node's changes before closing?");
+    expect(drawer()).toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(within(drawer()).getByLabelText('Notes')).toHaveValue('Half a thought');
+    expect(lastCall('update_graph_node')).toBeUndefined();
+  });
+
+  it('asks on Escape too, once the label has been changed', async () => {
+    const user = await openNode('character: Rook');
+    const label = within(drawer()).getByLabelText('Label');
+
+    await user.clear(label);
+    await user.type(label, 'Rook the Bold');
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByRole('alertdialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(drawer()).toBeInTheDocument();
+  });
+
+  it('saves from the prompt, then closes', async () => {
+    const user = await openNode('character: Rook');
+    const panel = drawer();
+
+    await user.type(within(panel).getByLabelText('Notes'), 'Carries the ledger.');
+    await user.click(within(panel).getByRole('button', { name: 'Close inspector' }));
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Save' })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('update_graph_node')).toEqual({
+        id: 'n2',
+        label: 'Rook',
+        content: 'Carries the ledger.',
+        user: 'You',
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('complementary', { name: 'Node inspector' })).not.toBeInTheDocument()
+    );
+  });
+
+  it('discards a draft when told to, and reopens the saved version', async () => {
+    const user = await openNode('character: Rook');
+
+    await user.type(within(drawer()).getByLabelText('Notes'), 'A line to lose.');
+    await user.click(within(drawer()).getByRole('button', { name: 'Close inspector' }));
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Discard' })
+    );
+
+    expect(screen.queryByRole('complementary', { name: 'Node inspector' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'character: Rook' }));
+    expect(within(drawer()).getByLabelText('Notes')).toHaveValue('');
+    expect(within(drawer()).queryByLabelText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('keeps a half-written note when another node is opened', async () => {
+    const user = await openNode('character: Rook');
+
+    await user.type(within(drawer()).getByLabelText('Notes'), 'Half a thought');
+
+    // Switching nodes is not a close, and the draft belongs to its own node.
+    await user.click(screen.getByRole('button', { name: 'chapter: Opening' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(within(drawer()).getByLabelText('Notes')).toHaveValue('');
+
+    await user.click(screen.getByRole('button', { name: 'character: Rook' }));
+    expect(within(drawer()).getByLabelText('Notes')).toHaveValue('Half a thought');
+    expect(within(drawer()).getByLabelText('Unsaved changes')).toBeInTheDocument();
+  });
+
+  it('closes on Escape without asking when nothing was typed', async () => {
+    const user = await openNode('character: Rook');
+
+    await user.click(within(drawer()).getByLabelText('Label'));
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Node inspector' })).not.toBeInTheDocument();
   });
 });
