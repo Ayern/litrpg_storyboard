@@ -75,7 +75,10 @@ so the board answers who is ahead without opening anybody. The badges follow edi
 made in the drawer or on the Characters tab. The canvas is outlined while a card
 is in the air, the drop is a single write that either makes a linked node or
 nothing, and a node whose cast member is in the trash says so rather than looking
-unlinked.
+unlinked. This is HTML5 drag and drop, which is why the window sets
+`dragDropEnabled: false`: Tauri's native handler would otherwise replace
+WebView2's and swallow the drag events on Windows. Nothing in the app uses
+Tauri's own drop handler — import goes through a file dialog.
 
 **Finding anything** — `Ctrl+F` on the Graph tab opens a search palette over the
 canvas (the Search button does the same). A query is matched against a node's
