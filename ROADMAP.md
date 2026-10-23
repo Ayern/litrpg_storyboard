@@ -1,6 +1,6 @@
 # Roadmap and integrity checklist
 
-LitRPG Storyboard Tracker · updated 23 October 2026 · `main` @ `3527296`
+LitRPG Storyboard Tracker · updated 23 October 2026
 
 This is the working plan. The [README](README.md) says what the app does today;
 this file says what must stay true as it grows, and what comes next. One feature
@@ -161,12 +161,12 @@ honest: **S** is a short session, **M** a solid one, **L** several.
 
 ### Phase 0 — closing the promises
 
-**1. Find anything.** `Ctrl+F` today finds nodes in the open graph. Widen it to
-characters (jump to the cast entry and select it), connections (pan to the edge
-and open its editor), stories (open the story, then the node) and, with a filter
-row, restrict by kind. Keep the eight-result keyboard limit and the count.
-*Foundation:* the existing palette already has selection, outlining and panning;
-this is a query layer and a result-kind tag. **M**
+**1. Find anything.** **Done.** `Ctrl+F` reaches nodes, cast members, connections
+and the other stories, whose boards are read when the palette opens; choosing a
+result opens the inspector, the character sheet, the connection editor or the
+story. A filter row narrows the list by kind, and the eight-result keyboard limit
+and the count stay. Two follow-ups are noted in the README: results are not
+ranked, and the palette is still captured on the Graph tab only.
 
 **2. Shortcut reference.** A `?` overlay listing the keys per tab, plus a small
 `?` button next to the current-user field, shown once on a first run. Single

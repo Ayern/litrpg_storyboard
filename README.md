@@ -61,11 +61,18 @@ is in the air, the drop is a single write that either makes a linked node or
 nothing, and a node whose cast member is in the trash says so rather than looking
 unlinked.
 
-**Finding a node** — `Ctrl+F` on the Graph tab opens a search palette over the
-canvas (the Search button does the same). It matches a node's label, notes, type
-and linked cast member, outlines every match on the board as the query is typed,
-and lists the first eight. `↑`/`↓` move through them, `Enter` pans to the node and
-opens its inspector, and `Esc` closes the palette.
+**Finding anything** — `Ctrl+F` on the Graph tab opens a search palette over the
+canvas (the Search button does the same). A query is matched against a node's
+label, notes, type and linked cast member; a character's name and description;
+both ends of a connection and its label or relation type; and every story by
+title, description or the cards inside it — other stories' boards are read when
+the palette opens, so a word can be found without opening the story that holds
+it. Matches in the open story are outlined on the board as the query is typed,
+and the first eight results are listed. `↑`/`↓` move through them, `Enter` goes
+to the chosen one, and `Esc` closes the palette. A node opens in the inspector, a
+cast member opens their sheet, a connection opens its editor centered on it, and
+a story result opens that story. The filter row under the query narrows the list
+to one kind, and the count follows the filter.
 
 **Editing a connection** — click an edge to open the same kind of editor for its
 label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
@@ -327,9 +334,13 @@ point so it stops drawing the vanished badge.
 - **Individual stats cannot be deleted**, only overwritten or removed with their
   character. Attributes can be deleted one at a time — deleting is done on the
   Characters tab, not in the inspector.
-- **Search covers the open graph only.** `Ctrl+F` looks at that story's node
-  labels, notes, types and linked cast members; it does not reach characters,
-  stories or connections, and it is captured only on the Graph tab.
+- **Search is a plain substring match.** Case is ignored, but `rk` does not find
+  `Rook` and there is no ranking beyond the order results are gathered in: the
+  open story first (nodes, cast, connections), then the other stories, each
+  starting with its title. The palette is captured on the Graph tab only, and the
+  keyboard reaches the first eight results. Another story's board is read when
+  the palette opens and kept for the session; it is dropped when that story has
+  been open and left, so edits are never searched from a stale copy.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every

@@ -144,22 +144,79 @@ const cast = [
   },
 ];
 
+const otherStory = {
+  id: 'story-2',
+  title: 'Ashes',
+  description: 'A second book.',
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+};
+
+// A board in a story that is not open. The palette reads it when it opens, so a
+// card here is reachable without visiting that story first.
+const otherRows = [
+  {
+    id: 'n21',
+    story_id: otherStory.id,
+    node_type: 'chapter',
+    label: 'Cinder Keep',
+    content: 'Wren wakes in the ash.',
+    pos_x: 100,
+    pos_y: 100,
+    created_by: 'Ada',
+    created_at: '2026-10-22T12:00:00Z',
+    updated_at: '2026-10-22T12:00:00Z',
+    character_id: null,
+  },
+];
+
+const otherCast = [
+  {
+    id: 'char-2',
+    story_id: otherStory.id,
+    name: 'Wren',
+    description: 'A smith.',
+    created_at: '2026-10-22T12:00:00Z',
+    updated_at: '2026-10-22T12:00:00Z',
+  },
+];
+
+// A connection to search for. Most tests have none, so the counts they check
+// stay about cards only.
+const connection = {
+  id: 'e1',
+  story_id: story.id,
+  source_id: 'n2',
+  target_id: 'n3',
+  label: 'guards',
+  relation_type: 'protects',
+  created_by: 'Ada',
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+};
+
+let edges: unknown[] = [];
+
 beforeEach(() => {
+  edges = [];
   flowMock.setCenter.mockReset();
   invokeMock.mockReset();
-  invokeMock.mockImplementation(async (command: string) => {
+  invokeMock.mockImplementation(async (command: string, args?: { storyId?: string }) => {
+    const otherBoard = args?.storyId === otherStory.id;
+
     switch (command) {
       case 'get_all_stories':
-        return [story];
+        return [story, otherStory];
       case 'get_graph_nodes':
-        return rows;
+        return otherBoard ? otherRows : rows;
       case 'get_graph_edges':
+        return otherBoard ? [] : edges;
       case 'get_story_character_stats':
       case 'get_character_stats':
       case 'get_character_attributes':
         return [];
       case 'get_characters':
-        return cast;
+        return otherBoard ? otherCast : cast;
       default:
         return null;
     }
@@ -176,12 +233,24 @@ async function openCanvas() {
 }
 
 function searchDialog() {
-  return screen.getByRole('dialog', { name: 'Search the canvas' });
+  return screen.getByRole('dialog', { name: 'Search the storyboard' });
 }
 
 function hitIds(container: HTMLElement) {
   return Array.from(container.querySelectorAll('.react-flow__node.search-hit')).map(
     node => node.getAttribute('data-id')
+  );
+}
+
+// The result rows of one kind, so a test names what it clicks instead of relying
+// on an index that moves as the fixtures change.
+function resultButtons(kind: string) {
+  return Array.from(
+    searchDialog().querySelectorAll<HTMLElement>('.canvas-search-result')
+  ).filter(entry =>
+    kind === 'node'
+      ? entry.querySelector('.legend')
+      : entry.querySelector(`.canvas-search-kind.${kind}`)
   );
 }
 
@@ -192,7 +261,7 @@ describe('the canvas search', () => {
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
 
-    const input = await screen.findByLabelText('Search nodes');
+    const input = await screen.findByLabelText('Search everything');
     expect(input).toHaveFocus();
 
     await user.type(input, 'vault');
@@ -211,7 +280,7 @@ describe('the canvas search', () => {
     const { container } = await openCanvas();
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    await user.type(await screen.findByLabelText('Search nodes'), 'vault');
+    await user.type(await screen.findByLabelText('Search everything'), 'vault');
 
     // The first match is the chapter, which mentions the vault in its notes.
     await waitFor(() => expect(hitIds(container)).toEqual(['n1', 'n3']));
@@ -221,7 +290,7 @@ describe('the canvas search', () => {
       expect(flowMock.setCenter).toHaveBeenCalledWith(70, 20, { zoom: 1, duration: 300 })
     );
 
-    expect(screen.queryByRole('dialog', { name: 'Search the canvas' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Search the storyboard' })).not.toBeInTheDocument();
     expect(
       within(screen.getByRole('complementary', { name: 'Node inspector' })).getByLabelText(
         'Label'
@@ -234,7 +303,7 @@ describe('the canvas search', () => {
     await openCanvas();
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    const input = await screen.findByLabelText('Search nodes');
+    const input = await screen.findByLabelText('Search everything');
     await user.type(input, 'vault');
     await user.keyboard('{ArrowDown}{Enter}');
 
@@ -256,7 +325,7 @@ describe('the canvas search', () => {
     // Only the node labelled "Rook" is linked to her; searching the cast name
     // reaches it, and nothing else here is called Rook.
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    await user.type(await screen.findByLabelText('Search nodes'), 'rook');
+    await user.type(await screen.findByLabelText('Search everything'), 'rook');
 
     await waitFor(() => expect(hitIds(container)).toEqual(['n1', 'n2']));
   });
@@ -266,9 +335,9 @@ describe('the canvas search', () => {
     const { container } = await openCanvas();
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    await user.type(await screen.findByLabelText('Search nodes'), 'zeppelin');
+    await user.type(await screen.findByLabelText('Search everything'), 'zeppelin');
 
-    expect(screen.getByText('No node matches “zeppelin”.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing matches “zeppelin”.')).toBeInTheDocument();
     expect(screen.getByText('0 matches', { exact: false })).toBeInTheDocument();
     expect(hitIds(container)).toEqual([]);
   });
@@ -278,17 +347,17 @@ describe('the canvas search', () => {
     const { container } = await openCanvas();
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    const input = await screen.findByLabelText('Search nodes');
+    const input = await screen.findByLabelText('Search everything');
     await user.type(input, 'vault');
     await waitFor(() => expect(hitIds(container)).toHaveLength(2));
 
     await user.keyboard('{Escape}');
 
-    expect(screen.queryByRole('dialog', { name: 'Search the canvas' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Search the storyboard' })).not.toBeInTheDocument();
     expect(hitIds(container)).toEqual([]);
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    expect(await screen.findByLabelText('Search nodes')).toHaveValue('');
+    expect(await screen.findByLabelText('Search everything')).toHaveValue('');
   });
 
   it('explains the controls before they are used', async () => {
@@ -316,5 +385,122 @@ describe('the canvas search', () => {
       'title',
       expect.stringContaining('cast')
     );
+  });
+
+  it('opens a cast member on their sheet rather than on the canvas', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'rook');
+
+    const [castResult] = resultButtons('cast');
+    expect(castResult).toHaveTextContent('Rook');
+
+    await user.click(castResult);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Characters' })).toHaveClass('active')
+    );
+    expect(document.querySelector('[data-character-id="char-1"]')).toHaveClass('active');
+    expect(screen.getByRole('heading', { name: 'Rook' })).toBeInTheDocument();
+  });
+
+  it('finds a connection by either end and opens its editor at its middle', async () => {
+    const user = userEvent.setup();
+    edges = [connection];
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'protects');
+
+    // Found by the relation, which is not the label, and shown with both ends.
+    const [linkResult] = resultButtons('link');
+    expect(linkResult).toHaveTextContent('guards');
+    expect(linkResult).toHaveTextContent('Rook → Vault');
+
+    await user.click(linkResult);
+
+    expect(screen.getByText('Edit connection')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Label (optional)')).toHaveValue('guards');
+    expect(screen.getByPlaceholderText('Relation type (optional)')).toHaveValue('protects');
+    expect(flowMock.setCenter).toHaveBeenCalledWith(200, 250, { zoom: 1, duration: 300 });
+  });
+
+  it('narrows the list to one kind and outlines only what it lists', async () => {
+    const user = userEvent.setup();
+    const { container } = await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'rook');
+
+    // The two cards that mention her, plus her cast entry.
+    await waitFor(() =>
+      expect(screen.getByText('3 matches', { exact: false })).toBeInTheDocument()
+    );
+    expect(hitIds(container)).toEqual(['n1', 'n2']);
+
+    await user.click(within(searchDialog()).getByRole('button', { name: 'Cast' }));
+
+    expect(within(searchDialog()).getByRole('button', { name: 'Cast' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByText('1 match', { exact: false })).toBeInTheDocument();
+    expect(resultButtons('cast')).toHaveLength(1);
+    expect(within(searchDialog()).queryByText('Opening')).not.toBeInTheDocument();
+
+    // Nothing outlined while the list shows only the cast.
+    expect(hitIds(container)).toEqual([]);
+  });
+
+  it('finds a card in another story and opens that story on it', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'cinder');
+
+    const [otherResult] = await waitFor(
+      () => {
+        const found = resultButtons('node');
+        expect(found[0]).toHaveTextContent('Ashes');
+        return found;
+      },
+      { timeout: 2000 }
+    );
+
+    await user.click(otherResult);
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('get_graph_nodes', { storyId: 'story-2' })
+    );
+    expect(await screen.findByText('Cinder Keep')).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('complementary', { name: 'Node inspector' })).getByLabelText('Label')
+    ).toHaveValue('Cinder Keep');
+    expect(flowMock.setCenter).toHaveBeenCalledWith(170, 120, { zoom: 1, duration: 300 });
+  });
+
+  it('opens a story from its title', async () => {
+    const user = userEvent.setup();
+    await openCanvas();
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    await user.type(await screen.findByLabelText('Search everything'), 'ashes');
+
+    const [storyResult] = await waitFor(
+      () => {
+        const found = resultButtons('story');
+        expect(found[0]).toHaveTextContent('Ashes');
+        return found;
+      },
+      { timeout: 2000 }
+    );
+
+    await user.click(storyResult);
+
+    expect(await screen.findByText('Cinder Keep')).toBeInTheDocument();
+    expect(document.querySelector('.story-item.active')).toHaveTextContent('Ashes');
   });
 });

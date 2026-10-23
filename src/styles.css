@@ -291,7 +291,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
-  width: 320px;
+  width: 340px;
   max-width: calc(100% - 20px);
   display: flex;
   flex-direction: column;
@@ -353,9 +353,69 @@ body {
   white-space: nowrap;
 }
 
-.canvas-search-cast {
+.canvas-search-tag {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: #8fc7c2;
+}
+
+/* What a non-node result is. Cards already carry their type chip, so this only
+   appears for the cast, the connections and the stories. */
+.canvas-search-kind {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #33333a;
+  color: #b9b9c4;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.canvas-search-kind.cast {
+  background: #1d3a38;
+  color: #8fd8d1;
+}
+
+.canvas-search-kind.story {
+  background: #37304a;
+  color: #c3b3f2;
+}
+
+.canvas-search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.canvas-search-filter {
+  padding: 2px 8px;
+  background: #1e1e20;
+  border: 1px solid #3c3c40;
+  border-radius: 10px;
+  color: #a8a8a8;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.canvas-search-filter:hover {
+  border-color: #5ec8c0;
+  color: #ddd;
+}
+
+.canvas-search-filter.active {
+  background: #2c4442;
+  border-color: #5ec8c0;
+  color: #dff6f3;
+}
+
+.canvas-search-error {
+  font-size: 11px;
+  color: #f0a8a8;
 }
 
 .canvas-search-empty {
