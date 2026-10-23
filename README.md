@@ -104,7 +104,7 @@ An entry records:
 | `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
 | `entity_id` | The row that changed |
 | `action` | `create`, `update`, `revert`, `soft_delete`, `restore` or `purge` |
-| `field_changed` | Name of the changed field, for updates |
+| `field_changed` | Name of the changed field, for updates and reverts |
 | `old_value` / `new_value` | Before and after, as text |
 | `changed_by` | The current user's name at the time |
 | `changed_at` | RFC 3339 timestamp, UTC |
