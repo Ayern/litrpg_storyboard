@@ -630,6 +630,36 @@ body {
   background: rgba(0, 0, 0, 0.55);
 }
 
+/* Quitting is the last way to lose a draft, so this question sits above every
+   tab the way the shortcut list does. */
+.quit-prompt {
+  width: 100%;
+  max-width: 420px;
+  padding: 18px 20px 16px;
+  background: #262628;
+  border: 1px solid #454549;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.quit-prompt h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.quit-prompt p {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ccc;
+}
+
+.quit-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .shortcuts {
   width: 100%;
   max-width: 620px;

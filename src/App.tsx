@@ -13,6 +13,7 @@ import ReactFlow, {
 import type { Edge, Node, NodeProps } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
@@ -840,6 +841,7 @@ function App() {
   // rather than left in the field the question is about.
   const chapterKeepEditingRef = useRef<HTMLButtonElement | null>(null);
   const noteKeepEditingRef = useRef<HTMLButtonElement | null>(null);
+  const quitKeepWorkingRef = useRef<HTMLButtonElement | null>(null);
   // Where the keyboard goes back to once a question is answered, so dismissing it
   // does not leave focus on a button that is about to disappear.
   const chapterArcInputRef = useRef<HTMLInputElement | null>(null);
@@ -868,6 +870,8 @@ function App() {
   const [notePrompt, setNotePrompt] = useState<{ message: string; go: () => void } | null>(
     null
   );
+  // Closing the window is the last way to lose a draft, so it asks too.
+  const [quitPrompt, setQuitPrompt] = useState(false);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeLabelDraft, setNodeLabelDraft] = useState('');
@@ -1188,7 +1192,8 @@ function App() {
         (selectedTab !== 'graph' && selectedTab !== 'chapters') ||
         !currentStory ||
         shortcutsOpen ||
-        backupsOpen
+        backupsOpen ||
+        quitPrompt
       ) {
         return;
       }
@@ -1212,7 +1217,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedTab, currentStory, searchOpen, shortcutsOpen, backupsOpen]);
+  }, [selectedTab, currentStory, searchOpen, shortcutsOpen, backupsOpen, quitPrompt]);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -1222,6 +1227,9 @@ function App() {
   // in — there it is a question mark like any other.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // The quit question owns the keyboard while it is up.
+      if (quitPrompt) return;
+
       if (event.key === 'Escape' && shortcutsOpen) {
         event.preventDefault();
         setShortcutsOpen(false);
@@ -1244,7 +1252,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [shortcutsOpen]);
+  }, [shortcutsOpen, quitPrompt]);
 
   // Ctrl+Z and Ctrl+Shift+Z walk the recorded actions. Inside a field they are
   // left alone, because there they belong to the text being typed.
@@ -1257,7 +1265,7 @@ function App() {
         target?.isContentEditable ||
         ['input', 'textarea', 'select'].includes(target?.tagName?.toLowerCase() ?? '');
 
-      if (typing || shortcutsOpen || backupsOpen) return;
+      if (typing || shortcutsOpen || backupsOpen || quitPrompt) return;
 
       const key = event.key.toLowerCase();
 
@@ -1276,7 +1284,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undoLast, redoLast, shortcutsOpen, backupsOpen]);
+  }, [undoLast, redoLast, shortcutsOpen, backupsOpen, quitPrompt]);
 
   // The backups dialog is modal: Escape closes it, but not while a restore is
   // already running.
@@ -2423,6 +2431,10 @@ function App() {
     if (notePrompt) noteKeepEditingRef.current?.focus();
   }, [notePrompt]);
 
+  useEffect(() => {
+    if (quitPrompt) quitKeepWorkingRef.current?.focus();
+  }, [quitPrompt]);
+
   // Closing the form drops the question with it.
   useEffect(() => {
     if (editingChapterId == null) setChapterFormPrompt(null);
@@ -2635,6 +2647,67 @@ function App() {
     }
 
     return noteDraft.trim() !== '';
+  };
+
+  // Closing the window is the last way to lose a draft. The listener is installed
+  // once and reads the latest answer through a ref, so it never needs rewiring as
+  // the forms change.
+  const unsavedDraft = chapterDraftIsDirty() || noteDraftIsDirty();
+  const unsavedDraftRef = useRef(false);
+
+  useEffect(() => {
+    unsavedDraftRef.current = unsavedDraft;
+  }, [unsavedDraft]);
+
+  useEffect(() => {
+    // A plain browser page has no window to close; only the desktop app asks.
+    if (!('__TAURI_INTERNALS__' in window)) return;
+
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    void getCurrentWindow()
+      .onCloseRequested(event => {
+        if (!unsavedDraftRef.current) return;
+
+        event.preventDefault();
+        setQuitPrompt(true);
+      })
+      .then(stop => {
+        if (cancelled) stop();
+        else unlisten = stop;
+      })
+      .catch(error => {
+        console.error('Failed to watch for the window closing:', error);
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Where the keyboard goes back to once the question is answered: the field the
+  // draft is in, so the next keystroke still acts on it.
+  const dismissQuitPrompt = () => {
+    setQuitPrompt(false);
+
+    if (editingNoteId != null) noteEditorRef.current?.focus();
+    else if (openNotesChapterId != null) noteAddRef.current?.focus();
+    else if (editingChapterId != null) chapterArcInputRef.current?.focus();
+  };
+
+  // The answer when the work can go: close the window without writing. Destroying
+  // it skips the close request that would ask the same question again.
+  const quitWithoutSaving = () => {
+    setQuitPrompt(false);
+
+    void getCurrentWindow()
+      .destroy()
+      .catch(error => {
+        console.error('Failed to close the window:', error);
+        setQuitPrompt(true);
+      });
   };
 
   const requestNoteLeave = (go: () => void) => {
@@ -6861,6 +6934,44 @@ function App() {
           </div>
         )}
       </div>
+
+      {quitPrompt && (
+        <div className="shortcuts-backdrop" role="presentation">
+          <div
+            className="quit-prompt"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Unsaved changes before quitting"
+            onKeyDown={event => {
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                dismissQuitPrompt();
+              }
+            }}
+          >
+            <h2>Quit without saving?</h2>
+            <p>
+              Your chapter or note edits have not been saved. Quitting now drops
+              them.
+            </p>
+            <div className="quit-prompt-actions">
+              <button
+                title="Close the window and lose these edits"
+                onClick={quitWithoutSaving}
+              >
+                Quit without saving
+              </button>
+              <button
+                ref={quitKeepWorkingRef}
+                title="Stay in the app with these edits as they are"
+                onClick={dismissQuitPrompt}
+              >
+                Keep working
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {shortcutsOpen && (
         <div

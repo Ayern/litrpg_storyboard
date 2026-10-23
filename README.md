@@ -104,6 +104,9 @@ half-written note, or an edit that has not been saved, is dropped, and so does
 switching stories or following a search result that would leave the note behind.
 **Cancel** and `Escape` in the note editor ask before closing just that editor,
 and a second `Escape` dismisses the question and leaves the editor as it was.
+Closing the app window asks before either a chapter or a note draft goes, with
+**Keep working** focused; `Escape` dismisses that question too and puts the
+keyboard back in the field.
 
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
@@ -533,9 +536,10 @@ point so it stops drawing the vanished badge.
   holds 50 steps, so restarting the app or switching stories empties it. A
   level-up is recorded as its own action and is not revertible from the Audit tab
   either: type the previous level back in.
-- **Unsaved drafts live in memory.** A half-written label or note survives
-  switching nodes, closing the drawer and switching stories, but not restarting
-  the app; nothing is written to disk until Save is pressed.
+- **Unsaved drafts live in memory.** A half-written chapter, label or note
+  survives switching nodes, closing the drawer and switching stories, but not
+  restarting the app; closing the window asks first, and nothing is written to
+  disk until Save is pressed.
 - **Shortcuts are fixed, not rebindable.** What the reference lists is the whole
   set of keyboard routes; customising them is not supported.
 - **Search is a plain substring match.** Case is ignored, but `rk` does not find

@@ -1,16 +1,40 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
 
-const { invokeMock, flowMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn(),
-  flowMock: { setCenter: vi.fn(), getZoom: vi.fn(() => 1) },
-}));
+const { invokeMock, flowMock, windowMock } = vi.hoisted(() => {
+  type CloseHandler = (event: { preventDefault: () => void }) => void;
+
+  const closeHandlers: CloseHandler[] = [];
+
+  return {
+    invokeMock: vi.fn(),
+    flowMock: { setCenter: vi.fn(), getZoom: vi.fn(() => 1) },
+    windowMock: {
+      closeHandlers,
+      destroy: vi.fn(async () => {}),
+      onCloseRequested: vi.fn(async (handler: CloseHandler) => {
+        closeHandlers.push(handler);
+
+        return () => {
+          const index = closeHandlers.indexOf(handler);
+          if (index >= 0) closeHandlers.splice(index, 1);
+        };
+      }),
+    },
+  };
+});
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    onCloseRequested: windowMock.onCloseRequested,
+    destroy: windowMock.destroy,
+  }),
+}));
 
 vi.mock('reactflow', async () => {
   const React = await import('react');
@@ -218,6 +242,9 @@ const chaptersInOrder = () =>
     .sort((left, right) => (left.chapter_seq ?? 999) - (right.chapter_seq ?? 999));
 
 beforeEach(() => {
+  windowMock.closeHandlers.length = 0;
+  windowMock.destroy.mockClear();
+
   rows = [
     { ...nodeRow('n1', 'chapter', 'One', 1, '2026-10-22T12:00:00Z'), chapter_arc: 'The Vault', chapter_words: 1200, chapter_target: 2000 },
     nodeRow('n2', 'idea', 'Idea', null, '2026-10-22T12:01:00Z'),
@@ -309,6 +336,28 @@ beforeEach(() => {
 function lastCall(command: string) {
   return [...invokeMock.mock.calls].reverse().find(call => call[0] === command)?.[1];
 }
+
+// Only the desktop build has a window to close, so the quit guard is installed
+// when the Tauri bridge is there.
+function asDesktopWindow() {
+  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+}
+
+async function requestWindowClose() {
+  await waitFor(() => expect(windowMock.closeHandlers.length).toBeGreaterThan(0));
+
+  const event = { preventDefault: vi.fn() };
+
+  act(() => {
+    windowMock.closeHandlers.forEach(handler => handler(event));
+  });
+
+  return event;
+}
+
+afterEach(() => {
+  delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+});
 
 async function openChapters() {
   const user = userEvent.setup();
@@ -1424,5 +1473,94 @@ describe('chapter continuity', () => {
     await openChapters();
 
     expect(screen.queryByRole('region', { name: 'Continuity' })).not.toBeInTheDocument();
+  });
+});
+
+describe('quitting the app', () => {
+  it('asks before the window closes with an unsaved chapter edit', async () => {
+    asDesktopWindow();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+    await user.type(screen.getByLabelText('Words'), '99');
+
+    const event = await requestWindowClose();
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    const prompt = screen.getByRole('alertdialog', {
+      name: 'Unsaved changes before quitting',
+    });
+    // A stray Enter keeps the work, as in the chapter's own question.
+    expect(within(prompt).getByRole('button', { name: 'Keep working' })).toHaveFocus();
+    expect(windowMock.destroy).not.toHaveBeenCalled();
+
+    // Escape is the same answer, and the form is where it was.
+    await user.keyboard('{Escape}');
+
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved changes before quitting' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Words')).toHaveValue(80099);
+    expect(screen.getByLabelText('Arc')).toHaveFocus();
+  });
+
+  it('closes the window without writing when the edit is dropped', async () => {
+    asDesktopWindow();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+    await user.type(screen.getByLabelText('Words'), '99');
+
+    await requestWindowClose();
+    await user.click(screen.getByRole('button', { name: 'Quit without saving' }));
+
+    expect(windowMock.destroy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Quit without saving?')).not.toBeInTheDocument();
+    // The question never reaches the database: the form is simply gone with the
+    // window, so nothing is written.
+    expect(lastCall('set_chapter_details')).toBeUndefined();
+  });
+
+  it('asks before the window closes with an unsaved note, and keeps it', async () => {
+    asDesktopWindow();
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Notes for One' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Edit the note Rook owes the vault' })
+    );
+
+    const editor = screen.getByLabelText('Edit note in One');
+    await user.clear(editor);
+    await user.type(editor, 'The vault answers');
+
+    const event = await requestWindowClose();
+
+    expect(event.preventDefault).toHaveBeenCalled();
+
+    await user.click(
+      within(
+        screen.getByRole('alertdialog', { name: 'Unsaved changes before quitting' })
+      ).getByRole('button', { name: 'Keep working' })
+    );
+
+    expect(screen.getByLabelText('Edit note in One')).toHaveValue('The vault answers');
+    expect(screen.getByLabelText('Edit note in One')).toHaveFocus();
+    expect(windowMock.destroy).not.toHaveBeenCalled();
+  });
+
+  it('lets a clean window close without asking', async () => {
+    asDesktopWindow();
+    const user = await openChapters();
+
+    await user.click(screen.getByRole('button', { name: 'Edit Two details' }));
+
+    const event = await requestWindowClose();
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Unsaved changes before quitting' })
+    ).not.toBeInTheDocument();
   });
 });
