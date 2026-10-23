@@ -114,6 +114,9 @@ jobs:
           # rebuilt without moving the tag. Empty means the ref that triggered
           # this run.
           ref: ${{ inputs.release_tag }}
+          # The release notes are built from the commits since the previous tag,
+          # which needs the history and tags a shallow checkout leaves behind.
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -200,10 +203,38 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # Rebuilding an existing tag replaces the assets in place.
+            # Rebuilding an existing tag replaces the assets in place and leaves
+            # the notes it already has alone.
             gh release upload "$TAG" "${assets[@]}" --clobber
-          else
-            gh release create "$TAG" "${assets[@]}" \
-              --title "LitRPG Storyboard Tracker $TAG" \
-              --generate-notes
+            exit 0
           fi
+
+          # `--generate-notes` only lists pull requests, and this repository takes
+          # commits straight to main, so write the body from the commits between
+          # the previous release tag and this one instead.
+          notes=$(mktemp)
+          if previous=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null); then
+            echo "## Changes since $previous" > "$notes"
+            range="$previous..$TAG"
+          else
+            # First tagged release: every commit is new.
+            previous=""
+            echo "## Changes" > "$notes"
+            range="$TAG"
+          fi
+          echo >> "$notes"
+          # The version bump that made this tag tells a reader nothing.
+          git log --no-merges \
+            --pretty="- %s ([%h](https://github.com/$GITHUB_REPOSITORY/commit/%H))" "$range" \
+            | { grep -v '^- Release ' || true; } >> "$notes"
+          if [ -n "$previous" ]; then
+            printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "$GITHUB_REPOSITORY" "$previous" "$TAG" >> "$notes"
+          fi
+          # Said on every release page, because it is the first thing a downloader
+          # will hit.
+          printf '\n_Both installers are unsigned, so Windows will warn the first time one is run._\n' >> "$notes"
+
+          gh release create "$TAG" "${assets[@]}" \
+            --title "LitRPG Storyboard Tracker $TAG" \
+            --notes-file "$notes"
