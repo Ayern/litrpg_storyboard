@@ -14,6 +14,11 @@ edition = "2021"
 name = "litrpg_storyboard_tracker_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The database layer lives in its own crate so its tests build without Tauri --
+# and so without the WebKitGTK/GTK system packages that linking Tauri needs.
+[workspace]
+members = ["db"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -21,10 +26,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+litrpg-db = { path = "db" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-uuid = { version = "1.28.0", features = ["v4", "serde"] }
 chrono = "0.4.45"
 
 

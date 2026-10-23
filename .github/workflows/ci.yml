@@ -58,60 +58,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The tauri crate links against webkit and gtk, which the runner does not
-      # ship. `cargo test --lib` needs them even though no window is opened.
-      #
-      # Normally this takes ~25s, but the runner's Ubuntu mirror has stalled
-      # twice now -- 751s and 1667s for the same 104 MB -- while the tests it
-      # installs for run in four seconds. apt gives a silent connection 30s
-      # before abandoning that file (measured: 60s per source, as it tries
-      # InRelease and then Release) and retries a failed file three times, so one
-      # dead mirror becomes a chain of multi-minute gaps. Shorter timeout, more
-      # retries, a bounded fetch that is retried once, and a cap on the step: a
-      # dead mirror should cost minutes, not half an hour.
-      - name: Install Tauri system dependencies
-        timeout-minutes: 10
-        env:
-          # Nothing here should wait for a prompt; fail loudly if a package wants
-          # to ask something instead of sitting there until the timeout.
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt_opts=(
-            -o Acquire::Retries=5
-            -o Acquire::http::Timeout=20
-            -o Acquire::https::Timeout=20
-          )
-          packages=(
-            build-essential
-            curl
-            wget
-            file
-            libssl-dev
-            libgtk-3-dev
-            libwebkit2gtk-4.1-dev
-            libayatana-appindicator3-dev
-            librsvg2-dev
-            libxdo-dev
-            patchelf
-          )
-
-          # Fetching the packages is the only part a stalled mirror can hold up,
-          # so bound it and give it one retry: a stall is usually the mirror
-          # having a bad minute, and the second attempt lands on a healthy one.
-          # Interrupting apt while it is only fetching is safe, since nothing is
-          # unpacked until the install below, which runs from the local cache.
-          fetch() {
-            sudo timeout -k 10 90 apt-get "${apt_opts[@]}" update &&
-              sudo timeout -k 10 120 apt-get "${apt_opts[@]}" install -y \
-                --download-only "${packages[@]}"
-          }
-
-          if ! fetch; then
-            echo "::warning::the package fetch stalled or failed; retrying once"
-            fetch
-          fi
-
-          sudo apt-get "${apt_opts[@]}" install -y "${packages[@]}"
+      # The database is its own crate with no Tauri dependency, so these tests
+      # build only rusqlite and friends. Nothing here needs WebKitGTK, GTK or an
+      # apt install, which is what used to let a slow Ubuntu mirror hold this
+      # job up for half an hour.
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -121,8 +71,8 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Run tests
-        run: cargo test --lib
+      - name: Run database tests
+        run: cargo test -p litrpg-db
 
   package:
     name: Package the desktop app

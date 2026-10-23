@@ -153,7 +153,7 @@ Tests:
 
 ```bash
 npm test                             # audit tab paging and filtering (vitest, jsdom)
-cd src-tauri && cargo test --lib     # database layer, in-memory SQLite
+cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
 The frontend suite renders the real `App` with Tauri's `invoke` mocked, so it covers
@@ -165,8 +165,9 @@ page that arrives late, and what it says when a filter matches nothing.
 - **`src/`** — React 19 + React Flow 11 single-window UI. All commands are called
   through `@tauri-apps/api/core`'s `invoke`; the argument names are camelCase and
   Tauri maps them to the snake_case parameters of the Rust commands.
-- **`src-tauri/src/db.rs`** — all SQL, models and migrations. The connection is
-  owned by a `Db` value managed as Tauri state. Every public method takes the lock
+- **`src-tauri/db`** — all SQL, models and migrations, in a crate of its own with
+  no Tauri dependency, so its tests build without WebKitGTK or GTK. The connection
+  is owned by a `Db` value managed as Tauri state. Every public method takes the lock
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
@@ -193,7 +194,8 @@ page that arrives late, and what it says when a filter matches nothing.
 - **Single machine, no sync.** Sharing means copying the database file.
 - **CI packages for Windows only, and not on every push.** The workflow typechecks,
   builds and tests the frontend and runs the database tests on Ubuntu for every
-  push and pull request, but runs `tauri build` on `windows-latest` only for
+  push and pull request — those need no system packages, since only the app crate
+  links WebKitGTK — but runs `tauri build` on `windows-latest` only for
   pushes to `main`, tags and manual runs. Every packaging run keeps the installers
   as workflow artifacts, and a tagged build also publishes them on a GitHub
   Release. The installers are unsigned, and nothing is packaged for macOS or

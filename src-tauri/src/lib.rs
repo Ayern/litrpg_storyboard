@@ -1,6 +1,4 @@
-mod db;
-
-use db::{
+use litrpg_db::{
     AuditPage, Character, CharacterAttribute, CharacterStat, Db, Edge, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
