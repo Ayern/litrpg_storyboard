@@ -1726,6 +1726,250 @@ impl Db {
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
+    // ===== CHAPTER SNAPSHOT =====
+    //
+    // The progress ledger is a history, not a set of totals. This answers the
+    // question the rest of the app asks when it looks at a scene: what did this
+    // character's sheet hold when the story reached that chapter? The chapter's
+    // place in the reading order, not when a row happened to be entered, decides.
+
+    pub fn character_state_at_chapter(
+        &self,
+        character_id: &str,
+        chapter_id: &str,
+    ) -> DbResult<CharacterChapterState> {
+        let guard = self.conn()?;
+        Self::character_state_at_chapter_on(&guard, character_id, chapter_id)
+    }
+
+    /// The chapter cards need the same snapshot for every character assigned to
+    /// every chapter, without one command per card. The database still decides
+    /// who is assigned — a chapter's linked cast and its point of view — and what
+    /// each snapshot held as the story reached that chapter.
+    pub fn list_chapter_cast_states(&self, story_id: &str) -> DbResult<Vec<ChapterCastState>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT n.id, n.character_id, n.chapter_pov
+             FROM nodes n
+             JOIN stories st ON st.id = n.story_id
+             WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+               AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY n.chapter_seq, n.created_at, n.id",
+        )?;
+
+        let assignments = stmt
+            .query_map(params![story_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        drop(stmt);
+
+        let mut states = Vec::new();
+
+        for (chapter_id, linked, pov) in assignments {
+            let mut character_ids = Vec::new();
+
+            for character_id in [linked, pov].into_iter().flatten() {
+                if !character_ids.contains(&character_id) {
+                    character_ids.push(character_id);
+                }
+            }
+
+            for character_id in character_ids {
+                match Self::character_state_at_chapter_on(&guard, &character_id, &chapter_id) {
+                    Ok(state) => states.push(ChapterCastState {
+                        chapter_id: chapter_id.clone(),
+                        character_id,
+                        level: state.level,
+                        level_is_penalty: state.level_is_penalty,
+                        skills: state.skills,
+                    }),
+                    // A cast member in the trash has no badge to draw, and a
+                    // chapter without a reading-order place has no snapshot;
+                    // neither should keep the rest of the board from loading.
+                    Err(DbError::NotFound(_)) | Err(DbError::Invalid(_)) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+
+        Ok(states)
+    }
+
+    fn character_state_at_chapter_on(
+        conn: &Connection,
+        character_id: &str,
+        chapter_id: &str,
+    ) -> DbResult<CharacterChapterState> {
+        let story_id = live_character_story(conn, character_id)?;
+
+        let chapter = conn
+            .query_row(
+                "SELECT n.chapter_seq, n.story_id
+                 FROM nodes n
+                 JOIN stories st ON st.id = n.story_id
+                 WHERE n.id = ?1 AND n.node_type = 'chapter'
+                   AND n.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![chapter_id],
+                |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("chapter"))?;
+
+        if chapter.1 != story_id {
+            return Err(DbError::NotFound("chapter"));
+        }
+
+        let chapter_seq = chapter.0.ok_or_else(|| {
+            DbError::Invalid(
+                "a chapter needs a place in the reading order before its state can be read"
+                    .to_string(),
+            )
+        })?;
+
+        // The last milestone at or before this chapter is the level that applied.
+        // A later chapter's milestone is not allowed to leak backwards.
+        let milestone = conn
+            .query_row(
+                "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
+                        m.created_at, m.updated_at
+                 FROM character_level_milestones m
+                 JOIN nodes n ON n.id = m.chapter_id
+                 WHERE m.character_id = ?1 AND n.deleted_at IS NULL
+                   AND n.node_type = 'chapter' AND n.chapter_seq IS NOT NULL
+                   AND n.chapter_seq <= ?2
+                 ORDER BY n.chapter_seq DESC, m.created_at DESC, m.id DESC
+                 LIMIT 1",
+                params![character_id, chapter_seq],
+                level_milestone_row,
+            )
+            .optional()?;
+
+        let (level, level_milestone_id, level_is_penalty) = match milestone {
+            Some(milestone) => (
+                Some(milestone.level),
+                Some(milestone.id),
+                milestone.is_debuff,
+            ),
+            None => (None, None, false),
+        };
+
+        // A skill is learned at a chapter, so only skills placed at or before this
+        // one can be active. The chapter join is what makes "as of" honest: an
+        // unplaced skill cannot be guessed into a scene.
+        let mut learned = Vec::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.character_id, s.name, s.rank, s.effect, s.chapter_id,
+                        s.node_id, s.created_at, s.updated_at, n.chapter_seq
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 JOIN nodes n ON n.id = s.chapter_id
+                 WHERE s.character_id = ?1 AND c.deleted_at IS NULL
+                   AND st.deleted_at IS NULL AND n.deleted_at IS NULL
+                   AND n.node_type = 'chapter' AND n.chapter_seq IS NOT NULL
+                   AND n.chapter_seq <= ?2
+                 ORDER BY n.chapter_seq, s.created_at, s.id",
+            )?;
+
+            let rows = stmt.query_map(params![character_id, chapter_seq], |row| {
+                Ok((character_skill_row(row)?, row.get::<_, i64>(9)?))
+            })?;
+
+            for row in rows {
+                learned.push(row?);
+            }
+        }
+
+        // Events decide which of those skills survived to this chapter and which
+        // rank applied. Only events at or before the chapter count, and an event
+        // entered before the skill was learned is ignored rather than turning a
+        // later scene into a contradiction.
+        let mut events_by_skill: HashMap<String, Vec<(CharacterSkillEvent, i64)>> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at,
+                        e.updated_at, n.chapter_seq
+                 FROM character_skill_events e
+                 JOIN character_skills s ON s.id = e.skill_id
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 JOIN nodes n ON n.id = e.chapter_id
+                 WHERE s.character_id = ?1 AND c.deleted_at IS NULL
+                   AND st.deleted_at IS NULL AND n.deleted_at IS NULL
+                   AND n.node_type = 'chapter' AND n.chapter_seq IS NOT NULL
+                   AND n.chapter_seq <= ?2
+                 ORDER BY n.chapter_seq, e.created_at, e.id",
+            )?;
+
+            let rows = stmt.query_map(params![character_id, chapter_seq], |row| {
+                Ok((skill_event_row(row)?, row.get::<_, i64>(7)?))
+            })?;
+
+            for row in rows {
+                let (event, sequence) = row?;
+                events_by_skill
+                    .entry(event.skill_id.clone())
+                    .or_default()
+                    .push((event, sequence));
+            }
+        }
+
+        let mut skills = Vec::new();
+
+        for (skill, learned_seq) in learned {
+            let Some(learned_chapter_id) = skill.chapter_id.clone() else {
+                continue;
+            };
+
+            let mut events = events_by_skill.remove(&skill.id).unwrap_or_default();
+            events.retain(|(_, sequence)| *sequence >= learned_seq);
+
+            // A sacrifice removes the skill; a later use or upgrade is a
+            // continuity warning, not a revival. Any sacrifice by this chapter
+            // means there is nothing left to show.
+            if events.iter().any(|(event, _)| event.kind == "sacrificed") {
+                continue;
+            }
+
+            let rank = events
+                .iter()
+                .rev()
+                .find_map(|(event, _)| match event.kind.as_str() {
+                    "upgraded" | "used" => {
+                        event.rank.clone().filter(|rank| !rank.trim().is_empty())
+                    }
+                    _ => None,
+                })
+                .or_else(|| skill.rank.clone());
+
+            skills.push(CharacterChapterSkill {
+                skill_id: skill.id,
+                name: skill.name,
+                rank,
+                effect: skill.effect,
+                learned_chapter_id,
+                learned_chapter_seq: learned_seq,
+            });
+        }
+
+        Ok(CharacterChapterState {
+            character_id: character_id.to_string(),
+            chapter_id: chapter_id.to_string(),
+            chapter_seq,
+            level,
+            level_milestone_id,
+            level_is_penalty,
+            skills,
+        })
+    }
+
     // ===== INVENTORY AND CURRENCY =====
     //
     // Like skills, an item belongs to a character rather than to the board. The
@@ -6266,6 +6510,45 @@ pub struct CharacterLevelMilestone {
     pub is_debuff: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// One active skill in a character's state at a chapter. The rank is the one
+/// that applied then: the latest upgrade or use at or before that chapter,
+/// falling back to the skill row's own rank when no event recorded one.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterChapterSkill {
+    pub skill_id: String,
+    pub name: String,
+    pub rank: Option<String>,
+    pub effect: Option<String>,
+    pub learned_chapter_id: String,
+    pub learned_chapter_seq: i64,
+}
+
+/// What a character's sheet held at one chapter: the latest level milestone at
+/// or before it in reading order, and the skills learned by then that had not
+/// yet been sacrificed.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterChapterState {
+    pub character_id: String,
+    pub chapter_id: String,
+    pub chapter_seq: i64,
+    pub level: Option<i64>,
+    pub level_milestone_id: Option<String>,
+    pub level_is_penalty: bool,
+    pub skills: Vec<CharacterChapterSkill>,
+}
+
+/// The snapshot for one character assigned to one chapter, as the graph cards
+/// need it: enough for a compact badge and a tooltip, without repeating the
+/// chapter sequence that the caller already knows.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct ChapterCastState {
+    pub chapter_id: String,
+    pub character_id: String,
+    pub level: Option<i64>,
+    pub level_is_penalty: bool,
+    pub skills: Vec<CharacterChapterSkill>,
 }
 
 /// One change in a skill's life: a rank gained, a use in a chapter, or a
@@ -13512,6 +13795,367 @@ mod tests {
             .list_story_skill_events(&restored.id)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn a_chapter_state_reads_levels_in_reading_order_not_entry_order() {
+        let (db, story, character, one, _) = skill_story();
+        let third = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Three".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let prologue = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Prologue".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.set_chapter_order(
+            &story.id,
+            vec![
+                prologue.id.clone(),
+                one.id.clone(),
+                third.id.clone(),
+                second.id.clone(),
+            ],
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // The milestones are entered in a different order from the chapters, so
+        // a query that trusted `created_at` would give the wrong answer.
+        let first = db
+            .add_level_milestone(
+                character.id.clone(),
+                2,
+                Some(one.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.add_level_milestone(
+            character.id.clone(),
+            9,
+            Some(second.id.clone()),
+            false,
+            "Ada".into(),
+        )
+        .unwrap();
+        let penalty = db
+            .add_level_milestone(
+                character.id.clone(),
+                6,
+                Some(third.id.clone()),
+                true,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let before = db
+            .character_state_at_chapter(&character.id, &prologue.id)
+            .unwrap();
+        assert_eq!(before.chapter_seq, 1);
+        assert_eq!(before.level, None, "no milestone had happened yet");
+        assert!(before.skills.is_empty());
+
+        let opening = db
+            .character_state_at_chapter(&character.id, &one.id)
+            .unwrap();
+        assert_eq!(opening.chapter_seq, 2);
+        assert_eq!(opening.level, Some(2));
+        assert_eq!(
+            opening.level_milestone_id.as_deref(),
+            Some(first.id.as_str())
+        );
+        assert!(!opening.level_is_penalty);
+
+        let middle = db
+            .character_state_at_chapter(&character.id, &third.id)
+            .unwrap();
+        assert_eq!(middle.chapter_seq, 3);
+        assert_eq!(middle.level, Some(6));
+        assert_eq!(
+            middle.level_milestone_id.as_deref(),
+            Some(penalty.id.as_str())
+        );
+        assert!(
+            middle.level_is_penalty,
+            "the penalty flag travels with the level"
+        );
+
+        let last = db
+            .character_state_at_chapter(&character.id, &second.id)
+            .unwrap();
+        assert_eq!(last.chapter_seq, 4);
+        assert_eq!(last.level, Some(9));
+
+        let other = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
+        let elsewhere = db
+            .create_node(
+                other.id.clone(),
+                "chapter".into(),
+                "Elsewhere".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert!(
+            db.character_state_at_chapter(&character.id, &elsewhere.id)
+                .is_err(),
+            "a chapter from another story is not a valid anchor"
+        );
+    }
+
+    #[test]
+    fn a_chapter_state_lists_only_the_skills_active_then() {
+        let (db, story, character, one, _) = skill_story();
+        let two = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let three = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Three".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let fireball = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                Some("3d6 fire".into()),
+                Some(one.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let shield = db
+            .add_skill(
+                character.id.clone(),
+                "Shield".into(),
+                Some("Novice".into()),
+                None,
+                Some(two.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.add_skill(
+            character.id.clone(),
+            "Unplaced".into(),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.add_skill_event(
+            fireball.id.clone(),
+            "upgraded".into(),
+            Some(two.id.clone()),
+            Some("Rank 2".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_skill_event(
+            shield.id.clone(),
+            "sacrificed".into(),
+            Some(three.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        // A use recorded at the same chapter as the sacrifice does not revive it.
+        db.add_skill_event(
+            shield.id.clone(),
+            "used".into(),
+            Some(three.id.clone()),
+            Some("Novice".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let opening = db
+            .character_state_at_chapter(&character.id, &one.id)
+            .unwrap();
+        assert_eq!(opening.skills.len(), 1);
+        assert_eq!(opening.skills[0].name, "Fireball");
+        assert_eq!(opening.skills[0].rank.as_deref(), Some("Rank 1"));
+        assert_eq!(
+            opening.skills[0].learned_chapter_id.as_str(),
+            one.id.as_str()
+        );
+        assert_eq!(opening.skills[0].learned_chapter_seq, 1);
+
+        let middle = db
+            .character_state_at_chapter(&character.id, &two.id)
+            .unwrap();
+        assert_eq!(middle.skills.len(), 2);
+        let upgraded = middle
+            .skills
+            .iter()
+            .find(|skill| skill.name == "Fireball")
+            .unwrap();
+        assert_eq!(upgraded.rank.as_deref(), Some("Rank 2"));
+        assert!(middle.skills.iter().any(|skill| skill.name == "Shield"));
+        assert!(
+            !middle.skills.iter().any(|skill| skill.name == "Unplaced"),
+            "a skill with no chapter cannot be placed in a scene"
+        );
+
+        let end = db
+            .character_state_at_chapter(&character.id, &three.id)
+            .unwrap();
+        assert_eq!(end.skills.len(), 1);
+        assert_eq!(end.skills[0].name, "Fireball");
+        assert_eq!(end.skills[0].rank.as_deref(), Some("Rank 2"));
+        assert!(
+            !end.skills.iter().any(|skill| skill.name == "Shield"),
+            "a sacrificed skill is no longer active"
+        );
+    }
+
+    #[test]
+    fn chapter_cast_states_follow_the_linked_cast_and_pov_without_duplicates() {
+        let (db, story, character, one, _) = skill_story();
+        let wren = db
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let tess = db
+            .create_character(story.id.clone(), "Tess".into(), None, "Ada".into())
+            .unwrap();
+        let two = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let three = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Three".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.set_node_character(&one.id, Some(character.id.clone()), "Ada".into())
+            .unwrap();
+        // The second chapter names Wren in both ways. The card should not show
+        // her twice because the two links happen to agree.
+        db.set_node_character(&two.id, Some(wren.id.clone()), "Ada".into())
+            .unwrap();
+        db.set_chapter_details(
+            &two.id,
+            None,
+            None,
+            None,
+            Some(wren.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        // The third chapter links Tess, who has no milestone at all.
+        db.set_node_character(&three.id, Some(tess.id.clone()), "Ada".into())
+            .unwrap();
+
+        db.add_level_milestone(
+            character.id.clone(),
+            3,
+            Some(one.id.clone()),
+            false,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_level_milestone(
+            wren.id.clone(),
+            2,
+            Some(two.id.clone()),
+            false,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let states = db.list_chapter_cast_states(&story.id).unwrap();
+
+        assert_eq!(states.len(), 3);
+
+        let opening = states
+            .iter()
+            .find(|state| state.chapter_id == one.id)
+            .unwrap();
+        assert_eq!(opening.character_id, character.id);
+        assert_eq!(opening.level, Some(3));
+
+        let second: Vec<_> = states
+            .iter()
+            .filter(|state| state.chapter_id == two.id)
+            .collect();
+        assert_eq!(second.len(), 1, "the same cast member is shown once");
+        assert_eq!(second[0].character_id, wren.id);
+        assert_eq!(second[0].level, Some(2));
+
+        let third = states
+            .iter()
+            .find(|state| state.chapter_id == three.id)
+            .unwrap();
+        assert_eq!(third.character_id, tess.id);
+        assert_eq!(
+            third.level, None,
+            "a character with no milestone yet keeps a badge but no level"
+        );
     }
 
     // A story with a cast member, a chapter and an item card, which is the shape

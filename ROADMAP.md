@@ -292,9 +292,18 @@ moments that can only be described in words. **M**
 **9. Progression ledger.** **Started.** A per-chapter level milestone now exists
 (`character_level_milestones`), entered on the sheet with a chapter and an
 explicit penalty flag, and compared in reading order on the Chapters tab and the
-chapter cards. Remaining: XP per chapter (`character_progress`), a grid entry
-flow, and a power curve — one line per character, chapter on the x-axis and the
-choice of level, XP or any stat on the y, with declared jumps allowed. **L**
+chapter cards. The Characters tab now draws a **Power curve**: one step line per
+character, chapters in reading order on the x-axis and level on the y, with a
+toggle for every plotted line so power curves can be compared side by side. The
+line comes straight from the milestone rows; an unplaced or trashed chapter is
+left off rather than guessed at. A database query also answers "where did this
+character stand as of this chapter?" — active level, skills learned and their
+rank at the time, with sacrifices removed — and the chart's **As of chapter**
+readout uses it. Chapter cards on the Graph tab also carry compact badges for the
+linked cast and POV character, with that snapshot's level and the active skills in
+the tooltip. Remaining: XP per chapter (`character_progress`), a grid entry flow,
+a real per-scene cast assignment, and switching the chart's y-axis to XP or any
+stat, with declared jumps allowed. **L**
 
 ### Phase 3 — the world
 
@@ -342,12 +351,13 @@ names unchanged, and the legend test covers them. **S**
 ### Phase 4 — see the story
 
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
-Chapters tab currently flags chapter timing and duplication, a cast member in two
-chapters on one day, an item still carried after its recorded loss or lost before
+Chapters tab currently flags chapter timing and duplication, a cast member intwo chapters on one day, an item still carried after its recorded loss or lost before
 acquisition, a level drop without a penalty flag, a skill used before acquisition,
 a rank used before its upgrade, and a skill used after sacrifice. The last three
 and the level drop also appear as buttons on the affected chapter card; clicking
-one selects the holder and opens the exact milestone or skill event. Remaining:
+one selects the holder and opens the exact milestone or skill event. The
+Characters tab's chapter-state query uses the same reading order for a snapshot
+of active level and skills. Remaining:
 chapter gaps, cast linked after they are dead or trashed, nodes untouched for 30
 days, and dangling plot threads with no `resolves` edge. Every finding names its
 node and chapter; chapter links pan to that chapter, and progression links cross

@@ -214,6 +214,40 @@ order and warns when a level goes backwards without that penalty flag; the same
 warning is drawn on the chapter card where the drop appears. Clicking either one
 opens the holder's sheet and puts that milestone straight into its editor.
 
+**Progression chart and chapter state** — the top of the Characters tab draws a
+power curve from `character_level_milestones`: one step line per character, with
+the chapters in reading order along the x-axis and levels up the y-axis. Every
+cast member with a placed milestone starts on the chart, and the legend toggles
+each line on or off so two or more curves can be compared without recolouring the
+others. The line starts at the first recorded milestone, steps at each chapter
+where the level changes, and leaves a milestone with no live chapter off the
+chart rather than guessing where it belongs. The chart is read-only; **Edit** on
+the milestone still changes the number.
+
+Below it, **As of chapter** reads a snapshot rather than redrawing the chart by
+hand: choose a chapter and the panel says each selected character's active level
+and the skills they still held then. The database resolves the chapter's place in
+the reading order, takes the last milestone at or before it, and follows skill
+events up to the same point. A skill's rank is the latest upgrade or use recorded
+by then, falling back to the skill row's own rank when no event carries one, and a
+sacrifice removes it from that scene. A skill or milestone entered
+without a chapter cannot be placed in a snapshot and is left out; an event entered
+before its skill was learned is ignored as a contradiction rather than used to
+rewrite later scenes. This is the same `character_state_at_chapter` query other
+screens can use to ask what a character had in any chapter.
+
+**Chapter cast badges** — a chapter card on the Graph tab names the cast assigned
+to it: the character it is linked to and the point-of-view character, if either is
+set. Each name gets a compact level badge from the same chapter snapshot, so
+"Rook (Lv 12)" is the level Rook had when the story reached that chapter, not the
+level on the sheet today. Hovering or focusing a badge lists that character's
+active skills and their ranks; clicking it opens the character sheet. A character
+with no milestone yet keeps the name badge without a level, and a chapter with
+nobody assigned gets no badge row at all. The badges are `nodrag nopan` buttons,
+so opening one does not drag the card or pan the board. Every chapter's assigned
+cast is read in one story-wide request rather than one request per card, and the
+request is repeated when the milestones, skills or assignments change.
+
 **Skills** — a cast member's skills are rows of their own rather than attributes
 called "Skill": a name, an optional rank and effect in the author's own words,
 and the chapter it was learned in. Each row can also name the `skill` card it
@@ -540,7 +574,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression links, skills and inventory, chapters, POV, in-world days and times, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression chart and chapter state, chapter-card cast badges, progression links, skills and inventory, chapters, POV, in-world days and times, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -559,7 +593,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 43 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 45 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`, and the
@@ -588,6 +622,10 @@ page that arrives late, and what it says when a filter matches nothing.
   does not drive — while the ↑/↓ buttons move a chapter everywhere. Deleting a
   chapter leaves its position empty until something is moved or **Renumber** is
   pressed; that is shown in the tab, not repaired silently.
+- **A chapter's cast badge knows two links, not a scene list.** It shows the
+  character linked to the chapter and the point-of-view character. There is no
+  separate per-scene cast assignment yet, so another character who appears in the
+  scene without either link is not on the badge row.
 - **The story bible carries only what the app models.** The file and the clipboard
   hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
   the cast with their skills and inventory, and the other cards. Copying needs
@@ -605,7 +643,11 @@ page that arrives late, and what it says when a filter matches nothing.
   second level, and without a target there is no bar to fill. Level milestones and
   skill events are also author-recorded: the continuity panel can only compare the
   chapters someone entered, so a missing milestone means no warning rather than a
-  guessed level.
+  guessed level. The chart draws those recorded points, not a line fitted through
+  them, and a character with no milestones has no line at all; the "as of" panel
+  likewise reports "No level recorded" rather than borrowing the sheet's current
+  level. The chart's y-axis is level only for now: XP and stats are not series yet,
+  and a deliberate jump is drawn exactly where the author placed it.
 - **Inventory has one recorded loss, not a chapter-by-chapter history.** An item
   can name the chapter it was lost in, but the panel only compares that chapter
   with the acquisition chapter and with the item's current count. Reacquiring it

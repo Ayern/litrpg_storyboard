@@ -135,6 +135,56 @@ interface CharacterLevelMilestone {
   updated_at: string;
 }
 
+// A skill as it stood in one chapter. The rank is the one that applied then,
+// which is not necessarily the rank the skill row holds today.
+interface CharacterChapterSkill {
+  skill_id: string;
+  name: string;
+  rank: string | null;
+  effect: string | null;
+  learned_chapter_id: string;
+  learned_chapter_seq: number;
+}
+
+// What a character's sheet held at a chapter, read from the milestone and event
+// ledgers by the database rather than recalculated in the UI.
+interface CharacterChapterState {
+  character_id: string;
+  chapter_id: string;
+  chapter_seq: number;
+  level: number | null;
+  level_milestone_id: string | null;
+  level_is_penalty: boolean;
+  skills: CharacterChapterSkill[];
+}
+
+// The compact form of that snapshot used by a chapter card. The database sends
+// one row per assigned character; the card adds the cast member's name.
+interface ChapterCastState {
+  chapter_id: string;
+  character_id: string;
+  level: number | null;
+  level_is_penalty: boolean;
+  skills: CharacterChapterSkill[];
+}
+
+interface ChapterCastBadge {
+  characterId: string;
+  name: string;
+  level: number | null;
+  levelIsPenalty: boolean;
+  skills: CharacterChapterSkill[];
+}
+
+// One line on the progression chart. The colour is fixed per cast member while
+// the chart is open, so toggling someone off does not recolour the others.
+interface ProgressionChartSeries {
+  characterId: string;
+  name: string;
+  color: string;
+  milestones: CharacterLevelMilestone[];
+}
+
 type SkillEventKind = 'upgraded' | 'sacrificed' | 'used';
 
 // One change in a skill's life. The chapter places it in the reading order; the
@@ -233,6 +283,11 @@ type NodeData = {
   // Who is carrying this item, filled in when the canvas is drawn.
   inventoryHolders?: InventoryHolder[];
   hiddenInventoryHolders?: number;
+  // The cast whose snapshot applies to this chapter, linked in the reading
+  // order by the database. The card shows a level only when one was recorded.
+  chapterCast?: ChapterCastBadge[];
+  hiddenChapterCast?: number;
+  onOpenChapterCast?: (characterId: string) => void;
   // Continuity warnings that belong to this chapter, short enough for the card
   // and complete in the tooltip.
   continuityFlags?: ChapterContinuityFlag[];
@@ -311,6 +366,22 @@ function isNodeType(value: string): value is NodeType {
 
 // How many numbers a card has room for before it starts counting.
 const NODE_STAT_BADGES = 2;
+
+// A chapter card keeps its cast badges to a compact pair; the rest are counted.
+const CHAPTER_CAST_BADGES_SHOWN = 2;
+
+// Fixed, distinguishable line colours. A cast member keeps the same colour while
+// the chart is open, so hiding one line does not recolour the comparison.
+const PROGRESSION_CHART_COLORS = [
+  '#7ac47a',
+  '#7aa2f7',
+  '#e0af68',
+  '#f7768e',
+  '#bb9af7',
+  '#2ac3de',
+  '#9ece6a',
+  '#ff9e64',
+];
 
 // How many note cards hang under one chapter before the rest are counted.
 const NOTE_CARDS_SHOWN = 3;
@@ -452,7 +523,18 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const holders = data.skillHolders ?? [];
   const itemHolders = data.inventoryHolders ?? [];
   const continuityFlags = data.continuityFlags ?? [];
+  const chapterCast = data.chapterCast ?? [];
 
+  const castSkillText = (member: ChapterCastBadge) =>
+    member.skills.length === 0
+      ? 'No active skills yet'
+      : member.skills
+          .map(skill => (skill.rank ? `${skill.name} (${skill.rank})` : skill.name))
+          .join(', ');
+  const castLevelText = (member: ChapterCastBadge) =>
+    member.level !== null
+      ? `Level ${member.level}${member.levelIsPenalty ? ' (penalty)' : ''}`
+      : 'No level recorded as of this chapter';
 
   return (
     <>
@@ -467,6 +549,50 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
         )}
       </span>
       <span className="graph-node-label">{data.label}</span>
+      {/* A chapter card names the cast whose snapshot applies there. The badge is
+          a real button, so the hover title works with a keyboard too. */}
+      {kind === 'chapter' && chapterCast.length > 0 && (
+        <div
+          className="graph-node-chapter-cast"
+          role="group"
+          aria-label="Cast in this chapter"
+        >
+          {chapterCast.slice(0, CHAPTER_CAST_BADGES_SHOWN).map(member => (
+            <button
+              type="button"
+              key={member.characterId}
+              className="graph-node-chapter-cast-badge nodrag nopan"
+              data-chapter-cast={member.characterId}
+              title={`${member.name} — ${castLevelText(member)}\nActive skills: ${castSkillText(
+                member
+              )}\nOpen ${member.name}'s sheet`}
+              aria-label={`${member.name}, ${castLevelText(
+                member
+              )}. Active skills: ${castSkillText(member)}`}
+              onClick={event => {
+                event.stopPropagation();
+                data.onOpenChapterCast?.(member.characterId);
+              }}
+            >
+              <span className="graph-node-chapter-cast-name">{member.name}</span>
+              {member.level !== null && (
+                <span
+                  className={`graph-node-chapter-cast-level${
+                    member.levelIsPenalty ? ' penalty' : ''
+                  }`}
+                >
+                  Lv {member.level}
+                </span>
+              )}
+            </button>
+          ))}
+          {(data.hiddenChapterCast ?? 0) > 0 && (
+            <span className="graph-node-chapter-cast-more">
+              +{data.hiddenChapterCast}
+            </span>
+          )}
+        </div>
+      )}
       {kind === 'chapter' && continuityFlags.length > 0 && (
         <div
           className="graph-node-continuity"
@@ -1167,6 +1293,218 @@ function AuditChange({
   );
 }
 
+// A small hand-drawn SVG chart, so the comparison needs no charting dependency.
+// The x-axis is the chapter list in reading order; each line steps at the chapter
+// where a milestone lands, which is how the ledger actually reads.
+function ProgressionChart({
+  chapters,
+  series,
+}: {
+  chapters: Node<NodeData>[];
+  series: ProgressionChartSeries[];
+}) {
+  const width = 760;
+  const height = 260;
+  const margin = { top: 18, right: 18, bottom: 38, left: 46 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const chapterIndex = new Map(chapters.map((chapter, index) => [chapter.id, index]));
+
+  const built = series.map(entry => {
+    const byChapter = new Map<number, CharacterLevelMilestone>();
+    const ordered = entry.milestones
+      .filter(
+        milestone =>
+          milestone.chapter_id !== null && chapterIndex.has(milestone.chapter_id)
+      )
+      .sort(
+        (a, b) =>
+          (chapterIndex.get(a.chapter_id as string) as number) -
+            (chapterIndex.get(b.chapter_id as string) as number) ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+      );
+
+    // One milestone per chapter, as in the continuity checks: the last one
+    // recorded there is the level that applied.
+    for (const milestone of ordered) {
+      byChapter.set(
+        chapterIndex.get(milestone.chapter_id as string) as number,
+        milestone
+      );
+    }
+
+    const markers = [...byChapter.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([index, milestone]) => ({ index, milestone }));
+    const steps: { index: number; level: number }[] = [];
+    let active: number | null = null;
+
+    for (let index = 0; index < chapters.length; index += 1) {
+      const milestone = byChapter.get(index);
+      if (milestone) active = milestone.level;
+      if (active !== null) steps.push({ index, level: active });
+    }
+
+    return { ...entry, markers, steps };
+  });
+
+  const levels = built.flatMap(entry => entry.markers.map(marker => marker.milestone.level));
+  const lowest = Math.min(...levels);
+  const highest = Math.max(...levels);
+  const pad = highest === lowest ? 1 : Math.max(1, Math.ceil((highest - lowest) * 0.15));
+  const yMin = Math.max(0, lowest - pad);
+  const yMax = highest + pad;
+  const x = (index: number) =>
+    chapters.length <= 1
+      ? margin.left + plotWidth / 2
+      : margin.left + (index / (chapters.length - 1)) * plotWidth;
+  const y = (level: number) =>
+    margin.top + ((yMax - level) / Math.max(1, yMax - yMin)) * plotHeight;
+  const ticks = [0, 1, 2, 3, 4].map(
+    step => yMin + ((yMax - yMin) * step) / 4
+  );
+  const labelEvery = Math.max(1, Math.ceil(chapters.length / 8));
+  const names = series.map(entry => entry.name).join(', ');
+
+  return (
+    <svg
+      className="progression-chart-svg"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`Character levels for ${names} across ${chapters.length} chapters in reading order`}
+    >
+      <title>
+        {`Character levels for ${names} across ${chapters.length} chapters in reading order`}
+      </title>
+
+      {ticks.map(tick => {
+        const label = Number.isInteger(tick) ? String(tick) : tick.toFixed(1);
+
+        return (
+          <g key={`level-${label}`}>
+            <line
+              className="progression-chart-grid-line"
+              x1={margin.left}
+              x2={width - margin.right}
+              y1={y(tick)}
+              y2={y(tick)}
+            />
+            <text
+              className="progression-chart-axis-label"
+              x={margin.left - 8}
+              y={y(tick) + 4}
+              textAnchor="end"
+            >
+              {label}
+            </text>
+          </g>
+        );
+      })}
+
+      <line
+        className="progression-chart-axis"
+        x1={margin.left}
+        x2={margin.left}
+        y1={margin.top}
+        y2={height - margin.bottom}
+      />
+      <line
+        className="progression-chart-axis"
+        x1={margin.left}
+        x2={width - margin.right}
+        y1={height - margin.bottom}
+        y2={height - margin.bottom}
+      />
+
+      {chapters.map((chapter, index) => {
+        if (
+          index !== 0 &&
+          index !== chapters.length - 1 &&
+          index % labelEvery !== 0
+        ) {
+          return null;
+        }
+
+        return (
+          <text
+            key={chapter.id}
+            className="progression-chart-axis-label"
+            x={x(index)}
+            y={height - margin.bottom + 16}
+            textAnchor="middle"
+          >
+            {chapter.data.chapterSeq != null ? `Ch. ${chapter.data.chapterSeq}` : 'Unplaced'}
+          </text>
+        );
+      })}
+
+      <text
+        className="progression-chart-axis-title"
+        x={margin.left + plotWidth / 2}
+        y={height - 4}
+        textAnchor="middle"
+      >
+        Chapter in reading order
+      </text>
+
+      {built.map(entry => {
+        const d = entry.steps
+          .map(
+            (step, index) =>
+              `${index === 0 ? 'M' : 'H'} ${x(step.index)} ${
+                index === 0 ? y(step.level) : ''
+              }${index === 0 ? '' : ` V ${y(step.level)}`}`
+          )
+          .join(' ');
+
+        return (
+          <g key={entry.characterId} data-series={entry.characterId}>
+            <title>
+              {entry.markers
+                .map(marker => {
+                  const chapter = chapters[marker.index];
+                  const label = chapter.data.label;
+                  const penalty = marker.milestone.is_debuff ? ' (penalty)' : '';
+                  return `${label}: level ${marker.milestone.level}${penalty}`;
+                })
+                .join(', ')}
+            </title>
+            <path
+              className="progression-chart-line"
+              d={d}
+              stroke={entry.color}
+              fill="none"
+            />
+            {entry.markers.map(marker => {
+              const chapter = chapters[marker.index];
+              const penalty = marker.milestone.is_debuff ? ' (penalty)' : '';
+
+              return (
+                <circle
+                  key={marker.milestone.id}
+                  className="progression-chart-marker"
+                  data-chapter-id={chapter.id}
+                  data-level={marker.milestone.level}
+                  data-penalty={marker.milestone.is_debuff ? 'true' : 'false'}
+                  cx={x(marker.index)}
+                  cy={y(marker.milestone.level)}
+                  r={marker.milestone.is_debuff ? 5 : 3.8}
+                  fill={entry.color}
+                >
+                  <title>
+                    {`${entry.name} — ${chapter.data.label}: level ${marker.milestone.level}${penalty}`}
+                  </title>
+                </circle>
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [currentStory, setCurrentStory] = useState<Story | null>(null);
@@ -1332,6 +1670,20 @@ function App() {
   const [storyLevelMilestones, setStoryLevelMilestones] = useState<
     CharacterLevelMilestone[]
   >([]);
+  // One snapshot per assigned character per chapter, read in one request so a
+  // board of cards does not issue one command each.
+  const [storyChapterCastStates, setStoryChapterCastStates] = useState<ChapterCastState[]>(
+    []
+  );
+
+  // The chart compares cast members, so a line is only hidden explicitly rather
+  // than being selected on first load. The chapter-state readout asks the
+  // database for the active level and skills rather than recalculating them.
+  const [hiddenChartCharacterIds, setHiddenChartCharacterIds] = useState<string[]>([]);
+  const [chartStateChapterId, setChartStateChapterId] = useState('');
+  const [chartChapterStates, setChartChapterStates] = useState<CharacterChapterState[]>([]);
+  const [chartStateLoading, setChartStateLoading] = useState(false);
+  const [chartStateError, setChartStateError] = useState<string | null>(null);
 
   const [characterInventory, setCharacterInventory] = useState<InventoryItem[]>([]);
   const [storyInventory, setStoryInventory] = useState<InventoryItem[]>([]);
@@ -2573,6 +2925,77 @@ function App() {
     () => new Map(characters.map(character => [character.id, character.name])),
     [characters]
   );
+
+  // The chapter card badges describe the cast assigned to each chapter. The
+  // database decides the assignment (linked cast and POV) and the snapshot; this
+  // key only says when that assignment has changed enough to ask again, without
+  // refetching on every node drag.
+  const chapterCastAssignmentsKey = useMemo(
+    () =>
+      chapterNodes
+        .map(
+          node =>
+            `${node.id}:${node.data.characterId ?? ''}:${node.data.chapterPov ?? ''}`
+        )
+        .join('|'),
+    [chapterNodes]
+  );
+
+  useEffect(() => {
+    if (!currentStory || chapterNodes.length === 0) {
+      setStoryChapterCastStates(previous => (previous.length === 0 ? previous : []));
+      return;
+    }
+
+    let cancelled = false;
+
+    invoke<ChapterCastState[]>('get_story_chapter_cast_states', {
+      storyId: currentStory.id,
+    })
+      .then(states => {
+        if (!cancelled) {
+          setStoryChapterCastStates(Array.isArray(states) ? states : []);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to read chapter cast states:', error);
+        if (!cancelled) {
+          setStoryChapterCastStates(previous => (previous.length === 0 ? previous : []));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentStory,
+    chapterCastAssignmentsKey,
+    chapterNodes.length,
+    storyLevelMilestones,
+    storySkills,
+    storySkillEvents,
+  ]);
+
+  const chapterCastByChapter = useMemo(() => {
+    const grouped = new Map<string, ChapterCastBadge[]>();
+
+    for (const state of storyChapterCastStates) {
+      const name = castNames.get(state.character_id);
+      if (!name) continue;
+
+      const existing = grouped.get(state.chapter_id) ?? [];
+      existing.push({
+        characterId: state.character_id,
+        name,
+        level: state.level,
+        levelIsPenalty: state.level_is_penalty,
+        skills: state.skills,
+      });
+      grouped.set(state.chapter_id, existing);
+    }
+
+    return grouped;
+  }, [storyChapterCastStates, castNames]);
 
   // Time order, which is not always reading order. A chapter without a day is
   // left off rather than quietly given one; the note above the list counts them.
@@ -6350,6 +6773,7 @@ function App() {
       const hiddenNotes = notes.length - noteCards.length;
       const holders = holdersByNode[node.id] ?? [];
       const itemHolders = inventoryByNode[node.id] ?? [];
+      const chapterCast = chapterCastByChapter.get(node.id) ?? [];
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
         ...(progressFlagsByChapter.get(node.id) ?? []),
@@ -6367,6 +6791,7 @@ function App() {
         notes.length === 0 &&
         holders.length === 0 &&
         itemHolders.length === 0 &&
+        chapterCast.length === 0 &&
         continuityFlags.length === 0
       ) {
         return node;
@@ -6412,6 +6837,14 @@ function App() {
                 hiddenInventoryHolders: Math.max(0, itemHolders.length - 2),
               }
             : {}),
+          ...(chapterCast.length > 0
+            ? {
+                chapterCast,
+                hiddenChapterCast: Math.max(0, chapterCast.length - CHAPTER_CAST_BADGES_SHOWN),
+                onOpenChapterCast: (characterId: string) =>
+                  openCharacterSheet(characterId),
+              }
+            : {}),
           ...(continuityFlags.length > 0
             ? {
                 continuityFlags,
@@ -6430,6 +6863,7 @@ function App() {
     storySkills,
     storyInventory,
     castStats,
+    chapterCastByChapter,
     dropTargetNodeId,
     searchOpen,
     searchMatchIds,
@@ -6485,6 +6919,129 @@ function App() {
       ),
     [chapterNodes]
   );
+
+  // The chart reads the same story-wide milestone rows the continuity checks
+  // use. Only chapters that are on the board can place a point, so a milestone
+  // whose chapter is in the trash is left out rather than guessed at.
+  const chartSeries = useMemo<ProgressionChartSeries[]>(() => {
+    const chapterIds = new Set(chapterNodes.map(chapter => chapter.id));
+
+    return characters
+      .map((character, index) => ({
+        characterId: character.id,
+        name: character.name,
+        color: PROGRESSION_CHART_COLORS[index % PROGRESSION_CHART_COLORS.length],
+        milestones: storyLevelMilestones.filter(
+          milestone =>
+            milestone.character_id === character.id &&
+            milestone.chapter_id !== null &&
+            chapterIds.has(milestone.chapter_id)
+        ),
+      }))
+      .filter(series => series.milestones.length > 0);
+  }, [characters, storyLevelMilestones, chapterNodes]);
+
+  const visibleChartSeries = useMemo(
+    () =>
+      chartSeries.filter(
+        series => !hiddenChartCharacterIds.includes(series.characterId)
+      ),
+    [chartSeries, hiddenChartCharacterIds]
+  );
+
+  // The chapter-state request is keyed by ids rather than by the series array.
+  // `useMemo` can hand back a fresh array when the board redraws; the ids are what
+  // actually change the question being asked of the database.
+  const visibleChartCharacterIds = visibleChartSeries
+    .map(series => series.characterId)
+    .join('|');
+
+  // A chapter without a reading-order number cannot anchor an "as of" query, so
+  // the readout offers only chapters the database can actually place.
+  const chartStateChapters = useMemo(
+    () => chapterNodes.filter(chapter => chapter.data.chapterSeq != null),
+    [chapterNodes]
+  );
+
+  const chartStateById = useMemo(
+    () => new Map(chartChapterStates.map(state => [state.character_id, state])),
+    [chartChapterStates]
+  );
+
+  const chartStateChapter =
+    chartStateChapters.find(chapter => chapter.id === chartStateChapterId) ?? null;
+
+  useEffect(() => {
+    if (selectedTab !== 'characters') return;
+
+    setChartStateChapterId(previous => {
+      if (previous && chartStateChapters.some(chapter => chapter.id === previous)) {
+        return previous;
+      }
+
+      return chartStateChapters[chartStateChapters.length - 1]?.id ?? '';
+    });
+  }, [selectedTab, chartStateChapters]);
+
+  useEffect(() => {
+    if (
+      selectedTab !== 'characters' ||
+      !currentStory ||
+      !chartStateChapterId ||
+      !visibleChartCharacterIds
+    ) {
+      setChartChapterStates(previous => (previous.length === 0 ? previous : []));
+      setChartStateLoading(false);
+      setChartStateError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setChartStateLoading(true);
+    setChartStateError(null);
+
+    Promise.all(
+      visibleChartCharacterIds.split('|').map(characterId =>
+        invoke<CharacterChapterState>('get_character_state_at_chapter', {
+          characterId,
+          chapterId: chartStateChapterId,
+        })
+      )
+    )
+      .then(states => {
+        if (cancelled) return;
+        setChartChapterStates(
+          states.filter((state): state is CharacterChapterState => Boolean(state))
+        );
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setChartChapterStates([]);
+        setChartStateError(String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setChartStateLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedTab,
+    currentStory,
+    chartStateChapterId,
+    visibleChartCharacterIds,
+    storyLevelMilestones,
+    storySkillEvents,
+  ]);
+
+  const toggleChartCharacter = (characterId: string) => {
+    setHiddenChartCharacterIds(previous =>
+      previous.includes(characterId)
+        ? previous.filter(id => id !== characterId)
+        : [...previous, characterId]
+    );
+  };
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -8269,7 +8826,148 @@ function App() {
             {!currentStory ? (
               <div className="empty-state">Load a story to manage characters</div>
             ) : (
-              <div className="characters-layout">
+              <>
+                <section className="progression-chart-panel" aria-label="Progression chart">
+                  <div className="progression-chart-head">
+                    <div>
+                      <h3 className="progression-chart-title">Power curve</h3>
+                      <div className="progression-chart-caption">
+                        Level milestones by chapter in reading order.
+                      </div>
+                    </div>
+
+                    {chartSeries.length > 0 && (
+                      <div
+                        className="progression-legend"
+                        role="group"
+                        aria-label="Compare characters"
+                      >
+                        {chartSeries.map(series => {
+                          const shown = !hiddenChartCharacterIds.includes(
+                            series.characterId
+                          );
+
+                          return (
+                            <button
+                              key={series.characterId}
+                              className={`progression-legend-button ${
+                                shown ? 'active' : ''
+                              }`}
+                              aria-pressed={shown}
+                              title={`${shown ? 'Hide' : 'Show'} ${series.name}'s level line`}
+                              onClick={() => toggleChartCharacter(series.characterId)}
+                            >
+                              <span
+                                className="progression-legend-swatch"
+                                style={{ backgroundColor: series.color }}
+                                aria-hidden="true"
+                              />
+                              {series.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {chapterNodes.length === 0 ? (
+                    <div className="empty">
+                      Add a chapter before plotting a power curve.
+                    </div>
+                  ) : chartSeries.length === 0 ? (
+                    <div className="empty">
+                      No level milestones yet — record one on a character's sheet.
+                    </div>
+                  ) : visibleChartSeries.length === 0 ? (
+                    <div className="empty">
+                      Choose a character above to show a level line.
+                    </div>
+                  ) : (
+                    <ProgressionChart chapters={chapterNodes} series={visibleChartSeries} />
+                  )}
+
+                  {chartSeries.length > 0 && chartStateChapters.length > 0 && (
+                    <div className="progression-chapter-state">
+                      <label className="progression-state-picker">
+                        <span>As of chapter</span>
+                        <select
+                          aria-label="Chapter state"
+                          title="Read each selected character's level and skills at this chapter"
+                          value={chartStateChapterId}
+                          onChange={(e) => setChartStateChapterId(e.target.value)}
+                        >
+                          {chartStateChapters.map(chapter => (
+                            <option key={chapter.id} value={chapter.id}>
+                              {`Ch. ${chapter.data.chapterSeq} — ${chapter.data.label}`}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {visibleChartSeries.length === 0 ? (
+                        <div className="progression-state-note">
+                          Choose a character to read a chapter state.
+                        </div>
+                      ) : chartStateLoading ? (
+                        <div className="progression-state-note" role="status">
+                          Reading chapter state…
+                        </div>
+                      ) : chartStateError ? (
+                        <div className="audit-error">
+                          Could not read chapter state: {chartStateError}
+                        </div>
+                      ) : (
+                        <ul
+                          className="progression-state-list"
+                          aria-label={`Character state at ${
+                            chartStateChapter?.data.label ?? 'chapter'
+                          }`}
+                        >
+                          {visibleChartSeries.map(series => {
+                            const state = chartStateById.get(series.characterId);
+                            const skills = state?.skills ?? [];
+
+                            return (
+                              <li
+                                key={series.characterId}
+                                data-state-character={series.characterId}
+                              >
+                                <span
+                                  className="progression-legend-swatch"
+                                  style={{ backgroundColor: series.color }}
+                                  aria-hidden="true"
+                                />
+                                <span className="progression-state-name">
+                                  {series.name}
+                                </span>
+                                <span className="progression-state-level">
+                                  {state?.level != null
+                                    ? `Level ${state.level}${
+                                        state.level_is_penalty ? ' (penalty)' : ''
+                                      }`
+                                    : 'No level recorded'}
+                                </span>
+                                <span className="progression-state-skills">
+                                  {skills.length === 0
+                                    ? 'No active skills'
+                                    : skills
+                                        .map(skill =>
+                                          skill.rank
+                                            ? `${skill.name} (${skill.rank})`
+                                            : skill.name
+                                        )
+                                        .join(' · ')}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <div className="characters-layout">
                 <div className="character-list">
                   <div className="character-creator">
                     <input
@@ -9621,7 +10319,8 @@ function App() {
                     </>
                   )}
                 </div>
-              </div>
+                </div>
+              </>
             )}
           </div>
         )}

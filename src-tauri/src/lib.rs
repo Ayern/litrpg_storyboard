@@ -1,7 +1,7 @@
 use litrpg_db::{
-    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterCurrency,
-    CharacterLevelMilestone, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem,
-    Edge, InventoryItem, Node, Story, StoryExport,
+    AuditPage, BackupInfo, ChapterCastState, Character, CharacterAttribute, CharacterChapterState,
+    CharacterCurrency, CharacterLevelMilestone, CharacterSkill, CharacterSkillEvent, CharacterStat,
+    Db, DeletedItem, Edge, InventoryItem, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -299,6 +299,25 @@ fn delete_level_milestone(
     user: String,
 ) -> Result<(), String> {
     db.delete_level_milestone(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_state_at_chapter(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    chapter_id: String,
+) -> Result<CharacterChapterState, String> {
+    db.character_state_at_chapter(&character_id, &chapter_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_chapter_cast_states(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<ChapterCastState>, String> {
+    db.list_chapter_cast_states(&story_id)
         .map_err(|e| e.to_string())
 }
 
@@ -929,6 +948,8 @@ pub fn run() {
             add_level_milestone,
             update_level_milestone,
             delete_level_milestone,
+            get_character_state_at_chapter,
+            get_story_chapter_cast_states,
             get_skill_events,
             get_story_skill_events,
             add_skill_event,
