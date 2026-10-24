@@ -368,7 +368,10 @@ to record death. **M**
 **12b. Quest and contract ledger.** **Done.** `quests` and `quest_rewards`
 (schema v21) record a contract's title, free-text status, required acceptance
 chapter, optional ending chapter, cast giver and faction card, description and
-notes, plus a bundle of XP, item, stat and faction-standing payouts. Every field
+notes, plus a bundle of XP, item, stat and faction-standing payouts; choosing an
+ending chapter marks the quest completed and clearing it reopens it, with the
+form refusing a status that says otherwise. A faction card can be created from
+the form that needs it. Every field
 change is audited; the acceptance chapter is a foreign key that takes the quest
 with it on purge, while the other links are cleared. The Quests tab filters by
 status and edits one quest at a time; chapter cards badge both chapters a quest

@@ -383,6 +383,24 @@ describe('relations on the character sheet', () => {
     expect(document.querySelector('[data-progression="relation-relation-1"]')).toBeNull();
   });
 
+  it('shows every kind of bond as soon as the field is focused', async () => {
+    const user = await openSheet();
+
+    const kind = screen.getByLabelText('New relation kind');
+    await user.click(kind);
+
+    const list = screen.getByRole('listbox', {
+      name: 'New relation kind suggestions',
+    });
+
+    expect(within(list).getAllByRole('option').map(option => option.textContent)).toEqual(
+      ['ally', 'rival', 'mentor', 'family', 'owes']
+    );
+
+    await user.click(within(list).getByRole('option', { name: 'mentor' }));
+    expect(kind).toHaveValue('mentor');
+  });
+
   it('records a faction standing with the chapter it began in', async () => {
     const user = await openSheet();
 

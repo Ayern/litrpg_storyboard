@@ -235,6 +235,21 @@ beforeEach(() => {
         return [{ ...rook }, { ...mira }];
       case 'get_story_quests':
         return quests.map(quest => ({ ...quest, rewards: quest.rewards.map(r => ({ ...r })) }));
+      case 'create_graph_node':
+        return {
+          id: 'n5',
+          story_id: story.id,
+          node_type: args.nodeType,
+          label: args.label,
+          content: null,
+          pos_x: args.posX,
+          pos_y: args.posY,
+          created_by: args.createdBy,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+          character_id: null,
+          chapter_seq: null,
+        };
       case 'get_story_character_progress':
         return progress.map(row => ({ ...row }));
       case 'get_story_inventory':
@@ -387,6 +402,19 @@ describe('the quest ledger', () => {
     await user.selectOptions(screen.getByLabelText('Quest accepted chapter'), 'n1');
     await user.selectOptions(screen.getByLabelText('Quest completed chapter'), 'n2');
     await user.type(screen.getByLabelText('Quest description'), 'Find the page.');
+
+    // Choosing the ending chapter ends the contract, so the status follows it
+    // rather than asking for the same fact twice.
+    expect(screen.getByLabelText('Quest status')).toHaveValue('completed');
+
+    // Clearing it reopens the quest, so neither control can contradict the
+    // other by accident.
+    await user.selectOptions(screen.getByLabelText('Quest completed chapter'), '');
+    expect(screen.getByLabelText('Quest status')).toHaveValue('active');
+
+    await user.selectOptions(screen.getByLabelText('Quest completed chapter'), 'n2');
+    expect(screen.getByLabelText('Quest status')).toHaveValue('completed');
+
     await user.click(screen.getByRole('button', { name: 'Save quest' }));
 
     expect(lastCall('add_quest')).toMatchObject({
@@ -396,19 +424,70 @@ describe('the quest ledger', () => {
       factionNodeId: 'n4',
       acceptedChapterId: 'n1',
       completedChapterId: 'n2',
-      status: 'active',
+      status: 'completed',
       description: 'Find the page.',
       notes: null,
       user: 'You',
     });
 
     const card = questCard('The Ledger');
-    expect(card).toHaveTextContent('Active');
+    expect(card).toHaveTextContent('Completed');
     expect(card).toHaveTextContent('Accepted in Chapter One');
     expect(card).toHaveTextContent('Ended in Chapter Two');
     expect(card).toHaveTextContent('Giver: Rook');
     expect(card).toHaveTextContent('Faction: The Ashen Guild');
     expect(card).toHaveTextContent('No rewards recorded');
+  });
+
+  it('shows every status at once, not just the word already in the field', async () => {
+    const user = await openQuests();
+    await user.click(screen.getByRole('button', { name: 'New quest' }));
+
+    const status = screen.getByLabelText('Quest status');
+    await user.click(status);
+
+    const options = within(
+      screen.getByRole('listbox', { name: 'Quest status suggestions' })
+    ).getAllByRole('option');
+
+    expect(options.map(option => option.textContent)).toEqual([
+      'active',
+      'completed',
+      'failed',
+      'abandoned',
+    ]);
+
+    await user.click(
+      within(
+        screen.getByRole('listbox', { name: 'Quest status suggestions' })
+      ).getByRole('option', { name: 'failed' })
+    );
+
+    expect(status).toHaveValue('failed');
+  });
+
+  it('makes a faction card from the quest form', async () => {
+    const user = await openQuests();
+    await user.click(screen.getByRole('button', { name: 'New quest' }));
+
+    await user.type(
+      screen.getByLabelText('New quest faction name'),
+      'The Silver Chain'
+    );
+    await user.click(screen.getByRole('button', { name: 'Add faction' }));
+
+    expect(lastCall('create_graph_node')).toMatchObject({
+      storyId: story.id,
+      nodeType: 'faction',
+      label: 'The Silver Chain',
+      createdBy: 'You',
+    });
+
+    const faction = screen.getByLabelText('Quest faction');
+    expect(faction).toHaveValue('n5');
+    expect(
+      within(faction).getByRole('option', { name: 'The Silver Chain' })
+    ).toBeInTheDocument();
   });
 
   it('puts a badge on both chapters and opens the quest from it', async () => {

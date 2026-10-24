@@ -546,6 +546,10 @@ type NodeType = typeof nodeTypes[number];
 // a story's own verbs matter more than a fixed list.
 const relationTypes = ['unlocks', 'requires', 'rewards'] as const;
 
+// The bond kinds a sheet suggests. Like a connection's verbs these are only
+// suggestions: the field keeps whatever word the author types.
+const relationKindSuggestions = ['ally', 'rival', 'mentor', 'family', 'owes'] as const;
+
 function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
 }
@@ -2311,6 +2315,84 @@ function RelationsMap({
   );
 }
 
+// A free-text field with its suggestions always in reach. A native datalist
+// filters by what is already typed, so on the default "ally" it shows only that
+// one; this opens the whole list on focus and keeps the typed word possible.
+function SuggestionInput({
+  label,
+  title,
+  placeholder,
+  value,
+  suggestions,
+  onChange,
+  onEnter,
+  onEscape,
+  autoFocus,
+}: {
+  label: string;
+  title?: string;
+  placeholder?: string;
+  value: string;
+  suggestions: readonly string[];
+  onChange: (value: string) => void;
+  onEnter?: () => void;
+  onEscape?: () => void;
+  autoFocus?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const trimmed = value.trim();
+  const options = [
+    ...suggestions,
+    ...(trimmed && !suggestions.includes(trimmed) ? [trimmed] : []),
+  ];
+
+  return (
+    <div className="suggestion-field">
+      <input
+        aria-label={label}
+        title={title}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={event => {
+          if (event.key === 'Enter' && onEnter) onEnter();
+          if (event.key === 'Escape' && onEscape) onEscape();
+        }}
+      />
+      {open && options.length > 0 && (
+        <div
+          className="suggestion-options"
+          role="listbox"
+          aria-label={`${label} suggestions`}
+        >
+          {options.map(option => (
+            <button
+              key={option}
+              type="button"
+              role="option"
+              aria-selected={option === trimmed}
+              className={option === trimmed ? 'active' : ''}
+              // Keeping the focus in the field lets the click land before the
+              // list closes on blur.
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The two views of the Characters tab, in one place so the sheet and the map
 // describe the switch the same way.
 function CharacterViewToggle({
@@ -2542,6 +2624,10 @@ function App() {
   const [questNotice, setQuestNotice] = useState<string | null>(null);
   const [questDraft, setQuestDraft] = useState<QuestDraft | null>(null);
   const [rewardDraft, setRewardDraft] = useState<QuestRewardDraft | null>(null);
+  // A faction can be made from the forms that need one, rather than sending the
+  // author to the Graph tab and back.
+  const [newQuestFactionName, setNewQuestFactionName] = useState('');
+  const [newStandingFactionName, setNewStandingFactionName] = useState('');
   // The quest a chapter badge just opened, lit briefly so the eye can find it.
   const [focusedQuestId, setFocusedQuestId] = useState<string | null>(null);
   const [applyingRewardsQuestId, setApplyingRewardsQuestId] = useState<string | null>(
@@ -3887,6 +3973,36 @@ function App() {
       });
     } catch (e) {
       console.error('Failed to create node:', e);
+    }
+  };
+
+  // Creates a faction card on the board and hands its id back, so a quest or a
+  // standing can name it without leaving the form.
+  const createFactionCard = async (
+    name: string,
+    onCreated: (id: string) => void,
+    onError: (message: string) => void
+  ) => {
+    if (!currentStory || !name.trim()) return;
+
+    const position = { x: 100 + Math.random() * 400, y: 100 + Math.random() * 300 };
+
+    try {
+      const created: any = await invoke('create_graph_node', {
+        storyId: currentStory.id,
+        nodeType: 'faction',
+        label: name.trim(),
+        content: null,
+        posX: position.x,
+        posY: position.y,
+        createdBy: actor,
+      });
+
+      setNodes(nds => [...nds, toFlowNode(created)]);
+      onCreated(created.id);
+    } catch (e) {
+      console.error('Failed to create a faction:', e);
+      onError(`Could not create the faction: ${String(e)}`);
     }
   };
 
@@ -7259,6 +7375,26 @@ function App() {
 
     if (!questDraft.accepted) {
       setQuestError('Choose the chapter the quest is accepted in.');
+      return;
+    }
+
+    // An ending chapter and a status that says nothing has ended cannot both be
+    // true. The form keeps them in step, so this only catches hand-edited words.
+    const ended = ['completed', 'failed', 'abandoned'].includes(
+      status.toLowerCase()
+    );
+
+    if (ended && !questDraft.completed) {
+      setQuestError(
+        'Choose the chapter this quest ended in, or set its status back to active.'
+      );
+      return;
+    }
+
+    if (questDraft.completed && status.toLowerCase() === 'active') {
+      setQuestError(
+        'An active quest cannot have an ending chapter; clear it or choose another status.'
+      );
       return;
     }
 
@@ -13512,15 +13648,15 @@ function App() {
                               >
                                 {editingRelationId === relation.id ? (
                                   <div className="relation-editor">
-                                    <input
-                                      aria-label="Relation kind"
+                                    <SuggestionInput
+                                      label="Relation kind"
+                                      title="Ally, rival, mentor, family and owes are only suggestions"
                                       autoFocus
                                       value={relationKindDraft}
-                                      onChange={(e) => setRelationKindDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') void saveRelation(relation);
-                                        if (e.key === 'Escape') setEditingRelationId(null);
-                                      }}
+                                      suggestions={relationKindSuggestions}
+                                      onChange={setRelationKindDraft}
+                                      onEnter={() => void saveRelation(relation)}
+                                      onEscape={() => setEditingRelationId(null)}
                                     />
                                     <span className="relation-other">{otherName}</span>
                                     <select
@@ -13615,19 +13751,15 @@ function App() {
                         </div>
 
                         <div className="relation-creator">
-                          <input
-                            aria-label="New relation kind"
-                            list="relation-kind-options"
+                          <SuggestionInput
+                            label="New relation kind"
                             title="Ally, rival, mentor, family and owes are only suggestions"
                             placeholder="Kind (ally)"
                             value={newRelationKind}
-                            onChange={(e) => setNewRelationKind(e.target.value)}
+                            suggestions={relationKindSuggestions}
+                            onChange={setNewRelationKind}
+                            onEnter={() => void addRelation()}
                           />
-                          <datalist id="relation-kind-options">
-                            {['ally', 'rival', 'mentor', 'family', 'owes'].map(kind => (
-                              <option key={kind} value={kind} />
-                            ))}
-                          </datalist>
                           <select
                             aria-label="New relation with"
                             title="The other cast member in this relation"
@@ -13851,6 +13983,46 @@ function App() {
                               </option>
                             ))}
                           </select>
+                          <span className="faction-quick-add">
+                            <input
+                              aria-label="New standing faction name"
+                              title="Make a faction card and record this standing in it"
+                              placeholder="New faction…"
+                              value={newStandingFactionName}
+                              onChange={event =>
+                                setNewStandingFactionName(event.target.value)
+                              }
+                              onKeyDown={event => {
+                                if (event.key !== 'Enter') return;
+                                event.preventDefault();
+                                void createFactionCard(
+                                  newStandingFactionName,
+                                  id => {
+                                    setNewStandingFactionId(id);
+                                    setNewStandingFactionName('');
+                                  },
+                                  setCharacterError
+                                );
+                              }}
+                            />
+                            <button
+                              type="button"
+                              title="Create this faction card and choose it"
+                              disabled={!newStandingFactionName.trim()}
+                              onClick={() =>
+                                void createFactionCard(
+                                  newStandingFactionName,
+                                  id => {
+                                    setNewStandingFactionId(id);
+                                    setNewStandingFactionName('');
+                                  },
+                                  setCharacterError
+                                )
+                              }
+                            >
+                              Add faction
+                            </button>
+                          </span>
                           <input
                             aria-label="New standing role"
                             placeholder="Standing (Member)"
@@ -14063,21 +14235,16 @@ function App() {
                       />
 
                       <div className="quest-editor-row">
-                        <input
-                          aria-label="Quest status"
+                        <SuggestionInput
+                          label="Quest status"
                           title="Active, completed, failed, abandoned — or your own word"
-                          list="quest-status-options"
                           placeholder="Status"
                           value={questDraft.status}
-                          onChange={event =>
-                            setQuestDraft({ ...questDraft, status: event.target.value })
+                          suggestions={questStatusChoices}
+                          onChange={status =>
+                            setQuestDraft({ ...questDraft, status })
                           }
                         />
-                        <datalist id="quest-status-options">
-                          {questStatusChoices.map(status => (
-                            <option key={status} value={status} />
-                          ))}
-                        </datalist>
 
                         <select
                           aria-label="Quest giver"
@@ -14095,21 +14262,68 @@ function App() {
                           ))}
                         </select>
 
-                        <select
-                          aria-label="Quest faction"
-                          title="The faction card that issued it, if any"
-                          value={questDraft.faction}
-                          onChange={event =>
-                            setQuestDraft({ ...questDraft, faction: event.target.value })
-                          }
-                        >
-                          <option value="">No faction</option>
-                          {factionCardChoices.map(node => (
-                            <option key={node.id} value={node.id}>
-                              {node.data.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="quest-editor-field quest-faction-field">
+                          <span>Faction</span>
+                          <select
+                            aria-label="Quest faction"
+                            title="The faction card that issued it, if any"
+                            value={questDraft.faction}
+                            onChange={event =>
+                              setQuestDraft({ ...questDraft, faction: event.target.value })
+                            }
+                          >
+                            <option value="">No faction</option>
+                            {factionCardChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="faction-quick-add">
+                            <input
+                              aria-label="New quest faction name"
+                              title="Make a faction card and issue this quest from it"
+                              placeholder="New faction…"
+                              value={newQuestFactionName}
+                              onChange={event =>
+                                setNewQuestFactionName(event.target.value)
+                              }
+                              onKeyDown={event => {
+                                if (event.key !== 'Enter') return;
+                                event.preventDefault();
+                                void createFactionCard(
+                                  newQuestFactionName,
+                                  id => {
+                                    setQuestDraft(draft =>
+                                      draft ? { ...draft, faction: id } : draft
+                                    );
+                                    setNewQuestFactionName('');
+                                  },
+                                  setQuestError
+                                );
+                              }}
+                            />
+                            <button
+                              type="button"
+                              title="Create this faction card and choose it"
+                              disabled={!newQuestFactionName.trim()}
+                              onClick={() =>
+                                void createFactionCard(
+                                  newQuestFactionName,
+                                  id => {
+                                    setQuestDraft(draft =>
+                                      draft ? { ...draft, faction: id } : draft
+                                    );
+                                    setNewQuestFactionName('');
+                                  },
+                                  setQuestError
+                                )
+                              }
+                            >
+                              Add faction
+                            </button>
+                          </span>
+                        </div>
                       </div>
 
                       <div className="quest-editor-row">
@@ -14137,9 +14351,25 @@ function App() {
                             aria-label="Quest completed chapter"
                             title="Optional: the chapter it was completed, failed or abandoned in"
                             value={questDraft.completed}
-                            onChange={event =>
-                              setQuestDraft({ ...questDraft, completed: event.target.value })
-                            }
+                            onChange={event => {
+                              const completed = event.target.value;
+                              const status = questDraft.status.trim().toLowerCase();
+
+                              // The chapter is what ends a contract, so choosing
+                              // one makes an open quest completed; clearing it
+                              // opens a quest that was only marked completed.
+                              setQuestDraft({
+                                ...questDraft,
+                                completed,
+                                status: completed
+                                  ? status === '' || status === 'active'
+                                    ? 'completed'
+                                    : questDraft.status
+                                  : ['completed', 'failed', 'abandoned'].includes(status)
+                                    ? 'active'
+                                    : questDraft.status,
+                              });
+                            }}
                           >
                             <option value="">Still open</option>
                             {chapterChoices.map(node => (

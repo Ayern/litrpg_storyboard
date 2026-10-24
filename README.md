@@ -388,8 +388,13 @@ required acceptance chapter, an optional ending chapter, a free-text status
 cast giver and faction card, an objectives description and private notes. Its
 **rewards** are child rows: XP, an item, a stat gain or a faction standing, each
 with an optional character or faction target and the author's own amount or
-wording. Every create, field change and delete is audited; the **Quests** tab
-filters by status and opens one quest for editing at a time. A quest shows as a
+wording. The chapters place the contract, so choosing an ending chapter marks the
+quest **completed** and clearing it reopens the quest; the form refuses a status
+that says a quest ended while no ending chapter is set. A faction card can be made
+from the quest form or a standing form with **Add faction**, so a missing faction
+never sends the author to the Graph tab. Every create, field change and delete is
+audited; the **Quests** tab filters by status and opens one quest for editing at a
+time. A quest shows as a
 badge on both chapters it names — a diamond where it was accepted, a tick where it
 ended — and clicking the badge opens it in the ledger. **Apply rewards to chapter
 ledger** on a completed quest prefills numeric XP into each character's income row

@@ -5109,3 +5109,95 @@ body {
   font-size: 10px;
   color: #8a8a8a;
 }
+
+/* A free-text field whose suggestions open in full on focus, rather than a
+   datalist filtered down to whatever is already typed. */
+.suggestion-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.suggestion-field > input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.suggestion-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  background: #1e1e1e;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.suggestion-options button {
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #c9c9c9;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestion-options button:hover,
+.suggestion-options button:focus-visible {
+  background: #33322c;
+  color: #f2e2b8;
+  outline: none;
+}
+
+.suggestion-options button.active {
+  color: #e3cb94;
+}
+
+/* A faction can be made from the form that needs it. */
+.faction-quick-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.faction-quick-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.faction-quick-add button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.relation-creator .suggestion-field {
+  flex: 1 1 130px;
+}
+
+.relation-editor .suggestion-field {
+  flex: 1 1 130px;
+}
+
+.quest-editor-row .suggestion-field {
+  flex: 1 1 150px;
+}
+
+.quest-editor-field select {
+  width: 100%;
+}
+
+.standing-creator .faction-quick-add {
+  flex: 1 1 180px;
+}
