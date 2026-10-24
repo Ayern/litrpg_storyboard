@@ -1757,6 +1757,37 @@ body {
   outline-offset: 2px;
 }
 
+/* A flag that can be settled where it is written gets one small button, so the
+   fix does not require opening a sheet and finding the row again. */
+.chapter-continuity-fix {
+  margin-top: 4px;
+}
+
+.chapter-continuity-sync {
+  padding: 2px 8px;
+  border: 1px solid #6b5a33;
+  border-radius: 4px;
+  background: #332c1d;
+  color: #e3cb94;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chapter-continuity-sync:hover:not(:disabled) {
+  border-color: #e3cb94;
+}
+
+.chapter-continuity-sync:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: 2px;
+}
+
+.chapter-continuity-sync:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .node-legend {
   background: rgba(30,30,30,0.9);
   padding: 4px 8px;
@@ -3963,6 +3994,36 @@ body {
 }
 
 .graph-node-continuity-return:disabled {
+  color: #666;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The one-click XP sync sits under the warning it settles, in the same small
+   type as Mark returned, so the fix never has to leave the board. */
+.graph-node-continuity-sync {
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #c9b98a;
+  font-family: inherit;
+  font-size: 9px;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.graph-node-continuity-sync:hover:not(:disabled) {
+  color: #e3cb94;
+  text-decoration-style: solid;
+}
+
+.graph-node-continuity-sync:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: 1px;
+}
+
+.graph-node-continuity-sync:disabled {
   color: #666;
   cursor: default;
   text-decoration: none;

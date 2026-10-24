@@ -347,6 +347,9 @@ type NodeData = {
   // Clears a recorded loss without leaving the board.
   onMarkItemReturned?: (itemId: string) => void;
   returningItemId?: string | null;
+  // Records the chapter ledger's sum on the milestone a warning names.
+  onSyncMilestoneXp?: (flag: ChapterContinuityFlag) => void;
+  syncingMilestoneXpId?: string | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -384,6 +387,9 @@ interface ChapterContinuityFlag {
   summary: string;
   detail: string;
   parts: ContinuityPart[];
+  // For an XP mismatch: what the ledger adds up to through this milestone's
+  // chapter, so the panel can put that number on the milestone in one click.
+  ledgerXp?: number;
   target: ProgressionTarget;
 }
 
@@ -657,6 +663,27 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 </span>
                 {flag.summary}
               </button>
+              {flag.kind === 'xp-income-mismatch' &&
+                flag.ledgerXp != null &&
+                flag.target.kind === 'level' && (
+                  <button
+                    type="button"
+                    className="graph-node-continuity-sync nodrag nopan"
+                    title={`Record the ledger's total of ${formatCount(flag.ledgerXp)} XP on this milestone`}
+                    aria-label={`Sync ${flag.characterName}'s total XP to ${formatCount(
+                      flag.ledgerXp
+                    )} XP`}
+                    disabled={data.syncingMilestoneXpId === flag.target.milestoneId}
+                    onClick={event => {
+                      event.stopPropagation();
+                      data.onSyncMilestoneXp?.(flag);
+                    }}
+                  >
+                    {data.syncingMilestoneXpId === flag.target.milestoneId
+                      ? 'Syncing…'
+                      : `Sync to ${formatCount(flag.ledgerXp)} XP`}
+                  </button>
+                )}
               {flag.itemId &&
                 continuityFlags.findIndex(other => other.itemId === flag.itemId) === index && (
 
@@ -1900,6 +1927,15 @@ function App() {
   const [storyLevelMilestones, setStoryLevelMilestones] = useState<
     CharacterLevelMilestone[]
   >([]);
+  // Read by a sync's undo step, so putting an old total back does not also put
+  // the milestone's other fields back.
+  const storyLevelMilestonesRef = useRef<CharacterLevelMilestone[]>([]);
+  // The one-click ledger sync, offered back for a moment like Mark returned.
+  const [syncedXpNotice, setSyncedXpNotice] = useState<{
+    characterName: string;
+    xp: number;
+  } | null>(null);
+  const [syncingXpMilestoneId, setSyncingXpMilestoneId] = useState<string | null>(null);
   // One income row per character and chapter, read with the rest of the story so
   // the chart and a sheet share the same ledger.
   const [storyCharacterProgress, setStoryCharacterProgress] = useState<
@@ -2130,6 +2166,7 @@ function App() {
     setHistoryDepth({ undo: 0, redo: 0 });
     setHistoryNotice(null);
     setReturnedNotice(null);
+    setSyncedXpNotice(null);
 
     // A note or cast panel belongs to the story it was opened in, so a switch
     // closes it.
@@ -2235,6 +2272,7 @@ function App() {
     // A newer action owns the board now; the old correction's Undo would be a
     // step out of order.
     setReturnedNotice(null);
+    setSyncedXpNotice(null);
   }, []);
 
   const moveInHistory = useCallback(
@@ -2248,6 +2286,7 @@ function App() {
       removedNodeIdsRef.current = new Set();
       setActionError(null);
       setReturnedNotice(null);
+      setSyncedXpNotice(null);
 
       try {
         await (direction === 'undo' ? step.undo() : step.redo());
@@ -2417,6 +2456,19 @@ function App() {
   useEffect(() => {
     storyInventoryRef.current = storyInventory;
   }, [storyInventory]);
+
+  useEffect(() => {
+    storyLevelMilestonesRef.current = storyLevelMilestones;
+  }, [storyLevelMilestones]);
+
+  // The sync's Undo is a correction offered straight away; the toolbar and
+  // shortcut keep the step after this prompt has gone.
+  useEffect(() => {
+    if (!syncedXpNotice) return;
+
+    const timer = setTimeout(() => setSyncedXpNotice(null), 10000);
+    return () => clearTimeout(timer);
+  }, [syncedXpNotice]);
 
   // A notice about an undo is useful for a moment, then it is just stale text.
   useEffect(() => {
@@ -3607,6 +3659,7 @@ function App() {
           chapterId: chapter.id,
           characterId,
           characterName: owner,
+          ledgerXp: earned,
           summary: `${owner}'s XP income is ${formatCount(
             earned
           )} XP, milestone says ${formatCount(recorded)}`,
@@ -3932,8 +3985,10 @@ function App() {
   // Every chapter it names is a link that opens that chapter, and every
   // progression entry opens on the holder's sheet, so a flag leads to the
   // thing to fix.
+  // Every line keeps the warning it came from when it has one, so the panel can
+  // offer a fix beside the sentence rather than sending the author to a sheet.
   const chapterContinuity = useMemo(() => {
-    const warnings: ContinuityPart[][] = [];
+    const warnings: { parts: ContinuityPart[]; flag?: ChapterContinuityFlag }[] = [];
 
     // The names in a grouped flag, comma-separated like the other counts.
     const commaList = (chapters: { id: string; label: string }[]): ContinuityPart[] =>
@@ -3952,13 +4007,15 @@ function App() {
     const withoutPov = chapterNodes.filter(node => !node.data.chapterPov);
 
     if (withoutPov.length > 0) {
-      warnings.push([
-        `${withoutPov.length} chapter${
-          withoutPov.length === 1 ? ' has' : 's have'
-        } no POV: `,
-        ...commaList(withoutPov.map(node => ({ id: node.id, label: node.data.label }))),
-        '.',
-      ]);
+      warnings.push({
+        parts: [
+          `${withoutPov.length} chapter${
+            withoutPov.length === 1 ? ' has' : 's have'
+          } no POV: `,
+          ...commaList(withoutPov.map(node => ({ id: node.id, label: node.data.label }))),
+          '.',
+        ],
+      });
     }
 
     // A time without a day is kept but cannot be placed: the timeline has
@@ -3968,13 +4025,15 @@ function App() {
     );
 
     if (timeWithoutDay.length > 0) {
-      warnings.push([
-        `${timeWithoutDay.length} chapter${
-          timeWithoutDay.length === 1 ? ' has' : 's have'
-        } a time but no day: `,
-        ...commaList(timeWithoutDay.map(node => ({ id: node.id, label: node.data.label }))),
-        '.',
-      ]);
+      warnings.push({
+        parts: [
+          `${timeWithoutDay.length} chapter${
+            timeWithoutDay.length === 1 ? ' has' : 's have'
+          } a time but no day: `,
+          ...commaList(timeWithoutDay.map(node => ({ id: node.id, label: node.data.label }))),
+          '.',
+        ],
+      });
     }
 
     // Reading order, with the chapters that are not placed in time skipped.
@@ -3985,12 +4044,14 @@ function App() {
       const after = placed[index];
 
       if ((after.data.chapterDay ?? 0) < (before.data.chapterDay ?? 0)) {
-        warnings.push([
-          chapterLink(after.id, after.data.label, true),
-          ` goes back to Day ${after.data.chapterDay} after `,
-          chapterLink(before.id, before.data.label, true),
-          ` on Day ${before.data.chapterDay}.`,
-        ]);
+        warnings.push({
+          parts: [
+            chapterLink(after.id, after.data.label, true),
+            ` goes back to Day ${after.data.chapterDay} after `,
+            chapterLink(before.id, before.data.label, true),
+            ` on Day ${before.data.chapterDay}.`,
+          ],
+        });
         continue;
       }
 
@@ -4006,12 +4067,14 @@ function App() {
         continue;
       }
 
-      warnings.push([
-        chapterLink(after.id, after.data.label, true),
-        ` goes back to ${after.data.chapterTime} after `,
-        chapterLink(before.id, before.data.label, true),
-        ` at ${before.data.chapterTime} on Day ${after.data.chapterDay}.`,
-      ]);
+      warnings.push({
+        parts: [
+          chapterLink(after.id, after.data.label, true),
+          ` goes back to ${after.data.chapterTime} after `,
+          chapterLink(before.id, before.data.label, true),
+          ` at ${before.data.chapterTime} on Day ${after.data.chapterDay}.`,
+        ],
+      });
     }
 
     // Two chapters cannot happen at the same moment on the same day. Only labels
@@ -4052,12 +4115,14 @@ function App() {
       );
 
       if (writtenTheSame) {
-        warnings.push([
-          ...andList(moment.chapters),
-          ` ${moment.chapters.length === 2 ? 'are both' : 'are all'} at ${
-            moment.chapters[0].time
-          } on Day ${moment.day}.`,
-        ]);
+        warnings.push({
+          parts: [
+            ...andList(moment.chapters),
+            ` ${moment.chapters.length === 2 ? 'are both' : 'are all'} at ${
+              moment.chapters[0].time
+            } on Day ${moment.day}.`,
+          ],
+        });
         return;
       }
 
@@ -4075,7 +4140,7 @@ function App() {
 
       parts.push(` happen at the same moment on Day ${moment.day}.`);
 
-      warnings.push(parts);
+      warnings.push({ parts });
     });
 
     // One cast member cannot be the point of view of two chapters on one day.
@@ -4107,17 +4172,21 @@ function App() {
     bookings.forEach(booking => {
       if (booking.chapters.length < 2) return;
 
-      warnings.push([
-        `${
-          castNames.get(booking.pov) ?? 'A cast member in the trash'
-        } is the POV of ${booking.chapters.length} chapters on Day ${booking.day}: `,
-        ...commaList(booking.chapters),
-        '.',
-      ]);
+      warnings.push({
+        parts: [
+          `${
+            castNames.get(booking.pov) ?? 'A cast member in the trash'
+          } is the POV of ${booking.chapters.length} chapters on Day ${booking.day}: `,
+          ...commaList(booking.chapters),
+          '.',
+        ],
+      });
     });
 
-    warnings.push(...inventoryContinuity.map(flag => flag.parts));
-    warnings.push(...progressContinuity.map(flag => flag.parts));
+    warnings.push(
+      ...inventoryContinuity.map(flag => ({ parts: flag.parts, flag })),
+      ...progressContinuity.map(flag => ({ parts: flag.parts, flag }))
+    );
 
     return warnings;
   }, [chapterNodes, castNames, inventoryContinuity, progressContinuity]);
@@ -5894,6 +5963,68 @@ function App() {
     );
   }, []);
 
+  // The chapter ledger and a total-XP milestone can disagree. Recording the
+  // ledger's sum on the milestone goes through the same audited command as the
+  // sheet's editor, and the step keeps an Undo for the old total.
+  const syncMilestoneXp = useCallback(
+    async (flag: ChapterContinuityFlag) => {
+      if (flag.target.kind !== 'level' || flag.ledgerXp == null) return;
+
+      const ledgerXp = flag.ledgerXp;
+      const targetMilestoneId = flag.target.milestoneId;
+      const milestone = storyLevelMilestonesRef.current.find(
+        candidate => candidate.id === targetMilestoneId
+      );
+
+      if (!milestone || milestone.xp === ledgerXp) return;
+
+      const previousXp = milestone.xp ?? null;
+      const milestoneId = milestone.id;
+      setActionError(null);
+      setSyncingXpMilestoneId(milestoneId);
+
+      // Read the row when the step runs, so a later edit to its level, chapter
+      // or stats is not swept away by this correction.
+      const writeXp = (xp: number | null) => async () => {
+        const current =
+          storyLevelMilestonesRef.current.find(candidate => candidate.id === milestoneId) ??
+          milestone;
+        const saved: CharacterLevelMilestone = await invoke('update_level_milestone', {
+          id: current.id,
+          level: current.level,
+          chapterId: current.chapter_id,
+          isDebuff: current.is_debuff,
+          xp,
+          statChanges: (current.stat_changes ?? []).map(change => ({
+            stat_name: change.stat_name,
+            amount: change.amount ?? null,
+            value_after: change.value_after ?? null,
+          })),
+          user: actor,
+        });
+
+        applyLevelMilestone(saved);
+        return saved;
+      };
+
+      try {
+        await writeXp(ledgerXp)();
+        recordStep({
+          label: `Sync ${flag.characterName}'s total XP to ${formatCount(ledgerXp)} XP`,
+          undo: writeXp(previousXp),
+          redo: writeXp(ledgerXp),
+        });
+        setSyncedXpNotice({ characterName: flag.characterName, xp: ledgerXp });
+      } catch (e) {
+        console.error('Failed to sync a milestone total:', e);
+        setActionError(`Could not sync ${flag.characterName}'s total XP: ${String(e)}`);
+      } finally {
+        setSyncingXpMilestoneId(null);
+      }
+    },
+    [actor, applyLevelMilestone, recordStep]
+  );
+
   const levelMilestoneXpFromDraft = (text: string): number | null | 'invalid' => {
     const xp = text.trim();
 
@@ -7516,6 +7647,8 @@ function App() {
                 onOpenContinuity: openCharacterSheet,
                 onMarkItemReturned: markItemReturned,
                 returningItemId,
+                onSyncMilestoneXp: syncMilestoneXp,
+                syncingMilestoneXpId: syncingXpMilestoneId,
               }
             : {}),
         },
@@ -7539,6 +7672,8 @@ function App() {
     openCharacterSheet,
     markItemReturned,
     returningItemId,
+    syncMilestoneXp,
+    syncingXpMilestoneId,
   ]);
 
   // The chapter a skill was learned in, offered in reading order. Skill cards
@@ -8515,6 +8650,30 @@ function App() {
               className="status-dismiss"
               title="Keep the item returned"
               onClick={() => setReturnedNotice(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {syncedXpNotice && (
+          <div className="status-strip returned-strip" role="status">
+            <span>
+              Synced {syncedXpNotice.characterName}'s total to{' '}
+              {formatCount(syncedXpNotice.xp)} XP.
+            </span>
+            <button
+              className="status-undo"
+              title={`Put ${syncedXpNotice.characterName}'s recorded total back`}
+              aria-label={`Undo syncing ${syncedXpNotice.characterName}'s total XP`}
+              onClick={() => void undoLast()}
+            >
+              Undo
+            </button>
+            <button
+              className="status-dismiss"
+              title="Keep the synced total"
+              onClick={() => setSyncedXpNotice(null)}
             >
               Dismiss
             </button>
@@ -9742,7 +9901,7 @@ function App() {
                           </span>
                         </div>
                         <ul>
-                          {chapterContinuity.map((parts, index) => (
+                          {chapterContinuity.map(({ parts, flag }, index) => (
                             <li
                               key={`${index}-${parts
                                 .map(part => (typeof part === 'string' ? part : part.text))
@@ -9771,6 +9930,25 @@ function App() {
                                   </button>
                                 )
                               )}
+                              {flag?.kind === 'xp-income-mismatch' &&
+                                flag.ledgerXp != null &&
+                                flag.target.kind === 'level' && (
+                                  <div className="chapter-continuity-fix">
+                                    <button
+                                      type="button"
+                                      className="chapter-continuity-sync"
+                                      title="Record the chapter ledger's total on this milestone"
+                                      disabled={
+                                        syncingXpMilestoneId === flag.target.milestoneId
+                                      }
+                                      onClick={() => void syncMilestoneXp(flag)}
+                                    >
+                                      {syncingXpMilestoneId === flag.target.milestoneId
+                                        ? 'Syncing…'
+                                        : `Sync to ${formatCount(flag.ledgerXp)} XP`}
+                                    </button>
+                                  </div>
+                                )}
                             </li>
                           ))}
                         </ul>

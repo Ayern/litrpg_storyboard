@@ -304,7 +304,9 @@ has its own ledger (`character_progress`, schema v18): one amount per character
 per chapter, edited on the sheet and drawn as grouped bars rather than a line
 because income is not cumulative. The ledger travels in export and import, and
 the continuity panel reconciles the income through each total-XP milestone with
-the total recorded there, naming both a shortfall and an excess. A database query
+the total recorded there, naming both a shortfall and an excess; a one-click
+**Sync to N XP** puts the ledger's sum on that milestone as an undoable edit. A
+database query
 also answers "where did this character stand as of this chapter?" —
 active level, skills learned and their rank at the time, with sacrifices removed —
 and the chart's **As of chapter** readout uses it. Chapter cards on the Graph tab

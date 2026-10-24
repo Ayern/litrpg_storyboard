@@ -350,11 +350,15 @@ penalty; a skill used before it was learned, a rank used before the upgrade that
 reached it, and a skill used or upgraded after it was sacrificed are flagged too.
 XP income is compared with every total-XP milestone as well: the ledger through
 that chapter must add up to the recorded total, and both a shortfall and an excess
-are named with the difference. A character with no income rows is left alone, so
-a story that only used totals is not warned about before it starts a ledger. Each
-warning names the character and the chapters involved, and clicking it switches
-to Characters, selects that person, scrolls to the relevant milestone or skill
-event and opens that entry for editing. The badges on the graph use ordinary buttons
+are named with the difference. The same warning carries a **Sync to N XP** button,
+both in the Continuity panel and on the chapter card, that records the ledger's sum
+on that milestone through the ordinary edit command, so the history says who
+changed it; the correction is one undoable step, and the notice that follows
+offers **Undo** for a moment. A character with no income rows
+is left alone, so a story that only used totals is not warned about before it
+starts a ledger. Each warning names the character and the chapters involved, and
+clicking the character switches to Characters, selects that person, scrolls to the
+relevant milestone or skill event and opens that entry for editing. The badges on the graph use ordinary buttons
 with `nodrag` and `nopan`, so opening one never pans the board or moves a card.
 
 **Help before clicking** — controls that are not self-explanatory carry a hover

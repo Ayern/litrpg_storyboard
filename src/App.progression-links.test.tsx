@@ -692,6 +692,43 @@ describe('progression warnings open the entry to edit', () => {
     ).toHaveClass('progression-row-focused');
   });
 
+  it('records the ledger total on the milestone in one click', async () => {
+    progress[1].xp_earned = 1200;
+
+    const user = await openChapters();
+
+    await user.click(
+      within(continuityPanel()).getByRole('button', { name: 'Sync to 2,100 XP' })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('update_level_milestone')).toMatchObject({
+        id: 'milestone-2',
+        level: 4,
+        chapterId: 'n2',
+        isDebuff: false,
+        xp: 2100,
+        statChanges: [{ stat_name: 'Strength', amount: 2, value_after: 12 }],
+        user: 'You',
+      })
+    );
+
+    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
+    expect(screen.getByText("Synced Rook's total to 2,100 XP.")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: "Undo syncing Rook's total XP" })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('update_level_milestone')).toMatchObject({
+        id: 'milestone-2',
+        xp: 2400,
+      })
+    );
+    expect(continuityText(continuityPanel())).toContain('XP earned through');
+  });
+
   it('opens the level milestone from the continuity panel', async () => {
     levels[1].level = 2;
 
@@ -757,6 +794,31 @@ describe('progression warnings open the entry to edit', () => {
     expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
       "Rook's XP income is 2,100 XP, milestone says 2,400"
     );
+  });
+
+  it('syncs the ledger total from the chapter card', async () => {
+    progress[1].xp_earned = 1200;
+
+    const user = await openGraph();
+    const card = (
+      await screen.findByText('Chapter Two', { selector: '.graph-node-label' })
+    ).closest('.graph-node');
+
+    expect(card).not.toBeNull();
+    await user.click(
+      within(card as HTMLElement).getByRole('button', {
+        name: "Sync Rook's total XP to 2,100 XP",
+      })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('update_level_milestone')).toMatchObject({
+        id: 'milestone-2',
+        xp: 2100,
+        statChanges: [{ stat_name: 'Strength', amount: 2, value_after: 12 }],
+      })
+    );
+    expect(screen.getByText("Synced Rook's total to 2,100 XP.")).toBeInTheDocument();
   });
 });
 
