@@ -109,6 +109,66 @@ interface CharacterAttribute {
   updated_at: string;
 }
 
+// One skill a cast member has. The rank and effect are the author's words, and
+// the chapter is the one it was learned in; both links are optional.
+interface CharacterSkill {
+  id: string;
+  character_id: string;
+  name: string;
+  rank: string | null;
+  effect: string | null;
+  chapter_id: string | null;
+  node_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A skill card names the cast members who have it, and where they learned it.
+interface SkillHolder {
+  id: string;
+  characterName: string;
+  rank: string | null;
+  chapterLabel: string | null;
+}
+
+// One item a cast member carries. Rarity and effect are the author's words, the
+// quantity is how many, the chapter is where it was acquired, and the lost
+// chapter is where it left their hands.
+interface InventoryItem {
+  id: string;
+  character_id: string;
+  name: string;
+  rarity: string | null;
+  quantity: number;
+  effect: string | null;
+  chapter_id: string | null;
+  lost_chapter_id: string | null;
+  node_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A named currency a cast member holds. No exchange rate is implied.
+interface CharacterCurrency {
+  id: string;
+  character_id: string;
+  name: string;
+  amount: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// An item card names who carries it, how many, how rare it is, where it came
+// from and, when the author recorded it, where it was lost.
+interface InventoryHolder {
+  id: string;
+  characterName: string;
+  quantity: number;
+  rarity: string | null;
+  chapterLabel: string | null;
+  lostChapterLabel: string | null;
+}
+
 // Simple type aliases for our custom node/edge data
 type NodeData = {
   label: string;
@@ -140,12 +200,43 @@ type NodeData = {
   noteCards?: ChapterNote[];
   hiddenNotes?: number;
   onOpenNote?: (noteId: string | null) => void;
+  // Who has this skill, with the rank and chapter they learned it in. Filled in
+  // when the canvas is drawn, so the card needs no read of its own.
+  skillHolders?: SkillHolder[];
+  hiddenSkillHolders?: number;
+  // Who is carrying this item, filled in when the canvas is drawn.
+  inventoryHolders?: InventoryHolder[];
+  hiddenInventoryHolders?: number;
+  // Lost-item warnings that belong to this chapter, short enough for the card
+  // and complete in the tooltip.
+  continuityFlags?: InventoryContinuityFlag[];
+  hiddenContinuityFlags?: number;
+  // Opens the sheet of the cast member a continuity warning names.
+  onOpenCharacter?: (characterId: string) => void;
+  // Clears a recorded loss without leaving the board.
+  onMarkItemReturned?: (itemId: string) => void;
+  returningItemId?: string | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
 // One advisory line in the continuity panel: its words, with every chapter it
 // names as a part that opens that chapter when clicked.
 type ContinuityPart = string | { id: string; text: string };
+
+// One lost-item warning, kept with the chapter whose card it belongs on. The
+// summary is short enough for a card; the detail is the whole sentence and goes
+// in the tooltip and the continuity panel.
+interface InventoryContinuityFlag {
+  itemId: string;
+  itemName: string;
+  kind: 'still-carried' | 'lost-before-acquired';
+  chapterId: string | null;
+  characterId: string;
+  characterName: string;
+  summary: string;
+  detail: string;
+  parts: ContinuityPart[];
+}
 
 // We'll use ReactFlow's internal types but cast our data. The last five are the
 // LitRPG vocabulary: the System, what it grants, and the factions and quests it
@@ -314,6 +405,9 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const hidden = stats.length - shown.length;
   const linked = Boolean(data.characterId);
   const level = data.characterLevel ?? null;
+  const holders = data.skillHolders ?? [];
+  const itemHolders = data.inventoryHolders ?? [];
+  const continuityFlags = data.continuityFlags ?? [];
 
   return (
     <>
@@ -328,6 +422,52 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
         )}
       </span>
       <span className="graph-node-label">{data.label}</span>
+      {kind === 'chapter' && continuityFlags.length > 0 && (
+        <div
+          className="graph-node-continuity"
+          title={continuityFlags.map(flag => flag.detail).join('\n')}
+        >
+          {continuityFlags.slice(0, 2).map((flag, index) => (
+            <div className="graph-node-continuity-line" key={`${flag.itemId}-${flag.kind}`}>
+              <button
+                type="button"
+                className="graph-node-continuity-open nodrag nopan"
+                title={`Open ${flag.characterName}'s sheet\n${flag.detail}`}
+                aria-label={`Open ${flag.characterName}'s sheet: ${flag.detail}`}
+                onClick={event => {
+                  event.stopPropagation();
+                  data.onOpenCharacter?.(flag.characterId);
+                }}
+              >
+                <span className="graph-node-continuity-mark" aria-hidden="true">
+                  !
+                </span>
+                {flag.summary}
+              </button>
+              {continuityFlags.findIndex(other => other.itemId === flag.itemId) === index && (
+                <button
+                  type="button"
+                  className="graph-node-continuity-return nodrag nopan"
+                  title={`Clear the lost chapter for “${flag.itemName}” and mark it returned`}
+                  aria-label={`Mark ${flag.itemName} returned`}
+                  disabled={data.returningItemId === flag.itemId}
+                  onClick={event => {
+                    event.stopPropagation();
+                    data.onMarkItemReturned?.(flag.itemId);
+                  }}
+                >
+                  {data.returningItemId === flag.itemId ? 'Returning…' : 'Mark returned'}
+                </button>
+              )}
+            </div>
+          ))}
+          {(data.hiddenContinuityFlags ?? 0) > 0 && (
+            <span className="graph-node-continuity-more">
+              +{data.hiddenContinuityFlags} more
+            </span>
+          )}
+        </div>
+      )}
       {linked && (
         <span
           className="graph-node-cast"
@@ -357,6 +497,113 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           {stats.length === 0 && (
             <span className="graph-node-cast-empty">
               {data.characterName ? 'no stats yet' : 'cast member in the trash'}
+            </span>
+          )}
+        </span>
+      )}
+      {/* A skill card names who has it, so the board answers "who can do this"
+          without opening every character sheet. */}
+      {kind === 'skill' && (
+        <span
+          className="graph-node-holders"
+          title={
+            holders.length > 0
+              ? holders
+                  .map(holder =>
+                    [
+                      holder.characterName,
+                      holder.rank,
+                      holder.chapterLabel ? `learned in ${holder.chapterLabel}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  )
+                  .join('\n')
+              : undefined
+          }
+        >
+          {holders.length === 0 && (
+            <span className="graph-node-holders-empty">No one has this skill yet</span>
+          )}
+          {holders.slice(0, 2).map(holder => (
+            <span className="graph-node-holder" key={holder.id}>
+              <span className="graph-node-holder-name">{holder.characterName}</span>
+              {holder.rank && (
+                <span className="graph-node-holder-rank">{holder.rank}</span>
+              )}
+              {holder.chapterLabel && (
+                <span
+                  className="graph-node-holder-chapter"
+                  title={`Learned in ${holder.chapterLabel}`}
+                >
+                  {holder.chapterLabel}
+                </span>
+              )}
+            </span>
+          ))}
+          {(data.hiddenSkillHolders ?? 0) > 0 && (
+            <span className="graph-node-holder more">
+              +{data.hiddenSkillHolders}
+            </span>
+          )}
+        </span>
+      )}
+      {/* An item card names who carries it, how many and how rare it is, so the
+          board answers "who has this" without opening every sheet. */}
+      {kind === 'item' && (
+        <span
+          className="graph-node-holders"
+          title={
+            itemHolders.length > 0
+              ? itemHolders
+                  .map(holder =>
+                    [
+                      holder.characterName,
+                      `×${holder.quantity}`,
+                      holder.rarity,
+                      holder.chapterLabel ? `acquired in ${holder.chapterLabel}` : null,
+                      holder.lostChapterLabel ? `lost in ${holder.lostChapterLabel}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  )
+                  .join('\n')
+              : undefined
+          }
+        >
+          {itemHolders.length === 0 && (
+            <span className="graph-node-holders-empty">
+              No one is carrying this item yet
+            </span>
+          )}
+          {itemHolders.slice(0, 2).map(holder => (
+            <span className="graph-node-holder" key={holder.id}>
+              <span className="graph-node-holder-name">{holder.characterName}</span>
+              <span className="graph-node-holder-quantity">×{holder.quantity}</span>
+              {holder.rarity && (
+                <span className="graph-node-holder-rarity">{holder.rarity}</span>
+              )}
+              {holder.chapterLabel && (
+                <span
+                  className="graph-node-holder-chapter"
+                  title={`Acquired in ${holder.chapterLabel}`}
+                >
+                  {holder.chapterLabel}
+                </span>
+              )}
+              {holder.lostChapterLabel && (
+                <span
+                  className="graph-node-holder-lost"
+                  title={`Lost in ${holder.lostChapterLabel}`}
+                >
+                  lost in {holder.lostChapterLabel}
+                </span>
+              )}
+            </span>
+          ))}
+          {(data.hiddenInventoryHolders ?? 0) > 0 && (
+            <span className="graph-node-holder more">
+              +{data.hiddenInventoryHolders}
             </span>
           )}
         </span>
@@ -462,6 +709,17 @@ function toChapterNote(row: any): ChapterNote {
 // Plain digits with thousands separators, so a story total reads at a glance.
 function formatCount(value: number): string {
   return value.toLocaleString('en-US');
+}
+
+// The plain sentence behind a continuity flag, without its chapter buttons.
+function continuityText(parts: ContinuityPart[]): string {
+  return parts.map(part => (typeof part === 'string' ? part : part.text)).join('');
+}
+
+// A chapter named inside a continuity sentence, which the panel renders as a
+// button that opens that chapter.
+function chapterLink(id: string, label: string, quoted = false): ContinuityPart {
+  return { id, text: quoted ? `“${label}”` : label };
 }
 
 // What a chapter row says about its words. A target without a count reads as
@@ -619,6 +877,9 @@ const entityLabels: Record<string, string> = {
   character: 'Character',
   character_stat: 'Character stat',
   character_attribute: 'Character attribute',
+  character_skill: 'Character skill',
+  character_inventory: 'Inventory item',
+  character_currency: 'Currency',
   node: 'Graph node',
   edge: 'Graph connection',
 };
@@ -636,6 +897,9 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
   { value: 'character', label: 'Characters' },
   { value: 'character_stat', label: 'Stats' },
   { value: 'character_attribute', label: 'Attributes' },
+  { value: 'character_skill', label: 'Skills' },
+  { value: 'character_inventory', label: 'Inventory' },
+  { value: 'character_currency', label: 'Currency' },
   { value: 'node', label: 'Nodes' },
   { value: 'edge', label: 'Connections' },
 ];
@@ -678,6 +942,9 @@ const fieldLabels: Record<string, string> = {
   chapter_pov: 'POV',
   chapter_day: 'in-world day',
   chapter_time: 'time of day',
+  card: 'skill card',
+  item_card: 'item card',
+  lost_chapter: 'chapter lost in',
 };
 
 // The chapter list's one-sentence warning. Positions start at 1, so a story
@@ -1008,6 +1275,58 @@ function App() {
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [characterStats, setCharacterStats] = useState<CharacterStat[]>([]);
   const [characterAttributes, setCharacterAttributes] = useState<CharacterAttribute[]>([]);
+  const [characterSkills, setCharacterSkills] = useState<CharacterSkill[]>([]);
+  // Every live cast member's skills, so a skill card can name who has it without
+  // one read per card.
+  const [storySkills, setStorySkills] = useState<CharacterSkill[]>([]);
+
+  const [characterInventory, setCharacterInventory] = useState<InventoryItem[]>([]);
+  const [storyInventory, setStoryInventory] = useState<InventoryItem[]>([]);
+  // Read by an undo step recorded before a later edit, so putting the lost
+  // chapter back does not also put the item's other fields back.
+  const storyInventoryRef = useRef<InventoryItem[]>([]);
+  const [characterCurrency, setCharacterCurrency] = useState<CharacterCurrency[]>([]);
+
+  // The item form, one row open at a time like skills. Quantities are kept as
+  // typed text so a field can be cleared while it is being changed.
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemRarity, setNewItemRarity] = useState('');
+  const [newItemQuantity, setNewItemQuantity] = useState('1');
+  const [newItemEffect, setNewItemEffect] = useState('');
+  const [newItemChapterId, setNewItemChapterId] = useState('');
+  const [newItemLostChapterId, setNewItemLostChapterId] = useState('');
+  const [newItemNodeId, setNewItemNodeId] = useState('');
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemNameDraft, setItemNameDraft] = useState('');
+  const [itemRarityDraft, setItemRarityDraft] = useState('');
+  const [itemQuantityDraft, setItemQuantityDraft] = useState('1');
+  const [itemEffectDraft, setItemEffectDraft] = useState('');
+  const [itemChapterDraft, setItemChapterDraft] = useState('');
+  const [itemLostChapterDraft, setItemLostChapterDraft] = useState('');
+  const [itemNodeDraft, setItemNodeDraft] = useState('');
+  const [returningItemId, setReturningItemId] = useState<string | null>(null);
+  // What Mark returned just did, so the board can offer the correction back
+  // before the notice fades.
+  const [returnedNotice, setReturnedNotice] = useState<{ itemName: string } | null>(null);
+
+  const [newCurrencyName, setNewCurrencyName] = useState('');
+  const [newCurrencyAmount, setNewCurrencyAmount] = useState('0');
+  const [editingCurrencyId, setEditingCurrencyId] = useState<string | null>(null);
+  const [currencyNameDraft, setCurrencyNameDraft] = useState('');
+  const [currencyAmountDraft, setCurrencyAmountDraft] = useState('0');
+
+  // The skill form, one row open at a time like stats and attributes.
+  const [newSkillName, setNewSkillName] = useState('');
+  const [newSkillRank, setNewSkillRank] = useState('');
+  const [newSkillEffect, setNewSkillEffect] = useState('');
+  const [newSkillChapterId, setNewSkillChapterId] = useState('');
+  const [newSkillNodeId, setNewSkillNodeId] = useState('');
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
+  const [skillNameDraft, setSkillNameDraft] = useState('');
+  const [skillRankDraft, setSkillRankDraft] = useState('');
+  const [skillEffectDraft, setSkillEffectDraft] = useState('');
+  const [skillChapterDraft, setSkillChapterDraft] = useState('');
+  const [skillNodeDraft, setSkillNodeDraft] = useState('');
 
   // Every live cast member's stats, which is what the cards on the canvas show.
   // Kept here rather than fetched per card so one read covers the whole board.
@@ -1131,6 +1450,7 @@ function App() {
     redoStackRef.current = [];
     setHistoryDepth({ undo: 0, redo: 0 });
     setHistoryNotice(null);
+    setReturnedNotice(null);
 
     // A note panel belongs to the story it was opened in, so a switch closes it.
     setOpenNotesChapterId(null);
@@ -1148,13 +1468,17 @@ function App() {
 
       // The cast rail and the cards' badges both read from here, so the cast and
       // its numbers are loaded with the graph rather than on another tab.
-      const [cast, stats, notes] = await Promise.all([
+      const [cast, stats, skills, inventory, notes] = await Promise.all([
         invoke<Character[]>('get_characters', { storyId: story.id }),
         invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
+        invoke<CharacterSkill[]>('get_story_skills', { storyId: story.id }),
+        invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
         invoke<any[]>('get_chapter_notes', { storyId: story.id }),
       ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
+      setStorySkills(skills ?? []);
+      setStoryInventory(inventory ?? []);
       setChapterNotes((notes ?? []).map(toChapterNote));
 
       // A node or connection from the previous story is no longer on the canvas.
@@ -1203,6 +1527,9 @@ function App() {
     redoStackRef.current = [];
     undoStackRef.current = [...undoStackRef.current, step].slice(-UNDO_LIMIT);
     setHistoryDepth({ undo: undoStackRef.current.length, redo: 0 });
+    // A newer action owns the board now; the old correction's Undo would be a
+    // step out of order.
+    setReturnedNotice(null);
   }, []);
 
   const moveInHistory = useCallback(
@@ -1215,6 +1542,7 @@ function App() {
 
       removedNodeIdsRef.current = new Set();
       setActionError(null);
+      setReturnedNotice(null);
 
       try {
         await (direction === 'undo' ? step.undo() : step.redo());
@@ -1379,6 +1707,12 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [backupsOpen, restoringFile]);
 
+  // The board's undo closures read the latest row rather than the one captured
+  // when the action happened, so a later field edit is not swept away by Undo.
+  useEffect(() => {
+    storyInventoryRef.current = storyInventory;
+  }, [storyInventory]);
+
   // A notice about an undo is useful for a moment, then it is just stale text.
   useEffect(() => {
     if (!historyNotice) return;
@@ -1386,6 +1720,15 @@ function App() {
     const timer = setTimeout(() => setHistoryNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [historyNotice]);
+
+  // Mark returned's Undo is a correction offered straight away; the toolbar and
+  // shortcut keep the step after this prompt has gone.
+  useEffect(() => {
+    if (!returnedNotice) return;
+
+    const timer = setTimeout(() => setReturnedNotice(null), 10000);
+    return () => clearTimeout(timer);
+  }, [returnedNotice]);
 
   useEffect(() => {
     if (!restoreNotice) return;
@@ -1569,16 +1912,28 @@ function App() {
     setCharacters(loaded);
 
     if (selectedCharacterId) {
-      const [stats, attributes] = await Promise.all([
+      const [stats, attributes, skills, inventory, currency] = await Promise.all([
         invoke<CharacterStat[]>('get_character_stats', {
           characterId: selectedCharacterId,
         }),
         invoke<CharacterAttribute[]>('get_character_attributes', {
           characterId: selectedCharacterId,
         }),
+        invoke<CharacterSkill[]>('get_character_skills', {
+          characterId: selectedCharacterId,
+        }),
+        invoke<InventoryItem[]>('get_character_inventory', {
+          characterId: selectedCharacterId,
+        }),
+        invoke<CharacterCurrency[]>('get_character_currency', {
+          characterId: selectedCharacterId,
+        }),
       ]);
       setCharacterStats(stats);
       setCharacterAttributes(attributes);
+      setCharacterSkills(skills ?? []);
+      setCharacterInventory(inventory ?? []);
+      setCharacterCurrency(currency ?? []);
     }
   };
 
@@ -1743,6 +2098,71 @@ function App() {
     };
 
     loadAttributes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCharacterId]);
+
+  // Skills follow the selected character as well.
+  useEffect(() => {
+    if (!selectedCharacterId) {
+      setCharacterSkills([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSkills = async () => {
+      try {
+        const loaded: CharacterSkill[] = await invoke('get_character_skills', {
+          characterId: selectedCharacterId,
+        });
+        if (!cancelled) setCharacterSkills(loaded ?? []);
+      } catch (e) {
+        console.error('Failed to load character skills:', e);
+        if (!cancelled) setCharacterError(String(e));
+      }
+    };
+
+    loadSkills();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCharacterId]);
+
+  // Inventory and currency follow the selected character as well.
+  useEffect(() => {
+    if (!selectedCharacterId) {
+      setCharacterInventory([]);
+      setCharacterCurrency([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadLedger = async () => {
+      try {
+        const [items, currency] = await Promise.all([
+          invoke<InventoryItem[]>('get_character_inventory', {
+            characterId: selectedCharacterId,
+          }),
+          invoke<CharacterCurrency[]>('get_character_currency', {
+            characterId: selectedCharacterId,
+          }),
+        ]);
+
+        if (cancelled) return;
+        setCharacterInventory(items ?? []);
+        setCharacterCurrency(currency ?? []);
+      } catch (e) {
+        console.error('Failed to load inventory and currency:', e);
+        if (!cancelled) setCharacterError(String(e));
+      }
+    };
+
+    loadLedger();
 
     return () => {
       cancelled = true;
@@ -2114,19 +2534,124 @@ function App() {
       });
   }, [chapterNodes]);
 
+  // The lost-item checks are worked out once so the Chapters tab and the chapter
+  // cards say the same thing. A flag belongs to the chapter it was lost in; one
+  // whose chapter is in the trash has no card of its own and stays in the panel.
+  const inventoryContinuity = useMemo(() => {
+    const flags: InventoryContinuityFlag[] = [];
+    const chapterById = new Map(chapterNodes.map(node => [node.id, node]));
+
+    storyInventory.forEach(item => {
+      if (!item.lost_chapter_id) return;
+
+      const owner = castNames.get(item.character_id) ?? 'A cast member';
+      const lostChapter = chapterById.get(item.lost_chapter_id);
+      const lostName = lostChapter ? lostChapter.data.label : 'a chapter in the trash';
+
+      // An item marked lost but still carried is a contradiction the ledger can
+      // see without guessing where in the story the author is reading.
+      if (item.quantity > 0) {
+        const parts: ContinuityPart[] = [
+          `${owner}'s “${item.name}” is marked lost in `,
+          ...(lostChapter ? [chapterLink(lostChapter.id, lostName, true)] : [lostName]),
+          ` but is still carried (×${formatCount(item.quantity)}).`,
+        ];
+
+        flags.push({
+          itemId: item.id,
+          itemName: item.name,
+          kind: 'still-carried',
+          chapterId: lostChapter?.id ?? null,
+          characterId: item.character_id,
+          characterName: owner,
+          summary: `${owner} still has “${item.name}” (×${formatCount(item.quantity)})`,
+          detail: continuityText(parts),
+          parts,
+        });
+      }
+
+      // A lost chapter earlier than the acquisition is the other mistake the
+      // recorded links can prove, because both chapters have a reading position.
+      const acquiredChapter = item.chapter_id
+        ? chapterById.get(item.chapter_id)
+        : undefined;
+      const lostSeq = lostChapter?.data.chapterSeq ?? null;
+      const acquiredSeq = acquiredChapter?.data.chapterSeq ?? null;
+
+      if (
+        lostChapter &&
+        acquiredChapter &&
+        lostSeq != null &&
+        acquiredSeq != null &&
+        lostSeq < acquiredSeq
+      ) {
+        const parts: ContinuityPart[] = [
+          `${owner}'s “${item.name}” is marked lost in `,
+          chapterLink(lostChapter.id, lostName, true),
+          ` before it was acquired in `,
+          chapterLink(acquiredChapter.id, acquiredChapter.data.label, true),
+          '.',
+        ];
+
+        flags.push({
+          itemId: item.id,
+          itemName: item.name,
+          kind: 'lost-before-acquired',
+          chapterId: lostChapter.id,
+          characterId: item.character_id,
+          characterName: owner,
+          summary: `${owner}'s “${item.name}” lost before acquired`,
+          detail: continuityText(parts),
+          parts,
+        });
+      }
+    });
+
+    return flags;
+  }, [chapterNodes, castNames, storyInventory]);
+
+  // A chapter card carries the lost-item warnings filed under the chapter whose
+  // card it is, so the problem is visible where the chapter sits on the board.
+  const inventoryFlagsByChapter = useMemo(() => {
+    const byChapter = new Map<string, InventoryContinuityFlag[]>();
+
+    inventoryContinuity.forEach(flag => {
+      if (!flag.chapterId) return;
+
+      const existing = byChapter.get(flag.chapterId) ?? [];
+      existing.push(flag);
+      byChapter.set(flag.chapterId, existing);
+    });
+
+    return byChapter;
+  }, [inventoryContinuity]);
+
+  // A warning names the cast member whose ledger contradicts it. Opening their
+  // sheet from the card puts the item and its lost chapter in front of the
+  // author, so the fix starts where the warning is rather than in a search.
+  const openCharacterSheet = useCallback((characterId: string) => {
+    setSelectedTab('characters');
+    setSelectedCharacterId(characterId);
+    setEditingProgress(false);
+
+    // The sheet is rendered by the tab that was just switched to, so scroll its
+    // row into view after that render rather than against the old list.
+    setTimeout(() => {
+      document
+        .querySelector(`[data-character-id="${characterId}"]`)
+        ?.scrollIntoView?.({ block: 'nearest' });
+    }, 0);
+  }, []);
+
   // Continuity is advisory: nothing here blocks a save. It names what looks
   // inconsistent — a chapter with no POV, a time with no day to place it on, a
   // day that goes backwards, a time that goes backwards inside a day, two
-  // chapters at the same moment, or one cast member in two chapters on the same
-  // day — and leaves the decision to the author. Every chapter it names is a
-  // link that opens that chapter, so a flag leads to the thing to fix.
+  // chapters at the same moment, one cast member in two chapters on the same
+  // day, or an item still carried after it was lost — and leaves the decision
+  // to the author. Every chapter it names is a link that opens that chapter, so
+  // a flag leads to the thing to fix.
   const chapterContinuity = useMemo(() => {
     const warnings: ContinuityPart[][] = [];
-
-    const chapterLink = (id: string, label: string, quoted = false): ContinuityPart => ({
-      id,
-      text: quoted ? `“${label}”` : label,
-    });
 
     // The names in a grouped flag, comma-separated like the other counts.
     const commaList = (chapters: { id: string; label: string }[]): ContinuityPart[] =>
@@ -2309,8 +2834,10 @@ function App() {
       ]);
     });
 
+    warnings.push(...inventoryContinuity.map(flag => flag.parts));
+
     return warnings;
-  }, [chapterNodes, castNames]);
+  }, [chapterNodes, castNames, inventoryContinuity]);
 
   const focusChapterRow = (chapterId: string) => {
     document
@@ -3845,6 +4372,393 @@ function App() {
     }
   };
 
+  // A skill is shown on the sheet and on its card, so both lists take the saved
+  // row. The sort matches the read, which is by name.
+  const applySkill = (saved: CharacterSkill) => {
+    const ordered = (list: CharacterSkill[]) =>
+      [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+    setCharacterSkills(ordered);
+    setStorySkills(ordered);
+  };
+
+  const startSkillEdit = (skill: CharacterSkill) => {
+    setCharacterError(null);
+    setEditingSkillId(skill.id);
+    setSkillNameDraft(skill.name);
+    setSkillRankDraft(skill.rank ?? '');
+    setSkillEffectDraft(skill.effect ?? '');
+    setSkillChapterDraft(skill.chapter_id ?? '');
+    setSkillNodeDraft(skill.node_id ?? '');
+  };
+
+  const saveSkill = async (skill: CharacterSkill) => {
+    const name = skillNameDraft.trim();
+
+    if (!name) {
+      setCharacterError('A skill needs a name — delete it to remove it.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: CharacterSkill = await invoke('update_skill', {
+        id: skill.id,
+        name,
+        rank: skillRankDraft.trim() || null,
+        effect: skillEffectDraft.trim() || null,
+        chapterId: skillChapterDraft || null,
+        nodeId: skillNodeDraft || null,
+        user: actor,
+      });
+
+      applySkill(updated);
+      setEditingSkillId(null);
+    } catch (e) {
+      console.error('Failed to save skill:', e);
+      setCharacterError(`Could not save skill: ${String(e)}`);
+    }
+  };
+
+  const addSkill = async () => {
+    if (!selectedCharacterId || !newSkillName.trim()) return;
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterSkill = await invoke('add_skill', {
+        characterId: selectedCharacterId,
+        name: newSkillName.trim(),
+        rank: newSkillRank.trim() || null,
+        effect: newSkillEffect.trim() || null,
+        chapterId: newSkillChapterId || null,
+        nodeId: newSkillNodeId || null,
+        user: actor,
+      });
+
+      applySkill(saved);
+      setNewSkillName('');
+      setNewSkillRank('');
+      setNewSkillEffect('');
+      setNewSkillChapterId('');
+      setNewSkillNodeId('');
+    } catch (e) {
+      console.error('Failed to add skill:', e);
+      setCharacterError(`Could not add skill: ${String(e)}`);
+    }
+  };
+
+  const removeSkill = async (skill: CharacterSkill) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_skill', { id: skill.id, user: actor });
+      setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
+      setStorySkills(prev => prev.filter(other => other.id !== skill.id));
+      setEditingSkillId(null);
+    } catch (e) {
+      console.error('Failed to delete skill:', e);
+      setCharacterError(`Could not delete skill: ${String(e)}`);
+    }
+  };
+
+  // An item is shown on the sheet and on its card, so both lists take the saved
+  // row. The sort matches the read, which is by name.
+  const applyInventoryItem = (saved: InventoryItem) => {
+    const ordered = (list: InventoryItem[]) =>
+      [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+    setCharacterInventory(ordered);
+    setStoryInventory(ordered);
+  };
+
+  // A correction made on the board can name an item whose owner's sheet is not
+  // the one loaded, so only the story list always takes the saved row.
+  const applyReturnedItem = useCallback((saved: InventoryItem) => {
+    const ordered = (list: InventoryItem[]) =>
+      [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+    setStoryInventory(previous => {
+      const next = ordered(previous);
+      storyInventoryRef.current = next;
+      return next;
+    });
+    setCharacterInventory(previous =>
+      previous.some(other => other.id === saved.id) ? ordered(previous) : previous
+    );
+  }, []);
+
+  const parseCount = (text: string): number | null => {
+    const trimmed = text.trim();
+    return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+  };
+
+  const startItemEdit = (item: InventoryItem) => {
+    setCharacterError(null);
+    setEditingItemId(item.id);
+    setItemNameDraft(item.name);
+    setItemRarityDraft(item.rarity ?? '');
+    setItemQuantityDraft(String(item.quantity));
+    setItemEffectDraft(item.effect ?? '');
+    setItemChapterDraft(item.chapter_id ?? '');
+    setItemLostChapterDraft(item.lost_chapter_id ?? '');
+    setItemNodeDraft(item.node_id ?? '');
+  };
+
+  const saveItem = async (item: InventoryItem) => {
+    const name = itemNameDraft.trim();
+
+    if (!name) {
+      setCharacterError('An item needs a name — delete it to remove it.');
+      return;
+    }
+
+    const quantity = parseCount(itemQuantityDraft);
+
+    if (quantity === null) {
+      setCharacterError('An item needs a whole-number quantity, zero or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: InventoryItem = await invoke('update_inventory_item', {
+        id: item.id,
+        name,
+        rarity: itemRarityDraft.trim() || null,
+        quantity,
+        effect: itemEffectDraft.trim() || null,
+        chapterId: itemChapterDraft || null,
+        lostChapterId: itemLostChapterDraft || null,
+        nodeId: itemNodeDraft || null,
+        user: actor,
+      });
+
+      applyInventoryItem(updated);
+      setEditingItemId(null);
+    } catch (e) {
+      console.error('Failed to save item:', e);
+      setCharacterError(`Could not save item: ${String(e)}`);
+    }
+  };
+
+  const addItem = async () => {
+    if (!selectedCharacterId || !newItemName.trim()) return;
+
+    const quantity = parseCount(newItemQuantity);
+
+    if (quantity === null) {
+      setCharacterError('An item needs a whole-number quantity, zero or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: InventoryItem = await invoke('add_inventory_item', {
+        characterId: selectedCharacterId,
+        name: newItemName.trim(),
+        rarity: newItemRarity.trim() || null,
+        quantity,
+        effect: newItemEffect.trim() || null,
+        chapterId: newItemChapterId || null,
+        lostChapterId: newItemLostChapterId || null,
+        nodeId: newItemNodeId || null,
+        user: actor,
+      });
+
+      applyInventoryItem(saved);
+      setNewItemName('');
+      setNewItemRarity('');
+      setNewItemQuantity('1');
+      setNewItemEffect('');
+      setNewItemChapterId('');
+      setNewItemLostChapterId('');
+      setNewItemNodeId('');
+    } catch (e) {
+      console.error('Failed to add item:', e);
+      setCharacterError(`Could not add item: ${String(e)}`);
+    }
+  };
+
+  const removeItem = async (item: InventoryItem) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_inventory_item', { id: item.id, user: actor });
+      setCharacterInventory(prev => prev.filter(other => other.id !== item.id));
+      setStoryInventory(prev => prev.filter(other => other.id !== item.id));
+      setEditingItemId(null);
+    } catch (e) {
+      console.error('Failed to delete item:', e);
+      setCharacterError(`Could not delete item: ${String(e)}`);
+    }
+  };
+
+  // Clearing the loss is the one correction the card can make without leaving
+  // the board. It goes through the same audited command as the sheet's editor,
+  // so the history records the lost chapter it removed.
+  const markItemReturned = useCallback(
+    async (itemId: string) => {
+      const item = storyInventory.find(candidate => candidate.id === itemId);
+
+      if (!item || !item.lost_chapter_id) return;
+
+      const previousLostChapterId = item.lost_chapter_id;
+      setActionError(null);
+      setReturningItemId(itemId);
+
+      try {
+        const updated: InventoryItem = await invoke('update_inventory_item', {
+          id: item.id,
+          name: item.name,
+          rarity: item.rarity,
+          quantity: item.quantity,
+          effect: item.effect,
+          chapterId: item.chapter_id,
+          lostChapterId: null,
+          nodeId: item.node_id,
+          user: actor,
+        });
+
+        applyReturnedItem(updated);
+
+        // Walk only the lost chapter, and read the item as it stands when the
+        // step runs, so undo does not also undo an edit made in between.
+        const setLostChapter = (lostChapterId: string | null) => async () => {
+          const current =
+            storyInventoryRef.current.find(candidate => candidate.id === updated.id) ?? updated;
+          const saved: InventoryItem = await invoke('update_inventory_item', {
+            id: current.id,
+            name: current.name,
+            rarity: current.rarity,
+            quantity: current.quantity,
+            effect: current.effect,
+            chapterId: current.chapter_id,
+            lostChapterId,
+            nodeId: current.node_id,
+            user: actor,
+          });
+
+          applyReturnedItem(saved);
+          return saved;
+        };
+
+        recordStep({
+          label: `Mark “${item.name}” returned`,
+          undo: setLostChapter(previousLostChapterId),
+          redo: setLostChapter(null),
+        });
+        setReturnedNotice({ itemName: item.name });
+      } catch (e) {
+        console.error('Failed to mark an item returned:', e);
+        setActionError(`Could not mark ${item.name} returned: ${String(e)}`);
+      } finally {
+        setReturningItemId(null);
+      }
+    },
+    [storyInventory, actor, applyReturnedItem, recordStep]
+  );
+
+  const applyCurrency = (saved: CharacterCurrency) => {
+    const ordered = (list: CharacterCurrency[]) =>
+      [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+    setCharacterCurrency(ordered);
+  };
+
+  const startCurrencyEdit = (currency: CharacterCurrency) => {
+    setCharacterError(null);
+    setEditingCurrencyId(currency.id);
+    setCurrencyNameDraft(currency.name);
+    setCurrencyAmountDraft(String(currency.amount));
+  };
+
+  const saveCurrency = async (currency: CharacterCurrency) => {
+    const name = currencyNameDraft.trim();
+
+    if (!name) {
+      setCharacterError('A currency needs a name — delete it to remove it.');
+      return;
+    }
+
+    const amount = parseCount(currencyAmountDraft);
+
+    if (amount === null) {
+      setCharacterError('A currency amount must be a whole number, zero or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const updated: CharacterCurrency = await invoke('update_currency', {
+        id: currency.id,
+        name,
+        amount,
+        user: actor,
+      });
+
+      applyCurrency(updated);
+      setEditingCurrencyId(null);
+    } catch (e) {
+      console.error('Failed to save currency:', e);
+      setCharacterError(`Could not save currency: ${String(e)}`);
+    }
+  };
+
+  const addCurrency = async () => {
+    if (!selectedCharacterId || !newCurrencyName.trim()) return;
+
+    const amount = parseCount(newCurrencyAmount);
+
+    if (amount === null) {
+      setCharacterError('A currency amount must be a whole number, zero or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterCurrency = await invoke('add_currency', {
+        characterId: selectedCharacterId,
+        name: newCurrencyName.trim(),
+        amount,
+        user: actor,
+      });
+
+      applyCurrency(saved);
+      setNewCurrencyName('');
+      setNewCurrencyAmount('0');
+    } catch (e) {
+      console.error('Failed to add currency:', e);
+      setCharacterError(`Could not add currency: ${String(e)}`);
+    }
+  };
+
+  const removeCurrency = async (currency: CharacterCurrency) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_currency', { id: currency.id, user: actor });
+      setCharacterCurrency(prev => prev.filter(other => other.id !== currency.id));
+      setEditingCurrencyId(null);
+    } catch (e) {
+      console.error('Failed to delete currency:', e);
+      setCharacterError(`Could not delete currency: ${String(e)}`);
+    }
+  };
+
   const startCharacterEdit = () => {
     if (!selectedCharacter) return;
     setCharacterError(null);
@@ -4756,12 +5670,62 @@ function App() {
   // them while the note toggle is on, as cards pinned under the chapter.
   const canvasNodes = useMemo(() => {
     const castById = new Map(characters.map(character => [character.id, character]));
+    const nodeLabels = new Map(nodes.map(node => [node.id, node.data.label]));
+    // A skill card names its holders in one read rather than asking the database
+    // per card. A skill whose character is gone (in the trash) is left out.
+    const holdersByNode: Record<string, SkillHolder[]> = {};
+
+    for (const skill of storySkills) {
+      if (!skill.node_id) continue;
+      const character = castById.get(skill.character_id);
+      if (!character) continue;
+
+      if (!holdersByNode[skill.node_id]) holdersByNode[skill.node_id] = [];
+      holdersByNode[skill.node_id].push({
+        id: skill.id,
+        characterName: character.name,
+        rank: skill.rank,
+        chapterLabel: skill.chapter_id ? nodeLabels.get(skill.chapter_id) ?? null : null,
+      });
+    }
+
+    for (const holders of Object.values(holdersByNode)) {
+      holders.sort((a, b) => a.characterName.localeCompare(b.characterName));
+    }
+
+    // The same for an item card: who carries it, how many and how rare.
+    const inventoryByNode: Record<string, InventoryHolder[]> = {};
+
+    for (const item of storyInventory) {
+      if (!item.node_id) continue;
+      const character = castById.get(item.character_id);
+      if (!character) continue;
+
+      if (!inventoryByNode[item.node_id]) inventoryByNode[item.node_id] = [];
+      inventoryByNode[item.node_id].push({
+        id: item.id,
+        characterName: character.name,
+        quantity: item.quantity,
+        rarity: item.rarity,
+        chapterLabel: item.chapter_id ? nodeLabels.get(item.chapter_id) ?? null : null,
+        lostChapterLabel: item.lost_chapter_id
+          ? nodeLabels.get(item.lost_chapter_id) ?? null
+          : null,
+      });
+    }
+
+    for (const holders of Object.values(inventoryByNode)) {
+      holders.sort((a, b) => a.characterName.localeCompare(b.characterName));
+    }
 
     return nodes.map(node => {
       const characterId = node.data.characterId;
       const notes = showChapterNotes ? notesByChapter.get(node.id) ?? [] : [];
       const noteCards = notes.slice(0, NOTE_CARDS_SHOWN);
       const hiddenNotes = notes.length - noteCards.length;
+      const holders = holdersByNode[node.id] ?? [];
+      const itemHolders = inventoryByNode[node.id] ?? [];
+      const continuityFlags = inventoryFlagsByChapter.get(node.id) ?? [];
       const classes = [
         node.id === dropTargetNodeId ? 'drop-target' : '',
         searchOpen && searchMatchIds.has(node.id) ? 'search-hit' : '',
@@ -4769,7 +5733,16 @@ function App() {
         .filter(Boolean)
         .join(' ');
 
-      if (!characterId && !classes && notes.length === 0) return node;
+      if (
+        !characterId &&
+        !classes &&
+        notes.length === 0 &&
+        holders.length === 0 &&
+        itemHolders.length === 0 &&
+        continuityFlags.length === 0
+      ) {
+        return node;
+      }
 
       return {
         ...node,
@@ -4799,12 +5772,35 @@ function App() {
                   openNoteFromGraph(node.id, noteId),
               }
             : {}),
+          ...(holders.length > 0
+            ? {
+                skillHolders: holders,
+                hiddenSkillHolders: Math.max(0, holders.length - 2),
+              }
+            : {}),
+          ...(itemHolders.length > 0
+            ? {
+                inventoryHolders: itemHolders,
+                hiddenInventoryHolders: Math.max(0, itemHolders.length - 2),
+              }
+            : {}),
+          ...(continuityFlags.length > 0
+            ? {
+                continuityFlags,
+                hiddenContinuityFlags: Math.max(0, continuityFlags.length - 2),
+                onOpenCharacter: openCharacterSheet,
+                onMarkItemReturned: markItemReturned,
+                returningItemId,
+              }
+            : {}),
         },
       };
     });
   }, [
     nodes,
     characters,
+    storySkills,
+    storyInventory,
     castStats,
     dropTargetNodeId,
     searchOpen,
@@ -4812,7 +5808,43 @@ function App() {
     showChapterNotes,
     notesByChapter,
     openNoteFromGraph,
+    inventoryFlagsByChapter,
+    openCharacterSheet,
+    markItemReturned,
+    returningItemId,
   ]);
+
+  // The chapter a skill was learned in, offered in reading order. Skill cards
+  // are the optional other end of the link, so a skill can name the card that
+  // grants it.
+  const chapterChoices = useMemo(
+    () =>
+      nodes
+        .filter(node => node.data.nodeType === 'chapter')
+        .sort(
+          (a, b) =>
+            (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+              (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+            a.data.label.localeCompare(b.data.label)
+        ),
+    [nodes]
+  );
+
+  const skillCardChoices = useMemo(
+    () =>
+      nodes
+        .filter(node => node.data.nodeType === 'skill')
+        .sort((a, b) => a.data.label.localeCompare(b.data.label)),
+    [nodes]
+  );
+
+  const itemCardChoices = useMemo(
+    () =>
+      nodes
+        .filter(node => node.data.nodeType === 'item')
+        .sort((a, b) => a.data.label.localeCompare(b.data.label)),
+    [nodes]
+  );
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -5349,6 +6381,27 @@ function App() {
           <div className="error-strip">
             <span>{actionError}</span>
             <button title="Hide this message" onClick={() => setActionError(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {returnedNotice && (
+          <div className="status-strip returned-strip" role="status">
+            <span>Marked “{returnedNotice.itemName}” returned.</span>
+            <button
+              className="status-undo"
+              title={`Put the lost chapter back for “${returnedNotice.itemName}”`}
+              aria-label={`Undo marking ${returnedNotice.itemName} returned`}
+              onClick={() => void undoLast()}
+            >
+              Undo
+            </button>
+            <button
+              className="status-dismiss"
+              title="Keep the item returned"
+              onClick={() => setReturnedNotice(null)}
+            >
               Dismiss
             </button>
           </div>
@@ -6885,6 +7938,605 @@ function App() {
                             disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
                           >
                             Add attribute
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Skills are rows of their own: a rank and an effect are
+                          the author's words, and the chapter is where it was
+                          learned. A skill card can name its holders too. */}
+                      <div className="skill-section">
+                        <h4 className="character-section-heading">Skills</h4>
+
+                        <div className="skill-list">
+                          {characterSkills.length === 0 && (
+                            <div className="empty">
+                              No skills yet — add one below.
+                            </div>
+                          )}
+
+                          {characterSkills.map(skill => {
+                            const chapter = chapterChoices.find(
+                              choice => choice.id === skill.chapter_id
+                            );
+                            const card = skillCardChoices.find(
+                              choice => choice.id === skill.node_id
+                            );
+
+                            return (
+                              <div key={skill.id} className="skill-row">
+                                {editingSkillId === skill.id ? (
+                                  <div className="skill-editor">
+                                    <input
+                                      aria-label="Skill name"
+                                      autoFocus
+                                      value={skillNameDraft}
+                                      onChange={(e) => setSkillNameDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveSkill(skill);
+                                        if (e.key === 'Escape') setEditingSkillId(null);
+                                      }}
+                                    />
+                                    <input
+                                      aria-label="Skill rank"
+                                      placeholder="Rank (optional)"
+                                      value={skillRankDraft}
+                                      onChange={(e) => setSkillRankDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveSkill(skill);
+                                        if (e.key === 'Escape') setEditingSkillId(null);
+                                      }}
+                                    />
+                                    <input
+                                      aria-label="Skill effect"
+                                      placeholder="Effect (optional)"
+                                      value={skillEffectDraft}
+                                      onChange={(e) => setSkillEffectDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveSkill(skill);
+                                        if (e.key === 'Escape') setEditingSkillId(null);
+                                      }}
+                                    />
+                                    <select
+                                      aria-label="Chapter acquired"
+                                      title="The chapter this skill was learned in"
+                                      value={skillChapterDraft}
+                                      onChange={(e) => setSkillChapterDraft(e.target.value)}
+                                    >
+                                      <option value="">No chapter</option>
+                                      {skillChapterDraft &&
+                                        !chapterChoices.some(
+                                          choice => choice.id === skillChapterDraft
+                                        ) && (
+                                          <option value={skillChapterDraft}>
+                                            Chapter in the trash
+                                          </option>
+                                        )}
+                                      {chapterChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      aria-label="Skill card"
+                                      title="The skill card this skill belongs to"
+                                      value={skillNodeDraft}
+                                      onChange={(e) => setSkillNodeDraft(e.target.value)}
+                                    >
+                                      <option value="">No card</option>
+                                      {skillNodeDraft &&
+                                        !skillCardChoices.some(
+                                          choice => choice.id === skillNodeDraft
+                                        ) && (
+                                          <option value={skillNodeDraft}>
+                                            Card in the trash
+                                          </option>
+                                        )}
+                                      {skillCardChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <div className="skill-actions">
+                                      <button
+                                        title={`Save this ${skill.name}`}
+                                        onClick={() => saveSkill(skill)}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        title="Leave the skill as it was"
+                                        onClick={() => setEditingSkillId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="skill-summary">
+                                      <span className="skill-name">{skill.name}</span>
+                                      {skill.rank && (
+                                        <span className="skill-rank">{skill.rank}</span>
+                                      )}
+                                      {skill.effect && (
+                                        <span className="skill-effect">{skill.effect}</span>
+                                      )}
+                                      <span className="skill-chapter">
+                                        {chapter
+                                          ? `Learned in ${chapter.data.label}`
+                                          : skill.chapter_id
+                                            ? 'Chapter in the trash'
+                                            : 'Chapter not recorded'}
+                                      </span>
+                                      {card && (
+                                        <span className="skill-card-link">
+                                          Card: {card.data.label}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button
+                                      title={`Change ${skill.name}'s rank, effect or chapter`}
+                                      onClick={() => startSkillEdit(skill)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete ${skill.name}`}
+                                      onClick={() => removeSkill(skill)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="skill-creator">
+                          <input
+                            aria-label="New skill name"
+                            placeholder="Skill"
+                            value={newSkillName}
+                            onChange={(e) => setNewSkillName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
+                          />
+                          <input
+                            aria-label="New skill rank"
+                            placeholder="Rank"
+                            value={newSkillRank}
+                            onChange={(e) => setNewSkillRank(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
+                          />
+                          <input
+                            aria-label="New skill effect"
+                            placeholder="Effect"
+                            value={newSkillEffect}
+                            onChange={(e) => setNewSkillEffect(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
+                          />
+                          <select
+                            aria-label="New skill chapter"
+                            title="The chapter this skill was learned in"
+                            value={newSkillChapterId}
+                            onChange={(e) => setNewSkillChapterId(e.target.value)}
+                          >
+                            <option value="">No chapter</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="New skill card"
+                            title="The skill card this skill belongs to"
+                            value={newSkillNodeId}
+                            onChange={(e) => setNewSkillNodeId(e.target.value)}
+                          >
+                            <option value="">No card</option>
+                            {skillCardChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            title="Add this skill to the selected character"
+                            onClick={addSkill}
+                            disabled={!newSkillName.trim()}
+                          >
+                            Add skill
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Inventory is a ledger, not a game engine: a name, a
+                          rarity, how many, what it does and where it was found. */}
+                      <div className="inventory-section">
+                        <h4 className="character-section-heading">Inventory</h4>
+
+                        <div className="inventory-list">
+                          {characterInventory.length === 0 && (
+                            <div className="empty">
+                              No items yet — add one below.
+                            </div>
+                          )}
+
+                          {characterInventory.map(item => {
+                            const chapter = chapterChoices.find(
+                              choice => choice.id === item.chapter_id
+                            );
+                            const card = itemCardChoices.find(
+                              choice => choice.id === item.node_id
+                            );
+                            const lostChapter = chapterChoices.find(
+                              choice => choice.id === item.lost_chapter_id
+                            );
+
+                            return (
+                              <div key={item.id} className="inventory-row">
+                                {editingItemId === item.id ? (
+                                  <div className="inventory-editor">
+                                    <input
+                                      aria-label="Item name"
+                                      autoFocus
+                                      value={itemNameDraft}
+                                      onChange={(e) => setItemNameDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveItem(item);
+                                        if (e.key === 'Escape') setEditingItemId(null);
+                                      }}
+                                    />
+                                    <input
+                                      aria-label="Item rarity"
+                                      placeholder="Rarity (optional)"
+                                      value={itemRarityDraft}
+                                      onChange={(e) => setItemRarityDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveItem(item);
+                                        if (e.key === 'Escape') setEditingItemId(null);
+                                      }}
+                                    />
+                                    <input
+                                      aria-label="Item quantity"
+                                      type="number"
+                                      min={0}
+                                      step={1}
+                                      title="How many of this item the character carries"
+                                      value={itemQuantityDraft}
+                                      onChange={(e) => setItemQuantityDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveItem(item);
+                                        if (e.key === 'Escape') setEditingItemId(null);
+                                      }}
+                                    />
+                                    <input
+                                      aria-label="Item effect"
+                                      placeholder="Effect (optional)"
+                                      value={itemEffectDraft}
+                                      onChange={(e) => setItemEffectDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveItem(item);
+                                        if (e.key === 'Escape') setEditingItemId(null);
+                                      }}
+                                    />
+                                    <select
+                                      aria-label="Item chapter acquired"
+                                      title="The chapter this item was acquired in"
+                                      value={itemChapterDraft}
+                                      onChange={(e) => setItemChapterDraft(e.target.value)}
+                                    >
+                                      <option value="">No chapter</option>
+                                      {itemChapterDraft &&
+                                        !chapterChoices.some(
+                                          choice => choice.id === itemChapterDraft
+                                        ) && (
+                                          <option value={itemChapterDraft}>
+                                            Chapter in the trash
+                                          </option>
+                                        )}
+                                      {chapterChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      aria-label="Item chapter lost"
+                                      title="The chapter this item was lost in"
+                                      value={itemLostChapterDraft}
+                                      onChange={(e) => setItemLostChapterDraft(e.target.value)}
+                                    >
+                                      <option value="">Not lost</option>
+                                      {itemLostChapterDraft &&
+                                        !chapterChoices.some(
+                                          choice => choice.id === itemLostChapterDraft
+                                        ) && (
+                                          <option value={itemLostChapterDraft}>
+                                            Chapter in the trash
+                                          </option>
+                                        )}
+                                      {chapterChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      aria-label="Item card"
+                                      title="The item card this row belongs to"
+                                      value={itemNodeDraft}
+                                      onChange={(e) => setItemNodeDraft(e.target.value)}
+                                    >
+                                      <option value="">No card</option>
+                                      {itemNodeDraft &&
+                                        !itemCardChoices.some(
+                                          choice => choice.id === itemNodeDraft
+                                        ) && (
+                                          <option value={itemNodeDraft}>
+                                            Card in the trash
+                                          </option>
+                                        )}
+                                      {itemCardChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <div className="inventory-actions">
+                                      <button
+                                        title={`Save this ${item.name}`}
+                                        onClick={() => saveItem(item)}
+                                      >
+                                        Save item
+                                      </button>
+                                      <button
+                                        title="Leave the item as it was"
+                                        onClick={() => setEditingItemId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="inventory-summary">
+                                      <span className="inventory-name">{item.name}</span>
+                                      <span className="inventory-quantity">
+                                        ×{formatCount(item.quantity)}
+                                      </span>
+                                      {item.rarity && (
+                                        <span className="inventory-rarity">{item.rarity}</span>
+                                      )}
+                                      {item.effect && (
+                                        <span className="inventory-effect">{item.effect}</span>
+                                      )}
+                                      <span className="inventory-chapter">
+                                        {chapter
+                                          ? `Found in ${chapter.data.label}`
+                                          : item.chapter_id
+                                            ? 'Chapter in the trash'
+                                            : 'Chapter not recorded'}
+                                      </span>
+                                      {item.lost_chapter_id && (
+                                        <span className="inventory-lost">
+                                          {lostChapter
+                                            ? `Lost in ${lostChapter.data.label}`
+                                            : 'Lost in a chapter in the trash'}
+                                        </span>
+                                      )}
+                                      {card && (
+                                        <span className="inventory-card-link">
+                                          Card: {card.data.label}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button
+                                      title={`Change ${item.name}'s rarity, quantity, effect or chapter`}
+                                      onClick={() => startItemEdit(item)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete ${item.name}`}
+                                      onClick={() => removeItem(item)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="inventory-creator">
+                          <input
+                            aria-label="New item name"
+                            placeholder="Item"
+                            value={newItemName}
+                            onChange={(e) => setNewItemName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                          />
+                          <input
+                            aria-label="New item rarity"
+                            placeholder="Rarity"
+                            value={newItemRarity}
+                            onChange={(e) => setNewItemRarity(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                          />
+                          <input
+                            aria-label="New item quantity"
+                            type="number"
+                            min={0}
+                            step={1}
+                            title="How many of this item the character carries"
+                            value={newItemQuantity}
+                            onChange={(e) => setNewItemQuantity(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                          />
+                          <input
+                            aria-label="New item effect"
+                            placeholder="Effect"
+                            value={newItemEffect}
+                            onChange={(e) => setNewItemEffect(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                          />
+                          <select
+                            aria-label="New item chapter"
+                            title="The chapter this item was acquired in"
+                            value={newItemChapterId}
+                            onChange={(e) => setNewItemChapterId(e.target.value)}
+                          >
+                            <option value="">No chapter</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="New item lost chapter"
+                            title="The chapter this item was lost in"
+                            value={newItemLostChapterId}
+                            onChange={(e) => setNewItemLostChapterId(e.target.value)}
+                          >
+                            <option value="">Not lost</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="New item card"
+                            title="The item card this row belongs to"
+                            value={newItemNodeId}
+                            onChange={(e) => setNewItemNodeId(e.target.value)}
+                          >
+                            <option value="">No card</option>
+                            {itemCardChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            title="Add this item to the selected character"
+                            onClick={addItem}
+                            disabled={!newItemName.trim()}
+                          >
+                            Add item
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Currency is a named amount per character. Nothing adds
+                          up across names: gold and mana crystals stay separate. */}
+                      <div className="currency-section">
+                        <h4 className="character-section-heading">Currency</h4>
+
+                        <div className="currency-list">
+                          {characterCurrency.length === 0 && (
+                            <div className="empty">
+                              No currency yet — add one below.
+                            </div>
+                          )}
+
+                          {characterCurrency.map(currency => (
+                            <div key={currency.id} className="currency-row">
+                              {editingCurrencyId === currency.id ? (
+                                <div className="currency-editor">
+                                  <input
+                                    aria-label="Currency name"
+                                    autoFocus
+                                    value={currencyNameDraft}
+                                    onChange={(e) => setCurrencyNameDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveCurrency(currency);
+                                      if (e.key === 'Escape') setEditingCurrencyId(null);
+                                    }}
+                                  />
+                                  <input
+                                    aria-label="Currency amount"
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={currencyAmountDraft}
+                                    onChange={(e) => setCurrencyAmountDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveCurrency(currency);
+                                      if (e.key === 'Escape') setEditingCurrencyId(null);
+                                    }}
+                                  />
+                                  <div className="currency-actions">
+                                    <button
+                                      title={`Save this ${currency.name} amount`}
+                                      onClick={() => saveCurrency(currency)}
+                                    >
+                                      Save currency
+                                    </button>
+                                    <button
+                                      title="Leave the amount as it was"
+                                      onClick={() => setEditingCurrencyId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="currency-summary">
+                                    <span className="currency-amount">
+                                      {formatCount(currency.amount)}
+                                    </span>
+                                    <span className="currency-name">{currency.name}</span>
+                                  </div>
+                                  <button
+                                    title={`Change the amount of ${currency.name}`}
+                                    onClick={() => startCurrencyEdit(currency)}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    title={`Delete ${currency.name}`}
+                                    onClick={() => removeCurrency(currency)}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="currency-creator">
+                          <input
+                            aria-label="New currency name"
+                            placeholder="Currency (Gold)"
+                            value={newCurrencyName}
+                            onChange={(e) => setNewCurrencyName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
+                          />
+                          <input
+                            aria-label="New currency amount"
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={newCurrencyAmount}
+                            onChange={(e) => setNewCurrencyAmount(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
+                          />
+                          <button
+                            title="Add this currency to the selected character"
+                            onClick={addCurrency}
+                            disabled={!newCurrencyName.trim()}
+                          >
+                            Add currency
                           </button>
                         </div>
                       </div>

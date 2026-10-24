@@ -1,6 +1,6 @@
 use litrpg_db::{
-    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterStat, Db, DeletedItem, Edge, Node,
-    Story, StoryExport,
+    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterCurrency, CharacterSkill,
+    CharacterStat, Db, DeletedItem, Edge, InventoryItem, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -15,7 +15,11 @@ const SNAPSHOTS_TO_KEEP: usize = 10;
 /// instead of silently starting empty.
 fn legacy_db_path() -> Option<PathBuf> {
     let base = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?;
-    Some(PathBuf::from(base).join("litrpg_storyboard").join(DB_FILE_NAME))
+    Some(
+        PathBuf::from(base)
+            .join("litrpg_storyboard")
+            .join(DB_FILE_NAME),
+    )
 }
 
 fn adopt_legacy_database(db_path: &Path) {
@@ -184,8 +188,177 @@ fn get_character_attributes(
 }
 
 #[tauri::command]
-fn delete_character_attribute(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+fn delete_character_attribute(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
     db.delete_attribute(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_skill(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    name: String,
+    rank: Option<String>,
+    effect: Option<String>,
+    chapter_id: Option<String>,
+    node_id: Option<String>,
+    user: String,
+) -> Result<CharacterSkill, String> {
+    db.add_skill(character_id, name, rank, effect, chapter_id, node_id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_skill(
+    db: tauri::State<'_, Db>,
+    id: String,
+    name: String,
+    rank: Option<String>,
+    effect: Option<String>,
+    chapter_id: Option<String>,
+    node_id: Option<String>,
+    user: String,
+) -> Result<CharacterSkill, String> {
+    db.update_skill(id, name, rank, effect, chapter_id, node_id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_skill(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_skill(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_skills(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<CharacterSkill>, String> {
+    db.list_skills(&character_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_skills(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterSkill>, String> {
+    db.list_story_skills(&story_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_inventory_item(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    name: String,
+    rarity: Option<String>,
+    quantity: i64,
+    effect: Option<String>,
+    chapter_id: Option<String>,
+    lost_chapter_id: Option<String>,
+    node_id: Option<String>,
+    user: String,
+) -> Result<InventoryItem, String> {
+    db.add_inventory_item(
+        character_id,
+        name,
+        rarity,
+        quantity,
+        effect,
+        chapter_id,
+        lost_chapter_id,
+        node_id,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_inventory_item(
+    db: tauri::State<'_, Db>,
+    id: String,
+    name: String,
+    rarity: Option<String>,
+    quantity: i64,
+    effect: Option<String>,
+    chapter_id: Option<String>,
+    lost_chapter_id: Option<String>,
+    node_id: Option<String>,
+    user: String,
+) -> Result<InventoryItem, String> {
+    db.update_inventory_item(
+        id,
+        name,
+        rarity,
+        quantity,
+        effect,
+        chapter_id,
+        lost_chapter_id,
+        node_id,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_inventory_item(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_inventory_item(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_inventory(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<InventoryItem>, String> {
+    db.list_inventory(&character_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_inventory(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<InventoryItem>, String> {
+    db.list_story_inventory(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_currency(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    name: String,
+    amount: i64,
+    user: String,
+) -> Result<CharacterCurrency, String> {
+    db.add_currency(character_id, name, amount, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_currency(
+    db: tauri::State<'_, Db>,
+    id: String,
+    name: String,
+    amount: i64,
+    user: String,
+) -> Result<CharacterCurrency, String> {
+    db.update_currency(id, name, amount, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_currency(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_currency(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_currency(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<CharacterCurrency>, String> {
+    db.list_currency(&character_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -253,8 +426,7 @@ fn set_chapter_details(
 /// Chapters tab reads them separately.
 #[tauri::command]
 fn get_chapter_notes(db: tauri::State<'_, Db>, story_id: String) -> Result<Vec<Node>, String> {
-    db.list_chapter_notes(&story_id)
-        .map_err(|e| e.to_string())
+    db.list_chapter_notes(&story_id).map_err(|e| e.to_string())
 }
 
 /// Adds a plain-text note under a chapter. The label is taken from its first
@@ -277,8 +449,7 @@ fn update_chapter_note(
     text: String,
     user: String,
 ) -> Result<Node, String> {
-    db.update_note(&id, text, user)
-        .map_err(|e| e.to_string())
+    db.update_note(&id, text, user).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -334,8 +505,15 @@ fn create_graph_edge(
     relation_type: Option<String>,
     created_by: String,
 ) -> Result<Edge, String> {
-    db.create_edge(story_id, source_id, target_id, label, relation_type, created_by)
-        .map_err(|e| e.to_string())
+    db.create_edge(
+        story_id,
+        source_id,
+        target_id,
+        label,
+        relation_type,
+        created_by,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -403,7 +581,10 @@ fn delete_edge(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(),
 /// What can be brought back: the deleted stories when no story is named, or the
 /// deleted contents of one story.
 #[tauri::command]
-fn get_trash(db: tauri::State<'_, Db>, story_id: Option<String>) -> Result<Vec<DeletedItem>, String> {
+fn get_trash(
+    db: tauri::State<'_, Db>,
+    story_id: Option<String>,
+) -> Result<Vec<DeletedItem>, String> {
     db.list_deleted(story_id.as_deref())
         .map_err(|e| e.to_string())
 }
@@ -499,8 +680,7 @@ fn export_story_json(
     let json = serde_json::to_string_pretty(&export)
         .map_err(|e| format!("could not serialize the story: {e}"))?;
 
-    std::fs::write(&path, json)
-        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    std::fs::write(&path, json).map_err(|e| format!("could not write {}: {e}", path.display()))?;
 
     Ok(path.display().to_string())
 }
@@ -525,10 +705,7 @@ fn export_story_markdown(
         .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
 
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let path = dir.join(format!(
-        "{}-story-bible-{stamp}.md",
-        slugify(&bible.title)
-    ));
+    let path = dir.join(format!("{}-story-bible-{stamp}.md", slugify(&bible.title)));
 
     std::fs::write(&path, bible.markdown)
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
@@ -539,10 +716,7 @@ fn export_story_markdown(
 /// The Markdown a clipboard copy needs: the same text the saved file holds, so
 /// the two cannot drift.
 #[tauri::command]
-fn story_bible_markdown(
-    db: tauri::State<'_, Db>,
-    story_id: String,
-) -> Result<String, String> {
+fn story_bible_markdown(db: tauri::State<'_, Db>, story_id: String) -> Result<String, String> {
     db.story_bible(&story_id)
         .map(|bible| bible.markdown)
         .map_err(|e| e.to_string())
@@ -642,6 +816,20 @@ pub fn run() {
             set_character_attribute,
             get_character_attributes,
             delete_character_attribute,
+            add_skill,
+            update_skill,
+            delete_skill,
+            get_character_skills,
+            get_story_skills,
+            add_inventory_item,
+            update_inventory_item,
+            delete_inventory_item,
+            get_character_inventory,
+            get_story_inventory,
+            add_currency,
+            update_currency,
+            delete_currency,
+            get_character_currency,
             create_graph_node,
             get_graph_nodes,
             set_chapter_order,

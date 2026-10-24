@@ -38,9 +38,11 @@ the next begins.
   the label and notes drafts.
 - **It is only part of a LitRPG storyboard.** Level, XP and rank are real
   fields, and the board now has `system`, `skill`, `item`, `quest` and `faction`
-  cards, but those cards still carry only a label, notes and connections — no
-  rank, quantity or effect — and nothing checks whether a level-up was earned or
-  a rank only rose.
+  cards. Skills and inventory are real rows with the chapter they arrived in,
+  an item can record where it was lost, and a `skill` or `item` card names who
+  has it — but `quest` and `faction` cards
+  still carry only a label, notes and connections, and nothing checks whether a
+  level-up was earned or a rank only rose.
 - **In-world time is a day and a typed label.** A chapter can name its POV, its
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
@@ -48,8 +50,11 @@ the next begins.
   is flagged so it is not lost. Chapters can be dragged by a row's grip or moved
   with the arrow buttons, but "where is Rook at chapter 9?" is still answered by
   the timeline, not by a search.
-- **No continuity checking.** Nothing warns that a character is in two places, a
-  skill is used before it is learned, or a chapter is missing.
+- **Continuity checking is partial.** The Chapters tab warns about chapter
+  timing, a cast member in two places on one day, and an item still carried or
+  acquired after its recorded loss. Nothing checks that a character is in two
+  places across days, that a skill is used before it is learned, or that a chapter
+  is missing.
 - **Visuals are unverified.** Every UI claim in this project is proven through
   jsdom and synthetic events; the desktop window has never been looked at during
   development.
@@ -291,17 +296,29 @@ every session once it exists. **L**
 
 ### Phase 3 — the world
 
-**10. Skills.** Replace "Skill: Fireball = Master" attributes with real rows:
-name, rank, short effect, the chapter it was acquired in, and optionally the node
-that grants it (a `skill` card). Rank can rise, so rank changes get their own
-history. The character sheet shows a compact ladder, and a skill's card lists who
-has it. **M**
+**10. Skills.** **Done.** A cast member's skills are rows with a name, an
+optional rank and effect, the chapter they were acquired in, and optionally the
+`skill` card that grants them. Each field change is its own history entry, the
+character sheet lists them alphabetically with their chapter, and a skill's card
+names its holders with each one's rank and chapter. A reference whose node is
+purged is cleared rather than left dangling; trashing one alone keeps it.
+`character_skills` is schema v12, carried by export, import and the story bible,
+and covered by database and UI tests. **M**
 
-**11. Inventory and currency.** Items with name, rarity, quantity, effect, and
-the chapter acquired/lost; a currency row per character (gold, credits, mana
-crystals — named by the author). Show carried items on the cast sheet, and
-optionally on the graph when a node is an `item`. Keep it a ledger, not a game
-engine: no prices, no encumbrance maths. **M**
+**11. Inventory and currency.** **Done.** A cast member's items are rows with a
+name, an optional rarity and effect, a quantity, the chapter acquired in, the
+chapter lost in, and optionally the `item` card they belong to. Currencies are
+separate named amounts (gold, credits, mana crystals — named by the author), with
+no exchange rate. Both are listed on the cast sheet, saved field by field into
+the history, and carried by export, import and the story bible. An `item` card
+names its holders with quantity, rarity and chapter, the Chapters tab flags an
+item still carried after it was recorded lost, or lost before it was acquired,
+and that short warning sits on the lost chapter's card on the Graph tab, where
+clicking it opens the holder's sheet and **Mark returned** clears the recorded
+loss in place. The notice that follows offers **Undo**, and the correction is
+recorded as one board history step. A purged chapter or card clears only the link. `character_inventory` and
+`character_currency` are schema v13, and `lost_chapter_id` is schema v14, with
+database and UI tests. **M**
 
 **12. Relationship map.** Cast-to-cast relations (`ally`, `rival`, `mentor`,
 `family`, `owes`) stored per story, drawn as a small graph in a new Cast view and
@@ -319,12 +336,14 @@ names unchanged, and the legend test covers them. **S**
 
 ### Phase 4 — see the story
 
-**14. Continuity panel.** An advisory list, never a blocker: chapter gaps and
-duplicates, chapters with no POV, cast linked after they are dead or trashed,
-skills used before acquisition, level drops between chapters, items held after
-being lost, nodes untouched for 30 days, and dangling plot threads with no
-`resolves` edge. Every finding names its node and chapter, and clicking it pans
-there. Warnings are derived on read, so they cannot go stale. **M–L**
+**14. Continuity panel.** **Started.** An advisory list, never a blocker. The
+Chapters tab currently flags chapter timing and duplication, a cast member in two
+chapters on one day, an item still carried after its recorded loss, and an item
+lost before it was acquired. Remaining: chapter gaps, cast linked after they are
+dead or trashed, skills used before acquisition, level drops between chapters,
+nodes untouched for 30 days, and dangling plot threads with no `resolves` edge.
+Every finding names its node and chapter, and clicking it pans there. Warnings
+are derived on read, so they cannot go stale. **M–L**
 
 **15. Story dashboard.** The landing view for a story: counts by type, chapters
 written vs drafted (a small status on chapter nodes), word totals, the cast with
@@ -339,7 +358,7 @@ grouped by kind. Character cards are omitted so a sheet is never written twice,
 and no app jargon reaches the file. **Copy bible** puts the same Markdown on the
 clipboard, so both routes carry identical text, and chapters now carry their POV,
 in-world day and time label, with a **Timeline** section in time order.
-Remaining: skills and inventory (phase 3), and open threads. **M**
+Remaining: open threads. **M**
 
 ### Phase 5 — make it feel inevitable
 

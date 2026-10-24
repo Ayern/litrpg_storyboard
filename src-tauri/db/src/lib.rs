@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 14;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -800,7 +800,10 @@ impl Db {
             return Ok(());
         };
 
-        tx.execute("DELETE FROM character_attributes WHERE id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM character_attributes WHERE id = ?1",
+            params![id],
+        )?;
 
         log_audit(
             &tx,
@@ -819,6 +822,1025 @@ impl Db {
         tx.commit()?;
 
         Ok(())
+    }
+
+    // ===== SKILL OPERATIONS =====
+    //
+    // Skills belong to a character, not to the board. The optional chapter and
+    // skill card are links; both are checked to be live nodes of the same story
+    // before anything is written, and both survive the card being trashed.
+
+    pub fn add_skill(
+        &self,
+        character_id: String,
+        name: String,
+        rank: Option<String>,
+        effect: Option<String>,
+        chapter_id: Option<String>,
+        node_id: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterSkill> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("a skill needs a name".to_string()));
+        }
+
+        let rank = clean_optional(rank);
+        let effect = clean_optional(effect);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &character_id)?;
+        validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        validate_node_reference(&tx, &story_id, node_id.as_deref(), "skill", "skill card")?;
+
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM character_skills WHERE character_id = ?1 AND name = ?2",
+                params![&character_id, &name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if taken.is_some() {
+            return Err(DbError::Invalid(format!(
+                "{name} is already one of this character's skills"
+            )));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_skills
+             (id, character_id, name, rank, effect, chapter_id, node_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                &id,
+                &character_id,
+                &name,
+                &rank,
+                &effect,
+                &chapter_id,
+                &node_id,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_skill",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("name"),
+                old_value: None,
+                new_value: Some(name.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterSkill {
+            id,
+            character_id,
+            name,
+            rank,
+            effect,
+            chapter_id,
+            node_id,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_skill(
+        &self,
+        id: String,
+        name: String,
+        rank: Option<String>,
+        effect: Option<String>,
+        chapter_id: Option<String>,
+        node_id: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterSkill> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("a skill needs a name".to_string()));
+        }
+
+        let rank = clean_optional(rank);
+        let effect = clean_optional(effect);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
+                        s.created_at, s.updated_at, c.story_id
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE s.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("skill"))?;
+
+        let (
+            character_id,
+            old_name,
+            old_rank,
+            old_effect,
+            old_chapter,
+            old_node,
+            created_at,
+            old_updated_at,
+            story_id,
+        ) = existing;
+
+        // A link sent back unchanged is not checked again: its chapter or card
+        // may have been trashed since, and that should not stop an unrelated
+        // rank being saved.
+        if chapter_id != old_chapter {
+            validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        }
+        if node_id != old_node {
+            validate_node_reference(&tx, &story_id, node_id.as_deref(), "skill", "skill card")?;
+        }
+
+        if name != old_name {
+            let taken: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM character_skills
+                      WHERE character_id = ?1 AND name = ?2 AND id <> ?3",
+                    params![&character_id, &name, &id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if taken.is_some() {
+                return Err(DbError::Invalid(format!(
+                    "{name} is already one of this character's skills"
+                )));
+            }
+        }
+
+        // References read as their labels in the history, not as opaque ids.
+        let old_chapter_label = reference_label(&tx, old_chapter.as_deref())?;
+        let old_node_label = reference_label(&tx, old_node.as_deref())?;
+        let new_chapter_label = reference_label(&tx, chapter_id.as_deref())?;
+        let new_node_label = reference_label(&tx, node_id.as_deref())?;
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if name != old_name {
+            changes.push(("name", Some(old_name.clone()), Some(name.clone())));
+        }
+        if rank != old_rank {
+            changes.push(("rank", old_rank.clone(), rank.clone()));
+        }
+        if effect != old_effect {
+            changes.push(("effect", old_effect.clone(), effect.clone()));
+        }
+        if chapter_id != old_chapter {
+            changes.push(("chapter", old_chapter_label, new_chapter_label));
+        }
+        if node_id != old_node {
+            changes.push(("card", old_node_label, new_node_label));
+        }
+
+        let updated = CharacterSkill {
+            id: id.clone(),
+            character_id,
+            name,
+            rank,
+            effect,
+            chapter_id,
+            node_id,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        // Saving the same values writes nothing and bumps no timestamp.
+        if changes.is_empty() {
+            return Ok(CharacterSkill {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        tx.execute(
+            "UPDATE character_skills
+                SET name = ?1, rank = ?2, effect = ?3, chapter_id = ?4, node_id = ?5,
+                    updated_at = ?6
+              WHERE id = ?7",
+            params![
+                &updated.name,
+                &updated.rank,
+                &updated.effect,
+                &updated.chapter_id,
+                &updated.node_id,
+                &updated.updated_at,
+                &updated.id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_skill",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_skill(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT s.name, c.story_id
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 WHERE s.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((name, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_skills WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_skill",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_skills(&self, character_id: &str) -> DbResult<Vec<CharacterSkill>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT s.id, s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
+                    s.created_at, s.updated_at
+             FROM character_skills s
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE s.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY s.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], character_skill_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Every skill of every live cast member in a story, so a skill card can
+    /// name who has it without one read per card.
+    pub fn list_story_skills(&self, story_id: &str) -> DbResult<Vec<CharacterSkill>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT s.id, s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
+                    s.created_at, s.updated_at
+             FROM character_skills s
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY s.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], character_skill_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    // ===== INVENTORY AND CURRENCY =====
+    //
+    // Like skills, an item belongs to a character rather than to the board. The
+    // optional acquired chapter, lost chapter and `item` card are links, checked
+    // to be live nodes of the same story before anything is written, and all
+    // survive a link being trashed. Currency is a named amount with no exchange
+    // rate: the app records the ledger, it does not price anything.
+
+    pub fn add_inventory_item(
+        &self,
+        character_id: String,
+        name: String,
+        rarity: Option<String>,
+        quantity: i64,
+        effect: Option<String>,
+        chapter_id: Option<String>,
+        lost_chapter_id: Option<String>,
+        node_id: Option<String>,
+        user: String,
+    ) -> DbResult<InventoryItem> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("an item needs a name".to_string()));
+        }
+
+        if quantity < 0 {
+            return Err(DbError::Invalid(
+                "an item's quantity cannot be negative".to_string(),
+            ));
+        }
+
+        let rarity = clean_optional(rarity);
+        let effect = clean_optional(effect);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &character_id)?;
+        validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            lost_chapter_id.as_deref(),
+            "chapter",
+            "chapter",
+        )?;
+        validate_node_reference(&tx, &story_id, node_id.as_deref(), "item", "item card")?;
+
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM character_inventory WHERE character_id = ?1 AND name = ?2",
+                params![&character_id, &name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if taken.is_some() {
+            return Err(DbError::Invalid(format!(
+                "{name} is already in this character's inventory"
+            )));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_inventory
+             (id, character_id, name, rarity, quantity, effect, chapter_id,
+              lost_chapter_id, node_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                &id,
+                &character_id,
+                &name,
+                &rarity,
+                quantity,
+                &effect,
+                &chapter_id,
+                &lost_chapter_id,
+                &node_id,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_inventory",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("name"),
+                old_value: None,
+                new_value: Some(name.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(InventoryItem {
+            id,
+            character_id,
+            name,
+            rarity,
+            quantity,
+            effect,
+            chapter_id,
+            lost_chapter_id,
+            node_id,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_inventory_item(
+        &self,
+        id: String,
+        name: String,
+        rarity: Option<String>,
+        quantity: i64,
+        effect: Option<String>,
+        chapter_id: Option<String>,
+        lost_chapter_id: Option<String>,
+        node_id: Option<String>,
+        user: String,
+    ) -> DbResult<InventoryItem> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("an item needs a name".to_string()));
+        }
+
+        if quantity < 0 {
+            return Err(DbError::Invalid(
+                "an item's quantity cannot be negative".to_string(),
+            ));
+        }
+
+        let rarity = clean_optional(rarity);
+        let effect = clean_optional(effect);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT i.character_id, i.name, i.rarity, i.quantity, i.effect,
+                        i.chapter_id, i.lost_chapter_id, i.node_id, i.created_at,
+                        i.updated_at, c.story_id
+                 FROM character_inventory i
+                 JOIN characters c ON c.id = i.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE i.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, String>(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("inventory item"))?;
+
+        let (
+            character_id,
+            old_name,
+            old_rarity,
+            old_quantity,
+            old_effect,
+            old_chapter,
+            old_lost_chapter,
+            old_node,
+            created_at,
+            old_updated_at,
+            story_id,
+        ) = existing;
+
+        // A link sent back unchanged is not checked again: its chapter or card
+        // may have been trashed since, and that should not stop an unrelated
+        // quantity being saved.
+        if chapter_id != old_chapter {
+            validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        }
+        if lost_chapter_id != old_lost_chapter {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                lost_chapter_id.as_deref(),
+                "chapter",
+                "chapter",
+            )?;
+        }
+        if node_id != old_node {
+            validate_node_reference(&tx, &story_id, node_id.as_deref(), "item", "item card")?;
+        }
+
+        if name != old_name {
+            let taken: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM character_inventory
+                      WHERE character_id = ?1 AND name = ?2 AND id <> ?3",
+                    params![&character_id, &name, &id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if taken.is_some() {
+                return Err(DbError::Invalid(format!(
+                    "{name} is already in this character's inventory"
+                )));
+            }
+        }
+
+        // References read as their labels in the history, not as opaque ids.
+        let old_chapter_label = reference_label(&tx, old_chapter.as_deref())?;
+        let old_lost_chapter_label = reference_label(&tx, old_lost_chapter.as_deref())?;
+        let old_node_label = reference_label(&tx, old_node.as_deref())?;
+        let new_chapter_label = reference_label(&tx, chapter_id.as_deref())?;
+        let new_lost_chapter_label = reference_label(&tx, lost_chapter_id.as_deref())?;
+        let new_node_label = reference_label(&tx, node_id.as_deref())?;
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if name != old_name {
+            changes.push(("name", Some(old_name.clone()), Some(name.clone())));
+        }
+        if rarity != old_rarity {
+            changes.push(("rarity", old_rarity.clone(), rarity.clone()));
+        }
+        if quantity != old_quantity {
+            changes.push((
+                "quantity",
+                Some(old_quantity.to_string()),
+                Some(quantity.to_string()),
+            ));
+        }
+        if effect != old_effect {
+            changes.push(("effect", old_effect.clone(), effect.clone()));
+        }
+        if chapter_id != old_chapter {
+            changes.push(("chapter", old_chapter_label, new_chapter_label));
+        }
+        if lost_chapter_id != old_lost_chapter {
+            changes.push((
+                "lost_chapter",
+                old_lost_chapter_label,
+                new_lost_chapter_label,
+            ));
+        }
+        if node_id != old_node {
+            changes.push(("item_card", old_node_label, new_node_label));
+        }
+
+        let updated = InventoryItem {
+            id: id.clone(),
+            character_id,
+            name,
+            rarity,
+            quantity,
+            effect,
+            chapter_id,
+            lost_chapter_id,
+            node_id,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        // Saving the same values writes nothing and bumps no timestamp.
+        if changes.is_empty() {
+            return Ok(InventoryItem {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        tx.execute(
+            "UPDATE character_inventory
+                SET name = ?1, rarity = ?2, quantity = ?3, effect = ?4,
+                    chapter_id = ?5, lost_chapter_id = ?6, node_id = ?7,
+                    updated_at = ?8
+              WHERE id = ?9",
+            params![
+                &updated.name,
+                &updated.rarity,
+                updated.quantity,
+                &updated.effect,
+                &updated.chapter_id,
+                &updated.lost_chapter_id,
+                &updated.node_id,
+                &updated.updated_at,
+                &updated.id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_inventory",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_inventory_item(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT i.name, c.story_id
+                 FROM character_inventory i
+                 JOIN characters c ON c.id = i.character_id
+                 WHERE i.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((name, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_inventory WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_inventory",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_inventory(&self, character_id: &str) -> DbResult<Vec<InventoryItem>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
+                    i.chapter_id, i.lost_chapter_id, i.node_id, i.created_at,
+                    i.updated_at
+             FROM character_inventory i
+             JOIN characters c ON c.id = i.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE i.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY i.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], inventory_item_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Every item carried by every live cast member in a story, so an `item`
+    /// card can name who holds it without one read per card.
+    pub fn list_story_inventory(&self, story_id: &str) -> DbResult<Vec<InventoryItem>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
+                    i.chapter_id, i.lost_chapter_id, i.node_id, i.created_at,
+                    i.updated_at
+             FROM character_inventory i
+             JOIN characters c ON c.id = i.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY i.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], inventory_item_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    pub fn add_currency(
+        &self,
+        character_id: String,
+        name: String,
+        amount: i64,
+        user: String,
+    ) -> DbResult<CharacterCurrency> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("a currency needs a name".to_string()));
+        }
+
+        if amount < 0 {
+            return Err(DbError::Invalid(
+                "a currency amount cannot be negative".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &character_id)?;
+
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM character_currency WHERE character_id = ?1 AND name = ?2",
+                params![&character_id, &name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if taken.is_some() {
+            return Err(DbError::Invalid(format!(
+                "{name} is already one of this character's currencies"
+            )));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_currency (id, character_id, name, amount, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![&id, &character_id, &name, amount, &timestamp, &timestamp],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_currency",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("name"),
+                old_value: None,
+                new_value: Some(name.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterCurrency {
+            id,
+            character_id,
+            name,
+            amount,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_currency(
+        &self,
+        id: String,
+        name: String,
+        amount: i64,
+        user: String,
+    ) -> DbResult<CharacterCurrency> {
+        let name = name.trim().to_string();
+
+        if name.is_empty() {
+            return Err(DbError::Invalid("a currency needs a name".to_string()));
+        }
+
+        if amount < 0 {
+            return Err(DbError::Invalid(
+                "a currency amount cannot be negative".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT k.character_id, k.name, k.amount, k.created_at, k.updated_at, c.story_id
+                 FROM character_currency k
+                 JOIN characters c ON c.id = k.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE k.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("currency"))?;
+
+        let (character_id, old_name, old_amount, created_at, old_updated_at, story_id) = existing;
+
+        if name != old_name {
+            let taken: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM character_currency
+                      WHERE character_id = ?1 AND name = ?2 AND id <> ?3",
+                    params![&character_id, &name, &id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if taken.is_some() {
+                return Err(DbError::Invalid(format!(
+                    "{name} is already one of this character's currencies"
+                )));
+            }
+        }
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if name != old_name {
+            changes.push(("name", Some(old_name.clone()), Some(name.clone())));
+        }
+        if amount != old_amount {
+            changes.push((
+                "amount",
+                Some(old_amount.to_string()),
+                Some(amount.to_string()),
+            ));
+        }
+
+        let updated = CharacterCurrency {
+            id: id.clone(),
+            character_id,
+            name,
+            amount,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        // Saving the same values writes nothing and bumps no timestamp.
+        if changes.is_empty() {
+            return Ok(CharacterCurrency {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        tx.execute(
+            "UPDATE character_currency SET name = ?1, amount = ?2, updated_at = ?3 WHERE id = ?4",
+            params![
+                &updated.name,
+                updated.amount,
+                &updated.updated_at,
+                &updated.id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_currency",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_currency(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT k.name, c.story_id
+                 FROM character_currency k
+                 JOIN characters c ON c.id = k.character_id
+                 WHERE k.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((name, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_currency WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_currency",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_currency(&self, character_id: &str) -> DbResult<Vec<CharacterCurrency>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT k.id, k.character_id, k.name, k.amount, k.created_at, k.updated_at
+             FROM character_currency k
+             JOIN characters c ON c.id = k.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE k.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY k.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], character_currency_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    pub fn list_story_currency(&self, story_id: &str) -> DbResult<Vec<CharacterCurrency>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT k.id, k.character_id, k.name, k.amount, k.created_at, k.updated_at
+             FROM character_currency k
+             JOIN characters c ON c.id = k.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY k.name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], character_currency_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
     // ===== NODE OPERATIONS (IDEA GRAPH) =====
@@ -1122,9 +2144,11 @@ impl Db {
         // that character has since been renamed or trashed.
         let previous_name: Option<String> = match &previous {
             Some(id) => tx
-                .query_row("SELECT name FROM characters WHERE id = ?1", params![id], |row| {
-                    row.get(0)
-                })
+                .query_row(
+                    "SELECT name FROM characters WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
                 .optional()?,
             None => None,
         };
@@ -1201,12 +2225,7 @@ impl Db {
     /// and a parent pointer, so the history, the trash and the export carry it
     /// like anything else; it is simply not on the board. The label is the note's
     /// first line, which is what the trash and the history have to show.
-    pub fn add_chapter_note(
-        &self,
-        chapter_id: &str,
-        text: String,
-        user: String,
-    ) -> DbResult<Node> {
+    pub fn add_chapter_note(&self, chapter_id: &str, text: String, user: String) -> DbResult<Node> {
         let body = note_body(text)?;
         let label = note_label(&body);
         let timestamp = now();
@@ -1921,6 +2940,45 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let mut character_skills = {
+            let mut stmt = guard.prepare(
+                "SELECT s.id, s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
+                        s.created_at, s.updated_at
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY s.name",
+            )?;
+            let rows = stmt.query_map(params![story_id], character_skill_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let mut character_inventory = {
+            let mut stmt = guard.prepare(
+                "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
+                        i.chapter_id, i.lost_chapter_id, i.node_id, i.created_at,
+                    i.updated_at
+                 FROM character_inventory i
+                 JOIN characters c ON c.id = i.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY i.name",
+            )?;
+            let rows = stmt.query_map(params![story_id], inventory_item_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let character_currency = {
+            let mut stmt = guard.prepare(
+                "SELECT k.id, k.character_id, k.name, k.amount, k.created_at, k.updated_at
+                 FROM character_currency k
+                 JOIN characters c ON c.id = k.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY k.name",
+            )?;
+            let rows = stmt.query_map(params![story_id], character_currency_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let nodes = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, node_type, label, content, pos_x, pos_y, created_by, created_at, updated_at, character_id, chapter_seq,
@@ -1930,6 +2988,53 @@ impl Db {
             let rows = stmt.query_map(params![story_id], node_row)?;
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
+
+        // The trash is not exported, so a skill pointing at a chapter or card in
+        // it would make the file reference a node it does not contain. The link
+        // is cleared here, which keeps every export importable.
+        let live_node_ids: std::collections::HashSet<&str> =
+            nodes.iter().map(|node| node.id.as_str()).collect();
+
+        for skill in &mut character_skills {
+            if skill
+                .chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                skill.chapter_id = None;
+            }
+            if skill
+                .node_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                skill.node_id = None;
+            }
+        }
+
+        for item in &mut character_inventory {
+            if item
+                .chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                item.chapter_id = None;
+            }
+            if item
+                .lost_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                item.lost_chapter_id = None;
+            }
+            if item
+                .node_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                item.node_id = None;
+            }
+        }
 
         let edges = {
             let mut stmt = guard.prepare(
@@ -1959,6 +3064,9 @@ impl Db {
             characters,
             character_stats,
             character_attributes,
+            character_skills,
+            character_inventory,
+            character_currency,
             nodes,
             edges,
             audit_trail,
@@ -1976,6 +3084,9 @@ impl Db {
         let nodes = self.list_nodes(story_id)?;
         let characters = self.list_characters(story_id)?;
         let stats = self.list_story_stats(story_id)?;
+        let skills = self.list_story_skills(story_id)?;
+        let inventory = self.list_story_inventory(story_id)?;
+        let currencies = self.list_story_currency(story_id)?;
         // The notes are nodes of their own, kept off the board, so they are read
         // separately and filed under the chapter that holds them.
         let chapter_notes = self.list_chapter_notes(story_id)?;
@@ -1994,6 +3105,12 @@ impl Db {
         let pov_names: std::collections::HashMap<&str, &str> = characters
             .iter()
             .map(|character| (character.id.as_str(), character.name.as_str()))
+            .collect();
+        // A skill names the chapter it was learned in by the chapter's title, the
+        // same way a POV is named by the cast member's name.
+        let node_names: std::collections::HashMap<&str, &str> = nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.label.as_str()))
             .collect();
 
         let mut lines: Vec<String> = vec![format!("# {}", story.title)];
@@ -2030,11 +3147,7 @@ impl Db {
                 .collect();
 
             if words > 0 || !targets.is_empty() {
-                let mut total = format!(
-                    "{} words in {} chapters",
-                    grouped(words),
-                    chapters.len()
-                );
+                let mut total = format!("{} words in {} chapters", grouped(words), chapters.len());
 
                 if !targets.is_empty() {
                     total.push_str(&format!(
@@ -2092,9 +3205,11 @@ impl Db {
                 }
 
                 match (chapter.chapter_words, chapter.chapter_target) {
-                    (Some(words), Some(target)) => {
-                        facts.push(format!("**Words:** {} of {}", grouped(words), grouped(target)))
-                    }
+                    (Some(words), Some(target)) => facts.push(format!(
+                        "**Words:** {} of {}",
+                        grouped(words),
+                        grouped(target)
+                    )),
                     (Some(words), None) => facts.push(format!("**Words:** {}", grouped(words))),
                     (None, Some(target)) => {
                         facts.push(format!("**Target:** {} words", grouped(target)))
@@ -2245,8 +3360,25 @@ impl Db {
                     .filter(|stat| stat.character_id == character.id)
                     .collect();
                 let attributes = self.list_attributes(&character.id)?;
+                let own_skills: Vec<&CharacterSkill> = skills
+                    .iter()
+                    .filter(|skill| skill.character_id == character.id)
+                    .collect();
+                let own_items: Vec<&InventoryItem> = inventory
+                    .iter()
+                    .filter(|item| item.character_id == character.id)
+                    .collect();
+                let own_currency: Vec<&CharacterCurrency> = currencies
+                    .iter()
+                    .filter(|currency| currency.character_id == character.id)
+                    .collect();
 
-                if !own_stats.is_empty() || !attributes.is_empty() {
+                if !own_stats.is_empty()
+                    || !attributes.is_empty()
+                    || !own_skills.is_empty()
+                    || !own_items.is_empty()
+                    || !own_currency.is_empty()
+                {
                     lines.push(String::new());
 
                     for stat in own_stats {
@@ -2255,6 +3387,91 @@ impl Db {
 
                     for attribute in attributes {
                         lines.push(format!("- {}: {}", attribute.attr_name, attribute.value));
+                    }
+
+                    for skill in own_skills {
+                        let mut line = format!("- **{}**", skill.name);
+
+                        if let Some(rank) = skill
+                            .rank
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|rank| !rank.is_empty())
+                        {
+                            line.push_str(&format!(" · {rank}"));
+                        }
+
+                        if let Some(effect) = skill
+                            .effect
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|effect| !effect.is_empty())
+                        {
+                            line.push_str(&format!(" — {effect}"));
+                        }
+
+                        if let Some(chapter) = skill
+                            .chapter_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id))
+                        {
+                            line.push_str(&format!(" (learned in \"{chapter}\")"));
+                        }
+
+                        lines.push(line);
+                    }
+
+                    // Currency reads as a plain ledger line: the amount, then the
+                    // name the author gave it. No conversion is implied.
+                    for currency in own_currency {
+                        lines.push(format!("- {} {}", grouped(currency.amount), currency.name));
+                    }
+
+                    // An item names its rarity and effect when it has them, and the
+                    // chapter it was acquired in by that chapter's title.
+                    for item in own_items {
+                        let mut line = format!("- **{}**", item.name);
+
+                        if item.quantity != 1 {
+                            line.push_str(&format!(" ×{}", grouped(item.quantity)));
+                        }
+
+                        if let Some(rarity) = item
+                            .rarity
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|rarity| !rarity.is_empty())
+                        {
+                            line.push_str(&format!(" · {rarity}"));
+                        }
+
+                        if let Some(effect) = item
+                            .effect
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|effect| !effect.is_empty())
+                        {
+                            line.push_str(&format!(" — {effect}"));
+                        }
+
+                        let acquired = item.chapter_id.as_deref().and_then(|id| node_names.get(id));
+                        let lost = item
+                            .lost_chapter_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id));
+
+                        match (acquired, lost) {
+                            (Some(acquired), Some(lost)) => line.push_str(&format!(
+                                " (acquired in \"{acquired}\"; lost in \"{lost}\")"
+                            )),
+                            (Some(acquired), None) => {
+                                line.push_str(&format!(" (acquired in \"{acquired}\")"))
+                            }
+                            (None, Some(lost)) => line.push_str(&format!(" (lost in \"{lost}\")")),
+                            (None, None) => {}
+                        }
+
+                        lines.push(line);
                     }
                 }
             }
@@ -3746,7 +4963,10 @@ impl Db {
                     )?;
                 } else {
                     tx.execute(
-                        &format!("UPDATE {} SET {} = ?1 WHERE id = ?2", spec.table, spec.column),
+                        &format!(
+                            "UPDATE {} SET {} = ?1 WHERE id = ?2",
+                            spec.table, spec.column
+                        ),
                         params![restore, entity_id],
                     )?;
                 }
@@ -3840,6 +5060,21 @@ impl Db {
             .iter()
             .map(|attribute| (attribute.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let skills: HashMap<String, String> = export
+            .character_skills
+            .iter()
+            .map(|skill| (skill.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let inventory: HashMap<String, String> = export
+            .character_inventory
+            .iter()
+            .map(|item| (item.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let currencies: HashMap<String, String> = export
+            .character_currency
+            .iter()
+            .map(|currency| (currency.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let nodes: HashMap<String, String> = export
             .nodes
             .iter()
@@ -3867,6 +5102,58 @@ impl Db {
                 return Err(DbError::Invalid(format!(
                     "the attribute '{}' belongs to a character the file does not contain",
                     attribute.attr_name
+                )));
+            }
+        }
+
+        for skill in &export.character_skills {
+            if !characters.contains_key(&skill.character_id) {
+                return Err(DbError::Invalid(format!(
+                    "the skill '{}' belongs to a character the file does not contain",
+                    skill.name
+                )));
+            }
+
+            for (reference, what) in [
+                (skill.chapter_id.as_ref(), "chapter"),
+                (skill.node_id.as_ref(), "skill card"),
+            ] {
+                if reference.is_some_and(|id| !nodes.contains_key(id)) {
+                    return Err(DbError::Invalid(format!(
+                        "the skill '{}' points at a {what} the file does not contain",
+                        skill.name
+                    )));
+                }
+            }
+        }
+
+        for item in &export.character_inventory {
+            if !characters.contains_key(&item.character_id) {
+                return Err(DbError::Invalid(format!(
+                    "the item '{}' belongs to a character the file does not contain",
+                    item.name
+                )));
+            }
+
+            for (reference, what) in [
+                (item.chapter_id.as_ref(), "chapter"),
+                (item.lost_chapter_id.as_ref(), "chapter"),
+                (item.node_id.as_ref(), "item card"),
+            ] {
+                if reference.is_some_and(|id| !nodes.contains_key(id)) {
+                    return Err(DbError::Invalid(format!(
+                        "the item '{}' points at a {what} the file does not contain",
+                        item.name
+                    )));
+                }
+            }
+        }
+
+        for currency in &export.character_currency {
+            if !characters.contains_key(&currency.character_id) {
+                return Err(DbError::Invalid(format!(
+                    "the currency '{}' belongs to a character the file does not contain",
+                    currency.name
                 )));
             }
         }
@@ -4027,6 +5314,68 @@ impl Db {
             )?;
         }
 
+        // Skills come after the nodes they can point at, because the chapter and
+        // card links are foreign keys into the copy.
+        for skill in &export.character_skills {
+            tx.execute(
+                "INSERT INTO character_skills
+                 (id, character_id, name, rank, effect, chapter_id, node_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    &skills[&skill.id],
+                    &characters[&skill.character_id],
+                    &skill.name,
+                    &skill.rank,
+                    &skill.effect,
+                    // The chapter and card get new ids with the rest of the story.
+                    skill.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    skill.node_id.as_ref().and_then(|id| nodes.get(id)),
+                    &skill.created_at,
+                    &skill.updated_at
+                ],
+            )?;
+        }
+
+        // Inventory follows the nodes for the same reason a skill does: its
+        // chapter and item-card links are foreign keys into the copy.
+        for item in &export.character_inventory {
+            tx.execute(
+                "INSERT INTO character_inventory
+                 (id, character_id, name, rarity, quantity, effect, chapter_id,
+                  lost_chapter_id, node_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &inventory[&item.id],
+                    &characters[&item.character_id],
+                    &item.name,
+                    &item.rarity,
+                    item.quantity,
+                    &item.effect,
+                    item.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    item.lost_chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    item.node_id.as_ref().and_then(|id| nodes.get(id)),
+                    &item.created_at,
+                    &item.updated_at
+                ],
+            )?;
+        }
+
+        for currency in &export.character_currency {
+            tx.execute(
+                "INSERT INTO character_currency
+                 (id, character_id, name, amount, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    &currencies[&currency.id],
+                    &characters[&currency.character_id],
+                    &currency.name,
+                    currency.amount,
+                    &currency.created_at,
+                    &currency.updated_at
+                ],
+            )?;
+        }
+
         for edge in &export.edges {
             tx.execute(
                 "INSERT INTO edges (id, story_id, source_id, target_id, label, relation_type, created_by, created_at)
@@ -4053,6 +5402,9 @@ impl Db {
                 "character" => characters.get(&entry.entity_id).cloned(),
                 "character_stat" => stats.get(&entry.entity_id).cloned(),
                 "character_attribute" => attributes.get(&entry.entity_id).cloned(),
+                "character_skill" => skills.get(&entry.entity_id).cloned(),
+                "character_inventory" => inventory.get(&entry.entity_id).cloned(),
+                "character_currency" => currencies.get(&entry.entity_id).cloned(),
                 "node" => nodes.get(&entry.entity_id).cloned(),
                 "edge" => edges.get(&entry.entity_id).cloned(),
                 _ => None,
@@ -4102,7 +5454,6 @@ impl Db {
             updated_at: export.story.updated_at,
         })
     }
-
 }
 
 // ===== MODELS =====
@@ -4181,6 +5532,56 @@ pub struct CharacterAttribute {
     pub character_id: String,
     pub attr_name: String,
     pub value: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One skill a cast member has. The rank is the author's words (“Master”,
+/// “Rank 2”), and the chapter and card are optional links, kept nullable so a
+/// skill survives the purging of the chapter it was learned in.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterSkill {
+    pub id: String,
+    pub character_id: String,
+    pub name: String,
+    pub rank: Option<String>,
+    pub effect: Option<String>,
+    pub chapter_id: Option<String>,
+    pub node_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One item a cast member carries. The rarity and effect are the author's own
+/// words, the quantity is how many they hold, and the chapter is where it was
+/// found. `lost_chapter_id` records where it left their hands. Every link is
+/// optional and nullable so an item survives the purging of the chapter it was
+/// acquired in, lost in, or both.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct InventoryItem {
+    pub id: String,
+    pub character_id: String,
+    pub name: String,
+    pub rarity: Option<String>,
+    pub quantity: i64,
+    pub effect: Option<String>,
+    pub chapter_id: Option<String>,
+    /// Absent from exports written before schema v14, so it defaults to none.
+    #[serde(default)]
+    pub lost_chapter_id: Option<String>,
+    pub node_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One named currency a cast member holds — gold, credits, mana crystals. The
+/// name and amount are the author's ledger, with no exchange rate anywhere.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterCurrency {
+    pub id: String,
+    pub character_id: String,
+    pub name: String,
+    pub amount: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -4338,8 +5739,10 @@ const DAY_PARTS: [(&[&str], i32); 7] = [
 ];
 
 /// Words that pull a day part earlier or later: “early morning”, “late night”.
-const DAY_PART_NUDGES: [(&[&str], i32); 2] =
-    [(&["early", "before"], -60), (&["late", "after", "deep"], 60)];
+const DAY_PART_NUDGES: [(&[&str], i32); 2] = [
+    (&["early", "before"], -60),
+    (&["late", "after", "deep"], 60),
+];
 
 /// Whether a byte counts as part of a word for `\b`, which in the frontend's
 /// patterns (like JavaScript's) means ASCII letters, digits and the underscore.
@@ -4480,6 +5883,14 @@ pub struct StoryExport {
     /// Absent from exports written before schema v2, so it defaults to empty.
     #[serde(default)]
     pub character_attributes: Vec<CharacterAttribute>,
+    /// Absent from exports written before schema v12, so it defaults to empty.
+    #[serde(default)]
+    pub character_skills: Vec<CharacterSkill>,
+    /// Absent from exports written before schema v13, so they default to empty.
+    #[serde(default)]
+    pub character_inventory: Vec<InventoryItem>,
+    #[serde(default)]
+    pub character_currency: Vec<CharacterCurrency>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub audit_trail: Vec<AuditEntry>,
@@ -4584,6 +5995,12 @@ const EDGE_FROM: &str = "edges t JOIN stories s ON s.id = t.story_id";
 const STAT_FROM: &str =
     "character_stats t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
 const ATTRIBUTE_FROM: &str = "character_attributes t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+const SKILL_FROM: &str =
+    "character_skills t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+const INVENTORY_FROM: &str =
+    "character_inventory t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+const CURRENCY_FROM: &str =
+    "character_currency t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
 
 /// A story's own children are visible while they and the story are live.
 const OWN_LIVE: &str = "t.deleted_at IS NULL AND s.deleted_at IS NULL";
@@ -4660,18 +6077,18 @@ fn optional_number_spec(
 /// deletion, or a field the app never records — has nothing to restore.
 fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
     Some(match (entity_type, field) {
-        ("story", "title") => {
-            text_spec("stories", "title", "stories t", "t.deleted_at IS NULL", true)
-        }
-        ("character", "name") => {
-            text_spec("characters", "name", CHARACTER_FROM, OWN_LIVE, true)
-        }
+        ("story", "title") => text_spec(
+            "stories",
+            "title",
+            "stories t",
+            "t.deleted_at IS NULL",
+            true,
+        ),
+        ("character", "name") => text_spec("characters", "name", CHARACTER_FROM, OWN_LIVE, true),
         ("character", "description") => {
             optional_text_spec("characters", "description", CHARACTER_FROM, OWN_LIVE, true)
         }
-        ("character", "level") => {
-            number_spec("characters", "level", CHARACTER_FROM, OWN_LIVE)
-        }
+        ("character", "level") => number_spec("characters", "level", CHARACTER_FROM, OWN_LIVE),
         ("character", "xp") => number_spec("characters", "xp", CHARACTER_FROM, OWN_LIVE),
         ("character", "rank") => {
             optional_text_spec("characters", "rank", CHARACTER_FROM, OWN_LIVE, true)
@@ -4689,6 +6106,57 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
             CHILD_LIVE,
             true,
         ),
+        // A skill's words are revertible like any other text. Its chapter and card
+        // links are not: the history records their labels, and turning a label
+        // back into an id would be a guess.
+        ("character_skill", "name") => {
+            text_spec("character_skills", "name", SKILL_FROM, CHILD_LIVE, true)
+        }
+        ("character_skill", "rank") => {
+            optional_text_spec("character_skills", "rank", SKILL_FROM, CHILD_LIVE, true)
+        }
+        ("character_skill", "effect") => {
+            optional_text_spec("character_skills", "effect", SKILL_FROM, CHILD_LIVE, true)
+        }
+        // An item's words and count are revertible; its chapter and item-card
+        // links are not, for the same reason a skill's are not.
+        ("character_inventory", "name") => text_spec(
+            "character_inventory",
+            "name",
+            INVENTORY_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("character_inventory", "rarity") => optional_text_spec(
+            "character_inventory",
+            "rarity",
+            INVENTORY_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("character_inventory", "effect") => optional_text_spec(
+            "character_inventory",
+            "effect",
+            INVENTORY_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("character_inventory", "quantity") => number_spec(
+            "character_inventory",
+            "quantity",
+            INVENTORY_FROM,
+            CHILD_LIVE,
+        ),
+        ("character_currency", "name") => text_spec(
+            "character_currency",
+            "name",
+            CURRENCY_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("character_currency", "amount") => {
+            number_spec("character_currency", "amount", CURRENCY_FROM, CHILD_LIVE)
+        }
         ("node", "label") => text_spec("nodes", "label", NODE_FROM, OWN_LIVE, true),
         ("node", "content") => optional_text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
         ("node", "chapter_seq") => {
@@ -4765,10 +6233,7 @@ enum RevertCheck {
     Nothing { reason: String },
     /// A revert is refused until something else is done — the row is gone, in the
     /// trash, or the field moved on.
-    Blocked {
-        state: RevertState,
-        reason: String,
-    },
+    Blocked { state: RevertState, reason: String },
     /// The field already holds the value a revert would write.
     Unchanged,
     /// The older value can be written back.
@@ -4852,7 +6317,11 @@ fn check_revert(conn: &Connection, entry: &AuditEntry) -> SqliteResult<RevertChe
                 "that item was deleted for good, so there is nothing to put back",
             ))
         }
-        other => return Ok(RevertCheck::nothing(format!("a {other} cannot be reverted"))),
+        other => {
+            return Ok(RevertCheck::nothing(format!(
+                "a {other} cannot be reverted"
+            )))
+        }
     }
 
     let Some(field) = entry.field_changed.as_deref() else {
@@ -5011,6 +6480,118 @@ fn audit_row(row: &rusqlite::Row<'_>) -> SqliteResult<AuditEntry> {
         revert_state: None,
         revert_reason: None,
     })
+}
+
+/// Every skill read selects its columns in this order.
+fn character_skill_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkill> {
+    Ok(CharacterSkill {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        name: row.get(2)?,
+        rank: row.get(3)?,
+        effect: row.get(4)?,
+        chapter_id: row.get(5)?,
+        node_id: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+/// Every inventory read selects its columns in this order.
+fn inventory_item_row(row: &rusqlite::Row<'_>) -> SqliteResult<InventoryItem> {
+    Ok(InventoryItem {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        name: row.get(2)?,
+        rarity: row.get(3)?,
+        quantity: row.get(4)?,
+        effect: row.get(5)?,
+        chapter_id: row.get(6)?,
+        lost_chapter_id: row.get(7)?,
+        node_id: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+/// Every currency read selects its columns in this order.
+fn character_currency_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterCurrency> {
+    Ok(CharacterCurrency {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        name: row.get(2)?,
+        amount: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+/// An optional text field with its edges trimmed; blank means absent, so a skill
+/// never carries an empty rank or effect.
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// The story a live cast member belongs to, refusing one that is gone or in the
+/// trash.
+fn live_character_story(conn: &Connection, character_id: &str) -> DbResult<String> {
+    conn.query_row(
+        "SELECT c.story_id
+         FROM characters c
+         JOIN stories st ON st.id = c.story_id
+         WHERE c.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+        params![character_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()?
+    .ok_or(DbError::NotFound("character"))
+}
+
+/// Checks that a skill's optional link points at a live node of the right type
+/// in the same story, and answers its label for the history.
+fn validate_node_reference(
+    conn: &Connection,
+    story_id: &str,
+    node_id: Option<&str>,
+    node_type: &str,
+    noun: &str,
+) -> DbResult<Option<String>> {
+    let Some(id) = node_id else {
+        return Ok(None);
+    };
+
+    let label = conn
+        .query_row(
+            "SELECT label FROM nodes
+              WHERE id = ?1 AND story_id = ?2 AND node_type = ?3 AND deleted_at IS NULL",
+            params![id, story_id, node_type],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    label.map(Some).ok_or_else(|| {
+        DbError::Invalid(format!(
+            "the {noun} must be a live {node_type} of this story"
+        ))
+    })
+}
+
+/// The label of a linked node, live or in the trash, for the history. The link
+/// itself is kept as an id, so the entry reads as the name it had.
+fn reference_label(conn: &Connection, node_id: Option<&str>) -> DbResult<Option<String>> {
+    let Some(id) = node_id else {
+        return Ok(None);
+    };
+
+    Ok(conn
+        .query_row(
+            "SELECT label FROM nodes WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
 }
 
 /// Every node read selects its columns in this order.
@@ -5276,6 +6857,18 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_011)?;
     }
 
+    if version < 12 {
+        conn.execute_batch(MIGRATION_012)?;
+    }
+
+    if version < 13 {
+        conn.execute_batch(MIGRATION_013)?;
+    }
+
+    if version < 14 {
+        conn.execute_batch(MIGRATION_014)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -5485,6 +7078,87 @@ const MIGRATION_011: &str = "
     ALTER TABLE nodes ADD COLUMN chapter_time TEXT;
 ";
 
+/// Schema v12: a cast member's skills are rows of their own.
+///
+/// A skill has a name, an optional rank and effect, and optionally the chapter
+/// it was learned in and the `skill` card that grants it. Both references are
+/// nullable and cleared when their node is purged, so a skill outlives a deleted
+/// card without pointing at a row that no longer exists.
+const MIGRATION_012: &str = "
+    CREATE TABLE IF NOT EXISTS character_skills (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        rank TEXT,
+        effect TEXT,
+        chapter_id TEXT,
+        node_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        UNIQUE(character_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_skills_character
+        ON character_skills (character_id);
+";
+
+/// Schema v13: a cast member's inventory and currencies are rows of their own.
+///
+/// An item has a name, an optional rarity and effect, a quantity, and optionally
+/// the chapter it was acquired in and the `item` card it belongs to. Currency is
+/// a named amount — gold, credits, mana crystals — with no exchange rate. Every
+/// link is nullable and cleared when its node is purged, so an item outlives a
+/// deleted chapter or card without pointing at a row that no longer exists.
+const MIGRATION_013: &str = "
+    CREATE TABLE IF NOT EXISTS character_inventory (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        rarity TEXT,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        effect TEXT,
+        chapter_id TEXT,
+        node_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        UNIQUE(character_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_inventory_character
+        ON character_inventory (character_id);
+
+    CREATE TABLE IF NOT EXISTS character_currency (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        amount INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        UNIQUE(character_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_currency_character
+        ON character_currency (character_id);
+";
+
+/// Schema v14: an item can record the chapter in which it was lost.
+///
+/// The link is nullable and cleared when its chapter is purged. An item that is
+/// marked lost but still carried, or lost before it was acquired, is a
+/// contradiction the Chapters tab flags; the history keeps the change like any
+/// other.
+const MIGRATION_014: &str = "
+    ALTER TABLE character_inventory
+        ADD COLUMN lost_chapter_id TEXT REFERENCES nodes(id) ON DELETE SET NULL;
+";
+
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
 ///
 /// A table rather than a config file, so the setting travels with the database,
@@ -5513,7 +7187,12 @@ mod tests {
             .create_story("Ash".into(), Some("notes".into()), "Ada".into())
             .unwrap();
         let character = source
-            .create_character(story.id.clone(), "Rook".into(), Some("Scout".into()), "Ada".into())
+            .create_character(
+                story.id.clone(),
+                "Rook".into(),
+                Some("Scout".into()),
+                "Ada".into(),
+            )
             .unwrap();
         source
             .add_or_update_stat(character.id.clone(), "Level".into(), 7, None, "Ada".into())
@@ -5594,12 +7273,17 @@ mod tests {
         let history = target
             .get_audit_log(Some(&restored.id), None, None, 100)
             .unwrap();
-        assert_eq!(history.len(), history_before + 1, "history plus the import entry");
+        assert_eq!(
+            history.len(),
+            history_before + 1,
+            "history plus the import entry"
+        );
         assert!(history
             .iter()
             .all(|entry| entry.story_id.as_deref() == Some(&restored.id)));
-        assert!(history.iter().any(|entry| entry.entity_type == "character"
-            && entry.entity_id == characters[0].id));
+        assert!(history
+            .iter()
+            .any(|entry| entry.entity_type == "character" && entry.entity_id == characters[0].id));
         assert!(history.iter().any(|entry| entry.changed_by == "Grace"));
     }
 
@@ -5619,7 +7303,10 @@ mod tests {
 
         assert_ne!(one.id, two.id);
         assert_eq!(one.title, "Ash");
-        assert_eq!(two.title, "Ash (imported)", "the copy gets a distinct title");
+        assert_eq!(
+            two.title, "Ash (imported)",
+            "the copy gets a distinct title"
+        );
         assert_eq!(target.list_stories().unwrap().len(), 2);
     }
 
@@ -5648,7 +7335,10 @@ mod tests {
 
         let characters = target.list_characters(&restored.id).unwrap();
         assert_eq!(characters.len(), 1);
-        assert!(target.list_attributes(&characters[0].id).unwrap().is_empty());
+        assert!(target
+            .list_attributes(&characters[0].id)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -5698,9 +7388,7 @@ mod tests {
     #[test]
     fn attributes_hold_text_and_update_by_name() {
         let db = Db::open_in_memory().unwrap();
-        let story = db
-            .create_story("Ash".into(), None, "Ada".into())
-            .unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -5756,9 +7444,7 @@ mod tests {
     #[test]
     fn deleting_an_attribute_is_recorded_and_idempotent() {
         let db = Db::open_in_memory().unwrap();
-        let story = db
-            .create_story("Ash".into(), None, "Ada".into())
-            .unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -5771,8 +7457,7 @@ mod tests {
             )
             .unwrap();
 
-        db.delete_attribute(&attribute.id, "Grace".into())
-            .unwrap();
+        db.delete_attribute(&attribute.id, "Grace".into()).unwrap();
         assert!(db.list_attributes(&character.id).unwrap().is_empty());
 
         // A second delete of the same row is quiet and writes nothing.
@@ -5795,9 +7480,7 @@ mod tests {
     #[test]
     fn a_deleted_character_takes_its_attributes_off_the_board() {
         let db = Db::open_in_memory().unwrap();
-        let story = db
-            .create_story("Ash".into(), None, "Ada".into())
-            .unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -5842,7 +7525,15 @@ mod tests {
             .create_character(story.id.clone(), "Gone".into(), None, "Ada".into())
             .unwrap();
         let node = db
-            .create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Hook".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
 
         db.delete_character(&gone.id, "Ada".into()).unwrap();
@@ -5879,13 +7570,36 @@ mod tests {
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
         let node = db
-            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let other = db
-            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "B".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let edge = db
-            .create_edge(story.id.clone(), node.id.clone(), other.id.clone(), None, None, "Ada".into())
+            .create_edge(
+                story.id.clone(),
+                node.id.clone(),
+                other.id.clone(),
+                None,
+                None,
+                "Ada".into(),
+            )
             .unwrap();
 
         db.delete_character(&character.id, "Ada".into()).unwrap();
@@ -5937,8 +7651,16 @@ mod tests {
         let gone = db
             .create_character(story.id.clone(), "Gone".into(), None, "Ada".into())
             .unwrap();
-        db.create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 0.0, 0.0, "Ada".into())
-            .unwrap();
+        db.create_node(
+            story.id.clone(),
+            "idea".into(),
+            "Hook".into(),
+            None,
+            0.0,
+            0.0,
+            "Ada".into(),
+        )
+        .unwrap();
 
         db.delete_character(&gone.id, "Ada".into()).unwrap();
         db.delete_story(&story.id, "Ada".into()).unwrap();
@@ -5957,7 +7679,9 @@ mod tests {
     #[test]
     fn purging_a_story_removes_it_and_its_contents_for_good() {
         let db = Db::open_in_memory().unwrap();
-        let story = db.create_story("Doomed".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Doomed".into(), None, "Ada".into())
+            .unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -5996,7 +7720,15 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Kept".into(), None, "Ada".into()).unwrap();
         let node = db
-            .create_node(story.id.clone(), "idea".into(), "Live".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Live".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
 
         assert!(
@@ -6020,13 +7752,36 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
         let from = db
-            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let to = db
-            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "B".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let edge = db
-            .create_edge(story.id.clone(), from.id.clone(), to.id.clone(), None, None, "Ada".into())
+            .create_edge(
+                story.id.clone(),
+                from.id.clone(),
+                to.id.clone(),
+                None,
+                None,
+                "Ada".into(),
+            )
             .unwrap();
 
         db.delete_edge(&edge.id, "Ada".into()).unwrap();
@@ -6060,7 +7815,10 @@ mod tests {
         db.restore_node("does-not-exist", "Ada".into()).unwrap();
         db.restore_edge("does-not-exist", "Ada".into()).unwrap();
 
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
     }
 
     #[test]
@@ -6080,9 +7838,11 @@ mod tests {
         migrate(&conn).unwrap();
 
         let deleted_at: Option<String> = conn
-            .query_row("SELECT deleted_at FROM stories WHERE id = 's1'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT deleted_at FROM stories WHERE id = 's1'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(deleted_at, None, "a migrated row starts live");
         let version: i32 = conn
@@ -6090,6 +7850,204 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
     }
+    #[test]
+    fn migrating_a_version_11_database_adds_skills_without_losing_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.pragma_update(None, "user_version", 11).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v12', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // The new table exists: this insert is the assertion.
+        conn.execute(
+            "INSERT INTO character_skills
+             (id, character_id, name, rank, effect, created_at, updated_at)
+             VALUES ('k1', 'c1', 'Fireball', 'Rank 1', NULL, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Written before v12", "existing rows are untouched");
+    }
+
+    #[test]
+    fn migrating_a_version_12_database_adds_inventory_and_currency() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        for block in [
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 12).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v13', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_skills (id, character_id, name, created_at, updated_at)
+             VALUES ('k1', 'c1', 'Fireball', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // The new tables exist: these inserts are the assertion.
+        conn.execute(
+            "INSERT INTO character_inventory
+             (id, character_id, name, rarity, quantity, created_at, updated_at)
+             VALUES ('i1', 'c1', 'Iron Sword', 'Rare', 2, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_currency (id, character_id, name, amount, created_at, updated_at)
+             VALUES ('m1', 'c1', 'Gold', 250, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let skills: i64 = conn
+            .query_row("SELECT count(*) FROM character_skills", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(skills, 1, "the skill that was there is untouched");
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Written before v13");
+    }
+
+    #[test]
+    fn migrating_a_version_13_database_adds_the_lost_chapter() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        for block in [
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 13).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v14', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'Chapter One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_inventory
+             (id, character_id, name, rarity, quantity, created_at, updated_at)
+             VALUES ('i1', 'c1', 'Iron Sword', 'Rare', 2, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let lost: Option<String> = conn
+            .query_row(
+                "SELECT lost_chapter_id FROM character_inventory WHERE id = 'i1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(lost, None, "an existing item starts without a lost chapter");
+
+        conn.execute(
+            "UPDATE character_inventory SET lost_chapter_id = 'n1' WHERE id = 'i1'",
+            [],
+        )
+        .unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM character_inventory WHERE id = 'i1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Iron Sword", "the item itself is untouched");
+    }
+
     #[test]
     fn migrating_a_version_1_database_adds_attributes_without_losing_data() {
         let conn = Connection::open_in_memory().unwrap();
@@ -6184,7 +8142,9 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
 
         let first = db.create_story("First".into(), None, "Ada".into()).unwrap();
-        let second = db.create_story("Second".into(), None, "Ada".into()).unwrap();
+        let second = db
+            .create_story("Second".into(), None, "Ada".into())
+            .unwrap();
         db.create_character(first.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
 
@@ -6233,7 +8193,10 @@ mod tests {
                 .get_audit_page(Some(&story.id), Some("node"), None, 2, offset)
                 .unwrap();
 
-            assert_eq!(page.total, 5, "the total describes the filter, not the window");
+            assert_eq!(
+                page.total, 5,
+                "the total describes the filter, not the window"
+            );
 
             if page.entries.is_empty() {
                 break;
@@ -6257,7 +8220,9 @@ mod tests {
     fn audit_paging_keeps_the_window_sane_and_scoped() {
         let db = Db::open_in_memory().unwrap();
         let first = db.create_story("First".into(), None, "Ada".into()).unwrap();
-        let second = db.create_story("Second".into(), None, "Ada".into()).unwrap();
+        let second = db
+            .create_story("Second".into(), None, "Ada".into())
+            .unwrap();
         db.create_character(first.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
 
@@ -6433,9 +8398,7 @@ mod tests {
     #[test]
     fn editing_a_node_records_each_changed_field_separately() {
         let db = Db::open_in_memory().unwrap();
-        let story = db
-            .create_story("Ash".into(), None, "Ada".into())
-            .unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
         let node = db
             .create_node(
                 story.id.clone(),
@@ -6490,9 +8453,7 @@ mod tests {
     #[test]
     fn editing_a_node_with_no_changes_writes_nothing() {
         let db = Db::open_in_memory().unwrap();
-        let story = db
-            .create_story("Ash".into(), None, "Ada".into())
-            .unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
         let node = db
             .create_node(
                 story.id.clone(),
@@ -6540,10 +8501,26 @@ mod tests {
 
         let story = db.create_story("Prune".into(), None, "Ada".into()).unwrap();
         let first = db
-            .create_node(story.id.clone(), "idea".into(), "First".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "First".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let second = db
-            .create_node(story.id.clone(), "idea".into(), "Second".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Second".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         db.create_edge(
             story.id.clone(),
@@ -6573,8 +8550,9 @@ mod tests {
 
         assert_eq!(deletes.len(), 2, "the node and its edge are both recorded");
         assert!(deletes.iter().all(|entry| entry.changed_by == "Grace"));
-        assert!(deletes.iter().any(|entry| entry.entity_type == "node"
-            && entry.old_value.as_deref() == Some("First")));
+        assert!(deletes.iter().any(
+            |entry| entry.entity_type == "node" && entry.old_value.as_deref() == Some("First")
+        ));
         assert!(deletes.iter().any(|entry| entry.entity_type == "edge"));
 
         // The edge went to the trash with the node, so it comes back with it.
@@ -6590,11 +8568,17 @@ mod tests {
 
         // The frontend reports a node's edges as deleted too, even though the
         // node's cascade already removed them, so this must not error.
-        db.delete_edge("does-not-exist".into(), "Ada".into()).unwrap();
-        db.delete_node("does-not-exist".into(), "Ada".into()).unwrap();
-        db.delete_story("does-not-exist".into(), "Ada".into()).unwrap();
+        db.delete_edge("does-not-exist".into(), "Ada".into())
+            .unwrap();
+        db.delete_node("does-not-exist".into(), "Ada".into())
+            .unwrap();
+        db.delete_story("does-not-exist".into(), "Ada".into())
+            .unwrap();
 
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
         assert_eq!(db.list_stories().unwrap().len(), 1);
         assert_eq!(db.list_stories().unwrap()[0].id, story.id);
     }
@@ -6605,10 +8589,26 @@ mod tests {
 
         let story = db.create_story("Cut".into(), None, "Ada".into()).unwrap();
         let node = db
-            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let other = db
-            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "B".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let edge = db
             .create_edge(
@@ -6652,10 +8652,26 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
         let from = db
-            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let to = db
-            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "B".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let edge = db
             .create_edge(
@@ -6697,11 +8713,10 @@ mod tests {
             .any(|entry| entry.field_changed.as_deref() == Some("label")
                 && entry.old_value.as_deref() == Some("early")
                 && entry.new_value.as_deref() == Some("later")));
-        assert!(history
-            .iter()
-            .any(|entry| entry.field_changed.as_deref() == Some("relation_type")
-                && entry.old_value.as_deref() == Some("leads_to")
-                && entry.new_value.as_deref() == Some("foreshadows")));
+        assert!(history.iter().any(|entry| entry.field_changed.as_deref()
+            == Some("relation_type")
+            && entry.old_value.as_deref() == Some("leads_to")
+            && entry.new_value.as_deref() == Some("foreshadows")));
 
         let stored = db.list_edges(&story.id).unwrap();
         assert_eq!(stored[0].label.as_deref(), Some("later"));
@@ -6712,10 +8727,26 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Bonds".into(), None, "Ada".into()).unwrap();
         let from = db
-            .create_node(story.id.clone(), "idea".into(), "A".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let to = db
-            .create_node(story.id.clone(), "idea".into(), "B".into(), None, 0.0, 0.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "B".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
             .unwrap();
         let edge = db
             .create_edge(
@@ -6767,7 +8798,9 @@ mod tests {
     #[test]
     fn renaming_a_story_records_the_previous_title() {
         let db = Db::open_in_memory().unwrap();
-        let story = db.create_story("Untitled".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Untitled".into(), None, "Ada".into())
+            .unwrap();
 
         let renamed = db
             .update_story(&story.id, "The Long Walk".into(), "Grace".into())
@@ -6802,21 +8835,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(unchanged.updated_at, story.updated_at);
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
     }
 
     #[test]
     fn deleting_a_story_hides_its_contents_but_keeps_the_history() {
         let db = Db::open_in_memory().unwrap();
 
-        let story = db.create_story("Doomed".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Doomed".into(), None, "Ada".into())
+            .unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
         db.add_or_update_stat(character.id.clone(), "Level".into(), 3, None, "Ada".into())
             .unwrap();
         let node = db
-            .create_node(story.id.clone(), "idea".into(), "Hook".into(), None, 1.0, 1.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "Hook".into(),
+                None,
+                1.0,
+                1.0,
+                "Ada".into(),
+            )
             .unwrap();
         db.create_edge(
             story.id.clone(),
@@ -6838,17 +8884,12 @@ mod tests {
 
         let history = db.get_audit_log(Some(&story.id), None, None, 100).unwrap();
         assert!(
-            history
-                .iter()
-                .any(|entry| entry.entity_type == "story"
-                    && entry.action == "soft_delete"
-                    && entry.changed_by == "Grace"),
+            history.iter().any(|entry| entry.entity_type == "story"
+                && entry.action == "soft_delete"
+                && entry.changed_by == "Grace"),
             "the deletion itself is recorded"
         );
-        assert!(
-            history.len() > 1,
-            "earlier history survives the deletion"
-        );
+        assert!(history.len() > 1, "earlier history survives the deletion");
 
         // Everything inside the story was live when it went to the trash, so all
         // of it comes back with the story.
@@ -6879,10 +8920,26 @@ mod tests {
         )
         .unwrap();
         let first = db
-            .create_node(story.id.clone(), "chapter".into(), "One".into(), None, 5.0, 6.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "One".into(),
+                None,
+                5.0,
+                6.0,
+                "Ada".into(),
+            )
             .unwrap();
         let second = db
-            .create_node(story.id.clone(), "event".into(), "Two".into(), None, 7.0, 8.0, "Ada".into())
+            .create_node(
+                story.id.clone(),
+                "event".into(),
+                "Two".into(),
+                None,
+                7.0,
+                8.0,
+                "Ada".into(),
+            )
             .unwrap();
         db.create_edge(
             story.id.clone(),
@@ -6896,8 +8953,16 @@ mod tests {
 
         // Another story must not leak into the export.
         let other = db.create_story("Other".into(), None, "Ada".into()).unwrap();
-        db.create_node(other.id.clone(), "idea".into(), "Nope".into(), None, 0.0, 0.0, "Ada".into())
-            .unwrap();
+        db.create_node(
+            other.id.clone(),
+            "idea".into(),
+            "Nope".into(),
+            None,
+            0.0,
+            0.0,
+            "Ada".into(),
+        )
+        .unwrap();
 
         let export = db.export_story(&story.id).unwrap();
 
@@ -6905,13 +8970,20 @@ mod tests {
         assert_eq!(export.story.description.as_deref(), Some("notes"));
         assert_eq!(export.characters.len(), 1);
         assert_eq!(export.character_stats.len(), 1);
-        assert_eq!(export.character_attributes.len(), 1, "text attributes travel too");
+        assert_eq!(
+            export.character_attributes.len(),
+            1,
+            "text attributes travel too"
+        );
         assert_eq!(export.character_attributes[0].value, "Rogue");
         assert_eq!(export.nodes.len(), 2);
         assert_eq!(export.edges.len(), 1);
         assert!(!export.audit_trail.is_empty());
         assert!(
-            export.audit_trail.iter().all(|entry| entry.story_id.as_deref() == Some(&story.id)),
+            export
+                .audit_trail
+                .iter()
+                .all(|entry| entry.story_id.as_deref() == Some(&story.id)),
             "history from other stories must not be included"
         );
         assert!(!export.exported_at.is_empty());
@@ -6924,7 +8996,12 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Cast".into(), None, "Ada".into()).unwrap();
         let character = db
-            .create_character(story.id.clone(), "Rook".into(), Some("Scout".into()), "Ada".into())
+            .create_character(
+                story.id.clone(),
+                "Rook".into(),
+                Some("Scout".into()),
+                "Ada".into(),
+            )
             .unwrap();
 
         let updated = db
@@ -6951,7 +9028,11 @@ mod tests {
             .filter(|entry| entry.action == "update")
             .collect();
 
-        assert_eq!(changes.len(), 2, "name and description are separate entries");
+        assert_eq!(
+            changes.len(),
+            2,
+            "name and description are separate entries"
+        );
         assert!(changes.iter().all(|entry| entry.changed_by == "Grace"));
 
         let rename = changes
@@ -6983,7 +9064,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(unchanged.updated_at, character.updated_at);
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
     }
 
     #[test]
@@ -6993,8 +9077,14 @@ mod tests {
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
-        db.add_or_update_stat(character.id.clone(), "Level".into(), 3, Some("from the raid".into()), "Ada".into())
-            .unwrap();
+        db.add_or_update_stat(
+            character.id.clone(),
+            "Level".into(),
+            3,
+            Some("from the raid".into()),
+            "Ada".into(),
+        )
+        .unwrap();
         let survivor = db
             .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
             .unwrap();
@@ -7041,7 +9131,10 @@ mod tests {
         db.delete_character("does-not-exist", "Ada".into()).unwrap();
 
         assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
     }
 
     /// The point of copying the file is that the copy predates the migration, so
@@ -7111,7 +9204,10 @@ mod tests {
         std::fs::write(snapshots::snapshot_dir(&path).join("notes.txt"), "mine").unwrap();
 
         let backups = db.list_backups().unwrap();
-        let names: Vec<&str> = backups.iter().map(|backup| backup.file_name.as_str()).collect();
+        let names: Vec<&str> = backups
+            .iter()
+            .map(|backup| backup.file_name.as_str())
+            .collect();
 
         assert_eq!(
             names,
@@ -7128,14 +9224,12 @@ mod tests {
     fn restoring_a_copy_replaces_the_contents_and_copies_what_it_replaced() {
         let (_dir, path) = backup_scratch("restore");
         let db = Db::open(&path).unwrap();
-        db.create_story("One".into(), None, "Ada".into())
-            .unwrap();
+        db.create_story("One".into(), None, "Ada".into()).unwrap();
 
         let copy = snapshots::snapshot(&path, 10).unwrap().unwrap();
         let file_name = copy.file_name().unwrap().to_str().unwrap().to_string();
 
-        db.create_story("Two".into(), None, "Ada".into())
-            .unwrap();
+        db.create_story("Two".into(), None, "Ada".into()).unwrap();
         assert_eq!(db.list_stories().unwrap().len(), 2);
 
         db.restore_backup(&file_name, 10).unwrap();
@@ -7153,8 +9247,7 @@ mod tests {
     fn refuses_foreign_names_and_files_that_are_not_databases() {
         let (_dir, path) = backup_scratch("refuse");
         let db = Db::open(&path).unwrap();
-        db.create_story("Kept".into(), None, "Ada".into())
-            .unwrap();
+        db.create_story("Kept".into(), None, "Ada".into()).unwrap();
 
         // No directory parts, and only names this app writes.
         assert!(matches!(
@@ -7278,7 +9371,11 @@ mod tests {
 
         assert_eq!(sequence("n1"), Some(1));
         assert_eq!(sequence("n3"), Some(2));
-        assert_eq!(sequence("n2"), None, "only a chapter has a place in the book");
+        assert_eq!(
+            sequence("n2"),
+            None,
+            "only a chapter has a place in the book"
+        );
 
         // v8 adds the arc and the counts; an old chapter starts without either.
         for node in &nodes {
@@ -7375,7 +9472,11 @@ mod tests {
             .filter(|node| node.node_type == "chapter")
             .map(|node| node.label)
             .collect::<Vec<_>>();
-        assert_eq!(chapters, vec!["One", "Two", "Three"], "refusals change nothing");
+        assert_eq!(
+            chapters,
+            vec!["One", "Two", "Three"],
+            "refusals change nothing"
+        );
 
         // A chapter in the trash keeps its number, so restoring it cannot collide
         // with a chapter made since.
@@ -7406,8 +9507,12 @@ mod tests {
 
         let one = make("One");
         let two = make("Two");
-        db.set_chapter_order(&story.id, vec![two.id.clone(), one.id.clone()], "Ada".into())
-            .unwrap();
+        db.set_chapter_order(
+            &story.id,
+            vec![two.id.clone(), one.id.clone()],
+            "Ada".into(),
+        )
+        .unwrap();
 
         let imported = db
             .import_story(db.export_story(&story.id).unwrap(), "Ada".into())
@@ -7532,19 +9637,50 @@ mod tests {
         assert_eq!(copy.chapter_target, Some(2000));
 
         let cleared = db
-            .set_chapter_details(&chapter.id, None, Some(0), None, None, None, None, "Ada".into())
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
             .unwrap();
         assert_eq!(cleared.chapter_arc, None);
-        assert_eq!(cleared.chapter_words, Some(0), "zero is a count, not an absence");
+        assert_eq!(
+            cleared.chapter_words,
+            Some(0),
+            "zero is a count, not an absence"
+        );
         assert_eq!(cleared.chapter_target, None);
 
         // Counts are the author's, but they still have to make sense, and a card
         // that is not a chapter has no place to keep them.
         assert!(db
-            .set_chapter_details(&chapter.id, None, Some(-1), None, None, None, None, "Ada".into())
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                Some(-1),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into()
+            )
             .is_err());
         assert!(db
-            .set_chapter_details(&chapter.id, None, None, Some(0), None, None, None, "Ada".into())
+            .set_chapter_details(
+                &chapter.id,
+                None,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                "Ada".into()
+            )
             .is_err());
         assert!(db
             .set_chapter_details(
@@ -7700,9 +9836,7 @@ mod tests {
             )
             .is_err());
 
-        let other = db
-            .create_story("Other".into(), None, "Ada".into())
-            .unwrap();
+        let other = db.create_story("Other".into(), None, "Ada".into()).unwrap();
         let stranger = db
             .create_character(other.id, "Stranger".into(), None, "Ada".into())
             .unwrap();
@@ -7764,7 +9898,10 @@ mod tests {
             .iter()
             .find(|entry| entry.field_changed.as_deref() == Some("chapter_time"))
             .unwrap();
-        assert_eq!(time_entry.new_value.as_deref(), Some("Dusk, after the fire"));
+        assert_eq!(
+            time_entry.new_value.as_deref(),
+            Some("Dusk, after the fire")
+        );
 
         // The time survives an export, and putting it back through the history
         // clears only the time.
@@ -7877,7 +10014,10 @@ mod tests {
             .iter()
             .find(|entry| entry.field_changed.as_deref() == Some("content"))
             .unwrap();
-        assert_eq!(edit.old_value.as_deref(), Some("Rook owes the vault\nand the warder knows it"));
+        assert_eq!(
+            edit.old_value.as_deref(),
+            Some("Rook owes the vault\nand the warder knows it")
+        );
         assert_eq!(edit.new_value.as_deref(), Some("The vault answers"));
 
         // An empty note is refused, and a note only belongs to a chapter.
@@ -8054,8 +10194,17 @@ mod tests {
         .unwrap();
 
         let second = make("Second", "chapter", None);
-        db.set_chapter_details(&second.id, None, Some(300), None, None, None, None, "Ada".into())
-            .unwrap();
+        db.set_chapter_details(
+            &second.id,
+            None,
+            Some(300),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
 
         let rook = db
             .create_character(
@@ -8124,7 +10273,11 @@ mod tests {
         db.add_chapter_note(&second.id, "Told after the fact.".into(), "Ada".into())
             .unwrap();
 
-        make("Blackgate", "location", Some("A gate that remembers.".into()));
+        make(
+            "Blackgate",
+            "location",
+            Some("A gate that remembers.".into()),
+        );
         // A character card is not repeated: the cast section carries the sheet.
         make("Rook", "character", Some("The card.".into()));
 
@@ -8324,8 +10477,15 @@ mod tests {
         assert_eq!(reverted[0].xp_to_next, None);
         assert_eq!(reverted[0].rank.as_deref(), Some("Copper"));
 
-        db.set_character_progress(&rook.id, 3, 250, Some("Copper".into()), Some(1000), "Ada".into())
-            .unwrap();
+        db.set_character_progress(
+            &rook.id,
+            3,
+            250,
+            Some("Copper".into()),
+            Some(1000),
+            "Ada".into(),
+        )
+        .unwrap();
 
         let levelled = db.level_up_character(&rook.id, "Ada".into()).unwrap();
         assert_eq!(levelled.level, 4);
@@ -8504,7 +10664,9 @@ mod tests {
     #[test]
     fn retention_removes_only_what_is_older_than_the_window() {
         let db = Db::open_in_memory().unwrap();
-        let story = db.create_story("Retention".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Retention".into(), None, "Ada".into())
+            .unwrap();
         let old = db
             .create_character(story.id.clone(), "Ancient".into(), None, "Ada".into())
             .unwrap();
@@ -8546,7 +10708,9 @@ mod tests {
     #[test]
     fn retention_records_who_removed_the_item() {
         let db = Db::open_in_memory().unwrap();
-        let story = db.create_story("Receipts".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Receipts".into(), None, "Ada".into())
+            .unwrap();
         let character = db
             .create_character(story.id.clone(), "Ancient".into(), None, "Ada".into())
             .unwrap();
@@ -8567,13 +10731,18 @@ mod tests {
         // A run that removes nothing writes nothing.
         let before = db.get_audit_log(None, None, None, 100).unwrap().len();
         assert_eq!(db.purge_expired(30).unwrap(), 0);
-        assert_eq!(db.get_audit_log(None, None, None, 100).unwrap().len(), before);
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
     }
 
     #[test]
     fn retention_takes_a_whole_story_and_its_contents() {
         let db = Db::open_in_memory().unwrap();
-        let story = db.create_story("Ancient".into(), None, "Ada".into()).unwrap();
+        let story = db
+            .create_story("Ancient".into(), None, "Ada".into())
+            .unwrap();
         let character = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -8640,6 +10809,54 @@ mod tests {
         assert_eq!(revert.new_value.as_deref(), Some("Rook"));
         assert_eq!(revert.changed_by, "Grace");
         assert_eq!(revert.story_id.as_deref(), Some(story.id.as_str()));
+    }
+
+    #[test]
+    fn reverting_a_skill_rank_puts_it_back() {
+        let (db, story, character, chapter, _) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.update_skill(
+            skill.id.clone(),
+            "Fireball".into(),
+            Some("Rank 2".into()),
+            None,
+            Some(second.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let rank = latest_entry(&db, "character_skill", &skill.id, "rank");
+        assert_eq!(entry_state(&db, &rank.id).0, Some(RevertState::Available));
+        assert!(db.revert_change(&rank.id, "Grace".into()).unwrap());
+
+        let skills = db.list_skills(&character.id).unwrap();
+        assert_eq!(skills[0].rank.as_deref(), Some("Rank 1"));
+
+        // The chapter link is recorded by label, so it is not offered as a revert.
+        let chapter = latest_entry(&db, "character_skill", &skill.id, "chapter");
+        assert_eq!(entry_state(&db, &chapter.id).0, None);
     }
 
     #[test]
@@ -8750,7 +10967,10 @@ mod tests {
 
         let stats = db.list_stats(&character.id).unwrap();
         assert_eq!(stats[0].value, 3);
-        assert_eq!(stats[0].stat_name, "Level", "the stat itself is still there");
+        assert_eq!(
+            stats[0].stat_name, "Level",
+            "the stat itself is still there"
+        );
     }
 
     #[test]
@@ -8873,7 +11093,10 @@ mod tests {
             .revert_change(&creation.id, "Ada".into())
             .unwrap_err()
             .to_string();
-        assert!(error.contains("a creation has nothing to put back"), "{error}");
+        assert!(
+            error.contains("a creation has nothing to put back"),
+            "{error}"
+        );
 
         db.update_character(&character.id, "Wren".into(), None, "Ada".into())
             .unwrap();
@@ -8996,13 +11219,12 @@ mod tests {
         db.update_character(&character.id, "Wren".into(), None, "Ada".into())
             .unwrap();
 
-        assert!(
-            db.revert_change(
+        assert!(db
+            .revert_change(
                 &latest_entry(&db, "character", &character.id, "name").id,
                 "Ada".into()
             )
-            .unwrap()
-        );
+            .unwrap());
 
         // The rename is undone: its own entry now has nothing to write.
         let rename = db
@@ -9013,7 +11235,10 @@ mod tests {
             .unwrap();
         let (state, reason) = entry_state(&db, &rename.id);
         assert_eq!(state, Some(RevertState::AlreadyBack));
-        assert!(reason.as_deref().unwrap_or_default().contains("already holds"));
+        assert!(reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("already holds"));
 
         // The revert that undid it can itself be put back.
         let revert = db
@@ -9055,7 +11280,10 @@ mod tests {
         db.purge_character(&character.id, "Ada".into()).unwrap();
         let (state, reason) = entry_state(&db, &rename.id);
         assert_eq!(state, Some(RevertState::Gone));
-        assert!(reason.as_deref().unwrap_or_default().contains("no longer in the database"));
+        assert!(reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no longer in the database"));
     }
 
     #[test]
@@ -9078,7 +11306,11 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert_eq!(Some(error), reason, "the tab refuses for the reason it showed");
+        assert_eq!(
+            Some(error),
+            reason,
+            "the tab refuses for the reason it showed"
+        );
     }
 
     #[test]
@@ -9106,7 +11338,10 @@ mod tests {
         let settings: i64 = conn
             .query_row("SELECT count(*) FROM settings", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(settings, 0, "the table starts empty, so nothing is ever purged by default");
+        assert_eq!(
+            settings, 0,
+            "the table starts empty, so nothing is ever purged by default"
+        );
 
         let title: String = conn
             .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
@@ -9188,7 +11423,10 @@ mod tests {
             .unwrap();
 
         let nodes = db.list_nodes(&story.id).unwrap();
-        assert_eq!(nodes[0].character_id.as_deref(), Some(character.id.as_str()));
+        assert_eq!(
+            nodes[0].character_id.as_deref(),
+            Some(character.id.as_str())
+        );
     }
 
     #[test]
@@ -9207,9 +11445,7 @@ mod tests {
             .unwrap();
         assert_eq!(entries(), before, "the same cast member is not a change");
 
-        let cleared = db
-            .set_node_character(&node.id, None, "Ada".into())
-            .unwrap();
+        let cleared = db.set_node_character(&node.id, None, "Ada".into()).unwrap();
         assert_eq!(cleared.character_id, None);
 
         let entry = latest_entry(&db, "node", &node.id, "character");
@@ -9221,7 +11457,9 @@ mod tests {
     fn a_link_is_refused_across_stories_and_through_the_trash() {
         let db = Db::open_in_memory().unwrap();
         let first = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
-        let second = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let second = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
         let theirs = db
             .create_character(second.id.clone(), "Wren".into(), None, "Ada".into())
             .unwrap();
@@ -9290,7 +11528,9 @@ mod tests {
     #[test]
     fn an_export_carries_the_link_into_the_copy() {
         let source = Db::open_in_memory().unwrap();
-        let story = source.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let story = source
+            .create_story("Ash".into(), None, "Ada".into())
+            .unwrap();
         let character = source
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -9340,9 +11580,7 @@ mod tests {
 
         assert_eq!(node.character_id.as_deref(), Some(character.id.as_str()));
         assert_eq!(
-            db.list_nodes(&story.id).unwrap()[0]
-                .character_id
-                .as_deref(),
+            db.list_nodes(&story.id).unwrap()[0].character_id.as_deref(),
             Some(character.id.as_str()),
             "the link is stored, not just returned"
         );
@@ -9365,7 +11603,9 @@ mod tests {
     fn a_linked_node_is_refused_through_the_trash_and_across_stories() {
         let db = Db::open_in_memory().unwrap();
         let first = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
-        let second = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let second = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
         let theirs = db
             .create_character(second.id.clone(), "Wren".into(), None, "Ada".into())
             .unwrap();
@@ -9404,7 +11644,9 @@ mod tests {
     fn a_story_reads_all_of_its_live_cast_stats_in_one_go() {
         let db = Db::open_in_memory().unwrap();
         let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
-        let other = db.create_story("Embers".into(), None, "Ada".into()).unwrap();
+        let other = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
         let rook = db
             .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
             .unwrap();
@@ -9432,6 +11674,1337 @@ mod tests {
 
         assert_eq!(stats.len(), 2, "only the live cast of this story");
         assert!(stats.iter().all(|stat| stat.character_id != trashed.id));
-        assert!(stats.iter().any(|stat| stat.character_id == wren.id && stat.value == 9));
+        assert!(stats
+            .iter()
+            .any(|stat| stat.character_id == wren.id && stat.value == 9));
+    }
+
+    // A story with a cast member, a chapter and a skill card, which is the shape
+    // every skill test starts from.
+    fn skill_story() -> (Db, Story, Character, Node, Node) {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "skill".into(),
+                "Fireball".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        (db, story, character, chapter, card)
+    }
+
+    #[test]
+    fn a_skill_keeps_its_rank_effect_and_chapter() {
+        let (db, story, character, chapter, card) = skill_story();
+
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "  Fireball  ".into(),
+                Some("Rank 2 ".into()),
+                Some("  3d6 fire  ".into()),
+                Some(chapter.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(skill.name, "Fireball", "the name is trimmed");
+        assert_eq!(skill.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(skill.effect.as_deref(), Some("3d6 fire"));
+        assert_eq!(skill.chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_eq!(skill.node_id.as_deref(), Some(card.id.as_str()));
+
+        let skills = db.list_skills(&character.id).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, skill.id);
+
+        // A skill card can name everyone who has the skill.
+        let board = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(board.len(), 1);
+        assert_eq!(board[0].character_id, character.id);
+    }
+
+    #[test]
+    fn a_blank_rank_is_stored_as_nothing() {
+        let (db, _, character, _, _) = skill_story();
+
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Tracking".into(),
+                Some("   ".into()),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(skill.rank, None);
+        assert_eq!(skill.effect, None);
+    }
+
+    #[test]
+    fn a_skill_needs_a_name_and_a_unique_one() {
+        let (db, _, character, _, _) = skill_story();
+
+        let error = db
+            .add_skill(
+                character.id.clone(),
+                "   ".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("needs a name"), "{error}");
+
+        db.add_skill(
+            character.id.clone(),
+            "Fireball".into(),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let error = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("already one of"), "{error}");
+        assert_eq!(db.list_skills(&character.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_skill_only_links_to_its_own_story() {
+        let (db, _, character, _, _) = skill_story();
+        let other = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
+        let theirs = db
+            .create_node(
+                other.id.clone(),
+                "chapter".into(),
+                "Their Chapter".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let error = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                None,
+                None,
+                Some(theirs.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live chapter of this story"), "{error}");
+
+        // A node of the wrong type is refused just as plainly.
+        let event = db
+            .create_node(
+                other.id.clone(),
+                "event".into(),
+                "Not a card".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let error = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                None,
+                None,
+                None,
+                Some(event.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live skill of this story"), "{error}");
+        assert!(db.list_skills(&character.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn editing_a_skill_records_each_field_it_changes() {
+        let (db, story, character, chapter, _) = skill_story();
+        let second_chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                Some("1d6 fire".into()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_skill(
+                skill.id.clone(),
+                "Greater Fireball".into(),
+                Some("Rank 2".into()),
+                Some("3d6 fire".into()),
+                Some(second_chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.name, "Greater Fireball");
+        assert_eq!(updated.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(
+            updated.chapter_id.as_deref(),
+            Some(second_chapter.id.as_str())
+        );
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_skill"), None, 100)
+            .unwrap();
+        let fields: Vec<&str> = history
+            .iter()
+            .filter_map(|entry| entry.field_changed.as_deref())
+            .collect();
+
+        assert_eq!(history[0].entity_id, skill.id);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"rank"));
+        assert!(fields.contains(&"effect"));
+        assert!(fields.contains(&"chapter"));
+        // The history says the chapter by its title, not its id.
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("chapter")
+                && entry.new_value.as_deref() == Some("Chapter Two")));
+    }
+
+    #[test]
+    fn saving_the_same_skill_writes_nothing() {
+        let (db, story, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let before = db
+            .get_audit_log(Some(&story.id), Some("character_skill"), None, 100)
+            .unwrap();
+
+        let unchanged = db
+            .update_skill(
+                skill.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let after = db
+            .get_audit_log(Some(&story.id), Some("character_skill"), None, 100)
+            .unwrap();
+
+        assert_eq!(unchanged.updated_at, skill.updated_at);
+        assert_eq!(after.len(), before.len());
+    }
+
+    #[test]
+    fn deleting_a_skill_leaves_the_cast_member_alone() {
+        let (db, story, character, _, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_skill(&skill.id, "Ada".into()).unwrap();
+
+        assert!(db.list_skills(&character.id).unwrap().is_empty());
+        assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
+
+        // Deleting the same skill twice is not an error, and records nothing more.
+        db.delete_skill(&skill.id, "Ada".into()).unwrap();
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_skill"), None, 100)
+            .unwrap();
+        assert!(history
+            .iter()
+            .any(|entry| entry.action == "delete" && entry.new_value.is_none()));
+    }
+
+    #[test]
+    fn a_trashed_character_takes_its_skills_out_of_view() {
+        let (db, story, character, _, _) = skill_story();
+        db.add_skill(
+            character.id.clone(),
+            "Fireball".into(),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+
+        assert!(db.list_skills(&character.id).unwrap().is_empty());
+        assert!(db.list_story_skills(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn purging_a_chapter_clears_the_link_but_keeps_the_skill() {
+        let (db, _, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 2".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+
+        let skills = db.list_skills(&character.id).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, skill.id);
+        assert_eq!(skills[0].chapter_id, None, "the missing chapter is cleared");
+    }
+
+    #[test]
+    fn skills_travel_with_an_export_and_keep_their_chapter() {
+        let (source, story, character, chapter, card) = skill_story();
+        source
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 2".into()),
+                Some("3d6 fire".into()),
+                Some(chapter.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_skills.len(), 1);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let characters = target.list_characters(&restored.id).unwrap();
+        let skills = target.list_story_skills(&restored.id).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "Fireball");
+        assert_eq!(skills[0].rank.as_deref(), Some("Rank 2"));
+        assert_eq!(skills[0].effect.as_deref(), Some("3d6 fire"));
+        assert_eq!(skills[0].character_id, characters[0].id);
+        assert_ne!(skills[0].chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_ne!(skills[0].node_id.as_deref(), Some(card.id.as_str()));
+
+        // The links point at the copy's own nodes, which are the chapter and the
+        // card the file carried.
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let linked_chapter = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == skills[0].chapter_id.as_deref())
+            .expect("the chapter link is remapped");
+        assert_eq!(linked_chapter.label, "Chapter One");
+        assert_eq!(linked_chapter.node_type, "chapter");
+
+        let linked_card = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == skills[0].node_id.as_deref())
+            .expect("the card link is remapped");
+        assert_eq!(linked_card.node_type, "skill");
+
+        // The skill's own history came along, pointing at the copied row.
+        let history = target
+            .get_audit_log(Some(&restored.id), Some("character_skill"), None, 100)
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.entity_id == skills[0].id));
+    }
+
+    #[test]
+    fn a_trashed_link_is_left_out_of_an_export_rather_than_breaking_it() {
+        let (source, story, character, chapter, _) = skill_story();
+        source
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 2".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        source.delete_node(&chapter.id, "Ada".into()).unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_skills.len(), 1);
+        assert_eq!(
+            export.character_skills[0].chapter_id, None,
+            "a chapter in the trash is not in the file"
+        );
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let skills = target.list_story_skills(&restored.id).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "Fireball");
+        assert_eq!(skills[0].chapter_id, None);
+    }
+
+    #[test]
+    fn a_trashed_chapter_link_does_not_block_an_unrelated_edit() {
+        let (db, _, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+
+        let updated = db
+            .update_skill(
+                skill.id.clone(),
+                "Fireball".into(),
+                Some("Rank 2".into()),
+                None,
+                // Sent back unchanged, so it is not checked again.
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(updated.chapter_id.as_deref(), Some(chapter.id.as_str()));
+    }
+
+    #[test]
+    fn a_story_bible_lists_each_skill_with_its_chapter() {
+        let (db, story, character, chapter, _) = skill_story();
+        db.add_skill(
+            character.id.clone(),
+            "Fireball".into(),
+            Some("Rank 2".into()),
+            Some("3d6 fire".into()),
+            Some(chapter.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let bible = db.story_bible(&story.id).unwrap();
+
+        assert!(bible
+            .markdown
+            .contains("- **Fireball** · Rank 2 — 3d6 fire (learned in \"Chapter One\")"));
+    }
+
+    // A story with a cast member, a chapter and an item card, which is the shape
+    // every inventory test starts from.
+    fn inventory_story() -> (Db, Story, Character, Node, Node) {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "item".into(),
+                "Iron Sword".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        (db, story, character, chapter, card)
+    }
+
+    #[test]
+    fn an_item_keeps_its_rarity_quantity_effect_and_chapter() {
+        let (db, story, character, chapter, card) = inventory_story();
+
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "  Iron Sword  ".into(),
+                Some("  Rare  ".into()),
+                2,
+                Some("  +1 damage  ".into()),
+                Some(chapter.id.clone()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(item.name, "Iron Sword", "the name is trimmed");
+        assert_eq!(item.rarity.as_deref(), Some("Rare"));
+        assert_eq!(item.quantity, 2);
+        assert_eq!(item.effect.as_deref(), Some("+1 damage"));
+        assert_eq!(item.chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_eq!(item.node_id.as_deref(), Some(card.id.as_str()));
+
+        let carried = db.list_inventory(&character.id).unwrap();
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0].id, item.id);
+
+        // An item card can name everyone carrying it.
+        let board = db.list_story_inventory(&story.id).unwrap();
+        assert_eq!(board.len(), 1);
+        assert_eq!(board[0].character_id, character.id);
+    }
+
+    #[test]
+    fn an_item_records_the_chapter_it_was_lost_in() {
+        let (db, story, character, chapter, _) = inventory_story();
+        let lost = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                None,
+                2,
+                None,
+                Some(chapter.id.clone()),
+                Some(lost.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(item.lost_chapter_id.as_deref(), Some(lost.id.as_str()));
+        assert_eq!(
+            db.list_inventory(&character.id).unwrap()[0]
+                .lost_chapter_id
+                .as_deref(),
+            Some(lost.id.as_str())
+        );
+        assert_eq!(
+            db.list_story_inventory(&story.id).unwrap()[0]
+                .lost_chapter_id
+                .as_deref(),
+            Some(lost.id.as_str())
+        );
+    }
+
+    #[test]
+    fn a_blank_rarity_is_stored_as_nothing_and_quantity_cannot_be_negative() {
+        let (db, _, character, _, _) = inventory_story();
+
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Torch".into(),
+                Some("   ".into()),
+                0,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(item.rarity, None);
+        assert_eq!(item.effect, None);
+        assert_eq!(item.quantity, 0, "a zero count is a real count");
+
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Debt".into(),
+                None,
+                -1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot be negative"), "{error}");
+        assert_eq!(db.list_inventory(&character.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_item_needs_a_unique_name_and_an_item_card_of_this_story() {
+        let (db, story, character, _, _) = inventory_story();
+
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "   ".into(),
+                None,
+                1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("needs a name"), "{error}");
+
+        db.add_inventory_item(
+            character.id.clone(),
+            "Iron Sword".into(),
+            None,
+            1,
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                None,
+                1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("already in"), "{error}");
+
+        // A chapter from another story is refused, and so is a live card of the
+        // wrong type in this one.
+        let other = db
+            .create_story("Embers".into(), None, "Ada".into())
+            .unwrap();
+        let theirs = db
+            .create_node(
+                other.id.clone(),
+                "chapter".into(),
+                "Their Chapter".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Lantern".into(),
+                None,
+                1,
+                None,
+                Some(theirs.id.clone()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live chapter of this story"), "{error}");
+
+        // A lost chapter is checked the same way as the chapter it was acquired in.
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Lantern".into(),
+                None,
+                1,
+                None,
+                None,
+                Some(theirs.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live chapter of this story"), "{error}");
+
+        let skill = db
+            .create_node(
+                story.id.clone(),
+                "skill".into(),
+                "Fireball".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let error = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Lantern".into(),
+                None,
+                1,
+                None,
+                None,
+                None,
+                Some(skill.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live item of this story"), "{error}");
+        assert_eq!(db.list_inventory(&character.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn editing_an_item_records_each_field_it_changes() {
+        let (db, story, character, chapter, card) = inventory_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let lost = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Three".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                Some("Common".into()),
+                1,
+                Some("+1 damage".into()),
+                Some(chapter.id.clone()),
+                Some(chapter.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_inventory_item(
+                item.id.clone(),
+                "Greater Iron Sword".into(),
+                Some("Epic".into()),
+                3,
+                Some("+2 damage".into()),
+                Some(second.id.clone()),
+                Some(lost.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.name, "Greater Iron Sword");
+        assert_eq!(updated.rarity.as_deref(), Some("Epic"));
+        assert_eq!(updated.quantity, 3);
+        assert_eq!(updated.chapter_id.as_deref(), Some(second.id.as_str()));
+        assert_eq!(updated.lost_chapter_id.as_deref(), Some(lost.id.as_str()));
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_inventory"), None, 100)
+            .unwrap();
+        let fields: Vec<&str> = history
+            .iter()
+            .filter_map(|entry| entry.field_changed.as_deref())
+            .collect();
+
+        assert_eq!(history[0].entity_id, item.id);
+        for field in [
+            "name",
+            "rarity",
+            "quantity",
+            "effect",
+            "chapter",
+            "lost_chapter",
+        ] {
+            assert!(fields.contains(&field), "missing {field}");
+        }
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("quantity")
+                && entry.old_value.as_deref() == Some("1")
+                && entry.new_value.as_deref() == Some("3")
+        }));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("chapter")
+                && entry.new_value.as_deref() == Some("Chapter Two")));
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("lost_chapter")
+                && entry.old_value.as_deref() == Some("Chapter One")
+                && entry.new_value.as_deref() == Some("Chapter Three")
+        }));
+    }
+
+    #[test]
+    fn saving_the_same_item_writes_nothing() {
+        let (db, story, character, chapter, card) = inventory_story();
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                Some("Rare".into()),
+                2,
+                None,
+                Some(chapter.id.clone()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        let before = db
+            .get_audit_log(Some(&story.id), Some("character_inventory"), None, 100)
+            .unwrap();
+
+        let unchanged = db
+            .update_inventory_item(
+                item.id.clone(),
+                "Iron Sword".into(),
+                Some("Rare".into()),
+                2,
+                None,
+                Some(chapter.id.clone()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        let after = db
+            .get_audit_log(Some(&story.id), Some("character_inventory"), None, 100)
+            .unwrap();
+
+        assert_eq!(unchanged.updated_at, item.updated_at);
+        assert_eq!(after.len(), before.len());
+    }
+
+    #[test]
+    fn deleting_an_item_leaves_the_cast_member_alone() {
+        let (db, story, character, _, _) = inventory_story();
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                None,
+                1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_inventory_item(&item.id, "Ada".into()).unwrap();
+
+        assert!(db.list_inventory(&character.id).unwrap().is_empty());
+        assert_eq!(db.list_characters(&story.id).unwrap().len(), 1);
+
+        // Deleting the same item twice is not an error, and records nothing more.
+        db.delete_inventory_item(&item.id, "Ada".into()).unwrap();
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_inventory"), None, 100)
+            .unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .filter(|entry| entry.action == "delete")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_trashed_character_takes_its_inventory_out_of_view() {
+        let (db, story, character, _, _) = inventory_story();
+        db.add_inventory_item(
+            character.id.clone(),
+            "Iron Sword".into(),
+            None,
+            1,
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+
+        assert!(db.list_inventory(&character.id).unwrap().is_empty());
+        assert!(db.list_story_inventory(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn purging_a_chapter_clears_the_item_link_but_keeps_the_item() {
+        let (db, _, character, chapter, _) = inventory_story();
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                Some("Rare".into()),
+                2,
+                None,
+                Some(chapter.id.clone()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+
+        let carried = db.list_inventory(&character.id).unwrap();
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0].id, item.id);
+        assert_eq!(
+            carried[0].chapter_id, None,
+            "the missing chapter is cleared"
+        );
+        assert_eq!(
+            carried[0].lost_chapter_id, None,
+            "the lost link is cleared too"
+        );
+    }
+
+    #[test]
+    fn inventory_and_currency_travel_with_an_export() {
+        let (source, story, character, chapter, card) = inventory_story();
+        let lost = source
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                Some("Rare".into()),
+                2,
+                Some("+1 damage".into()),
+                Some(chapter.id.clone()),
+                Some(lost.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .add_currency(character.id.clone(), "Gold".into(), 250, "Ada".into())
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_inventory.len(), 1);
+        assert_eq!(export.character_currency.len(), 1);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let characters = target.list_characters(&restored.id).unwrap();
+        let items = target.list_story_inventory(&restored.id).unwrap();
+        let currencies = target.list_story_currency(&restored.id).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Iron Sword");
+        assert_eq!(items[0].rarity.as_deref(), Some("Rare"));
+        assert_eq!(items[0].quantity, 2);
+        assert_eq!(items[0].effect.as_deref(), Some("+1 damage"));
+        assert_eq!(items[0].character_id, characters[0].id);
+        assert_ne!(items[0].chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_ne!(items[0].lost_chapter_id.as_deref(), Some(lost.id.as_str()));
+        assert_ne!(items[0].node_id.as_deref(), Some(card.id.as_str()));
+
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let linked_chapter = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == items[0].chapter_id.as_deref())
+            .expect("the chapter link is remapped");
+        assert_eq!(linked_chapter.label, "Chapter One");
+        let linked_lost = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == items[0].lost_chapter_id.as_deref())
+            .expect("the lost chapter link is remapped");
+        assert_eq!(linked_lost.label, "Chapter Two");
+        let linked_card = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == items[0].node_id.as_deref())
+            .expect("the item card link is remapped");
+        assert_eq!(linked_card.node_type, "item");
+
+        assert_eq!(currencies.len(), 1);
+        assert_eq!(currencies[0].name, "Gold");
+        assert_eq!(currencies[0].amount, 250);
+
+        // Both rows' histories came along, pointing at the copies.
+        let history = target
+            .get_audit_log(Some(&restored.id), None, None, 200)
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.entity_id == items[0].id));
+        assert!(history
+            .iter()
+            .any(|entry| entry.entity_id == currencies[0].id));
+    }
+
+    #[test]
+    fn an_export_written_before_the_lost_chapter_still_imports() {
+        let (source, story, character, chapter, _) = inventory_story();
+        source
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                None,
+                1,
+                None,
+                Some(chapter.id.clone()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        // Strip the field a pre-v14 export would not have had.
+        let export = source.export_story(&story.id).unwrap();
+        let mut value = serde_json::to_value(&export).unwrap();
+        value
+            .get_mut("character_inventory")
+            .and_then(|items| items.get_mut(0))
+            .and_then(|item| item.as_object_mut())
+            .unwrap()
+            .remove("lost_chapter_id");
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        assert_eq!(older.character_inventory[0].lost_chapter_id, None);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(older, "Grace".into()).unwrap();
+        let items = target.list_story_inventory(&restored.id).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Iron Sword");
+        assert_eq!(items[0].lost_chapter_id, None);
+    }
+
+    #[test]
+    fn a_trashed_chapter_link_is_left_out_of_an_export() {
+        let (source, story, character, chapter, _) = inventory_story();
+        source
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                None,
+                1,
+                None,
+                Some(chapter.id.clone()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        source.delete_node(&chapter.id, "Ada".into()).unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_inventory.len(), 1);
+        assert_eq!(
+            export.character_inventory[0].chapter_id, None,
+            "a chapter in the trash is not in the file"
+        );
+        assert_eq!(
+            export.character_inventory[0].lost_chapter_id, None,
+            "a lost chapter in the trash is not in the file either"
+        );
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let items = target.list_story_inventory(&restored.id).unwrap();
+        assert_eq!(items[0].name, "Iron Sword");
+        assert_eq!(items[0].chapter_id, None);
+        assert_eq!(items[0].lost_chapter_id, None);
+    }
+
+    #[test]
+    fn currency_is_a_named_amount_with_its_own_history() {
+        let (db, story, character, _, _) = inventory_story();
+        let gold = db
+            .add_currency(character.id.clone(), "  Gold  ".into(), 250, "Ada".into())
+            .unwrap();
+
+        assert_eq!(gold.name, "Gold");
+        assert_eq!(gold.amount, 250);
+        assert_eq!(db.list_currency(&character.id).unwrap().len(), 1);
+
+        let updated = db
+            .update_currency(gold.id.clone(), "Gold".into(), 300, "Ada".into())
+            .unwrap();
+        assert_eq!(updated.amount, 300);
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_currency"), None, 100)
+            .unwrap();
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("amount")
+                && entry.old_value.as_deref() == Some("250")
+                && entry.new_value.as_deref() == Some("300")
+        }));
+
+        // Saving the same amount is not a change.
+        let before = history.len();
+        db.update_currency(gold.id.clone(), "Gold".into(), 300, "Ada".into())
+            .unwrap();
+        assert_eq!(
+            db.get_audit_log(Some(&story.id), Some("character_currency"), None, 100)
+                .unwrap()
+                .len(),
+            before
+        );
+
+        db.delete_currency(&gold.id, "Ada".into()).unwrap();
+        assert!(db.list_currency(&character.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_currency_needs_a_unique_name_and_a_non_negative_amount() {
+        let (db, _, character, _, _) = inventory_story();
+
+        let error = db
+            .add_currency(character.id.clone(), "  ".into(), 10, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("needs a name"), "{error}");
+
+        db.add_currency(character.id.clone(), "Gold".into(), 10, "Ada".into())
+            .unwrap();
+
+        let error = db
+            .add_currency(character.id.clone(), "Gold".into(), 20, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("already one of"), "{error}");
+
+        let error = db
+            .add_currency(character.id.clone(), "Debt".into(), -5, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot be negative"), "{error}");
+    }
+
+    #[test]
+    fn item_counts_and_currency_amounts_are_revertible() {
+        let (db, _, character, _, _) = inventory_story();
+        let item = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Iron Sword".into(),
+                Some("Common".into()),
+                1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.update_inventory_item(
+            item.id.clone(),
+            "Iron Sword".into(),
+            Some("Rare".into()),
+            3,
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let quantity = latest_entry(&db, "character_inventory", &item.id, "quantity");
+        assert!(db.revert_change(&quantity.id, "Grace".into()).unwrap());
+        let items = db.list_inventory(&character.id).unwrap();
+        assert_eq!(items[0].quantity, 1);
+
+        let rarity = latest_entry(&db, "character_inventory", &item.id, "rarity");
+        assert!(db.revert_change(&rarity.id, "Grace".into()).unwrap());
+        assert_eq!(
+            db.list_inventory(&character.id).unwrap()[0]
+                .rarity
+                .as_deref(),
+            Some("Common")
+        );
+
+        let gold = db
+            .add_currency(character.id.clone(), "Gold".into(), 100, "Ada".into())
+            .unwrap();
+        db.update_currency(gold.id.clone(), "Gold".into(), 200, "Ada".into())
+            .unwrap();
+        let amount = latest_entry(&db, "character_currency", &gold.id, "amount");
+        assert!(db.revert_change(&amount.id, "Grace".into()).unwrap());
+        assert_eq!(db.list_currency(&character.id).unwrap()[0].amount, 100);
+    }
+
+    #[test]
+    fn a_story_bible_lists_currency_and_each_item_with_its_chapter() {
+        let (db, story, character, chapter, _) = inventory_story();
+        let lost = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.add_inventory_item(
+            character.id.clone(),
+            "Iron Sword".into(),
+            Some("Rare".into()),
+            2,
+            Some("+1 damage".into()),
+            Some(chapter.id.clone()),
+            Some(lost.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_currency(character.id.clone(), "Gold".into(), 250, "Ada".into())
+            .unwrap();
+
+        let bible = db.story_bible(&story.id).unwrap();
+
+        assert!(bible.markdown.contains("- 250 Gold"));
+        assert!(bible.markdown.contains(
+            "- **Iron Sword** ×2 · Rare — +1 damage (acquired in \"Chapter One\"; lost in \"Chapter Two\")"
+        ));
     }
 }

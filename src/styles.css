@@ -1841,6 +1841,39 @@ body {
   white-space: nowrap;
 }
 
+/* Mark returned leaves a short-lived correction on the board, so a mistaken
+   click does not need a trip to the Audit tab. */
+.returned-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.returned-strip span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.returned-strip button {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid #3d6a44;
+  color: #d2f0d6;
+  padding: 1px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.returned-strip button:hover {
+  background: #2c4631;
+}
+
+.returned-strip .status-dismiss {
+  margin-left: 0;
+}
+
 /* Characters */
 .characters-layout {
   display: flex;
@@ -2335,6 +2368,355 @@ body {
   cursor: not-allowed;
 }
 
+/* Skills (name, rank, effect and the chapter learned in) */
+.skill-section {
+  margin-bottom: 18px;
+}
+
+.skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #fb923c;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.skill-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-name {
+  color: #ddd;
+}
+
+.skill-rank {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  white-space: nowrap;
+}
+
+.skill-effect {
+  font-size: 11px;
+  color: #b9b9b9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.skill-chapter {
+  font-size: 10px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+
+.skill-card-link {
+  font-size: 10px;
+  color: #9a8fb8;
+  white-space: nowrap;
+}
+
+.skill-row button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.skill-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.skill-row button + button {
+  margin-left: 0;
+}
+
+.skill-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.skill-editor input,
+.skill-editor select,
+.skill-creator input,
+.skill-creator select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.skill-editor input:first-child {
+  flex: 1;
+  min-width: 110px;
+}
+
+.skill-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.skill-actions button {
+  margin-left: 0;
+}
+
+.skill-creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.skill-creator input:first-child {
+  flex: 1;
+  min-width: 110px;
+}
+
+.skill-creator button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.skill-creator button:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
+/* Inventory and currency (a ledger, not a game engine) */
+.inventory-section,
+.currency-section {
+  margin-bottom: 18px;
+}
+
+.inventory-list,
+.currency-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.inventory-row,
+.currency-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #7aa2f7;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.currency-row {
+  border-left-color: #d4b106;
+}
+
+.inventory-summary,
+.currency-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.inventory-name,
+.currency-name {
+  color: #ddd;
+}
+
+.inventory-quantity {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(122, 162, 247, 0.16);
+  color: #a9c1ff;
+  white-space: nowrap;
+}
+
+.inventory-rarity {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(192, 132, 252, 0.16);
+  color: #d8b4fe;
+  white-space: nowrap;
+}
+
+.inventory-effect {
+  font-size: 11px;
+  color: #b9b9b9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.inventory-chapter {
+  font-size: 10px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+
+.inventory-card-link {
+  font-size: 10px;
+  color: #9a8fb8;
+  white-space: nowrap;
+}
+
+.inventory-lost {
+  font-size: 10px;
+  color: #f0a0a0;
+  white-space: nowrap;
+}
+
+.currency-amount {
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(212, 177, 6, 0.16);
+  color: #f0d264;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-row button,
+.currency-row button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.inventory-row button:hover,
+.currency-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.inventory-row button + button,
+.currency-row button + button {
+  margin-left: 0;
+}
+
+.inventory-editor,
+.currency-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.inventory-editor input,
+.inventory-editor select,
+.inventory-creator input,
+.inventory-creator select,
+.currency-editor input,
+.currency-creator input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.inventory-editor input:first-child,
+.inventory-creator input:first-child,
+.currency-editor input:first-child,
+.currency-creator input:first-child {
+  flex: 1;
+  min-width: 110px;
+}
+
+.inventory-editor input[type='number'],
+.inventory-creator input[type='number'],
+.currency-editor input[type='number'],
+.currency-creator input[type='number'] {
+  width: 64px;
+  flex: 0 0 auto;
+}
+
+.inventory-actions,
+.currency-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.inventory-actions button,
+.currency-actions button {
+  margin-left: 0;
+}
+
+.inventory-creator,
+.currency-creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.inventory-creator button,
+.currency-creator button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.inventory-creator button:disabled,
+.currency-creator button:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
 /* Audit log */
 .audit-filters {
   display: flex;
@@ -2742,6 +3124,149 @@ body {
 }
 
 .graph-node-cast-empty {
+  font-size: 10px;
+  color: #8a8a8a;
+  font-style: italic;
+}
+
+/* A lost-item warning sits on the chapter card it belongs to, so the problem is
+   visible on the board rather than only in the panel below it. */
+.graph-node-continuity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid #4a3030;
+}
+
+.graph-node-continuity-line {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.graph-node-continuity-open {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #f0a0a0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.graph-node-continuity-open:hover {
+  color: #ffd0d0;
+  text-decoration: underline;
+}
+
+.graph-node-continuity-return {
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #9a9a9a;
+  font-family: inherit;
+  font-size: 9px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.graph-node-continuity-return:hover {
+  color: #ffd0d0;
+}
+
+.graph-node-continuity-return:disabled {
+  color: #666;
+  cursor: default;
+  text-decoration: none;
+}
+
+.graph-node-continuity-mark {
+  font-weight: 700;
+  color: #f87171;
+}
+
+.graph-node-continuity-more {
+  font-size: 10px;
+  color: #8a8a8a;
+}
+
+/* A skill card names who has it, with the rank and the chapter they learned it
+   in, so the board answers the question without opening a character sheet. */
+.graph-node-holders {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid #34343a;
+}
+
+.graph-node-holder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.graph-node-holder-name {
+  color: #ddd;
+}
+
+.graph-node-holder-rank {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  white-space: nowrap;
+}
+
+.graph-node-holder-quantity {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(122, 162, 247, 0.16);
+  color: #a9c1ff;
+  white-space: nowrap;
+}
+
+.graph-node-holder-rarity {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(192, 132, 252, 0.16);
+  color: #d8b4fe;
+  white-space: nowrap;
+}
+
+.graph-node-holder-chapter {
+  color: #9a9a9a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+
+.graph-node-holder-lost {
+  color: #f0a0a0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.graph-node-holder.more {
+  color: #8a8a8a;
+}
+
+.graph-node-holders-empty {
   font-size: 10px;
   color: #8a8a8a;
   font-style: italic;

@@ -77,9 +77,11 @@ id).
 **Continuity** — below the timeline, the Chapters tab lists what looks
 inconsistent: a chapter with no POV, a chapter that names a time but no day,
 a chapter whose day goes backwards in reading order, a chapter whose time goes
-backwards inside one day, two chapters placed at the same moment, and one cast
-member named as the POV of two chapters on the same day. A time is only compared
-when both labels read as a time of day, so "after the fire" is never guessed at.
+backwards inside one day, two chapters placed at the same moment, one cast
+member named as the POV of two chapters on the same day, an item still carried
+after it was recorded lost, and an item lost before it was acquired. A time is
+only compared when both labels read as a time of day, so "after the fire" is
+never guessed at.
 Two chapters collide when their labels resolve to the same minute, whether they
 were written the same way or not — "Dusk" and "7:00 pm" are one moment — and the
 flag quotes them as written. The flags are advisory — nothing is blocked, and the
@@ -204,6 +206,58 @@ a level, and clearing the rank or the target stores nothing rather than an empty
 string. A level starts at 1 and experience at 0, which is what the migration gives
 a character created before these fields existed.
 
+**Skills** — a cast member's skills are rows of their own rather than attributes
+called "Skill": a name, an optional rank and effect in the author's own words,
+and the chapter it was learned in. Each row can also name the `skill` card it
+belongs to. **Add skill** takes the name, rank, effect, chapter and card, and
+**Edit** changes any of them in place; a blank rank, effect, chapter or card
+stores nothing rather than an empty string, and two skills of one character
+cannot share a name. Skills are listed alphabetically on the sheet and are
+saved, deleted and audited individually, so changing a rank is one history
+entry that names the old and new rank. The chapter and card are links; if a
+chapter is purged, the skill keeps its name, rank and effect and the missing
+link is cleared instead of pointing at a row that no longer exists
+(trashing it alone leaves the link in place, and an unrelated edit does not
+force the author to re-pick it). A `skill` card on the board names the cast
+members who have it, with each one's rank and the chapter it was learned in, and
+says so when nobody has it yet. Skills travel in the JSON export, the story
+bible and an import with their chapter and card remapped like every other
+reference, and they appear in the Audit tab under **Skills**. A skill's name, rank
+and effect are revertible from the history; its chapter and card links are
+recorded by name and are not, for the same reason a POV link is not.
+
+**Inventory and currency** — a cast member's belongings are rows of their own
+rather than attributes called "Item": a name, an optional rarity and effect in
+the author's own words, a quantity, the chapter it was acquired in, and the
+chapter it was lost in. Each item can also name the `item` card it belongs to.
+**Add item** takes all of those, and **Edit** changes any of them in place; a
+blank rarity, effect, chapter, lost chapter or card stores nothing, two items of
+one character cannot share a name, and a quantity is a whole number from zero up.
+Currency is a separate named ledger — gold, credits, mana crystals — with an
+amount and no exchange rate, so nothing is converted or added across names. Items and currencies are listed
+alphabetically on the sheet and are saved, deleted and audited individually, so
+changing a count is one history entry with the old and new number. The acquired
+chapter, lost chapter and card are links; purging one clears the link and keeps
+the item, while trashing it alone leaves the link in place. An `item` card on the
+board names who carries it, with the quantity, rarity, chapter and where it was
+lost, and says so when nobody does. The Chapters tab's continuity panel warns
+when a recorded loss contradicts the ledger — an item still carried, or lost in
+an earlier chapter than the one it was acquired in — and links the chapter it
+names. The chapter card on the Graph tab carries the short version of that
+warning, with the full sentence in its tooltip; clicking it opens the holder's
+sheet on the Characters tab with that cast member selected. Beside the warning,
+**Mark returned** clears the recorded lost chapter through the same audited
+update the sheet uses, so the contradiction goes away without leaving the board
+and the item and its other links stay as they were. The notice that follows
+offers **Undo**, and the same step is in the board's history, so a mistake can be
+put back without opening the Audit tab. This is a ledger, not a game engine: no prices, weight or encumbrance
+maths. Items and currencies travel in the JSON export, the story bible and an
+import with their links remapped, and appear in the Audit tab under **Inventory**
+and **Currency**. An item's name, rarity, effect and quantity and a currency's
+name and amount are revertible from the history; an item's acquired chapter,
+lost chapter and card links are recorded by name and are not, for the same reason
+a POV link is not.
+
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
 for good, relink or keep the label. These are the platform's native tooltips, so
@@ -229,7 +283,7 @@ the list closes on `Esc`, its close button, or a click outside it.
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
 first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,
-nodes or connections. "Show older changes" pages further back and says how many are
+nodes, skills, inventory, currency or connections. "Show older changes" pages further back and says how many are
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
@@ -254,7 +308,8 @@ immediately when shortened, and anything it removes is recorded as a `purge` by
 `Trash retention` rather than looking like someone's deliberate click.
 
 **Export** — writes a complete JSON snapshot of one story — characters, stats,
-attributes, graph and full history — beside the database, under
+attributes, skills, inventory, currency, graph and full history — beside the
+database, under
 `exports/<story-slug>-<timestamp>.json`.
 
 **Story bible** — writes a Markdown file beside the JSON exports,
@@ -265,8 +320,10 @@ paragraph, then the chapter's notes as a bulleted list under **Notes**, keeping
 line breaks inside a note; a one-line story total follows the chapter list, and a
 **Timeline** section lists the chapters that have a day in time order with their
 time label and POV. The cast comes next — level, rank and XP where they exist, the description,
-then the stats and attributes as a plain list — followed by the other cards
-grouped by kind. Character cards are left out because the cast section already carries their
+then the stats, attributes, skills, currencies and inventory as a plain list (a
+skill with its rank, effect and the chapter it was learned in; an item with its
+rarity, quantity, effect, the chapter it was acquired in and the chapter it was
+lost in) — followed by the other cards grouped by kind. Character cards are left out because the cast section already carries their
 sheet. Headings are numbered and nothing is written in app jargon, so the file can
 be pasted into whatever you draft in. **Copy bible** puts the same text on the
 clipboard without writing a file, for pasting straight into a document; the
@@ -275,8 +332,10 @@ window declares only the clipboard write permission, not read.
 **Import** — restores one of those snapshots as a **new** story. Every id is
 remapped, so importing the same file twice gives two independent stories and
 nothing that already exists is touched; a title collision becomes
-`<title> (imported)`. Graph connections, attribute values and the original history
-come across, and the restore is all-or-nothing.
+`<title> (imported)`. Graph connections, attribute values, skills with their
+chapter and card links, inventory with its acquired, lost and item-card links,
+currencies, and the original history come across, and the restore is
+all-or-nothing.
 
 **Backups** — the Backups button lists the copies written at each launch, newest
 first, with when each was written, its size and its file name. Restoring one asks
@@ -371,7 +430,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `6`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `14`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -391,7 +450,13 @@ which is different from a word count of zero. Version 9 added `chapter_pov` and
 set. Version 10 added `nodes.parent_node_id`, which is NULL on everything but a
 note, so an existing story simply has no notes until one is added. Version 11
 added `chapter_time`, the free-text time of day; an older chapter has none until
-one is typed, which is different from a time that was cleared.
+one is typed, which is different from a time that was cleared. Version 12 added
+`character_skills`; an older story has none until one is added, and the table is
+empty on upgrade rather than inferred from attributes called "Skill". Version 13
+added `character_inventory` and `character_currency`; an older story starts with
+neither, and nothing is inferred from attributes called "Item" or "Gold". Version
+14 added `character_inventory.lost_chapter_id`; an existing item has no recorded
+loss until one is chosen, which is different from an item known to be lost.
 
 | Table | Contents |
 | --- | --- |
@@ -399,6 +464,9 @@ one is typed, which is different from a time that was cleared.
 | `characters` | Belongs to a story; `name`, `description`, progression (`level`, `xp`, nullable `rank` and `xp_to_next`), `deleted_at` |
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
+| `character_skills` | Belongs to a character; `name` (unique per character), nullable `rank` and `effect`, optional `chapter_id` and `node_id` links (cleared when that node is purged) |
+| `character_inventory` | Belongs to a character; `name` (unique per character), nullable `rarity` and `effect`, integer `quantity`, optional `chapter_id`, `lost_chapter_id` and `node_id` links (cleared when that node is purged) |
+| `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
@@ -416,8 +484,9 @@ A node and the connections removed with it share one `deleted_at` value, which i
 how restoring the node knows which connections to bring back with it. A
 connection deleted on its own keeps its earlier timestamp and stays in the trash.
 
-`characters`, `character_stats`, `character_attributes`, `nodes` and `edges` all
-cascade from their parent,
+`characters`, `character_stats`, `character_attributes`, `character_skills`,
+`character_inventory`, `character_currency`, `nodes` and `edges` all cascade from
+their parent,
 with `PRAGMA foreign_keys = ON`. `audit_log` deliberately has no foreign key, so
 history survives the deletion of what it describes. It is indexed on
 `(story_id, changed_at)` and `(entity_type, entity_id)`.
@@ -489,8 +558,8 @@ page that arrives late, and what it says when a filter matches nothing.
   pressed; that is shown in the tab, not repaired silently.
 - **The story bible carries only what the app models.** The file and the clipboard
   hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
-  the cast with their sheets, and the other cards. Skills and inventory have no
-  fields yet, so they cannot appear in it. Copying needs the clipboard write
+  the cast with their skills and inventory, and the other cards. Copying needs
+  the clipboard write
   permission; if the platform refuses it, the error strip says so.
 - **Word counts are typed, not measured.** There is no manuscript to count, so the
   total is the sum of the numbers entered; a chapter without a target contributes
@@ -502,6 +571,11 @@ page that arrives late, and what it says when a filter matches nothing.
   fields hold whatever the author typed, and leveling up just adds one. The bar
   clamps at 100% when experience passes the target rather than inventing a
   second level, and without a target there is no bar to fill.
+- **Inventory has one recorded loss, not a chapter-by-chapter history.** An item
+  can name the chapter it was lost in, but the panel only compares that chapter
+  with the acquisition chapter and with the item's current count. Reacquiring it
+  means clearing or changing the loss; there is no per-chapter ledger of who held
+  what.
 - **Undoing an edit needs the field to still hold what the edit left.** Deleting
   a story, character, node or connection moves it to the Trash tab, where it can
   be restored exactly or deleted for good, and any single recorded field can be
