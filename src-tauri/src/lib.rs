@@ -78,6 +78,21 @@ fn create_new_story(
 }
 
 #[tauri::command]
+fn create_demo_story(db: tauri::State<'_, Db>, user: String) -> Result<Story, String> {
+    db.create_demo_story(user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reset_demo_story(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    user: String,
+) -> Result<Story, String> {
+    db.reset_demo_story(&story_id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_all_stories(db: tauri::State<'_, Db>) -> Result<Vec<Story>, String> {
     db.list_stories().map_err(|e| e.to_string())
 }
@@ -1032,6 +1047,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize_database,
             create_new_story,
+            create_demo_story,
+            reset_demo_story,
             get_all_stories,
             get_story_by_id,
             create_new_character,

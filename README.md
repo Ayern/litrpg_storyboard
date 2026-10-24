@@ -15,7 +15,15 @@ What comes next, and the invariants every change keeps, are in
 ## Features
 
 **Stories** — create, rename and delete. The sidebar orders them by most recently
-touched.
+touched. **Load demo story** builds a prepared three-chapter story with two cast
+members, stats, skills, chapter cast, level and stat milestones, and XP income
+rows. Its last chapter deliberately leaves Mira's ledger 100 XP short of her
+total, so the continuity warning and chapter-card badge can be tried without
+touching a real story. While it keeps its prepared title and the demo is
+selected, **Reset demo story** replaces its chapters, cast, progression and
+history in place with a fresh copy of the sample data, so a walkthrough can be
+repeated without piling up demo stories. It is an ordinary story otherwise:
+rename, export, edit or delete it like any other.
 
 **Idea graph** — a pan/zoom canvas built on React Flow. Nodes have a type
 (`chapter`, `idea`, `character`, `location`, `event`, `plot`, `system`, `skill`,
@@ -629,7 +637,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 80 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 81 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`, and the

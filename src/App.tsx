@@ -1080,6 +1080,10 @@ const entityLabels: Record<string, string> = {
 // fixed 200 and then stop silently, so anything older was simply unreachable.
 const AUDIT_PAGE_SIZE = 50;
 
+// The prepared story's title. It is how the sidebar knows that a reset would
+// replace sample data rather than a story the author has made their own.
+const DEMO_STORY_TITLE = 'The Ember Ledger (Demo)';
+
 // Mirrors the entity types the database records in `audit_log.entity_type`.
 type AuditFilter = string | null;
 
@@ -1658,6 +1662,8 @@ function App() {
   >('graph');
   
   const [newStoryTitle, setNewStoryTitle] = useState('');
+  const [demoStoryBusy, setDemoStoryBusy] = useState(false);
+  const [demoResetConfirm, setDemoResetConfirm] = useState(false);
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
   // Chapter notes are context rather than cards, so the canvas stays the drawing
@@ -2024,6 +2030,9 @@ function App() {
 
   const loadStory = useCallback(async (story: Story) => {
     setCurrentStory(story);
+
+    // A reset confirmation belongs to the story it was opened for.
+    setDemoResetConfirm(false);
 
     // Undo is scoped to the story it was recorded in, so a switch starts clean.
     undoStackRef.current = [];
@@ -2958,6 +2967,60 @@ function App() {
       )}
     </li>
   );
+
+  const loadDemoStory = async () => {
+    if (demoStoryBusy) return;
+
+    setDemoStoryBusy(true);
+    setActionError(null);
+
+    try {
+      const story: Story = await invoke('create_demo_story', { user: actor });
+
+      setStories(previous => [story, ...previous.filter(other => other.id !== story.id)]);
+      setSelectedTab('graph');
+      await loadStory(story);
+      setImportStatus(`Loaded "${story.title}"`);
+    } catch (e) {
+      console.error('Failed to create the demo story:', e);
+      setActionError(`Could not create the demo story: ${String(e)}`);
+    } finally {
+      setDemoStoryBusy(false);
+    }
+  };
+
+  const resetDemoStory = async () => {
+    if (!currentStory || demoStoryBusy) return;
+
+    setDemoStoryBusy(true);
+    setActionError(null);
+
+    try {
+      const story: Story = await invoke('reset_demo_story', {
+        storyId: currentStory.id,
+        user: actor,
+      });
+
+      setStories(previous =>
+        previous.map(other => (other.id === story.id ? story : other))
+      );
+
+      // The reset was confirmed, so any draft about the replaced rows goes with
+      // them rather than being left pointing at a chapter that no longer exists.
+      setChapterFormPrompt(null);
+      setNotePrompt(null);
+      setEditingChapterId(null);
+
+      await loadStory(story);
+      setImportStatus(`Rebuilt "${story.title}" with its original sample data`);
+    } catch (e) {
+      console.error('Failed to reset the demo story:', e);
+      setActionError(`Could not reset the demo story: ${String(e)}`);
+    } finally {
+      setDemoStoryBusy(false);
+      setDemoResetConfirm(false);
+    }
+  };
 
   const createNewStory = async () => {
     if (!newStoryTitle.trim()) return;
@@ -7992,6 +8055,46 @@ function App() {
         <button className="import-button" title="Restore a story from a JSON export" onClick={importStory}>
           Import JSON
         </button>
+
+        <button
+          className="import-button demo-story-button"
+          title="Create a prepared story with cast, chapters, milestones and XP income to try the progression tools"
+          onClick={loadDemoStory}
+          disabled={demoStoryBusy}
+        >
+          {demoStoryBusy ? 'Building demo…' : 'Load demo story'}
+        </button>
+
+        {currentStory?.title === DEMO_STORY_TITLE &&
+          (demoResetConfirm ? (
+            <>
+              <button
+                className="import-button demo-reset-button demo-reset-confirm"
+                title="Replace this demo's chapters, cast, progression and history with the original sample data"
+                onClick={resetDemoStory}
+                disabled={demoStoryBusy}
+              >
+                {demoStoryBusy ? 'Rebuilding demo…' : 'Replace the demo data'}
+              </button>
+              <button
+                className="import-button"
+                title="Keep the demo as it is"
+                onClick={() => setDemoResetConfirm(false)}
+                disabled={demoStoryBusy}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              className="import-button demo-reset-button"
+              title="Replace this demo's edits in place with the original sample data"
+              onClick={() => setDemoResetConfirm(true)}
+              disabled={demoStoryBusy}
+            >
+              Reset demo story
+            </button>
+          ))}
 
         <div className="story-list">
           {stories.length === 0 && <div className="empty">No stories yet</div>}

@@ -131,6 +131,39 @@ body {
   color: #fff;
 }
 
+.demo-story-button {
+  border-style: dashed;
+  color: #9adfd9;
+}
+
+.demo-story-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.demo-reset-button {
+  border-style: dashed;
+  color: #d8b48a;
+}
+
+.demo-reset-button:hover {
+  background: #3a3026;
+  color: #ffe3bf;
+}
+
+.demo-reset-confirm,
+.demo-reset-confirm:hover {
+  border-style: solid;
+  border-color: #8a4a3a;
+  background: #4a211c;
+  color: #ffd9cf;
+}
+
+.demo-reset-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .status-dismiss {
   margin-left: auto;
   background: transparent;

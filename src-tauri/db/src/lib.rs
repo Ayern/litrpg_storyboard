@@ -87,6 +87,13 @@ fn backup_stamp(name: &str, prefix: &str) -> (String, u64) {
     }
 }
 
+/// The prepared story's title, used to create it and to recognise it when its
+/// contents are rebuilt in place. A demo that has been renamed is an ordinary
+/// story and is not reset behind the author's back.
+const DEMO_STORY_TITLE: &str = "The Ember Ledger (Demo)";
+
+const DEMO_STORY_DESCRIPTION: &str = "A prepared story for trying cast badges, milestones, stat snapshots, XP income and continuity. Mira's ledger is intentionally 100 XP short in Chapter Three.";
+
 /// Owns the single SQLite connection and hands it out under a lock.
 ///
 /// Every public method acquires the lock exactly once and passes `&Connection`
@@ -354,6 +361,310 @@ impl Db {
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
+    }
+
+    /// Builds a small, ready-to-explore story for trying the progression tools.
+    ///
+    /// The data is deliberately hand-written rather than generated from the
+    /// current date, so a walkthrough is repeatable. Mira's ledger is one
+    /// hundred XP short in the last chapter, which gives the continuity check
+    /// something real to find while the rest of the story stays consistent.
+    pub fn create_demo_story(&self, user: String) -> DbResult<Story> {
+        let story = self.create_story(
+            DEMO_STORY_TITLE.into(),
+            Some(DEMO_STORY_DESCRIPTION.into()),
+            user.clone(),
+        )?;
+
+        if let Err(error) = self.seed_demo_story(&story.id, &user) {
+            // Do not leave half a demo behind if one step is refused.
+            let _ = self.delete_story(&story.id, user.clone());
+            let _ = self.purge_story(&story.id, user);
+            return Err(error);
+        }
+
+        Ok(story)
+    }
+
+    /// Rebuilds the prepared demo in place with its original sample data.
+    ///
+    /// The story keeps its id, so it stays selected in the sidebar and any
+    /// bookmarks or exports of that id still name the same story. Its contents
+    /// and history are replaced: a reset is meant to undo a trial run, not to
+    /// preserve it. Only a story still carrying the demo title can be reset, so
+    /// a renamed story is never mistaken for a scratchpad and wiped.
+    pub fn reset_demo_story(&self, story_id: &str, user: String) -> DbResult<Story> {
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT title, created_at FROM stories WHERE id = ?1 AND deleted_at IS NULL",
+                params![story_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((title, created_at)) = existing else {
+            return Err(DbError::NotFound("story"));
+        };
+
+        if title != DEMO_STORY_TITLE {
+            return Err(DbError::Invalid(
+                "only the demo story can be reset".to_string(),
+            ));
+        }
+
+        // Old history names rows that are about to go, so it goes with them.
+        tx.execute(
+            "DELETE FROM audit_log WHERE story_id = ?1",
+            params![story_id],
+        )?;
+
+        // Deleting the story cascades to its cast, nodes, edges and every row
+        // that hangs off them, including skills, milestones and XP income.
+        tx.execute("DELETE FROM stories WHERE id = ?1", params![story_id])?;
+
+        tx.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                story_id,
+                DEMO_STORY_TITLE,
+                DEMO_STORY_DESCRIPTION,
+                &created_at,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(story_id),
+                entity_type: "story",
+                entity_id: story_id,
+                action: "reset",
+                field_changed: None,
+                old_value: Some(title),
+                new_value: Some("prepared demo data".to_string()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+        drop(guard);
+
+        // The seed writes through the ordinary public methods, each with its own
+        // transaction, so it runs after the reset transaction above.
+        self.seed_demo_story(story_id, &user)?;
+
+        Ok(Story {
+            id: story_id.to_string(),
+            title: DEMO_STORY_TITLE.to_string(),
+            description: Some(DEMO_STORY_DESCRIPTION.to_string()),
+            created_at,
+            updated_at: timestamp,
+        })
+    }
+
+    fn seed_demo_story(&self, story_id: &str, user: &str) -> DbResult<()> {
+        let user = user.to_string();
+
+        let rook = self.create_character(
+            story_id.to_string(),
+            "Rook Valebright".into(),
+            Some("A debt-bound delver who reads the System like a ledger.".into()),
+            user.clone(),
+        )?;
+        let mira = self.create_character(
+            story_id.to_string(),
+            "Mira Sable".into(),
+            Some("A courier with a stolen ember and a talent for exits.".into()),
+            user.clone(),
+        )?;
+
+        self.set_character_progress(
+            &rook.id,
+            4,
+            2400,
+            Some("Bronze".into()),
+            Some(3000),
+            user.clone(),
+        )?;
+        self.set_character_progress(
+            &mira.id,
+            3,
+            1500,
+            Some("Bronze".into()),
+            Some(2200),
+            user.clone(),
+        )?;
+
+        for (character_id, stat_name, value) in [
+            (&rook.id, "Strength", 18),
+            (&rook.id, "Agility", 14),
+            (&rook.id, "Insight", 12),
+            (&mira.id, "Agility", 17),
+            (&mira.id, "Insight", 16),
+            (&mira.id, "Strength", 9),
+        ] {
+            self.add_or_update_stat(
+                character_id.clone(),
+                stat_name.into(),
+                value,
+                None,
+                user.clone(),
+            )?;
+        }
+
+        let first = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "The Ashen Gate".into(),
+            Some("Rook buys a place at the gate with a debt he cannot name.".into()),
+            140.0,
+            120.0,
+            user.clone(),
+            Some(rook.id.clone()),
+        )?;
+        let second = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "A Ledger of Cinders".into(),
+            Some("Mira offers the ember to the clerk who wrote Rook's debt.".into()),
+            500.0,
+            120.0,
+            user.clone(),
+            Some(mira.id.clone()),
+        )?;
+        let third = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "The Ember Court".into(),
+            Some("The debt comes due in a room where every flame remembers.".into()),
+            860.0,
+            120.0,
+            user.clone(),
+            Some(rook.id.clone()),
+        )?;
+
+        self.set_chapter_details(
+            &first.id,
+            Some("Arrival".into()),
+            Some(2200),
+            Some(2500),
+            Some(rook.id.clone()),
+            Some(1),
+            Some("Dusk".into()),
+            user.clone(),
+        )?;
+        self.set_chapter_details(
+            &second.id,
+            Some("Bargain".into()),
+            Some(2600),
+            Some(3000),
+            Some(mira.id.clone()),
+            Some(2),
+            Some("Morning".into()),
+            user.clone(),
+        )?;
+        self.set_chapter_details(
+            &third.id,
+            Some("Confrontation".into()),
+            Some(3200),
+            Some(3000),
+            Some(rook.id.clone()),
+            Some(3),
+            Some("Night".into()),
+            user.clone(),
+        )?;
+
+        self.add_chapter_cast_member(first.id.clone(), mira.id.clone(), user.clone())?;
+        self.add_chapter_cast_member(second.id.clone(), rook.id.clone(), user.clone())?;
+        self.add_chapter_cast_member(third.id.clone(), mira.id.clone(), user.clone())?;
+
+        let ash_step = self.add_skill(
+            rook.id.clone(),
+            "Ash Step".into(),
+            Some("Rank 2".into()),
+            Some("A short step through smoke that leaves a grey afterimage.".into()),
+            Some(first.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        let ember_whisper = self.add_skill(
+            mira.id.clone(),
+            "Ember Whisper".into(),
+            Some("Rank 1".into()),
+            Some("Reads the last emotion a flame touched.".into()),
+            Some(first.id.clone()),
+            None,
+            user.clone(),
+        )?;
+
+        self.add_skill_event(
+            ash_step.id.clone(),
+            "used".into(),
+            Some(second.id.clone()),
+            Some("Rank 1".into()),
+            user.clone(),
+        )?;
+        self.add_skill_event(
+            ash_step.id.clone(),
+            "upgraded".into(),
+            Some(third.id.clone()),
+            Some("Rank 2".into()),
+            user.clone(),
+        )?;
+        self.add_skill_event(
+            ember_whisper.id.clone(),
+            "used".into(),
+            Some(second.id.clone()),
+            Some("Rank 1".into()),
+            user.clone(),
+        )?;
+
+        for (character, level, xp, stat_name, stat_points, chapter) in [
+            (&rook, 2, 600, "Strength", 15, &first),
+            (&rook, 3, 1500, "Strength", 16, &second),
+            (&rook, 4, 2400, "Strength", 18, &third),
+            (&mira, 1, 200, "Agility", 13, &first),
+            (&mira, 2, 800, "Agility", 15, &second),
+            (&mira, 3, 1500, "Agility", 17, &third),
+        ] {
+            self.add_level_milestone_with_metrics(
+                character.id.clone(),
+                level,
+                Some(chapter.id.clone()),
+                false,
+                Some(xp),
+                Some(stat_name.into()),
+                Some(stat_points),
+                user.clone(),
+            )?;
+        }
+
+        for (character, amount, chapter) in [
+            (&rook, 600, &first),
+            (&rook, 900, &second),
+            (&rook, 900, &third),
+            (&mira, 200, &first),
+            (&mira, 600, &second),
+            // Mira's total says 1,500 here; this row deliberately leaves the
+            // ledger 100 short so the continuity panel has a real mismatch.
+            (&mira, 600, &third),
+        ] {
+            self.add_character_progress(
+                character.id.clone(),
+                chapter.id.clone(),
+                amount,
+                user.clone(),
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn list_stories(&self) -> DbResult<Vec<Story>> {
@@ -9189,6 +9500,163 @@ const INDEXES: &str = "
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_demo_story_arrives_with_a_cast_and_an_intentional_xp_gap() {
+        let db = Db::open_in_memory().unwrap();
+
+        let story = db.create_demo_story("Ada".into()).unwrap();
+
+        assert_eq!(story.title, "The Ember Ledger (Demo)");
+        assert!(story
+            .description
+            .as_deref()
+            .is_some_and(|description| description.contains("intentionally 100 XP short")));
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters.len(), 2);
+        let rook = characters
+            .iter()
+            .find(|character| character.name == "Rook Valebright")
+            .expect("Rook is in the demo cast");
+        let mira = characters
+            .iter()
+            .find(|character| character.name == "Mira Sable")
+            .expect("Mira is in the demo cast");
+
+        let chapters: Vec<_> = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .filter(|node| node.node_type == "chapter")
+            .collect();
+        assert_eq!(chapters.len(), 3);
+        assert_eq!(
+            chapters
+                .iter()
+                .map(|chapter| chapter.chapter_seq)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)]
+        );
+        assert_eq!(chapters[0].chapter_pov.as_deref(), Some(rook.id.as_str()));
+        assert_eq!(chapters[1].chapter_pov.as_deref(), Some(mira.id.as_str()));
+        assert_eq!(chapters[2].chapter_pov.as_deref(), Some(rook.id.as_str()));
+        assert_eq!(chapters[2].chapter_arc.as_deref(), Some("Confrontation"));
+
+        let milestones = db.list_story_level_milestones(&story.id).unwrap();
+        assert_eq!(milestones.len(), 6);
+        let mira_total = milestones
+            .iter()
+            .find(|milestone| {
+                milestone.character_id == mira.id
+                    && milestone.chapter_id.as_deref() == Some(chapters[2].id.as_str())
+            })
+            .expect("Mira's last total is recorded");
+        assert_eq!(mira_total.xp, Some(1500));
+
+        let progress = db.list_story_character_progress(&story.id).unwrap();
+        assert_eq!(progress.len(), 6);
+        let mira_income: i64 = progress
+            .iter()
+            .filter(|entry| entry.character_id == mira.id)
+            .map(|entry| entry.xp_earned)
+            .sum();
+        assert_eq!(mira_income, 1400, "the demo leaves a 100 XP mismatch");
+        let rook_income: i64 = progress
+            .iter()
+            .filter(|entry| entry.character_id == rook.id)
+            .map(|entry| entry.xp_earned)
+            .sum();
+        assert_eq!(rook_income, 2400);
+
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_demo_story_can_be_reset_in_place() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_demo_story("Ada".into()).unwrap();
+        let original_created_at = story.created_at.clone();
+
+        // Change the demo the way a trial run would: more cast, another chapter,
+        // and a hand-edited ledger amount.
+        db.create_character(story.id.clone(), "Trespasser".into(), None, "Ada".into())
+            .unwrap();
+        db.create_node(
+            story.id.clone(),
+            "chapter".into(),
+            "Stray chapter".into(),
+            None,
+            1.0,
+            2.0,
+            "Ada".into(),
+        )
+        .unwrap();
+        let edited = db.list_story_character_progress(&story.id).unwrap()[0].clone();
+        db.update_character_progress(edited.id, edited.chapter_id, 9999, "Ada".into())
+            .unwrap();
+
+        let reset = db.reset_demo_story(&story.id, "Grace".into()).unwrap();
+
+        assert_eq!(reset.id, story.id, "the story is rebuilt in place");
+        assert_eq!(reset.title, DEMO_STORY_TITLE);
+        assert_eq!(reset.created_at, original_created_at);
+        assert!(reset
+            .description
+            .as_deref()
+            .is_some_and(|description| description.contains("intentionally 100 XP short")));
+
+        let characters = db.list_characters(&story.id).unwrap();
+        assert_eq!(characters.len(), 2);
+        assert!(characters
+            .iter()
+            .all(|character| character.name != "Trespasser"));
+
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert!(nodes.iter().all(|node| node.label != "Stray chapter"));
+
+        let progress = db.list_story_character_progress(&story.id).unwrap();
+        assert_eq!(progress.len(), 6);
+        let mira = characters
+            .iter()
+            .find(|character| character.name == "Mira Sable")
+            .expect("Mira is back in the demo cast");
+        let mira_income: i64 = progress
+            .iter()
+            .filter(|entry| entry.character_id == mira.id)
+            .map(|entry| entry.xp_earned)
+            .sum();
+        assert_eq!(mira_income, 1400, "the intentional XP gap is back");
+
+        assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+
+        // The trial run's history went with the data it described, and the reset
+        // itself is recorded under the person who asked for it.
+        let history = db.get_audit_log(Some(&story.id), None, None, 1000).unwrap();
+        assert!(history
+            .iter()
+            .any(|entry| entry.action == "reset" && entry.changed_by == "Grace"));
+        assert!(history.iter().all(|entry| entry.changed_by == "Grace"));
+    }
+
+    #[test]
+    fn only_the_demo_story_can_be_reset() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("A real story".into(), None, "Ada".into())
+            .unwrap();
+
+        let error = db.reset_demo_story(&story.id, "Grace".into()).unwrap_err();
+
+        assert!(matches!(error, DbError::Invalid(_)));
+        assert!(db.get_story(&story.id).unwrap().is_some());
+    }
 
     #[test]
     fn an_export_round_trips_into_a_new_story() {
