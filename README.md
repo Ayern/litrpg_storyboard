@@ -382,6 +382,25 @@ standing whose faction card is in the trash, an arc that ends before it begins, 
 two standings held in one faction at the same time; each warning opens the exact
 row it names.
 
+**Quests and contracts** (schema v21) live on their own tab. A quest has a title, a
+required acceptance chapter, an optional ending chapter, a free-text status
+(`active`, `completed`, `failed` and `abandoned` are suggestions), an optional
+cast giver and faction card, an objectives description and private notes. Its
+**rewards** are child rows: XP, an item, a stat gain or a faction standing, each
+with an optional character or faction target and the author's own amount or
+wording. Every create, field change and delete is audited; the **Quests** tab
+filters by status and opens one quest for editing at a time. A quest shows as a
+badge on both chapters it names — a diamond where it was accepted, a tick where it
+ended — and clicking the badge opens it in the ledger. **Apply rewards to chapter
+ledger** on a completed quest prefills numeric XP into each character's income row
+and item payouts into their inventory for the ending chapter; stat gains and
+standings are left for the sheet because they are written in your words, and an
+XP row already recorded in that chapter is skipped rather than doubled. Quests and
+rewards travel in the JSON export with every link remapped, and the story is
+warned when a contract ends before it is accepted, when an active quest's giver or
+faction is in the trash, or when a reward goes to somebody not in the ending
+chapter's cast.
+
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
 for good, relink or keep the label. These are the platform's native tooltips, so
@@ -407,7 +426,8 @@ the list closes on `Esc`, its close button, or a click outside it.
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
 first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,
-nodes, skills, inventory, currency or connections. "Show older changes" pages further back and says how many are
+nodes, skills, inventory, currency, relations, standings, quests, quest rewards or
+connections. "Show older changes" pages further back and says how many are
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
@@ -418,7 +438,8 @@ button whether the revert is still possible — *Changed since*, *In trash*, *Go
 click rather than after a refusal. It only applies while the field still holds the
 value that entry produced: if it changed again since, writing the older value
 would quietly throw the newer edit away. Creations and deletions are not
-revertible — the trash is what undoes those.
+revertible — the trash is what undoes those. Quest edits are recorded but not yet
+revertible, and neither are links the history stores as labels (a chapter or card).
 
 **Trash** — deleting a story, character, node or connection moves it here rather
 than destroying it. Restoring puts it back exactly as it was: a character returns
@@ -502,7 +523,7 @@ An entry records:
 | Column | Meaning |
 | --- | --- |
 | `story_id` | Which story the change belongs to, so history can be shown per story |
-| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, or a `node`, `edge` or `chapter_cast` row |
+| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, a `quest` or `quest_reward`, or a `node`, `edge` or `chapter_cast` row |
 | `entity_id` | The row that changed |
 | `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore` or `purge` |
 | `field_changed` | Name of the changed field, for updates and reverts |
@@ -560,7 +581,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `20`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `21`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -601,7 +622,9 @@ snapshot into `character_level_stat_changes`, so one level can carry several
 stats, and copied each old snapshot over as a value-after row without inventing a
 gain. Version 20 added `character_relations` and `faction_standings`; an older
 story starts with neither, so its cast simply has no recorded bonds or faction
-memberships until one is added.
+memberships until one is added. Version 21 added `quests` and `quest_rewards`; an
+older story starts with no contracts, and nothing is inferred from cards of type
+`quest` — those remain plain cards until a quest is recorded on the Quests tab.
 
 | Table | Contents |
 | --- | --- |
@@ -618,6 +641,8 @@ memberships until one is added.
 | `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
 | `character_relations` | Two cast members in one story; free-text `kind`, optional `note` and `since_chapter_id`/`until_chapter_id` links (cleared when the chapter is purged); unique on the ordered pair and kind |
 | `faction_standings` | One character's place in a faction card; free-text `standing`, optional `note` and `until_chapter_id`, required `since_chapter_id` when created; the faction link is cleared when its card is purged |
+| `quests` | Belongs to a story; `title`, free-text `status`, required `accepted_chapter_id`, optional `completed_chapter_id`, `giver_character_id` and `faction_node_id`, `description`, `notes`; purging the acceptance chapter takes the quest with it, while the other links are cleared |
+| `quest_rewards` | Belongs to a quest; `reward_type` (`xp`, `item`, `stat` or `faction_standing`), optional `target_id` (a character, or a faction card for a standing) and free-text `amount_or_details`; cascades with its quest |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
@@ -638,7 +663,7 @@ connection deleted on its own keeps its earlier timestamp and stays in the trash
 `characters`, `character_stats`, `character_attributes`, `character_skills`,
 `character_level_milestones`, `character_progress`, `character_skill_events`,
 `character_inventory`, `character_currency`, `chapter_cast`, `character_relations`,
-`faction_standings`, `nodes` and `edges` all cascade from their parent, with
+`faction_standings`, `quests` (with their rewards), `nodes` and `edges` all cascade from their parent, with
 `PRAGMA foreign_keys = ON`. `audit_log`
 deliberately has no foreign key, so history survives the deletion of what it
 describes. It is indexed on `(story_id, changed_at)` and

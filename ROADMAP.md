@@ -40,9 +40,10 @@ the next begins.
   fields, and the board now has `system`, `skill`, `item`, `quest` and `faction`
   cards. Skills and inventory are real rows with the chapter they arrived in,
   an item can record where it was lost, skills keep upgrades, uses and sacrifices
-  in reading order, and a `skill` or `item` card names who has it — but `quest`
-  and `faction` cards still carry only a label, notes and connections, and nothing
-  checks whether a level-up was earned or a rank only rose.
+  in reading order, and a `skill` or `item` card names who has it. Quests are real
+  rows with two chapters and a reward bundle, shown on the chapter cards, while a
+  `faction` card is named by the standings held through it. Nothing checks whether
+  a level-up was earned or a rank only rose.
 - **In-world time is a day and a typed label.** A chapter can name its POV, its
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
@@ -53,7 +54,9 @@ the next begins.
 - **Continuity checking is partial.** The Chapters tab warns about chapter
   timing, a cast member in two places on one day, an item still carried or
   acquired after its recorded loss, a level drop without a penalty flag, a skill
-  used before it was learned or upgraded, and a skill used after it was sacrificed.
+  used before it was learned or upgraded, a skill used after it was sacrificed,
+  and a quest that ends before it starts, names a trashed issuer or pays someone
+  absent from its ending chapter.
   Nothing checks that a character is in two places across days, that a chapter is
   missing, or that an event was entered at all; warnings only exist where the
   author recorded the chapter.
@@ -361,6 +364,20 @@ entry on the sheet. Continuity names a relation pointing at a trashed cast
 member, a standing on a trashed faction card, an arc that ends before it begins,
 and two stints held in one faction at once. A dead-mentor check still needs a way
 to record death. **M**
+
+**12b. Quest and contract ledger.** **Done.** `quests` and `quest_rewards`
+(schema v21) record a contract's title, free-text status, required acceptance
+chapter, optional ending chapter, cast giver and faction card, description and
+notes, plus a bundle of XP, item, stat and faction-standing payouts. Every field
+change is audited; the acceptance chapter is a foreign key that takes the quest
+with it on purge, while the other links are cleared. The Quests tab filters by
+status and edits one quest at a time; chapter cards badge both chapters a quest
+touches and open it in the ledger. A completed quest offers **Apply rewards to
+chapter ledger**, which prefills numeric XP rows and loot for the ending chapter
+and leaves stats and standings to the sheet; a row already recorded there is
+skipped. Export and import remap every link, and continuity flags an ending
+before the acceptance, a trashed issuer on an open quest, and a payout to someone
+not in the ending chapter's cast. **L**
 
 **13. LitRPG vocabulary.** **Done.** `system`, `skill`, `item`, `quest` and
 `faction` are first-class node types with their own colours, legend entries and

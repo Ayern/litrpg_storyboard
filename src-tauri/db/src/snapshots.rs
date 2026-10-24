@@ -132,7 +132,9 @@ mod tests {
         let contents = b"not really sqlite, but a copy does not care";
         fs::write(&db, contents).unwrap();
 
-        let copy = snapshot(&db, 10).unwrap().expect("a copy should be written");
+        let copy = snapshot(&db, 10)
+            .unwrap()
+            .expect("a copy should be written");
 
         assert_eq!(copy.parent().unwrap(), dir.join(SNAPSHOT_DIR));
         assert_eq!(fs::read(&copy).unwrap(), contents);

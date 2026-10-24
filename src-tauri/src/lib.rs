@@ -2,7 +2,8 @@ use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
     CharacterChapterState, CharacterCurrency, CharacterLevelMilestone, CharacterProgress,
     CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
-    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Story, StoryExport,
+    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Quest, QuestReward, Story,
+    StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -448,6 +449,122 @@ fn delete_faction_standing(
 ) -> Result<(), String> {
     db.delete_faction_standing(&id, user)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_quests(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    status: Option<String>,
+) -> Result<Vec<Quest>, String> {
+    db.list_story_quests(&story_id, status.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_quests_as_of(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    chapter_id: String,
+) -> Result<Vec<Quest>, String> {
+    db.list_story_quests_as_of(&story_id, &chapter_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn add_quest(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    title: String,
+    giver_character_id: Option<String>,
+    faction_node_id: Option<String>,
+    accepted_chapter_id: String,
+    completed_chapter_id: Option<String>,
+    status: String,
+    description: Option<String>,
+    notes: Option<String>,
+    user: String,
+) -> Result<Quest, String> {
+    db.add_quest(
+        story_id,
+        title,
+        giver_character_id,
+        faction_node_id,
+        accepted_chapter_id,
+        completed_chapter_id,
+        status,
+        description,
+        notes,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn update_quest(
+    db: tauri::State<'_, Db>,
+    id: String,
+    title: String,
+    giver_character_id: Option<String>,
+    faction_node_id: Option<String>,
+    accepted_chapter_id: String,
+    completed_chapter_id: Option<String>,
+    status: String,
+    description: Option<String>,
+    notes: Option<String>,
+    user: String,
+) -> Result<Quest, String> {
+    db.update_quest(
+        id,
+        title,
+        giver_character_id,
+        faction_node_id,
+        accepted_chapter_id,
+        completed_chapter_id,
+        status,
+        description,
+        notes,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_quest(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_quest(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_quest_reward(
+    db: tauri::State<'_, Db>,
+    quest_id: String,
+    reward_type: String,
+    target_id: Option<String>,
+    amount_or_details: Option<String>,
+    user: String,
+) -> Result<QuestReward, String> {
+    db.add_quest_reward(quest_id, reward_type, target_id, amount_or_details, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_quest_reward(
+    db: tauri::State<'_, Db>,
+    id: String,
+    reward_type: String,
+    target_id: Option<String>,
+    amount_or_details: Option<String>,
+    user: String,
+) -> Result<QuestReward, String> {
+    db.update_quest_reward(id, reward_type, target_id, amount_or_details, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_quest_reward(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_quest_reward(&id, user).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1189,6 +1306,14 @@ pub fn run() {
             get_story_faction_standings,
             add_faction_standing,
             update_faction_standing,
+            get_story_quests,
+            get_story_quests_as_of,
+            add_quest,
+            update_quest,
+            delete_quest,
+            add_quest_reward,
+            update_quest_reward,
+            delete_quest_reward,
             delete_faction_standing,
             get_character_progress,
             get_story_character_progress,

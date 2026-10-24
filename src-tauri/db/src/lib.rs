@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 20;
+const SCHEMA_VERSION: i32 = 21;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -2151,6 +2151,676 @@ impl Db {
                 action: "delete",
                 field_changed: None,
                 old_value: Some(standing),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    // ===== QUESTS =====
+    //
+    // A quest is a story-level record with two chapters: the one it was accepted
+    // in and the one it ended in, if it has. Its rewards are child rows, so a
+    // bundle is read and written with the quest it belongs to.
+
+    /// Every quest in a story, optionally narrowed to one status. Rewards come
+    /// with each quest, so the Quesal tab and chapter badges need one read.
+    pub fn list_story_quests(&self, story_id: &str, status: Option<&str>) -> DbResult<Vec<Quest>> {
+        let guard = self.conn()?;
+        let status = clean_optional(status.map(str::to_string));
+
+        let mut quests = {
+            let mut stmt = guard.prepare(
+                "SELECT id, story_id, title, giver_character_id, faction_node_id,
+                        accepted_chapter_id, completed_chapter_id, status, description,
+                        notes, created_by, created_at, updated_at
+                 FROM quests
+                 WHERE story_id = ?1 AND (?2 IS NULL OR lower(status) = lower(?2))
+                 ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map(params![story_id, &status], quest_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        attach_quest_rewards(&guard, story_id, &mut quests)?;
+
+        Ok(quests)
+    }
+
+    /// The quests that were open at a chapter: accepted there or earlier, and not
+    /// yet ended. A chapter with no place in the reading order has no answer.
+    pub fn list_story_quests_as_of(
+        &self,
+        story_id: &str,
+        chapter_id: &str,
+    ) -> DbResult<Vec<Quest>> {
+        let guard = self.conn()?;
+        let target: Option<i64> = guard
+            .query_row(
+                "SELECT chapter_seq FROM nodes
+                  WHERE id = ?1 AND story_id = ?2 AND deleted_at IS NULL",
+                params![chapter_id, story_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let Some(target) = target else {
+            return Ok(Vec::new());
+        };
+
+        let mut quests = {
+            let mut stmt = guard.prepare(
+                "SELECT q.id, q.story_id, q.title, q.giver_character_id, q.faction_node_id,
+                        q.accepted_chapter_id, q.completed_chapter_id, q.status,
+                        q.description, q.notes, q.created_by, q.created_at, q.updated_at
+                 FROM quests q
+                 JOIN nodes a ON a.id = q.accepted_chapter_id
+                 LEFT JOIN nodes c ON c.id = q.completed_chapter_id
+                 WHERE q.story_id = ?1
+                   AND a.deleted_at IS NULL AND a.chapter_seq IS NOT NULL
+                   AND a.chapter_seq <= ?2
+                   AND (q.completed_chapter_id IS NULL
+                        OR (c.deleted_at IS NULL AND c.chapter_seq > ?2))
+                 ORDER BY a.chapter_seq, q.created_at, q.id",
+            )?;
+            let rows = stmt.query_map(params![story_id, target], quest_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        attach_quest_rewards(&guard, story_id, &mut quests)?;
+
+        Ok(quests)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_quest(
+        &self,
+        story_id: String,
+        title: String,
+        giver_character_id: Option<String>,
+        faction_node_id: Option<String>,
+        accepted_chapter_id: String,
+        completed_chapter_id: Option<String>,
+        status: String,
+        description: Option<String>,
+        notes: Option<String>,
+        user: String,
+    ) -> DbResult<Quest> {
+        let title = title.trim().to_string();
+
+        if title.is_empty() {
+            return Err(DbError::Invalid("a quest needs a title".to_string()));
+        }
+
+        let status = clean_quest_status(status)?;
+        let description = clean_optional(description);
+        let notes = clean_optional(notes);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        ensure_live_story(&tx, &story_id)?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            Some(&accepted_chapter_id),
+            "chapter",
+            "chapter",
+        )?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            completed_chapter_id.as_deref(),
+            "chapter",
+            "chapter",
+        )?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            faction_node_id.as_deref(),
+            "faction",
+            "faction card",
+        )?;
+
+        if let Some(giver) = giver_character_id.as_deref() {
+            let giver_live: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM characters
+                      WHERE id = ?1 AND story_id = ?2 AND deleted_at IS NULL",
+                    params![giver, &story_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if giver_live.is_none() {
+                return Err(DbError::Invalid(
+                    "a quest giver must be live cast of this story".to_string(),
+                ));
+            }
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO quests
+             (id, story_id, title, giver_character_id, faction_node_id,
+              accepted_chapter_id, completed_chapter_id, status, description, notes,
+              created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                &id,
+                &story_id,
+                &title,
+                &giver_character_id,
+                &faction_node_id,
+                &accepted_chapter_id,
+                &completed_chapter_id,
+                &status,
+                &description,
+                &notes,
+                &user,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "quest",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("title"),
+                old_value: None,
+                new_value: Some(title.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(Quest {
+            id,
+            story_id,
+            title,
+            giver_character_id,
+            faction_node_id,
+            accepted_chapter_id: Some(accepted_chapter_id),
+            completed_chapter_id,
+            status,
+            description,
+            notes,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            rewards: Vec::new(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_quest(
+        &self,
+        id: String,
+        title: String,
+        giver_character_id: Option<String>,
+        faction_node_id: Option<String>,
+        accepted_chapter_id: String,
+        completed_chapter_id: Option<String>,
+        status: String,
+        description: Option<String>,
+        notes: Option<String>,
+        user: String,
+    ) -> DbResult<Quest> {
+        let title = title.trim().to_string();
+
+        if title.is_empty() {
+            return Err(DbError::Invalid("a quest needs a title".to_string()));
+        }
+
+        let status = clean_quest_status(status)?;
+        let description = clean_optional(description);
+        let notes = clean_optional(notes);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, title, giver_character_id, faction_node_id,
+                        accepted_chapter_id, completed_chapter_id, status, description, notes,
+                        created_by, created_at
+                 FROM quests WHERE id = ?1",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, String>(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("quest"))?;
+
+        let (
+            story_id,
+            old_title,
+            old_giver,
+            old_faction,
+            old_accepted,
+            old_completed,
+            old_status,
+            old_description,
+            old_notes,
+            created_by,
+            created_at,
+        ) = existing;
+
+        // Links sent back unchanged are not checked again: a chapter or card may
+        // have been trashed since, and that should not stop an unrelated edit.
+        if Some(accepted_chapter_id.as_str()) != old_accepted.as_deref() {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                Some(&accepted_chapter_id),
+                "chapter",
+                "chapter",
+            )?;
+        }
+        if completed_chapter_id != old_completed {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                completed_chapter_id.as_deref(),
+                "chapter",
+                "chapter",
+            )?;
+        }
+        if faction_node_id != old_faction {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                faction_node_id.as_deref(),
+                "faction",
+                "faction card",
+            )?;
+        }
+        if giver_character_id != old_giver {
+            if let Some(giver) = giver_character_id.as_deref() {
+                let giver_live: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM characters
+                          WHERE id = ?1 AND story_id = ?2 AND deleted_at IS NULL",
+                        params![giver, &story_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+
+                if giver_live.is_none() {
+                    return Err(DbError::Invalid(
+                        "a quest giver must be live cast of this story".to_string(),
+                    ));
+                }
+            }
+        }
+
+        let old_giver_label = character_reference_label(&tx, old_giver.as_deref())?;
+        let new_giver_label = character_reference_label(&tx, giver_character_id.as_deref())?;
+        let old_faction_label = reference_label(&tx, old_faction.as_deref())?;
+        let new_faction_label = reference_label(&tx, faction_node_id.as_deref())?;
+        let old_accepted_label = reference_label(&tx, old_accepted.as_deref())?;
+        let new_accepted_label = reference_label(&tx, Some(&accepted_chapter_id))?;
+        let old_completed_label = reference_label(&tx, old_completed.as_deref())?;
+        let new_completed_label = reference_label(&tx, completed_chapter_id.as_deref())?;
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if old_title != title {
+            changes.push(("title", Some(old_title), Some(title.clone())));
+        }
+        if old_status != status {
+            changes.push(("status", Some(old_status), Some(status.clone())));
+        }
+        if old_giver != giver_character_id {
+            changes.push(("giver", old_giver_label, new_giver_label));
+        }
+        if old_faction != faction_node_id {
+            changes.push(("faction", old_faction_label, new_faction_label));
+        }
+        if old_accepted.as_deref() != Some(accepted_chapter_id.as_str()) {
+            changes.push(("accepted", old_accepted_label, new_accepted_label));
+        }
+        if old_completed != completed_chapter_id {
+            changes.push(("completed", old_completed_label, new_completed_label));
+        }
+        if old_description != description {
+            changes.push(("description", old_description, description.clone()));
+        }
+        if old_notes != notes {
+            changes.push(("notes", old_notes, notes.clone()));
+        }
+
+        tx.execute(
+            "UPDATE quests
+                SET title = ?1, giver_character_id = ?2, faction_node_id = ?3,
+                    accepted_chapter_id = ?4, completed_chapter_id = ?5, status = ?6,
+                    description = ?7, notes = ?8, updated_at = ?9
+              WHERE id = ?10",
+            params![
+                &title,
+                &giver_character_id,
+                &faction_node_id,
+                &accepted_chapter_id,
+                &completed_chapter_id,
+                &status,
+                &description,
+                &notes,
+                &timestamp,
+                &id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "quest",
+                    entity_id: &id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        let rewards = {
+            let mut stmt = tx.prepare(
+                "SELECT id, quest_id, reward_type, target_id, amount_or_details,
+                        created_at, updated_at
+                 FROM quest_rewards WHERE quest_id = ?1
+                 ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map(params![&id], quest_reward_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        tx.commit()?;
+
+        Ok(Quest {
+            id,
+            story_id,
+            title,
+            giver_character_id,
+            faction_node_id,
+            accepted_chapter_id: Some(accepted_chapter_id),
+            completed_chapter_id,
+            status,
+            description,
+            notes,
+            created_by,
+            created_at,
+            updated_at: timestamp,
+            rewards,
+        })
+    }
+
+    pub fn delete_quest(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, title FROM quests WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, title)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM quests WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "quest",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(title),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn add_quest_reward(
+        &self,
+        quest_id: String,
+        reward_type: String,
+        target_id: Option<String>,
+        amount_or_details: Option<String>,
+        user: String,
+    ) -> DbResult<QuestReward> {
+        let reward_type = clean_reward_type(reward_type)?;
+        let details = clean_optional(amount_or_details);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id: String = tx
+            .query_row(
+                "SELECT story_id FROM quests WHERE id = ?1",
+                params![&quest_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("quest"))?;
+
+        validate_reward_target(&tx, &story_id, &reward_type, target_id.as_deref())?;
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO quest_rewards
+             (id, quest_id, reward_type, target_id, amount_or_details, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                &id,
+                &quest_id,
+                &reward_type,
+                &target_id,
+                &details,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "quest_reward",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("type"),
+                old_value: None,
+                new_value: Some(reward_type.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(QuestReward {
+            id,
+            quest_id,
+            reward_type,
+            target_id,
+            amount_or_details: details,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_quest_reward(
+        &self,
+        id: String,
+        reward_type: String,
+        target_id: Option<String>,
+        amount_or_details: Option<String>,
+        user: String,
+    ) -> DbResult<QuestReward> {
+        let reward_type = clean_reward_type(reward_type)?;
+        let details = clean_optional(amount_or_details);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
+                        r.created_at, q.story_id
+                 FROM quest_rewards r
+                 JOIN quests q ON q.id = r.quest_id
+                 WHERE r.id = ?1",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("quest reward"))?;
+
+        let (quest_id, old_type, old_target, old_details, created_at, story_id) = existing;
+
+        if reward_type != old_type || target_id != old_target {
+            validate_reward_target(&tx, &story_id, &reward_type, target_id.as_deref())?;
+        }
+
+        let old_target_label = if old_type == "faction_standing" {
+            reference_label(&tx, old_target.as_deref())?
+        } else {
+            character_reference_label(&tx, old_target.as_deref())?
+        };
+        let new_target_label = if reward_type == "faction_standing" {
+            reference_label(&tx, target_id.as_deref())?
+        } else {
+            character_reference_label(&tx, target_id.as_deref())?
+        };
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if old_type != reward_type {
+            changes.push(("type", Some(old_type), Some(reward_type.clone())));
+        }
+        if old_target != target_id {
+            changes.push(("target", old_target_label, new_target_label));
+        }
+        if old_details != details {
+            changes.push(("details", old_details, details.clone()));
+        }
+
+        tx.execute(
+            "UPDATE quest_rewards
+                SET reward_type = ?1, target_id = ?2, amount_or_details = ?3, updated_at = ?4
+              WHERE id = ?5",
+            params![&reward_type, &target_id, &details, &timestamp, &id],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "quest_reward",
+                    entity_id: &id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(QuestReward {
+            id,
+            quest_id,
+            reward_type,
+            target_id,
+            amount_or_details: details,
+            created_at,
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn delete_quest_reward(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT r.reward_type, q.story_id
+                 FROM quest_rewards r
+                 JOIN quests q ON q.id = r.quest_id
+                 WHERE r.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((reward_type, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM quest_rewards WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "quest_reward",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(reward_type),
                 new_value: None,
                 changed_by: &user,
             },
@@ -5592,6 +6262,10 @@ impl Db {
         // is cleared here, which keeps every export importable.
         let live_node_ids: std::collections::HashSet<&str> =
             nodes.iter().map(|node| node.id.as_str()).collect();
+        let live_character_ids: std::collections::HashSet<&str> = characters
+            .iter()
+            .map(|character| character.id.as_str())
+            .collect();
 
         for skill in &mut character_skills {
             if skill
@@ -5730,6 +6404,93 @@ impl Db {
                 .is_some_and(|id| live_node_ids.contains(id))
         });
 
+        // A quest is placed by the chapter it was accepted in, so a quest whose
+        // acceptance chapter is in the trash is left out of the file. The rest
+        // of its links are cleared the way a skill's are.
+        let mut quests = {
+            let mut stmt = guard.prepare(
+                "SELECT q.id, q.story_id, q.title, q.giver_character_id, q.faction_node_id,
+                        q.accepted_chapter_id, q.completed_chapter_id, q.status, q.description,
+                        q.notes, q.created_by, q.created_at, q.updated_at
+                 FROM quests q
+                 JOIN nodes a ON a.id = q.accepted_chapter_id
+                 WHERE q.story_id = ?1 AND a.deleted_at IS NULL
+                 ORDER BY q.created_at, q.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], quest_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let mut quest_rewards = Vec::new();
+
+        {
+            let mut stmt = guard.prepare(
+                "SELECT r.id, r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
+                        r.created_at, r.updated_at
+                 FROM quest_rewards r
+                 JOIN quests q ON q.id = r.quest_id
+                 JOIN nodes a ON a.id = q.accepted_chapter_id
+                 WHERE q.story_id = ?1 AND a.deleted_at IS NULL
+                 ORDER BY r.created_at, r.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], quest_reward_row)?;
+            quest_rewards.extend(rows.collect::<SqliteResult<Vec<_>>>()?);
+        }
+
+        for quest in &mut quests {
+            if quest
+                .giver_character_id
+                .as_deref()
+                .is_some_and(|id| !live_character_ids.contains(id))
+            {
+                quest.giver_character_id = None;
+            }
+            if quest
+                .faction_node_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                quest.faction_node_id = None;
+            }
+            if quest
+                .completed_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                quest.completed_chapter_id = None;
+            }
+            if quest
+                .accepted_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                quest.accepted_chapter_id = None;
+            }
+        }
+
+        quest_rewards.retain(|reward| quests.iter().any(|quest| quest.id == reward.quest_id));
+
+        for reward in &mut quest_rewards {
+            let target_alive = match reward.target_id.as_deref() {
+                None => true,
+                Some(id) if reward.reward_type == "faction_standing" => live_node_ids.contains(id),
+                Some(id) => live_character_ids.contains(id),
+            };
+
+            if !target_alive {
+                reward.target_id = None;
+            }
+        }
+
+        for quest in &mut quests {
+            let own: Vec<QuestReward> = quest_rewards
+                .iter()
+                .filter(|reward| reward.quest_id == quest.id)
+                .cloned()
+                .collect();
+            quest.rewards = own;
+        }
+
         let edges = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
@@ -5767,6 +6528,7 @@ impl Db {
             character_currency,
             character_relations,
             faction_standings,
+            quests,
             nodes,
             edges,
             audit_trail,
@@ -7441,6 +8203,25 @@ impl Db {
             )?;
         }
 
+        // A payout aimed at this character keeps its amount and kind but loses
+        // the person it was meant for, the way a faction link does when its card
+        // is purged.
+        let rewarded = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM quest_rewards
+                  WHERE target_id = ?1 AND reward_type != 'faction_standing'",
+            )?;
+            let rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<Vec<String>>>()?
+        };
+
+        for reward_id in rewarded {
+            tx.execute(
+                "UPDATE quest_rewards SET target_id = NULL WHERE id = ?1",
+                params![&reward_id],
+            )?;
+        }
+
         tx.execute("DELETE FROM characters WHERE id = ?1", params![id])?;
 
         log_audit(
@@ -7481,6 +8262,25 @@ impl Db {
                 "only a node in the trash can be deleted permanently".to_string(),
             ));
         };
+
+        // A standing paid through this card loses the card but keeps its wording,
+        // the way a faction link does. Quest and chapter links are foreign keys,
+        // so the database clears or cascades them with the node.
+        let paid_through_card = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM quest_rewards
+                  WHERE target_id = ?1 AND reward_type = 'faction_standing'",
+            )?;
+            let rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<Vec<String>>>()?
+        };
+
+        for reward_id in paid_through_card {
+            tx.execute(
+                "UPDATE quest_rewards SET target_id = NULL WHERE id = ?1",
+                params![&reward_id],
+            )?;
+        }
 
         // The chapter is gone, so its notes go with it rather than lingering in
         // the trash with nothing left to attach to.
@@ -7924,6 +8724,17 @@ impl Db {
             .iter()
             .map(|standing| (standing.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let quest_ids: HashMap<String, String> = export
+            .quests
+            .iter()
+            .map(|quest| (quest.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let reward_ids: HashMap<String, String> = export
+            .quests
+            .iter()
+            .flat_map(|quest| quest.rewards.iter())
+            .map(|reward| (reward.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let nodes: HashMap<String, String> = export
             .nodes
             .iter()
@@ -8230,6 +9041,117 @@ impl Db {
             }
         }
 
+        // A quest's two chapters, its giver, its faction card and its rewards all
+        // have to be present in the same file, or the copy would point at rows the
+        // source story owns.
+        for quest in &export.quests {
+            if quest.title.trim().is_empty() {
+                return Err(DbError::Invalid(
+                    "a quest in the file has no title".to_string(),
+                ));
+            }
+
+            if quest.status.trim().is_empty() {
+                return Err(DbError::Invalid(format!(
+                    "the quest '{}' has no status",
+                    quest.title
+                )));
+            }
+
+            let accepted = quest.accepted_chapter_id.as_ref().ok_or_else(|| {
+                DbError::Invalid(format!(
+                    "the quest '{}' has no chapter it was accepted in",
+                    quest.title
+                ))
+            })?;
+
+            let chapter_type = |id: &String| {
+                export
+                    .nodes
+                    .iter()
+                    .find(|node| &node.id == id)
+                    .map(|node| node.node_type.as_str())
+            };
+
+            if chapter_type(accepted) != Some("chapter")
+                || quest
+                    .completed_chapter_id
+                    .as_ref()
+                    .is_some_and(|id| chapter_type(id) != Some("chapter"))
+            {
+                return Err(DbError::Invalid(format!(
+                    "the quest '{}' points at a chapter the file does not contain",
+                    quest.title
+                )));
+            }
+
+            if quest
+                .giver_character_id
+                .as_ref()
+                .is_some_and(|id| !characters.contains_key(id))
+            {
+                return Err(DbError::Invalid(format!(
+                    "the quest '{}' is given by a character the file does not contain",
+                    quest.title
+                )));
+            }
+
+            if let Some(faction) = quest.faction_node_id.as_ref() {
+                match export.nodes.iter().find(|node| &node.id == faction) {
+                    Some(node) if node.node_type == "faction" => {}
+                    Some(_) => {
+                        return Err(DbError::Invalid(format!(
+                            "the quest '{}' is issued by a card that is not a faction",
+                            quest.title
+                        )))
+                    }
+                    None => {
+                        return Err(DbError::Invalid(format!(
+                            "the quest '{}' is issued by a card the file does not contain",
+                            quest.title
+                        )))
+                    }
+                }
+            }
+
+            for reward in &quest.rewards {
+                if clean_reward_type(reward.reward_type.clone()).is_err() {
+                    return Err(DbError::Invalid(format!(
+                        "the quest '{}' has a reward that is not xp, item, stat or faction_standing",
+                        quest.title
+                    )));
+                }
+
+                match reward.target_id.as_ref() {
+                    None => {}
+                    Some(target) if reward.reward_type == "faction_standing" => {
+                        match export.nodes.iter().find(|node| &node.id == target) {
+                            Some(node) if node.node_type == "faction" => {}
+                            Some(_) => {
+                                return Err(DbError::Invalid(format!(
+                                    "the quest '{}' pays a standing on a card that is not a faction",
+                                    quest.title
+                                )))
+                            }
+                            None => {
+                                return Err(DbError::Invalid(format!(
+                                    "the quest '{}' pays a standing on a card the file does not contain",
+                                    quest.title
+                                )))
+                            }
+                        }
+                    }
+                    Some(target) if !characters.contains_key(target) => {
+                        return Err(DbError::Invalid(format!(
+                            "the quest '{}' rewards a character the file does not contain",
+                            quest.title
+                        )))
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
         for currency in &export.character_currency {
             if !characters.contains_key(&currency.character_id) {
                 return Err(DbError::Invalid(format!(
@@ -8469,6 +9391,72 @@ impl Db {
                     &standing.updated_at
                 ],
             )?;
+        }
+
+        // Quests come after the cast and chapters they name, and their rewards
+        // after the quests, because each link is a foreign key into the copy.
+        for quest in &export.quests {
+            let Some(accepted) = quest
+                .accepted_chapter_id
+                .as_ref()
+                .and_then(|id| nodes.get(id))
+            else {
+                // Validation already refused a quest with no acceptance chapter.
+                continue;
+            };
+
+            tx.execute(
+                "INSERT INTO quests
+                 (id, story_id, title, giver_character_id, faction_node_id,
+                  accepted_chapter_id, completed_chapter_id, status, description, notes,
+                  created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    &quest_ids[&quest.id],
+                    &story_id,
+                    quest.title.trim(),
+                    quest
+                        .giver_character_id
+                        .as_ref()
+                        .and_then(|id| characters.get(id)),
+                    quest.faction_node_id.as_ref().and_then(|id| nodes.get(id)),
+                    accepted,
+                    quest
+                        .completed_chapter_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    quest.status.trim(),
+                    &quest.description,
+                    &quest.notes,
+                    &quest.created_by,
+                    &quest.created_at,
+                    &quest.updated_at
+                ],
+            )?;
+
+            for reward in &quest.rewards {
+                tx.execute(
+                    "INSERT INTO quest_rewards
+                     (id, quest_id, reward_type, target_id, amount_or_details,
+                      created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        &reward_ids[&reward.id],
+                        &quest_ids[&quest.id],
+                        reward.reward_type.trim().to_lowercase(),
+                        reward.target_id.as_ref().and_then(|id| {
+                            if reward.reward_type == "faction_standing" {
+                                nodes.get(id)
+                            } else {
+                                characters.get(id)
+                            }
+                        }),
+                        &reward.amount_or_details,
+                        &reward.created_at,
+                        &reward.updated_at
+                    ],
+                )?;
+            }
         }
 
         // Skills come after the nodes they can point at, because the chapter and
@@ -8828,6 +9816,51 @@ pub struct FactionStanding {
     #[serde(default)]
     pub until_chapter_id: Option<String>,
     pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One quest or contract. It is accepted in a chapter and optionally ended in a
+/// later one; the status is free text so the author's own word survives, with
+/// `active`, `completed`, `failed` and `abandoned` as the offered set. Rewards are
+/// child rows, loaded with the quest so a list needs one read.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct Quest {
+    pub id: String,
+    pub story_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub giver_character_id: Option<String>,
+    #[serde(default)]
+    pub faction_node_id: Option<String>,
+    pub accepted_chapter_id: Option<String>,
+    #[serde(default)]
+    pub completed_chapter_id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub rewards: Vec<QuestReward>,
+}
+
+/// One payout attached to a quest. `reward_type` is `xp`, `item`, `stat` or
+/// `faction_standing`; `target_id` is a character for the first three and a
+/// faction card for the last; `amount_or_details` holds a number or a phrase,
+/// whichever the kind needs, because a payout is not always countable.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct QuestReward {
+    pub id: String,
+    pub quest_id: String,
+    pub reward_type: String,
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub amount_or_details: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -9321,6 +10354,10 @@ pub struct StoryExport {
     pub character_relations: Vec<CharacterRelation>,
     #[serde(default)]
     pub faction_standings: Vec<FactionStanding>,
+    /// Absent from exports written before schema v21, so they default to empty.
+    /// A quest carries its own reward bundle, so there is no separate list.
+    #[serde(default)]
+    pub quests: Vec<Quest>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub audit_trail: Vec<AuditEntry>,
@@ -10033,6 +11070,76 @@ fn faction_standing_row(row: &rusqlite::Row<'_>) -> SqliteResult<FactionStanding
     })
 }
 
+/// Every quest read selects its columns in this order; rewards are loaded
+/// separately and attached.
+fn quest_row(row: &rusqlite::Row<'_>) -> SqliteResult<Quest> {
+    Ok(Quest {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        title: row.get(2)?,
+        giver_character_id: row.get(3)?,
+        faction_node_id: row.get(4)?,
+        accepted_chapter_id: row.get(5)?,
+        completed_chapter_id: row.get(6)?,
+        status: row.get(7)?,
+        description: row.get(8)?,
+        notes: row.get(9)?,
+        created_by: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        rewards: Vec::new(),
+    })
+}
+
+/// Every reward read selects its columns in this order.
+fn quest_reward_row(row: &rusqlite::Row<'_>) -> SqliteResult<QuestReward> {
+    Ok(QuestReward {
+        id: row.get(0)?,
+        quest_id: row.get(1)?,
+        reward_type: row.get(2)?,
+        target_id: row.get(3)?,
+        amount_or_details: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+/// Loads each quest's reward bundle in one query and hands it to the quest,
+/// rather than one query per quest.
+fn attach_quest_rewards(conn: &Connection, story_id: &str, quests: &mut [Quest]) -> DbResult<()> {
+    if quests.is_empty() {
+        return Ok(());
+    }
+
+    let mut by_quest: HashMap<String, Vec<QuestReward>> = HashMap::new();
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
+                    r.created_at, r.updated_at
+             FROM quest_rewards r
+             JOIN quests q ON q.id = r.quest_id
+             WHERE q.story_id = ?1
+             ORDER BY r.created_at, r.id",
+        )?;
+        let rows = stmt.query_map(params![story_id], quest_reward_row)?;
+
+        for row in rows {
+            let reward = row?;
+            by_quest
+                .entry(reward.quest_id.clone())
+                .or_default()
+                .push(reward);
+        }
+    }
+
+    for quest in quests {
+        quest.rewards = by_quest.remove(&quest.id).unwrap_or_default();
+    }
+
+    Ok(())
+}
+
 /// Every level milestone read selects its columns in this order. Stat changes
 /// are loaded separately and attached by the caller.
 fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMilestone> {
@@ -10211,6 +11318,101 @@ fn ensure_live_cast_in_story(
     Err(DbError::Invalid(
         "both sides of a relation must be live cast of the same story".to_string(),
     ))
+}
+
+/// A quest's status is the author's word, but it cannot be empty.
+fn clean_quest_status(status: String) -> DbResult<String> {
+    let status = status.trim().to_string();
+
+    if status.is_empty() {
+        return Err(DbError::Invalid("a quest needs a status".to_string()));
+    }
+
+    Ok(status)
+}
+
+/// The four kinds a payout can be. Kept as a small set because each one is
+/// applied differently; the details beside it stay free text.
+fn clean_reward_type(reward_type: String) -> DbResult<String> {
+    let reward_type = reward_type.trim().to_lowercase();
+
+    match reward_type.as_str() {
+        "xp" | "item" | "stat" | "faction_standing" => Ok(reward_type),
+        _ => Err(DbError::Invalid(
+            "a reward is xp, item, stat or faction_standing".to_string(),
+        )),
+    }
+}
+
+/// A reward's target depends on what it pays: a character for XP, stats and
+/// loot, a faction card for a standing, and either may be left out.
+fn validate_reward_target(
+    conn: &Connection,
+    story_id: &str,
+    reward_type: &str,
+    target_id: Option<&str>,
+) -> DbResult<()> {
+    let Some(target_id) = target_id else {
+        return Ok(());
+    };
+
+    if reward_type == "faction_standing" {
+        validate_node_reference(conn, story_id, Some(target_id), "faction", "faction card")?;
+        return Ok(());
+    }
+
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM characters c
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.id = ?1 AND c.story_id = ?2
+               AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+            params![target_id, story_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if found.is_some() {
+        return Ok(());
+    }
+
+    Err(DbError::Invalid(
+        "a reward target must be live cast of this story".to_string(),
+    ))
+}
+
+fn ensure_live_story(conn: &Connection, story_id: &str) -> DbResult<()> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM stories WHERE id = ?1 AND deleted_at IS NULL",
+            params![story_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if found.is_some() {
+        return Ok(());
+    }
+
+    Err(DbError::NotFound("story"))
+}
+
+/// A cast member's name as the history records it, live or in the trash.
+fn character_reference_label(
+    conn: &Connection,
+    character_id: Option<&str>,
+) -> DbResult<Option<String>> {
+    let Some(character_id) = character_id else {
+        return Ok(None);
+    };
+
+    Ok(conn
+        .query_row(
+            "SELECT name FROM characters WHERE id = ?1",
+            params![character_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
 }
 
 /// The story a live cast member belongs to, refusing one that is gone or in the
@@ -10870,6 +12072,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_020)?;
     }
 
+    if version < 21 {
+        conn.execute_batch(MIGRATION_021)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -11183,6 +12389,60 @@ const MIGRATION_018: &str = "
 
     CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
         ON character_progress (chapter_id);
+";
+
+/// Schema v21: quests and their reward bundles.
+///
+/// A quest belongs to a story, names the chapter it was accepted in and
+/// optionally the one it ended in, and can name a cast member and a faction that
+/// issued it. Rewards are child rows with a category, an optional target (a
+/// character for XP, stats and loot, a faction for standing) and free-text
+/// details, so an XP amount and an item name share one honest column. Links to a
+/// chapter, character or faction are nullable so a purge can clear them rather
+/// than delete the record.
+const MIGRATION_021: &str = "
+    CREATE TABLE IF NOT EXISTS quests (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        giver_character_id TEXT,
+        faction_node_id TEXT,
+        accepted_chapter_id TEXT NOT NULL,
+        completed_chapter_id TEXT,
+        status TEXT NOT NULL,
+        description TEXT,
+        notes TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,
+        FOREIGN KEY(giver_character_id) REFERENCES characters(id) ON DELETE SET NULL,
+        FOREIGN KEY(faction_node_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        -- A quest cannot be placed without the chapter it was accepted in, so
+        -- purging that chapter takes the quest and its rewards with it.
+        FOREIGN KEY(accepted_chapter_id) REFERENCES nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY(completed_chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quests_story
+        ON quests (story_id);
+
+    CREATE INDEX IF NOT EXISTS idx_quests_accepted
+        ON quests (accepted_chapter_id);
+
+    CREATE TABLE IF NOT EXISTS quest_rewards (
+        id TEXT PRIMARY KEY,
+        quest_id TEXT NOT NULL,
+        reward_type TEXT NOT NULL,
+        target_id TEXT,
+        amount_or_details TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(quest_id) REFERENCES quests(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quest_rewards_quest
+        ON quest_rewards (quest_id);
 ";
 
 /// Schema v20: cast-to-cast relations and faction standings.
@@ -18223,6 +19483,90 @@ mod tests {
     }
 
     #[test]
+    fn migrating_a_version_20_database_adds_the_quest_ledger() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        for block in [
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+            MIGRATION_014,
+            MIGRATION_015,
+            MIGRATION_016,
+            MIGRATION_017,
+            MIGRATION_018,
+            MIGRATION_019,
+            MIGRATION_020,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 20).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v21', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let db = Db {
+            conn: Mutex::new(conn),
+            path: None,
+        };
+
+        assert!(db.list_story_quests("s1", None).unwrap().is_empty());
+
+        let quest = db
+            .add_quest(
+                "s1".into(),
+                "The Ledger".into(),
+                Some("c1".into()),
+                None,
+                "n1".into(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            db.list_story_quests("s1", None).unwrap()[0].id,
+            quest.id,
+            "a story written before v21 gains an empty quest ledger"
+        );
+    }
+
+    #[test]
     fn migrating_a_version_17_database_adds_the_xp_ledger() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(BASE_SCHEMA).unwrap();
@@ -19657,5 +21001,472 @@ mod tests {
         assert!(bible.markdown.contains(
             "- **Iron Sword** ×2 · Rare — +1 damage (acquired in \"Chapter One\"; lost in \"Chapter Two\")"
         ));
+    }
+
+    // ===== QUESTS =====
+
+    fn quests_story() -> (Db, Story, Character, Character, Node, Node, Node) {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+        let first = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let faction = db
+            .create_node(
+                story.id.clone(),
+                "faction".into(),
+                "The Ashen Guild".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        (db, story, rook, mira, first, second, faction)
+    }
+
+    #[test]
+    fn a_quest_moves_from_accepted_to_completed_and_every_edit_is_recorded() {
+        let (db, story, rook, _, first, second, faction) = quests_story();
+
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "  The Ledger  ".into(),
+                Some(rook.id.clone()),
+                Some(faction.id.clone()),
+                first.id.clone(),
+                None,
+                "active".into(),
+                Some("  Find the missing page  ".into()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(quest.title, "The Ledger", "the title is trimmed");
+        assert_eq!(quest.description.as_deref(), Some("Find the missing page"));
+        assert!(quest.rewards.is_empty());
+
+        // Filtering is case-insensitive and every quest comes with its bundle.
+        assert_eq!(
+            db.list_story_quests(&story.id, Some("ACTIVE"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.list_story_quests(&story.id, Some("failed"))
+                .unwrap()
+                .len(),
+            0
+        );
+
+        // At the acceptance chapter it is open; at the completion chapter the
+        // chapter has already ended it.
+        assert_eq!(
+            db.list_story_quests_as_of(&story.id, &first.id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let completed = db
+            .update_quest(
+                quest.id.clone(),
+                "The Ledger".into(),
+                None,
+                Some(faction.id.clone()),
+                first.id.clone(),
+                Some(second.id.clone()),
+                "completed".into(),
+                Some("Find the missing page".into()),
+                Some("  Paid out by the guild  ".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.giver_character_id, None);
+        assert_eq!(completed.notes.as_deref(), Some("Paid out by the guild"));
+        assert_eq!(
+            db.list_story_quests_as_of(&story.id, &first.id)
+                .unwrap()
+                .len(),
+            1,
+            "accepted in that same chapter, so still not yet ended there"
+        );
+        assert!(
+            db.list_story_quests_as_of(&story.id, &second.id)
+                .unwrap()
+                .is_empty(),
+            "the chapter it ended in is past it"
+        );
+
+        let audit = db
+            .get_audit_log(Some(&story.id), Some("quest"), Some(&quest.id), 50)
+            .unwrap();
+
+        assert!(audit
+            .iter()
+            .any(|entry| entry.action == "create"
+                && entry.new_value.as_deref() == Some("The Ledger")));
+        assert!(audit.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("status")
+                && entry.new_value.as_deref() == Some("completed")
+        }));
+        assert!(
+            audit.iter().any(|entry| {
+                entry.field_changed.as_deref() == Some("giver") && entry.new_value.is_none()
+            }),
+            "removing the giver is recorded as a change, not a silent clear"
+        );
+
+        db.delete_quest(&quest.id, "Ada".into()).unwrap();
+        assert!(db.list_story_quests(&story.id, None).unwrap().is_empty());
+        assert!(db
+            .get_audit_log(Some(&story.id), Some("quest"), Some(&quest.id), 50)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.action == "delete"));
+    }
+
+    #[test]
+    fn a_quest_refuses_a_chapter_card_of_the_wrong_kind_or_another_story() {
+        let (db, story, rook, _, first, _, faction) = quests_story();
+        let other_story = db
+            .create_story("Elsewhere".into(), None, "Ada".into())
+            .unwrap();
+        let stranger = db
+            .create_character(
+                other_story.id.clone(),
+                "Stranger".into(),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert!(db
+            .add_quest(
+                story.id.clone(),
+                "No title kind".into(),
+                None,
+                None,
+                faction.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+
+        assert!(db
+            .add_quest(
+                story.id.clone(),
+                "Wrong giver".into(),
+                Some(stranger.id.clone()),
+                None,
+                first.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+
+        assert!(db
+            .add_quest(
+                story.id.clone(),
+                "  ".into(),
+                Some(rook.id.clone()),
+                None,
+                first.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+
+        db.add_quest(
+            story.id.clone(),
+            "A real one".into(),
+            Some(rook.id.clone()),
+            None,
+            first.id.clone(),
+            None,
+            "active".into(),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rewards_pay_the_right_kind_of_holder_and_follow_a_purge() {
+        let (db, story, rook, mira, first, second, faction) = quests_story();
+
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "The Ledger".into(),
+                Some(rook.id.clone()),
+                Some(faction.id.clone()),
+                first.id.clone(),
+                Some(second.id.clone()),
+                "completed".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let xp = db
+            .add_quest_reward(
+                quest.id.clone(),
+                " XP ".into(),
+                Some(rook.id.clone()),
+                Some("250".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(xp.reward_type, "xp");
+
+        db.add_quest_reward(
+            quest.id.clone(),
+            "faction_standing".into(),
+            Some(faction.id.clone()),
+            Some("Honoured".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // A standing belongs on a faction card and the rest on a character; a
+        // card or character from elsewhere is refused with words, not a raw
+        // constraint error.
+        assert!(db
+            .add_quest_reward(
+                quest.id.clone(),
+                "faction_standing".into(),
+                Some(rook.id.clone()),
+                None,
+                "Ada".into()
+            )
+            .is_err());
+        assert!(db
+            .add_quest_reward(
+                quest.id.clone(),
+                "xp".into(),
+                Some(faction.id.clone()),
+                None,
+                "Ada".into()
+            )
+            .is_err());
+        assert!(db
+            .add_quest_reward(quest.id.clone(), "gold".into(), None, None, "Ada".into())
+            .is_err());
+
+        let changed = db
+            .update_quest_reward(
+                xp.id.clone(),
+                "item".into(),
+                Some(mira.id.clone()),
+                Some("  Iron Key  ".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(changed.reward_type, "item");
+        assert_eq!(changed.amount_or_details.as_deref(), Some("Iron Key"));
+
+        let audit = db
+            .get_audit_log(Some(&story.id), Some("quest_reward"), Some(&xp.id), 50)
+            .unwrap();
+        assert!(audit
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("type")));
+        assert!(audit
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("target")));
+
+        // Purging the cast member clears the giver and every payout aimed at them,
+        // while the amount and kind stay as the author wrote them.
+        let lost = db
+            .add_quest_reward(
+                quest.id.clone(),
+                "xp".into(),
+                Some(rook.id.clone()),
+                Some("10".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_character(&rook.id, "Ada".into()).unwrap();
+        db.purge_character(&rook.id, "Ada".into()).unwrap();
+
+        let fresh = db.list_story_quests(&story.id, None).unwrap();
+        assert_eq!(fresh[0].giver_character_id, None);
+        assert!(fresh[0]
+            .rewards
+            .iter()
+            .any(|reward| reward.id == lost.id && reward.target_id.is_none()));
+
+        // Purging the faction card clears the issuing card and the standing paid
+        // through it, without deleting either record.
+        db.delete_node(&faction.id, "Ada".into()).unwrap();
+        db.purge_node(&faction.id, "Ada".into()).unwrap();
+
+        let fresh = db.list_story_quests(&story.id, None).unwrap();
+        assert_eq!(fresh[0].faction_node_id, None);
+        assert!(fresh[0]
+            .rewards
+            .iter()
+            .all(|reward| reward.reward_type != "faction_standing" || reward.target_id.is_none()));
+
+        // Purging the chapter a quest was accepted in takes the quest and its
+        // reward bundle with it, because a quest cannot be placed without it.
+        db.delete_node(&first.id, "Ada".into()).unwrap();
+        db.purge_node(&first.id, "Ada".into()).unwrap();
+
+        assert!(db.list_story_quests(&story.id, None).unwrap().is_empty());
+        let remaining: i64 = db
+            .conn()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM quest_rewards", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "the rewards went with their quest");
+    }
+
+    #[test]
+    fn quests_and_their_rewards_survive_export_and_import_with_new_ids() {
+        let (db, story, rook, _, first, second, faction) = quests_story();
+
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "The Ledger".into(),
+                Some(rook.id.clone()),
+                Some(faction.id.clone()),
+                first.id.clone(),
+                Some(second.id.clone()),
+                "completed".into(),
+                Some("Find the missing page".into()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        db.add_quest_reward(
+            quest.id.clone(),
+            "xp".into(),
+            Some(rook.id.clone()),
+            Some("250".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_quest_reward(
+            quest.id.clone(),
+            "faction_standing".into(),
+            Some(faction.id.clone()),
+            Some("Honoured".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let export = db.export_story(&story.id).unwrap();
+        assert_eq!(export.quests.len(), 1);
+        assert_eq!(export.quests[0].rewards.len(), 2);
+
+        // Through actual JSON, not just the in-memory shape, so a quest and its
+        // bundle are proven to serialize and come back whole.
+        let json = serde_json::to_string(&export).unwrap();
+        let export: StoryExport = serde_json::from_str(&json).unwrap();
+        assert_eq!(export.quests[0].rewards.len(), 2);
+
+        // A file written before v21 has no `quests` key at all.
+        let mut older = serde_json::to_value(&export).unwrap();
+        older.as_object_mut().unwrap().remove("quests");
+        let older: StoryExport = serde_json::from_value(older).unwrap();
+        assert!(older.quests.is_empty());
+
+        let copy = db.import_story(export, "Ada".into()).unwrap();
+        let imported = db.list_story_quests(&copy.id, None).unwrap();
+
+        assert_eq!(imported.len(), 1);
+        assert_ne!(imported[0].id, quest.id, "the copy gets its own ids");
+        assert_eq!(imported[0].title, "The Ledger");
+        assert_eq!(imported[0].status, "completed");
+        assert_eq!(imported[0].rewards.len(), 2);
+        assert!(imported[0]
+            .rewards
+            .iter()
+            .all(|reward| reward.quest_id == imported[0].id));
+
+        // Every link points into the copy, not back at the source story.
+        let copy_cast = db.list_characters(&copy.id).unwrap();
+        let copy_nodes = db.list_nodes(&copy.id).unwrap();
+        let giver = imported[0].giver_character_id.as_deref().unwrap();
+        assert!(copy_cast.iter().any(|character| character.id == giver));
+        assert!(copy_nodes
+            .iter()
+            .any(|node| Some(&node.id) == imported[0].accepted_chapter_id.as_ref()));
+        assert!(imported[0].rewards.iter().all(|reward| {
+            reward.target_id.as_ref().is_none_or(|id| {
+                copy_cast.iter().any(|character| &character.id == id)
+                    || copy_nodes.iter().any(|node| &node.id == id)
+            })
+        }));
+    }
+
+    #[test]
+    fn an_imported_quest_must_find_everything_it_points_at() {
+        let (db, story, rook, _, first, _, _) = quests_story();
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "The Ledger".into(),
+                Some(rook.id.clone()),
+                None,
+                first.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let mut export = db.export_story(&story.id).unwrap();
+        export.quests[0].accepted_chapter_id = Some(quest.id.clone());
+
+        let error = db.import_story(export, "Ada".into()).unwrap_err();
+        assert!(format!("{error}").contains("chapter"));
     }
 }

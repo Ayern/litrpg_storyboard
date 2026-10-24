@@ -193,6 +193,99 @@ interface FactionStanding {
   updated_at: string;
 }
 
+// A quest or contract. Its two chapters place it in the reading order, its
+// giver or faction says who issued it, and its rewards are its own children.
+interface Quest {
+  id: string;
+  story_id: string;
+  title: string;
+  giver_character_id: string | null;
+  faction_node_id: string | null;
+  accepted_chapter_id: string | null;
+  completed_chapter_id: string | null;
+  status: string;
+  description: string | null;
+  notes: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  rewards: QuestReward[];
+}
+
+// One payout from a quest. The kind decides what the target is: a character for
+// XP, an item and a stat, a faction card for a standing.
+interface QuestReward {
+  id: string;
+  quest_id: string;
+  reward_type: string;
+  target_id: string | null;
+  amount_or_details: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// The four statuses the form suggests. The database keeps the author's word, so
+// a story can use its own without a migration.
+const questStatuses = ['active', 'completed', 'failed', 'abandoned'] as const;
+
+const questStatusLabels: Record<string, string> = {
+  active: 'Active',
+  completed: 'Completed',
+  failed: 'Failed',
+  abandoned: 'Abandoned',
+};
+
+const questRewardTypes = ['xp', 'item', 'stat', 'faction_standing'] as const;
+
+const questRewardLabels: Record<string, string> = {
+  xp: 'XP',
+  item: 'Item',
+  stat: 'Stat',
+  faction_standing: 'Faction standing',
+};
+
+// One chapter card's quest badge: which quest, and whether it was accepted or
+// ended there, so the card reads both ends of the contract.
+interface QuestBadge {
+  questId: string;
+  title: string;
+  status: string;
+  role: 'accepted' | 'completed';
+}
+
+// One advisory problem in the quest ledger. The chapter links are kept so the
+// Quests tab and the continuity panel can point at the chapters named.
+interface QuestWarning {
+  id: string;
+  questId: string;
+  questTitle: string;
+  kind: string;
+  summary: string;
+  chapterIds: string[];
+}
+
+// The quest form's fields, one draft at a time. A null id means a new quest.
+interface QuestDraft {
+  id: string | null;
+  title: string;
+  giver: string;
+  faction: string;
+  accepted: string;
+  completed: string;
+  status: string;
+  description: string;
+  notes: string;
+}
+
+// The reward form's fields, likewise one draft at a time.
+interface QuestRewardDraft {
+  id: string | null;
+  questId: string;
+  type: string;
+  target: string;
+  details: string;
+}
+
 // One chapter's XP income. This is separate from the total XP snapshot on a
 // milestone: one says what was earned there, the other what the running total was.
 interface CharacterProgress {
@@ -370,6 +463,9 @@ type NodeData = {
   // order by the database. The card shows a level only when one was recorded.
   chapterCast?: ChapterCastBadge[];
   onOpenChapterCast?: (characterId: string) => void;
+  // The quests accepted or ended in this chapter, and where their badges lead.
+  questBadges?: QuestBadge[];
+  onOpenQuest?: (questId: string) => void;
   // Continuity warnings that belong to this chapter, short enough for the card
   // and complete in the tooltip.
   continuityFlags?: ChapterContinuityFlag[];
@@ -472,6 +568,10 @@ const PROGRESSION_CHART_COLORS = [
 
 // How many note cards hang under one chapter before the rest are counted.
 const NOTE_CARDS_SHOWN = 3;
+
+// Same for the quests that touch a chapter: two ends of a contract can be told
+// apart at a glance, and the rest are counted rather than shrinking the card.
+const QUEST_BADGES_SHOWN = 3;
 
 // The search palette lists this many; the rest are still reachable by typing
 // more of the name, and the hint says how many matched.
@@ -611,6 +711,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const itemHolders = data.inventoryHolders ?? [];
   const continuityFlags = data.continuityFlags ?? [];
   const chapterCast = data.chapterCast ?? [];
+  const questBadges = data.questBadges ?? [];
 
   const castSkillText = (member: ChapterCastBadge) =>
     member.skills.length === 0
@@ -673,6 +774,42 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
               )}
             </button>
           ))}
+        </div>
+      )}
+      {kind === 'chapter' && questBadges.length > 0 && (
+        <div
+          className="graph-node-quests"
+          role="group"
+          aria-label="Quests in this chapter"
+        >
+          {questBadges.slice(0, QUEST_BADGES_SHOWN).map(badge => (
+            <button
+              type="button"
+              key={`${badge.questId}-${badge.role}`}
+              className={`graph-node-quest-badge ${badge.role}`}
+              data-quest-badge={badge.questId}
+              title={`${badge.title} — ${badge.status}, ${
+                badge.role === 'accepted' ? 'accepted' : 'ended'
+              } in this chapter\nOpen it in the quest ledger`}
+              aria-label={`${badge.title}, ${badge.status}, ${
+                badge.role === 'accepted' ? 'accepted' : 'ended'
+              } here`}
+              onClick={event => {
+                event.stopPropagation();
+                data.onOpenQuest?.(badge.questId);
+              }}
+            >
+              <span className="graph-node-quest-mark" aria-hidden="true">
+                {badge.role === 'accepted' ? '◈' : '✓'}
+              </span>
+              <span className="graph-node-quest-title">{badge.title}</span>
+            </button>
+          ))}
+          {questBadges.length > QUEST_BADGES_SHOWN && (
+            <span className="graph-node-quest-more">
+              +{questBadges.length - QUEST_BADGES_SHOWN} more
+            </span>
+          )}
         </div>
       )}
       {kind === 'chapter' && continuityFlags.length > 0 && (
@@ -1158,6 +1295,8 @@ const entityLabels: Record<string, string> = {
   character_currency: 'Currency',
   character_relation: 'Relation',
   faction_standing: 'Faction standing',
+  quest: 'Quest',
+  quest_reward: 'Quest reward',
   node: 'Graph node',
   edge: 'Graph connection',
 };
@@ -1184,6 +1323,8 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
   { value: 'character_currency', label: 'Currency' },
   { value: 'character_relation', label: 'Relations' },
   { value: 'faction_standing', label: 'Faction standings' },
+  { value: 'quest', label: 'Quests' },
+  { value: 'quest_reward', label: 'Quest rewards' },
   { value: 'node', label: 'Nodes' },
   { value: 'edge', label: 'Connections' },
 ];
@@ -1235,6 +1376,16 @@ const fieldLabels: Record<string, string> = {
   faction: 'faction card',
   since: 'began in',
   until: 'ended in',
+  title: 'title',
+  status: 'status',
+  giver: 'giver',
+  accepted: 'accepted in',
+  completed: 'ended in',
+  description: 'description',
+  notes: 'notes',
+  type: 'reward type',
+  target: 'reward target',
+  details: 'reward details',
 };
 
 // The chapter list's one-sentence warning. Positions start at 1, so a story
@@ -2212,7 +2363,7 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<EdgeData>([]);
   
   const [selectedTab, setSelectedTab] = useState<
-    'graph' | 'chapters' | 'characters' | 'audit' | 'trash'
+    'graph' | 'chapters' | 'characters' | 'quests' | 'audit' | 'trash'
   >('graph');
   
   const [newStoryTitle, setNewStoryTitle] = useState('');
@@ -2382,6 +2533,20 @@ function App() {
   const [storyFactionStandings, setStoryFactionStandings] = useState<FactionStanding[]>([]);
   // The Characters tab opens on the sheets; the map is a mode, not another tab.
   const [characterView, setCharacterView] = useState<'sheet' | 'relations'>('sheet');
+  // Quests are read with the rest of the story, because chapter cards, the
+  // ledger and the continuity checks all read the same copy.
+  const [storyQuests, setStoryQuests] = useState<Quest[]>([]);
+  const [questFilter, setQuestFilter] = useState('all');
+  const [questError, setQuestError] = useState<string | null>(null);
+  // What the last Apply rewards run did, so a partially applied bundle says so.
+  const [questNotice, setQuestNotice] = useState<string | null>(null);
+  const [questDraft, setQuestDraft] = useState<QuestDraft | null>(null);
+  const [rewardDraft, setRewardDraft] = useState<QuestRewardDraft | null>(null);
+  // The quest a chapter badge just opened, lit briefly so the eye can find it.
+  const [focusedQuestId, setFocusedQuestId] = useState<string | null>(null);
+  const [applyingRewardsQuestId, setApplyingRewardsQuestId] = useState<string | null>(
+    null
+  );
   // One income row per character and chapter, read with the rest of the story so
   // the chart and a sheet share the same ledger.
   const [storyCharacterProgress, setStoryCharacterProgress] = useState<
@@ -2670,6 +2835,7 @@ function App() {
         chapterCast,
         relations,
         standings,
+        quests,
       ] =
         await Promise.all([
           invoke<Character[]>('get_characters', { storyId: story.id }),
@@ -2687,6 +2853,7 @@ function App() {
           invoke<ChapterCastMember[]>('get_story_chapter_cast', { storyId: story.id }),
           invoke<CharacterRelation[]>('get_story_relations', { storyId: story.id }),
           invoke<FactionStanding[]>('get_story_faction_standings', { storyId: story.id }),
+          invoke<Quest[]>('get_story_quests', { storyId: story.id }),
         ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
@@ -2699,6 +2866,14 @@ function App() {
       setStoryChapterCast(chapterCast ?? []);
       setStoryRelations(relations ?? []);
       setStoryFactionStandings(standings ?? []);
+      setStoryQuests(quests ?? []);
+      // A quest form and the quest it was opened for do not carry over.
+      setQuestDraft(null);
+      setRewardDraft(null);
+      setQuestError(null);
+      setQuestNotice(null);
+      setFocusedQuestId(null);
+      setQuestFilter('all');
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -3729,6 +3904,41 @@ function App() {
         : leftSeq - rightSeq;
     });
   }, [nodes]);
+
+  // A quest shows on both chapters it names: where it was taken and where it
+  // ended. The acceptance chapter is required, so every quest has at least one.
+  // Kept here because the cards are drawn from this map as well as the ledger.
+  const questsByChapter = useMemo(() => {
+    const byChapter = new Map<string, QuestBadge[]>();
+
+    for (const quest of storyQuests) {
+      const add = (chapterId: string | null, role: QuestBadge['role']) => {
+        if (!chapterId) return;
+
+        const existing = byChapter.get(chapterId) ?? [];
+
+        if (existing.some(badge => badge.questId === quest.id && badge.role === role)) {
+          return;
+        }
+
+        existing.push({
+          questId: quest.id,
+          title: quest.title,
+          status: quest.status,
+          role,
+        });
+        byChapter.set(chapterId, existing);
+      };
+
+      add(quest.accepted_chapter_id, 'accepted');
+
+      if (quest.completed_chapter_id !== quest.accepted_chapter_id) {
+        add(quest.completed_chapter_id, 'completed');
+      }
+    }
+
+    return byChapter;
+  }, [storyQuests]);
 
   // Duplicated, missing or absent numbers. Reordering avoids all three, so this
   // only has something to say after a deletion or after an older import.
@@ -5008,6 +5218,21 @@ function App() {
 
     go();
   };
+
+  // A chapter card's quest badge opens the ledger on that quest, the way a cast
+  // badge opens a sheet. The row is lit so the eye lands on the right contract.
+  const openQuest = useCallback((questId: string) => {
+    setSelectedTab('quests');
+    setQuestFilter('all');
+    setFocusedQuestId(questId);
+    setQuestError(null);
+
+    setTimeout(() => {
+      document
+        .querySelector(`[data-quest-id="${questId}"]`)
+        ?.scrollIntoView?.({ block: 'nearest' });
+    }, 0);
+  }, []);
 
   const requestTab = (tab: typeof selectedTab) => {
     if (tab === selectedTab) return;
@@ -6969,6 +7194,320 @@ function App() {
     }
   };
 
+  // A quest is kept with its reward bundle, so it is replaced whole rather than
+  // field by field. The order matches the database: acceptance position first.
+  const applyQuest = useCallback((saved: Quest) => {
+    setStoryQuests(previous =>
+      [...previous.filter(quest => quest.id !== saved.id), saved].sort(
+        (a, b) =>
+          (a.accepted_chapter_id ?? '').localeCompare(b.accepted_chapter_id ?? '') ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+      )
+    );
+  }, []);
+
+  const startNewQuest = () => {
+    setQuestError(null);
+    setQuestNotice(null);
+    setRewardDraft(null);
+    setQuestDraft({
+      id: null,
+      title: '',
+      giver: '',
+      faction: '',
+      accepted: '',
+      completed: '',
+      status: 'active',
+      description: '',
+      notes: '',
+    });
+  };
+
+  const startQuestEdit = (quest: Quest) => {
+    setQuestError(null);
+    setQuestNotice(null);
+    setRewardDraft(null);
+    setQuestDraft({
+      id: quest.id,
+      title: quest.title,
+      giver: quest.giver_character_id ?? '',
+      faction: quest.faction_node_id ?? '',
+      accepted: quest.accepted_chapter_id ?? '',
+      completed: quest.completed_chapter_id ?? '',
+      status: quest.status,
+      description: quest.description ?? '',
+      notes: quest.notes ?? '',
+    });
+  };
+
+  const saveQuestDraft = async () => {
+    if (!questDraft || !currentStory) return;
+
+    const title = questDraft.title.trim();
+    const status = questDraft.status.trim();
+
+    if (!title) {
+      setQuestError('A quest needs a title.');
+      return;
+    }
+
+    if (!status) {
+      setQuestError('A quest needs a status.');
+      return;
+    }
+
+    if (!questDraft.accepted) {
+      setQuestError('Choose the chapter the quest is accepted in.');
+      return;
+    }
+
+    setQuestError(null);
+
+    try {
+      const payload = {
+        title,
+        giverCharacterId: questDraft.giver || null,
+        factionNodeId: questDraft.faction || null,
+        acceptedChapterId: questDraft.accepted,
+        completedChapterId: questDraft.completed || null,
+        status,
+        description: questDraft.description.trim() || null,
+        notes: questDraft.notes.trim() || null,
+        user: actor,
+      };
+      const saved: Quest = questDraft.id
+        ? await invoke('update_quest', { id: questDraft.id, ...payload })
+        : await invoke('add_quest', { storyId: currentStory.id, ...payload });
+
+      applyQuest(saved);
+      setQuestDraft(null);
+    } catch (e) {
+      console.error('Failed to save a quest:', e);
+      setQuestError(`Could not save the quest: ${String(e)}`);
+    }
+  };
+
+  const removeQuest = async (quest: Quest) => {
+    setQuestError(null);
+
+    try {
+      await invoke('delete_quest', { id: quest.id, user: actor });
+      setStoryQuests(previous => previous.filter(other => other.id !== quest.id));
+
+      if (questDraft?.id === quest.id) setQuestDraft(null);
+      if (rewardDraft?.questId === quest.id) setRewardDraft(null);
+    } catch (e) {
+      console.error('Failed to delete a quest:', e);
+      setQuestError(`Could not delete the quest: ${String(e)}`);
+    }
+  };
+
+  const startNewReward = (quest: Quest) => {
+    setQuestError(null);
+    setRewardDraft({
+      id: null,
+      questId: quest.id,
+      type: 'xp',
+      target: '',
+      details: '',
+    });
+  };
+
+  const startRewardEdit = (reward: QuestReward) => {
+    setQuestError(null);
+    setRewardDraft({
+      id: reward.id,
+      questId: reward.quest_id,
+      type: reward.reward_type,
+      target: reward.target_id ?? '',
+      details: reward.amount_or_details ?? '',
+    });
+  };
+
+  const saveRewardDraft = async () => {
+    if (!rewardDraft) return;
+
+    setQuestError(null);
+
+    try {
+      const payload = {
+        rewardType: rewardDraft.type,
+        targetId: rewardDraft.target || null,
+        amountOrDetails: rewardDraft.details.trim() || null,
+        user: actor,
+      };
+      const saved: QuestReward = rewardDraft.id
+        ? await invoke('update_quest_reward', { id: rewardDraft.id, ...payload })
+        : await invoke('add_quest_reward', {
+            questId: rewardDraft.questId,
+            ...payload,
+          });
+
+      setStoryQuests(previous =>
+        previous.map(quest =>
+          quest.id === saved.quest_id
+            ? {
+                ...quest,
+                rewards: [...quest.rewards.filter(other => other.id !== saved.id), saved],
+              }
+            : quest
+        )
+      );
+      setRewardDraft(null);
+    } catch (e) {
+      console.error('Failed to save a quest reward:', e);
+      setQuestError(`Could not save the reward: ${String(e)}`);
+    }
+  };
+
+  const removeReward = async (reward: QuestReward) => {
+    setQuestError(null);
+
+    try {
+      await invoke('delete_quest_reward', { id: reward.id, user: actor });
+      setStoryQuests(previous =>
+        previous.map(quest =>
+          quest.id === reward.quest_id
+            ? {
+                ...quest,
+                rewards: quest.rewards.filter(other => other.id !== reward.id),
+              }
+            : quest
+        )
+      );
+      if (rewardDraft?.id === reward.id) setRewardDraft(null);
+    } catch (e) {
+      console.error('Failed to delete a quest reward:', e);
+      setQuestError(`Could not delete the reward: ${String(e)}`);
+    }
+  };
+
+  // Prefills the chapter ledger from a finished quest: XP into each character's
+  // income row, loot into their inventory. A stat change and a faction standing
+  // depend on the author's own wording, so those are left to the sheet; so is
+  // anything already recorded in that chapter, which is counted as skipped.
+  const applyQuestRewards = async (quest: Quest) => {
+    if (!currentStory) return;
+
+    const chapterId = quest.completed_chapter_id;
+
+    if (!chapterId) {
+      setQuestError('Record the chapter this quest ended in before applying rewards.');
+      return;
+    }
+
+    if (quest.rewards.length === 0) {
+      setQuestError('This quest has no rewards to apply.');
+      return;
+    }
+
+    setQuestError(null);
+    setQuestNotice(null);
+    setApplyingRewardsQuestId(quest.id);
+
+    let xpRows = 0;
+    let itemRows = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    try {
+      for (const reward of quest.rewards) {
+        const details = (reward.amount_or_details ?? '').trim();
+
+        if (!reward.target_id) {
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          if (reward.reward_type === 'xp') {
+            if (!/^\d+$/.test(details) || Number(details) <= 0) {
+              skipped += 1;
+              continue;
+            }
+
+            if (
+              storyCharacterProgress.some(
+                row =>
+                  row.character_id === reward.target_id && row.chapter_id === chapterId
+              )
+            ) {
+              skipped += 1;
+              continue;
+            }
+
+            await invoke('add_character_progress', {
+              characterId: reward.target_id,
+              chapterId,
+              xpEarned: Number(details),
+              user: actor,
+            });
+            xpRows += 1;
+          } else if (reward.reward_type === 'item') {
+            if (!details) {
+              skipped += 1;
+              continue;
+            }
+
+            await invoke('add_inventory_item', {
+              characterId: reward.target_id,
+              name: details,
+              rarity: null,
+              quantity: 1,
+              effect: `Reward from ${quest.title}`,
+              chapterId,
+              lostChapterId: null,
+              nodeId: null,
+              user: actor,
+            });
+            itemRows += 1;
+          } else {
+            // A stat gain and a faction standing are written in the author's
+            // words, so they are applied on the sheet rather than guessed at.
+            skipped += 1;
+          }
+        } catch (e) {
+          console.error('Failed to apply a quest reward:', e);
+          failed += 1;
+        }
+      }
+
+      if (xpRows > 0) {
+        const rows = await invoke<CharacterProgress[]>('get_story_character_progress', {
+          storyId: currentStory.id,
+        });
+        setStoryCharacterProgress(rows ?? []);
+      }
+
+      if (itemRows > 0) {
+        const rows = await invoke<InventoryItem[]>('get_story_inventory', {
+          storyId: currentStory.id,
+        });
+        setStoryInventory(rows ?? []);
+      }
+
+      const applied = [
+        xpRows > 0 ? `${xpRows} XP ${xpRows === 1 ? 'row' : 'rows'}` : null,
+        itemRows > 0 ? `${itemRows} ${itemRows === 1 ? 'item' : 'items'}` : null,
+      ].filter(Boolean);
+
+      setQuestNotice(
+        [
+          applied.length > 0
+            ? `Applied ${applied.join(' and ')} for “${quest.title}”.`
+            : `Nothing could be applied for “${quest.title}”.`,
+          skipped > 0 ? `${skipped} left for the sheet.` : null,
+          failed > 0 ? `${failed} could not be recorded.` : null,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      );
+    } finally {
+      setApplyingRewardsQuestId(null);
+    }
+  };
+
   const levelMilestoneXpFromDraft = (text: string): number | null | 'invalid' => {
     const xp = text.trim();
 
@@ -8515,6 +9054,7 @@ function App() {
       const holders = holdersByNode[node.id] ?? [];
       const itemHolders = inventoryByNode[node.id] ?? [];
       const chapterCast = chapterCastByChapter.get(node.id) ?? [];
+      const chapterQuests = questsByChapter.get(node.id) ?? [];
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
         ...(progressFlagsByChapter.get(node.id) ?? []),
@@ -8533,6 +9073,7 @@ function App() {
         holders.length === 0 &&
         itemHolders.length === 0 &&
         chapterCast.length === 0 &&
+        chapterQuests.length === 0 &&
         continuityFlags.length === 0
       ) {
         return node;
@@ -8584,6 +9125,12 @@ function App() {
                     openCharacterSheet(characterId),
                 }
               : {}),
+          ...(chapterQuests.length > 0
+            ? {
+                questBadges: chapterQuests,
+                onOpenQuest: openQuest,
+              }
+            : {}),
           ...(continuityFlags.length > 0
             ? {
                 continuityFlags,
@@ -8613,6 +9160,8 @@ function App() {
     openNoteFromGraph,
     inventoryFlagsByChapter,
     progressFlagsByChapter,
+    questsByChapter,
+    openQuest,
     openCharacterSheet,
     markItemReturned,
     returningItemId,
@@ -8658,6 +9207,197 @@ function App() {
         .filter(node => node.data.nodeType === 'faction')
         .sort((a, b) => a.data.label.localeCompare(b.data.label)),
     [nodes]
+  );
+
+  // Quest continuity is advisory like the rest: a contract that ends before it
+  // began, one still open after its issuer was trashed, or a payout to somebody
+  // who is not in the chapter it is paid in. Only recorded links are compared.
+  const questContinuity = useMemo(() => {
+    const warnings: QuestWarning[] = [];
+    const chapterById = new Map(chapterChoices.map(node => [node.id, node]));
+    const liveCast = new Set(characters.map(character => character.id));
+    const factions = new Set(factionCardChoices.map(node => node.id));
+    const castInChapter = new Map<string, Set<string>>();
+
+    // A chapter's linked cast member and point of view count as present even
+    // when they were never added to the extra cast list.
+    for (const node of chapterNodes) {
+      const existing = castInChapter.get(node.id) ?? new Set<string>();
+
+      if (node.data.characterId) existing.add(node.data.characterId);
+      if (node.data.chapterPov) existing.add(node.data.chapterPov);
+
+      if (existing.size > 0) castInChapter.set(node.id, existing);
+    }
+
+    for (const member of storyChapterCast) {
+      const existing = castInChapter.get(member.chapter_id) ?? new Set<string>();
+      existing.add(member.character_id);
+      castInChapter.set(member.chapter_id, existing);
+    }
+
+    for (const quest of storyQuests) {
+      const accepted = quest.accepted_chapter_id
+        ? chapterById.get(quest.accepted_chapter_id)
+        : undefined;
+      const completed = quest.completed_chapter_id
+        ? chapterById.get(quest.completed_chapter_id)
+        : undefined;
+      const acceptedSeq = accepted?.data.chapterSeq ?? null;
+      const completedSeq = completed?.data.chapterSeq ?? null;
+
+      if (
+        accepted &&
+        completed &&
+        acceptedSeq != null &&
+        completedSeq != null &&
+        completedSeq < acceptedSeq
+      ) {
+        warnings.push({
+          id: `quest-${quest.id}-ends-before-start`,
+          questId: quest.id,
+          questTitle: quest.title,
+          kind: 'ends-before-start',
+          summary: `“${quest.title}” ends before it is accepted`,
+          chapterIds: [completed.id, accepted.id],
+        });
+      }
+
+      if (quest.status.trim().toLowerCase() === 'active') {
+        if (quest.giver_character_id && !liveCast.has(quest.giver_character_id)) {
+          warnings.push({
+            id: `quest-${quest.id}-giver-in-trash`,
+            questId: quest.id,
+            questTitle: quest.title,
+            kind: 'giver-in-trash',
+            summary: `“${quest.title}” is still active but its giver is in the trash`,
+            chapterIds: accepted ? [accepted.id] : [],
+          });
+        }
+
+        if (quest.faction_node_id && !factions.has(quest.faction_node_id)) {
+          warnings.push({
+            id: `quest-${quest.id}-faction-in-trash`,
+            questId: quest.id,
+            questTitle: quest.title,
+            kind: 'faction-in-trash',
+            summary: `“${quest.title}” is still active but its faction is in the trash`,
+            chapterIds: accepted ? [accepted.id] : [],
+          });
+        }
+      }
+
+      const present = completed ? castInChapter.get(completed.id) : undefined;
+
+      if (!completed || !present || present.size === 0) continue;
+
+      const named = new Set<string>();
+
+      for (const reward of quest.rewards) {
+        if (reward.reward_type === 'faction_standing' || !reward.target_id) continue;
+        if (present.has(reward.target_id) || named.has(reward.target_id)) continue;
+
+        // A character with no live cast entry cannot be in a chapter either, but
+        // that is the trashed-cast story rather than this one.
+        if (!liveCast.has(reward.target_id)) continue;
+
+        named.add(reward.target_id);
+        const name = castNames.get(reward.target_id) ?? 'A cast member';
+
+        warnings.push({
+          id: `quest-${quest.id}-reward-${reward.target_id}`,
+          questId: quest.id,
+          questTitle: quest.title,
+          kind: 'reward-target-absent',
+          summary: `“${quest.title}” pays ${name}, who is not in ${completed.data.label}`,
+          chapterIds: [completed.id],
+        });
+      }
+    }
+
+    return warnings;
+  }, [
+    storyQuests,
+    chapterNodes,
+    chapterChoices,
+    characters,
+    factionCardChoices,
+    storyChapterCast,
+    castNames,
+  ]);
+
+  const questWarningsByQuest = useMemo(() => {
+    const byQuest = new Map<string, QuestWarning[]>();
+
+    for (const warning of questContinuity) {
+      const existing = byQuest.get(warning.questId) ?? [];
+      existing.push(warning);
+      byQuest.set(warning.questId, existing);
+    }
+
+    return byQuest;
+  }, [questContinuity]);
+
+  // A quest warning joins the same advisory list as the chapter and progression
+  // checks. Its chapters are links, so the panel leads to the rows compared.
+  const questContinuityLines = useMemo<
+    { parts: ContinuityPart[]; flag?: ChapterContinuityFlag }[]
+  >(
+    () =>
+      questContinuity.map(warning => {
+        const named = warning.chapterIds
+          .map(id => chapterNodes.find(node => node.id === id))
+          .filter(
+            (node, index, all): node is (typeof chapterNodes)[number] =>
+              node != null && all.findIndex(other => other?.id === node.id) === index
+          );
+
+        return {
+          parts: [
+            warning.summary,
+            ...(named.length > 0
+              ? [
+                  ': ',
+                  ...named.flatMap((node, index): ContinuityPart[] => [
+                    ...(index === 0 ? [] : [', ']),
+                    chapterLink(node.id, node.data.label),
+                  ]),
+                ]
+              : []),
+            '.',
+          ] as ContinuityPart[],
+        };
+      }),
+    [questContinuity, chapterNodes]
+  );
+
+  // Everything the Chapters tab's continuity panel lists, in one place.
+  const continuityLines = useMemo(
+    () => [...chapterContinuity, ...questContinuityLines],
+    [chapterContinuity, questContinuityLines]
+  );
+
+  // The ledger offers the statuses that exist in this story, so a story with its
+  // own words is not forced into the suggested four.
+  const questStatusChoices = useMemo(() => {
+    const names = new Set<string>(questStatuses);
+
+    for (const quest of storyQuests) {
+      const status = quest.status.trim();
+      if (status) names.add(status);
+    }
+
+    return [...names];
+  }, [storyQuests]);
+
+  const filteredQuests = useMemo(
+    () =>
+      questFilter === 'all'
+        ? storyQuests
+        : storyQuests.filter(
+            quest => quest.status.trim().toLowerCase() === questFilter.toLowerCase()
+          ),
+    [storyQuests, questFilter]
   );
 
   // The sheet lists the bonds that touch this character from either side, and
@@ -9550,6 +10290,13 @@ function App() {
               onClick={() => requestTab('characters')}
             >
               Characters
+            </button>
+            <button
+              className={selectedTab === 'quests' ? 'active' : ''}
+              title="Track quests, contracts and their rewards by chapter"
+              onClick={() => requestTab('quests')}
+            >
+              Quests
             </button>
             <button
               className={selectedTab === 'audit' ? 'active' : ''}
@@ -10881,7 +11628,7 @@ function App() {
                       )}
                     </section>
 
-                    {chapterContinuity.length > 0 && (
+                    {continuityLines.length > 0 && (
                       <section
                         className="chapter-continuity"
                         aria-labelledby="chapter-continuity-heading"
@@ -10889,11 +11636,11 @@ function App() {
                         <div className="chapter-continuity-head">
                           <h3 id="chapter-continuity-heading">Continuity</h3>
                           <span className="chapter-continuity-note">
-                            {chapterContinuity.length} to check · advisory
+                            {continuityLines.length} to check · advisory
                           </span>
                         </div>
                         <ul>
-                          {chapterContinuity.map(({ parts, flag }, index) => (
+                          {continuityLines.map(({ parts, flag }, index) => (
                             <li
                               key={`${index}-${parts
                                 .map(part => (typeof part === 'string' ? part : part.text))
@@ -13234,6 +13981,511 @@ function App() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {selectedTab === 'quests' && (
+          <div className="tab-content">
+            <div className="quests-layout">
+              <div className="quests-header">
+                <div>
+                  <h2 className="quests-title">Quests &amp; contracts</h2>
+                  <p className="quests-caption">
+                    A contract is placed by the chapter it was accepted in and, once
+                    it ends, by the chapter that closed it. Rewards are recorded as
+                    payouts rather than applied until you ask for them.
+                  </p>
+                </div>
+                <div className="quests-actions">
+                  <span className="quests-count" role="status">
+                    {filteredQuests.length} of {storyQuests.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="quest-new-button"
+                    title="Record a new quest or contract"
+                    disabled={!currentStory || chapterChoices.length === 0}
+                    onClick={startNewQuest}
+                  >
+                    New quest
+                  </button>
+                </div>
+              </div>
+
+              {questError && (
+                <div className="quest-error" role="alert">
+                  {questError}
+                </div>
+              )}
+
+              {questNotice && (
+                <div className="quest-notice" role="status">
+                  {questNotice}
+                </div>
+              )}
+
+              {!currentStory ? (
+                <div className="empty-state">Load a story to track its quests</div>
+              ) : chapterChoices.length === 0 ? (
+                <div className="empty-state">
+                  Add a chapter first — a quest is placed by the chapter it is
+                  accepted in.
+                </div>
+              ) : (
+                <>
+                  {questDraft && (
+                    <form
+                      className="quest-editor"
+                      aria-label={questDraft.id ? 'Edit quest' : 'New quest'}
+                      onSubmit={event => {
+                        event.preventDefault();
+                        void saveQuestDraft();
+                      }}
+                    >
+                      <div className="quest-editor-head">
+                        <h3>{questDraft.id ? 'Edit quest' : 'New quest'}</h3>
+                        <span className="quest-editor-hint">
+                          {questDraft.id
+                            ? 'Every changed field goes into the history.'
+                            : 'The acceptance chapter is required.'}
+                        </span>
+                      </div>
+
+                      <input
+                        aria-label="Quest title"
+                        title="The quest or contract's name"
+                        placeholder="Title"
+                        autoFocus
+                        value={questDraft.title}
+                        onChange={event =>
+                          setQuestDraft({ ...questDraft, title: event.target.value })
+                        }
+                      />
+
+                      <div className="quest-editor-row">
+                        <input
+                          aria-label="Quest status"
+                          title="Active, completed, failed, abandoned — or your own word"
+                          list="quest-status-options"
+                          placeholder="Status"
+                          value={questDraft.status}
+                          onChange={event =>
+                            setQuestDraft({ ...questDraft, status: event.target.value })
+                          }
+                        />
+                        <datalist id="quest-status-options">
+                          {questStatusChoices.map(status => (
+                            <option key={status} value={status} />
+                          ))}
+                        </datalist>
+
+                        <select
+                          aria-label="Quest giver"
+                          title="The cast member who issued it, if one did"
+                          value={questDraft.giver}
+                          onChange={event =>
+                            setQuestDraft({ ...questDraft, giver: event.target.value })
+                          }
+                        >
+                          <option value="">No giver</option>
+                          {characters.map(character => (
+                            <option key={character.id} value={character.id}>
+                              {character.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          aria-label="Quest faction"
+                          title="The faction card that issued it, if any"
+                          value={questDraft.faction}
+                          onChange={event =>
+                            setQuestDraft({ ...questDraft, faction: event.target.value })
+                          }
+                        >
+                          <option value="">No faction</option>
+                          {factionCardChoices.map(node => (
+                            <option key={node.id} value={node.id}>
+                              {node.data.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="quest-editor-row">
+                        <label className="quest-editor-field">
+                          <span>Accepted in</span>
+                          <select
+                            aria-label="Quest accepted chapter"
+                            value={questDraft.accepted}
+                            onChange={event =>
+                              setQuestDraft({ ...questDraft, accepted: event.target.value })
+                            }
+                          >
+                            <option value="">Choose chapter…</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="quest-editor-field">
+                          <span>Ended in</span>
+                          <select
+                            aria-label="Quest completed chapter"
+                            title="Optional: the chapter it was completed, failed or abandoned in"
+                            value={questDraft.completed}
+                            onChange={event =>
+                              setQuestDraft({ ...questDraft, completed: event.target.value })
+                            }
+                          >
+                            <option value="">Still open</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <textarea
+                        aria-label="Quest description"
+                        title="The objectives or terms, in your own words"
+                        placeholder="Objectives or terms"
+                        rows={2}
+                        value={questDraft.description}
+                        onChange={event =>
+                          setQuestDraft({ ...questDraft, description: event.target.value })
+                        }
+                      />
+
+                      <textarea
+                        aria-label="Quest notes"
+                        title="Bookkeeping notes for you, not the story"
+                        placeholder="Notes"
+                        rows={2}
+                        value={questDraft.notes}
+                        onChange={event =>
+                          setQuestDraft({ ...questDraft, notes: event.target.value })
+                        }
+                      />
+
+                      <div className="quest-editor-buttons">
+                        <button type="submit" title="Save this quest and its placement">
+                          Save quest
+                        </button>
+                        <button
+                          type="button"
+                          title="Leave the quest as it was"
+                          onClick={() => setQuestDraft(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  <div
+                    className="quest-filter"
+                    role="group"
+                    aria-label="Quest status filter"
+                  >
+                    {['all', ...questStatusChoices].map(status => (
+                      <button
+                        type="button"
+                        key={status}
+                        className={questFilter === status ? 'active' : ''}
+                        aria-pressed={questFilter === status}
+                        title={
+                          status === 'all'
+                            ? 'Show every quest'
+                            : `Show only ${questStatusLabels[status] ?? status} quests`
+                        }
+                        onClick={() => setQuestFilter(status)}
+                      >
+                        {status === 'all' ? 'All' : (questStatusLabels[status] ?? status)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="quest-list">
+                    {filteredQuests.length === 0 && (
+                      <div className="empty">
+                        {storyQuests.length === 0
+                          ? 'No quests yet — record one with New quest.'
+                          : 'No quests with this status.'}
+                      </div>
+                    )}
+
+                    {filteredQuests.map(quest => {
+                      const acceptedLabel = quest.accepted_chapter_id
+                        ? (chapterLabelById.get(quest.accepted_chapter_id) ??
+                          'a chapter in the trash')
+                        : 'no chapter recorded';
+                      const completedLabel = quest.completed_chapter_id
+                        ? (chapterLabelById.get(quest.completed_chapter_id) ??
+                          'a chapter in the trash')
+                        : null;
+                      const giverName = quest.giver_character_id
+                        ? (characterNameById.get(quest.giver_character_id) ??
+                          'cast in the trash')
+                        : null;
+                      const factionName = quest.faction_node_id
+                        ? (factionCardChoices.find(
+                            node => node.id === quest.faction_node_id
+                          )?.data.label ?? 'faction in the trash')
+                        : null;
+                      const warnings = questWarningsByQuest.get(quest.id) ?? [];
+                      const focused = focusedQuestId === quest.id;
+                      const statusKey = quest.status
+                        .toLowerCase()
+                        .replace(/[^a-z0-9-]+/g, '-');
+
+                      return (
+                        <section
+                          key={quest.id}
+                          className={`quest-card${focused ? ' quest-focused' : ''}`}
+                          data-quest-id={quest.id}
+                          aria-label={`Quest ${quest.title}`}
+                        >
+                          <div className="quest-card-head">
+                            <div className="quest-card-title">
+                              <h3>{quest.title}</h3>
+                              <span
+                                className={`quest-status quest-status-${statusKey}`}
+                                title="The quest's status"
+                              >
+                                {questStatusLabels[quest.status] ?? quest.status}
+                              </span>
+                            </div>
+                            <div className="quest-card-actions">
+                              <button
+                                type="button"
+                                title={`Edit “${quest.title}”`}
+                                onClick={() => startQuestEdit(quest)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                title={`Delete “${quest.title}”`}
+                                onClick={() => void removeQuest(quest)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="quest-card-meta">
+                            <span>
+                              Accepted in <strong>{acceptedLabel}</strong>
+                            </span>
+                            <span>
+                              {completedLabel ? (
+                                <>
+                                  Ended in <strong>{completedLabel}</strong>
+                                </>
+                              ) : (
+                                'Still open'
+                              )}
+                            </span>
+                            {giverName && <span>Giver: {giverName}</span>}
+                            {factionName && <span>Faction: {factionName}</span>}
+                          </div>
+
+                          {quest.description && (
+                            <p className="quest-description">{quest.description}</p>
+                          )}
+                          {quest.notes && <p className="quest-notes">{quest.notes}</p>}
+
+                          {warnings.length > 0 && (
+                            <ul className="quest-warnings">
+                              {warnings.map(warning => (
+                                <li key={warning.id} data-quest-warning={warning.kind}>
+                                  <span className="quest-warning-mark" aria-hidden="true">
+                                    !
+                                  </span>
+                                  {warning.summary}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          <div className="quest-rewards">
+                            <div className="quest-rewards-head">
+                              <h4>Rewards</h4>
+                              <button
+                                type="button"
+                                title="Record a payout for this quest"
+                                onClick={() => startNewReward(quest)}
+                              >
+                                Add reward
+                              </button>
+                            </div>
+
+                            {quest.rewards.length === 0 && (
+                              <div className="empty">No rewards recorded.</div>
+                            )}
+
+                            <ul className="quest-reward-list">
+                              {quest.rewards.map(reward => {
+                                const targetName =
+                                  reward.reward_type === 'faction_standing'
+                                    ? (factionCardChoices.find(
+                                        node => node.id === reward.target_id
+                                      )?.data.label ??
+                                      (reward.target_id
+                                        ? 'a faction in the trash'
+                                        : 'no target'))
+                                    : reward.target_id
+                                      ? (characterNameById.get(reward.target_id) ??
+                                        'cast in the trash')
+                                      : 'no target';
+
+                                return (
+                                  <li key={reward.id} className="quest-reward-row">
+                                    <span className="quest-reward-kind">
+                                      {questRewardLabels[reward.reward_type] ??
+                                        reward.reward_type}
+                                    </span>
+                                    <span className="quest-reward-target">{targetName}</span>
+                                    <span className="quest-reward-details">
+                                      {reward.amount_or_details?.trim() || 'no details'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      title="Change this reward"
+                                      onClick={() => startRewardEdit(reward)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="Delete this reward"
+                                      onClick={() => void removeReward(reward)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+
+                            {rewardDraft?.questId === quest.id && (
+                              <div className="quest-reward-editor">
+                                <select
+                                  aria-label="Reward type"
+                                  value={rewardDraft.type}
+                                  onChange={event =>
+                                    setRewardDraft({
+                                      ...rewardDraft,
+                                      type: event.target.value,
+                                      target: '',
+                                    })
+                                  }
+                                >
+                                  {questRewardTypes.map(type => (
+                                    <option key={type} value={type}>
+                                      {questRewardLabels[type]}
+                                    </option>
+                                  ))}
+                                </select>
+                                <select
+                                  aria-label="Reward target"
+                                  title={
+                                    rewardDraft.type === 'faction_standing'
+                                      ? 'The faction card whose standing changes'
+                                      : 'The cast member who receives it'
+                                  }
+                                  value={rewardDraft.target}
+                                  onChange={event =>
+                                    setRewardDraft({
+                                      ...rewardDraft,
+                                      target: event.target.value,
+                                    })
+                                  }
+                                >
+                                  <option value="">No target</option>
+                                  {(rewardDraft.type === 'faction_standing'
+                                    ? factionCardChoices.map(node => ({
+                                        id: node.id,
+                                        label: node.data.label,
+                                      }))
+                                    : characters.map(character => ({
+                                        id: character.id,
+                                        label: character.name,
+                                      }))
+                                  ).map(choice => (
+                                    <option key={choice.id} value={choice.id}>
+                                      {choice.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  aria-label="Reward amount or details"
+                                  title="A number for XP, a name for an item, or the author's words"
+                                  placeholder={
+                                    rewardDraft.type === 'xp'
+                                      ? 'XP amount'
+                                      : rewardDraft.type === 'item'
+                                        ? 'Item name'
+                                        : 'Details'
+                                  }
+                                  value={rewardDraft.details}
+                                  onChange={event =>
+                                    setRewardDraft({
+                                      ...rewardDraft,
+                                      details: event.target.value,
+                                    })
+                                  }
+                                />
+                                <div className="quest-reward-editor-buttons">
+                                  <button
+                                    type="button"
+                                    title="Save this reward on the quest"
+                                    onClick={() => void saveRewardDraft()}
+                                  >
+                                    Save reward
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Leave the rewards as they were"
+                                    onClick={() => setRewardDraft(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {quest.completed_chapter_id && quest.rewards.length > 0 && (
+                            <div className="quest-apply">
+                              <button
+                                type="button"
+                                title={
+                                  `Record this quest's XP and loot in ${completedLabel}, ` +
+                                  'without touching stat gains or standings'
+                                }
+                                disabled={applyingRewardsQuestId === quest.id}
+                                onClick={() => void applyQuestRewards(quest)}
+                              >
+                                {applyingRewardsQuestId === quest.id
+                                  ? 'Applying…'
+                                  : 'Apply rewards to chapter ledger'}
+                              </button>
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 

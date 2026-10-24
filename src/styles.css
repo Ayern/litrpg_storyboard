@@ -4595,3 +4595,517 @@ body {
   border-radius: 6px;
   color: #888;
 }
+
+/* ===== Quests & contracts =====
+   The ledger is a stack of contracts: the chapters that place each one, who
+   issued it, the payouts it owes, and any advisory warning it raised. */
+.quests-layout {
+  max-width: 880px;
+}
+
+.quests-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.quests-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.quests-caption {
+  margin: 0;
+  max-width: 620px;
+  color: #8f8f8f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.quests-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.quests-count {
+  color: #888;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quests-actions button,
+.quest-editor button,
+.quest-card button,
+.quest-reward-editor button {
+  padding: 5px 10px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #ccc;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quests-actions button:hover,
+.quest-editor button:hover,
+.quest-card button:hover,
+.quest-reward-editor button:hover {
+  border-color: #5ec8c0;
+  color: #dff6f3;
+}
+
+.quest-card button:disabled,
+.quest-apply button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.quest-new-button {
+  background: #0e639c !important;
+  border-color: #0e639c !important;
+  color: #fff !important;
+}
+
+.quest-error,
+.quest-notice {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.quest-error {
+  border: 1px solid #7a3b3b;
+  background: rgba(248, 113, 113, 0.08);
+  color: #f2b8b8;
+}
+
+.quest-notice {
+  border: 1px solid #3c5a4a;
+  background: rgba(122, 196, 122, 0.08);
+  color: #bfe0c3;
+}
+
+.quest-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+}
+
+.quest-editor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quest-editor-head h3 {
+  margin: 0;
+  font-size: 13px;
+  color: #e3cb94;
+}
+
+.quest-editor-hint {
+  color: #888;
+  font-size: 11px;
+}
+
+.quest-editor input,
+.quest-editor select,
+.quest-editor textarea,
+.quest-reward-editor input,
+.quest-reward-editor select {
+  padding: 6px 8px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #1e1e1e;
+  color: #ddd;
+  font: inherit;
+  font-size: 12px;
+}
+
+.quest-editor textarea {
+  resize: vertical;
+}
+
+.quest-editor input:focus-visible,
+.quest-editor select:focus-visible,
+.quest-editor textarea:focus-visible,
+.quest-reward-editor input:focus-visible,
+.quest-reward-editor select:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: -1px;
+}
+
+.quest-editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quest-editor-row > input,
+.quest-editor-row > select {
+  flex: 1 1 150px;
+}
+
+.quest-editor-field {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 3px;
+  color: #999;
+  font-size: 11px;
+}
+
+.quest-editor-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.quest-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.quest-filter button {
+  padding: 4px 10px;
+  border: 1px solid #333;
+  border-radius: 999px;
+  background: #252526;
+  color: #aaa;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.quest-filter button:hover {
+  color: #e3cb94;
+}
+
+.quest-filter button.active {
+  border-color: #6b5a2e;
+  background: #3a3320;
+  color: #e3cb94;
+}
+
+.quest-filter button:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: 1px;
+}
+
+.quest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quest-card {
+  padding: 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.quest-card.quest-focused {
+  border-color: #6b5a2e;
+  box-shadow: 0 0 0 1px rgba(227, 203, 148, 0.35);
+}
+
+.quest-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quest-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quest-card-title h3 {
+  margin: 0;
+  font-size: 13px;
+  color: #eee;
+  overflow-wrap: anywhere;
+}
+
+.quest-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(227, 203, 148, 0.14);
+  color: #e3cb94;
+  font-size: 10px;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.quest-status-active {
+  background: rgba(94, 200, 192, 0.14);
+  color: #a9e3de;
+}
+
+.quest-status-completed {
+  background: rgba(122, 196, 122, 0.14);
+  color: #b7e0b7;
+}
+
+.quest-status-failed {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+}
+
+.quest-status-abandoned {
+  background: rgba(160, 160, 160, 0.14);
+  color: #b0b0b0;
+}
+
+.quest-card-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.quest-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  color: #8f8f8f;
+  font-size: 11px;
+}
+
+.quest-card-meta strong {
+  color: #c9c9c9;
+  font-weight: 600;
+}
+
+.quest-description,
+.quest-notes {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quest-description {
+  color: #cfcfcf;
+}
+
+.quest-notes {
+  color: #8f8f8f;
+  font-style: italic;
+}
+
+.quest-warnings {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quest-warnings li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #e0b98a;
+  font-size: 11px;
+}
+
+.quest-warning-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(227, 203, 148, 0.2);
+  color: #e3cb94;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.quest-rewards {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2f2f2f;
+}
+
+.quest-rewards-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quest-rewards-head h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+}
+
+.quest-reward-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quest-reward-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.quest-reward-kind {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(167, 139, 250, 0.14);
+  color: #cdbcfc;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.quest-reward-target {
+  color: #ddd;
+  font-weight: 600;
+}
+
+.quest-reward-details {
+  flex: 1;
+  min-width: 0;
+  color: #9c9c9c;
+  overflow-wrap: anywhere;
+}
+
+.quest-reward-row button {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.quest-reward-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  background: #1e1e1e;
+  border: 1px dashed #3c3c3c;
+  border-radius: 4px;
+}
+
+.quest-reward-editor input {
+  flex: 1 1 160px;
+}
+
+.quest-reward-editor-buttons {
+  display: flex;
+  flex: 1 1 100%;
+  gap: 6px;
+}
+
+.quest-apply {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2f2f2f;
+}
+
+.quest-apply button {
+  padding: 5px 10px;
+  border: 1px solid #3c5a4a;
+  border-radius: 4px;
+  background: rgba(122, 196, 122, 0.1);
+  color: #bfe0c3;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quest-apply button:hover {
+  border-color: #7fc47f;
+  color: #e0efe0;
+}
+
+/* Chapter cards carry the quests that touch them: a diamond for the chapter a
+   contract was taken in, a tick for the chapter that ended it. */
+.graph-node-quests {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.graph-node-quest-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid #4a4230;
+  border-radius: 999px;
+  background: rgba(227, 203, 148, 0.08);
+  color: #d8c9a4;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.graph-node-quest-badge.completed {
+  border-color: #39453a;
+  background: rgba(122, 196, 122, 0.08);
+  color: #b9cdb9;
+}
+
+.graph-node-quest-badge:hover,
+.graph-node-quest-badge:focus-visible {
+  border-color: #8a7440;
+  background: rgba(227, 203, 148, 0.16);
+  color: #f2e2b8;
+  outline: none;
+}
+
+.graph-node-quest-mark {
+  flex-shrink: 0;
+  font-size: 9px;
+}
+
+.graph-node-quest-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-node-quest-more {
+  font-size: 10px;
+  color: #8a8a8a;
+}
