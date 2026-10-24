@@ -115,6 +115,28 @@ interface LevelRow {
   level: number;
   chapter_id: string | null;
   is_debuff: boolean;
+  xp?: number | null;
+  stat_name?: string | null;
+  stat_points?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface StatRow {
+  id: string;
+  character_id: string;
+  stat_name: string;
+  value: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProgressRow {
+  id: string;
+  character_id: string;
+  chapter_id: string;
+  xp_earned: number;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +169,8 @@ const nodeRow = (id: string, type: string, label: string) => ({
 let skills: SkillRow[] = [];
 let levels: LevelRow[] = [];
 let events: EventRow[] = [];
+let stats: StatRow[] = [];
+let progress: ProgressRow[] = [];
 
 beforeEach(() => {
   skills = [
@@ -169,6 +193,9 @@ beforeEach(() => {
       level: 3,
       chapter_id: 'n1',
       is_debuff: false,
+      xp: 900,
+      stat_name: 'Strength',
+      stat_points: 10,
       created_at: '2026-10-22T12:00:00Z',
       updated_at: '2026-10-22T12:00:00Z',
     },
@@ -178,6 +205,47 @@ beforeEach(() => {
       level: 4,
       chapter_id: 'n2',
       is_debuff: false,
+      xp: 2400,
+      stat_name: 'Strength',
+      stat_points: 12,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+  ];
+  stats = [
+    {
+      id: 'stat-1',
+      character_id: 'char-1',
+      stat_name: 'Strength',
+      value: 12,
+      notes: null,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+    {
+      id: 'stat-2',
+      character_id: 'char-1',
+      stat_name: 'Dexterity',
+      value: 9,
+      notes: null,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+  ];
+  progress = [
+    {
+      id: 'progress-1',
+      character_id: 'char-1',
+      chapter_id: 'n1',
+      xp_earned: 900,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+    {
+      id: 'progress-2',
+      character_id: 'char-1',
+      chapter_id: 'n2',
+      xp_earned: 1500,
       created_at: '2026-10-22T12:00:00Z',
       updated_at: '2026-10-22T12:00:00Z',
     },
@@ -208,10 +276,14 @@ beforeEach(() => {
           nodeRow('n3', 'chapter', 'Chapter Three'),
         ];
       case 'get_graph_edges':
-      case 'get_story_character_stats':
-      case 'get_character_stats':
       case 'get_character_attributes':
         return [];
+      case 'get_story_character_stats':
+        return stats.map(stat => ({ ...stat }));
+      case 'get_character_stats':
+        return stats
+          .filter(stat => stat.character_id === args.characterId)
+          .map(stat => ({ ...stat }));
       case 'get_characters':
         return args.storyId === story.id ? [character] : [];
       case 'get_story_skills':
@@ -222,6 +294,12 @@ beforeEach(() => {
           .map(skill => ({ ...skill }));
       case 'get_story_level_milestones':
         return levels.map(level => ({ ...level }));
+      case 'get_story_character_progress':
+        return progress.map(entry => ({ ...entry }));
+      case 'get_character_progress':
+        return progress
+          .filter(entry => entry.character_id === args.characterId)
+          .map(entry => ({ ...entry }));
       case 'get_character_level_milestones':
         return levels
           .filter(level => level.character_id === args.characterId)
@@ -239,6 +317,9 @@ beforeEach(() => {
           level: args.level,
           chapter_id: args.chapterId ?? null,
           is_debuff: args.isDebuff,
+          xp: args.xp ?? null,
+          stat_name: args.statName ?? null,
+          stat_points: args.statPoints ?? null,
           created_at: '2026-10-22T12:00:00Z',
           updated_at: '2026-10-22T12:00:00Z',
         };
@@ -254,12 +335,42 @@ beforeEach(() => {
           level: args.level,
           chapter_id: args.chapterId ?? null,
           is_debuff: args.isDebuff,
+          xp: args.xp ?? null,
+          stat_name: args.statName ?? null,
+          stat_points: args.statPoints ?? null,
         };
         levels = levels.map(level => (level.id === updated.id ? updated : level));
         return { ...updated };
       }
       case 'delete_level_milestone':
         levels = levels.filter(level => level.id !== args.id);
+        return null;
+      case 'add_character_progress': {
+        const saved: ProgressRow = {
+          id: `progress-${progress.length + 1}`,
+          character_id: args.characterId,
+          chapter_id: args.chapterId,
+          xp_earned: args.xpEarned,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        progress = [...progress, saved];
+        return { ...saved };
+      }
+      case 'update_character_progress': {
+        const existing = progress.find(entry => entry.id === args.id);
+        if (!existing) return null;
+
+        const updated: ProgressRow = {
+          ...existing,
+          chapter_id: args.chapterId,
+          xp_earned: args.xpEarned,
+        };
+        progress = progress.map(entry => (entry.id === updated.id ? updated : entry));
+        return { ...updated };
+      }
+      case 'delete_character_progress':
+        progress = progress.filter(entry => entry.id !== args.id);
         return null;
       case 'add_skill_event': {
         const saved: EventRow = {
@@ -358,6 +469,40 @@ describe('level and skill continuity', () => {
 
     // The chapters still have their own POV reminder, but not a level one.
     expect(continuityText(continuityPanel())).not.toContain('level goes back');
+  });
+
+  it('accepts XP income that adds up to each total milestone', async () => {
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
+  });
+
+  it('flags XP income that does not add up to a total milestone', async () => {
+    progress[1].xp_earned = 1200;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's XP earned through “Chapter Two” adds up to 2,100 XP, but the total XP milestone there records 2,400 XP (300 short)."
+    );
+  });
+
+  it('flags income over the recorded total as well', async () => {
+    progress[1].xp_earned = 1700;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's XP earned through “Chapter Two” adds up to 2,600 XP, but the total XP milestone there records 2,400 XP (200 over)."
+    );
+  });
+
+  it('leaves totals alone until a character has an income row', async () => {
+    progress = [];
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
   });
 
   it('flags a skill used before it was learned', async () => {
@@ -482,6 +627,23 @@ describe('level and skill continuity', () => {
 });
 
 describe('progression warnings open the entry to edit', () => {
+  it('opens the total-XP milestone from a reconciliation warning', async () => {
+    progress[1].xp_earned = 1200;
+
+    const user = await openChapters();
+    const panel = continuityPanel();
+
+    expect(continuityText(panel)).toContain('XP earned through');
+
+    await user.click(within(panel).getByRole('button', { name: 'Rook' }));
+
+    expect(screen.getByRole('button', { name: 'Characters' })).toHaveClass('active');
+    expect(screen.getByLabelText('Milestone total XP')).toHaveValue(2400);
+    expect(
+      document.querySelector('[data-progression="level-milestone-2"]')
+    ).toHaveClass('progression-row-focused');
+  });
+
   it('opens the level milestone from the continuity panel', async () => {
     levels[1].level = 2;
 
@@ -534,6 +696,20 @@ describe('progression warnings open the entry to edit', () => {
       document.querySelector('[data-progression="skill-event-event-use"]')
     ).toHaveClass('progression-row-focused');
   });
+
+  it('shows the reconciliation warning on the chapter card', async () => {
+    progress[1].xp_earned = 1200;
+
+    await openGraph();
+    const card = (
+      await screen.findByText('Chapter Two', { selector: '.graph-node-label' })
+    ).closest('.graph-node');
+
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
+      "Rook's XP income is 2,100 XP, milestone says 2,400"
+    );
+  });
 });
 
 describe('level milestones and skill events on the sheet', () => {
@@ -543,6 +719,9 @@ describe('level milestones and skill events on the sheet', () => {
     await user.clear(screen.getByLabelText('New milestone level'));
     await user.type(screen.getByLabelText('New milestone level'), '6');
     await user.selectOptions(screen.getByLabelText('New milestone chapter'), 'n3');
+    await user.selectOptions(screen.getByLabelText('New milestone stat'), 'Strength');
+    await user.type(screen.getByLabelText('New milestone stat points'), '14');
+    await user.type(screen.getByLabelText('New milestone total XP'), '3600');
     await user.click(screen.getByLabelText('New milestone is a penalty'));
     await user.click(screen.getByRole('button', { name: 'Add milestone' }));
 
@@ -551,6 +730,9 @@ describe('level milestones and skill events on the sheet', () => {
       level: 6,
       chapterId: 'n3',
       isDebuff: true,
+      xp: 3600,
+      statName: 'Strength',
+      statPoints: 14,
       user: 'You',
     });
     expect(document.querySelector('[data-progression="level-milestone-3"]')).toBeInTheDocument();
@@ -562,9 +744,17 @@ describe('level milestones and skill events on the sheet', () => {
     await user.click(
       screen.getByTitle('Change the level and chapter of the level 3 milestone')
     );
+    expect(screen.getByLabelText('Milestone total XP')).toHaveValue(900);
+    expect(screen.getByLabelText('Milestone stat')).toHaveValue('Strength');
+    expect(screen.getByLabelText('Milestone stat points')).toHaveValue(10);
     await user.clear(screen.getByLabelText('Milestone level'));
     await user.type(screen.getByLabelText('Milestone level'), '5');
     await user.selectOptions(screen.getByLabelText('Milestone chapter'), 'n2');
+    await user.selectOptions(screen.getByLabelText('Milestone stat'), 'Dexterity');
+    await user.clear(screen.getByLabelText('Milestone stat points'));
+    await user.type(screen.getByLabelText('Milestone stat points'), '11');
+    await user.clear(screen.getByLabelText('Milestone total XP'));
+    await user.type(screen.getByLabelText('Milestone total XP'), '1500');
     await user.click(screen.getByRole('button', { name: 'Save milestone' }));
 
     expect(lastCall('update_level_milestone')).toMatchObject({
@@ -572,6 +762,9 @@ describe('level milestones and skill events on the sheet', () => {
       level: 5,
       chapterId: 'n2',
       isDebuff: false,
+      xp: 1500,
+      statName: 'Dexterity',
+      statPoints: 11,
       user: 'You',
     });
 
@@ -580,6 +773,31 @@ describe('level milestones and skill events on the sheet', () => {
       id: 'milestone-2',
       user: 'You',
     });
+  });
+
+  it('refuses negative XP and a stat without points', async () => {
+    const user = await openSheet();
+
+    await user.type(screen.getByLabelText('New milestone total XP'), '-1');
+    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
+
+    expect(
+      await screen.findByText('Total XP is a whole number, 0 or more, or blank.')
+    ).toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
+    ).toHaveLength(0);
+
+    await user.clear(screen.getByLabelText('New milestone total XP'));
+    await user.selectOptions(screen.getByLabelText('New milestone stat'), 'Strength');
+    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
+
+    expect(
+      await screen.findByText('A primary stat needs both a name and a value, or both blank.')
+    ).toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
+    ).toHaveLength(0);
   });
 
   it('refuses a milestone below level 1', async () => {
@@ -594,6 +812,79 @@ describe('level milestones and skill events on the sheet', () => {
     ).toBeInTheDocument();
     expect(
       invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
+    ).toHaveLength(0);
+  });
+
+  it('adds, edits and deletes XP earned by chapter', async () => {
+    const user = await openSheet();
+
+    expect(document.querySelector('[data-xp-entry="progress-1"]')).toHaveTextContent(
+      'Chapter One900 XP earned'
+    );
+    expect(document.querySelector('[data-xp-entry="progress-2"]')).toHaveTextContent(
+      'Chapter Two1500 XP earned'
+    );
+
+    await user.selectOptions(screen.getByLabelText('New XP entry chapter'), 'n3');
+    await user.type(screen.getByLabelText('New XP entry earned XP'), '750');
+    await user.click(screen.getByRole('button', { name: 'Add XP' }));
+
+    expect(lastCall('add_character_progress')).toMatchObject({
+      characterId: 'char-1',
+      chapterId: 'n3',
+      xpEarned: 750,
+      user: 'You',
+    });
+    expect(document.querySelector('[data-xp-entry="progress-3"]')).toHaveTextContent(
+      'Chapter Three750 XP earned'
+    );
+
+    await user.click(screen.getByTitle('Change the XP earned in Chapter One'));
+    expect(screen.getByLabelText('XP entry earned XP')).toHaveValue(900);
+    await user.clear(screen.getByLabelText('XP entry earned XP'));
+    await user.type(screen.getByLabelText('XP entry earned XP'), '500');
+    await user.click(screen.getByRole('button', { name: 'Save XP' }));
+
+    expect(lastCall('update_character_progress')).toMatchObject({
+      id: 'progress-1',
+      chapterId: 'n1',
+      xpEarned: 500,
+      user: 'You',
+    });
+    expect(document.querySelector('[data-xp-entry="progress-1"]')).toHaveTextContent(
+      '500 XP earned'
+    );
+
+    await user.click(screen.getByTitle('Delete the XP earned in Chapter Two'));
+    expect(lastCall('delete_character_progress')).toMatchObject({
+      id: 'progress-2',
+      user: 'You',
+    });
+    expect(document.querySelector('[data-xp-entry="progress-2"]')).toBeNull();
+  });
+
+  it('refuses negative XP or an XP entry without a chapter', async () => {
+    const user = await openSheet();
+
+    await user.selectOptions(screen.getByLabelText('New XP entry chapter'), 'n3');
+    await user.type(screen.getByLabelText('New XP entry earned XP'), '-1');
+    await user.click(screen.getByRole('button', { name: 'Add XP' }));
+
+    expect(
+      await screen.findByText('XP earned is a whole number, 0 or more.')
+    ).toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_character_progress')
+    ).toHaveLength(0);
+
+    await user.clear(screen.getByLabelText('New XP entry earned XP'));
+    await user.type(screen.getByLabelText('New XP entry earned XP'), '100');
+    await user.selectOptions(screen.getByLabelText('New XP entry chapter'), '');
+    await user.click(screen.getByRole('button', { name: 'Add XP' }));
+
+    expect(await screen.findByText('XP earned needs a chapter.')).toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_character_progress')
     ).toHaveLength(0);
   });
 

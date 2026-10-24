@@ -290,20 +290,29 @@ Remaining: cast in two places at once across different days, and
 moments that can only be described in words. **M**
 
 **9. Progression ledger.** **Started.** A per-chapter level milestone now exists
-(`character_level_milestones`), entered on the sheet with a chapter and an
-explicit penalty flag, and compared in reading order on the Chapters tab and the
-chapter cards. The Characters tab now draws a **Power curve**: one step line per
-character, chapters in reading order on the x-axis and level on the y, with a
-toggle for every plotted line so power curves can be compared side by side. The
-line comes straight from the milestone rows; an unplaced or trashed chapter is
-left off rather than guessed at. A database query also answers "where did this
-character stand as of this chapter?" — active level, skills learned and their
-rank at the time, with sacrifices removed — and the chart's **As of chapter**
-readout uses it. Chapter cards on the Graph tab also carry compact badges for the
-linked cast and POV character, with that snapshot's level and the active skills in
-the tooltip. Remaining: XP per chapter (`character_progress`), a grid entry flow,
-a real per-scene cast assignment, and switching the chart's y-axis to XP or any
-stat, with declared jumps allowed. **L**
+(`character_level_milestones`), entered on the sheet with a chapter, an explicit
+penalty flag and optional **Total XP** and **Stat points** snapshots, and compared
+in reading order on the Chapters tab and the chapter cards. The Characters tab now
+draws a **Power curve**: one step line per character, chapters in reading order on
+the x-axis, and a y-axis that switches between level, total XP, XP earned and any
+recorded primary stat, with a toggle for every plotted line or bar group so power
+curves can be compared side by side. Level and total XP come from milestone rows;
+an unplaced or trashed chapter is left off rather than guessed at, and a milestone
+without the chosen snapshot does not erase the last recorded value. XP earned now
+has its own ledger (`character_progress`, schema v18): one amount per character
+per chapter, edited on the sheet and drawn as grouped bars rather than a line
+because income is not cumulative. The ledger travels in export and import, and
+the continuity panel reconciles the income through each total-XP milestone with
+the total recorded there, naming both a shortfall and an excess. A database query
+also answers "where did this character stand as of this chapter?" —
+active level, skills learned and their rank at the time, with sacrifices removed —
+and the chart's **As of chapter** readout uses it. Chapter cards on the Graph tab
+also carry compact badges for the linked cast, the POV character and every
+character added with **Cast** on the Chapters tab, with that snapshot's level and
+the active skills in the tooltip. `chapter_cast` is schema v16, so a party can
+share a chapter without overwriting its one linked cast member; the explicit list
+travels in export and import. Remaining: a grid entry flow and declared jumps
+allowed. **L**
 
 ### Phase 3 — the world
 

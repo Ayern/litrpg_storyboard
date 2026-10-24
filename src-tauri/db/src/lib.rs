@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 15;
+const SCHEMA_VERSION: i32 = 18;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -1170,6 +1170,8 @@ impl Db {
     // current level. The two stay separate so recording where a level was reached
     // does not rewrite the sheet, and a deliberate penalty can be marked as such.
 
+    /// The original milestone shape: no XP or primary-stat snapshot. Kept as a
+    /// convenience for callers that only record a level.
     pub fn add_level_milestone(
         &self,
         character_id: String,
@@ -1178,12 +1180,36 @@ impl Db {
         is_debuff: bool,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
+        self.add_level_milestone_with_metrics(
+            character_id,
+            level,
+            chapter_id,
+            is_debuff,
+            None,
+            None,
+            None,
+            user,
+        )
+    }
+
+    pub fn add_level_milestone_with_metrics(
+        &self,
+        character_id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        xp: Option<i64>,
+        stat_name: Option<String>,
+        stat_points: Option<i64>,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
         if level < 1 {
             return Err(DbError::Invalid(
                 "a level milestone must be level 1 or higher".to_string(),
             ));
         }
 
+        let (xp, stat_name, stat_points) = clean_milestone_metrics(xp, stat_name, stat_points)?;
         let timestamp = now();
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -1195,15 +1221,18 @@ impl Db {
 
         tx.execute(
             "INSERT INTO character_level_milestones
-             (id, character_id, level, chapter_id, is_debuff, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
+              stat_points, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
             params![
                 &id,
                 &character_id,
                 level,
                 &chapter_id,
                 is_debuff,
-                &timestamp,
+                xp,
+                &stat_name,
+                stat_points,
                 &timestamp
             ],
         )?;
@@ -1222,6 +1251,28 @@ impl Db {
             },
         )?;
 
+        for (field, value) in [
+            ("xp", xp.map(|value| value.to_string())),
+            ("stat_name", stat_name.clone()),
+            ("stat_points", stat_points.map(|value| value.to_string())),
+        ] {
+            if let Some(value) = value {
+                log_audit(
+                    &tx,
+                    AuditRecord {
+                        story_id: Some(&story_id),
+                        entity_type: "character_level_milestone",
+                        entity_id: &id,
+                        action: "create",
+                        field_changed: Some(field),
+                        old_value: None,
+                        new_value: Some(value),
+                        changed_by: &user,
+                    },
+                )?;
+            }
+        }
+
         tx.commit()?;
 
         Ok(CharacterLevelMilestone {
@@ -1230,6 +1281,9 @@ impl Db {
             level,
             chapter_id,
             is_debuff,
+            xp,
+            stat_name,
+            stat_points,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
@@ -1243,12 +1297,29 @@ impl Db {
         is_debuff: bool,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
+        self.update_level_milestone_with_metrics(
+            id, level, chapter_id, is_debuff, None, None, None, user,
+        )
+    }
+
+    pub fn update_level_milestone_with_metrics(
+        &self,
+        id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        xp: Option<i64>,
+        stat_name: Option<String>,
+        stat_points: Option<i64>,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
         if level < 1 {
             return Err(DbError::Invalid(
                 "a level milestone must be level 1 or higher".to_string(),
             ));
         }
 
+        let (xp, stat_name, stat_points) = clean_milestone_metrics(xp, stat_name, stat_points)?;
         let timestamp = now();
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -1256,6 +1327,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT m.character_id, m.level, m.chapter_id, m.is_debuff,
+                        m.xp, m.stat_name, m.stat_points,
                         m.created_at, m.updated_at, c.story_id
                  FROM character_level_milestones m
                  JOIN characters c ON c.id = m.character_id
@@ -1268,9 +1340,12 @@ impl Db {
                         row.get::<_, i64>(1)?,
                         row.get::<_, Option<String>>(2)?,
                         row.get::<_, bool>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
                     ))
                 },
             )
@@ -1282,6 +1357,9 @@ impl Db {
             old_level,
             old_chapter,
             old_debuff,
+            old_xp,
+            old_stat_name,
+            old_stat_points,
             created_at,
             old_updated_at,
             story_id,
@@ -1317,12 +1395,35 @@ impl Db {
             ));
         }
 
+        if xp != old_xp {
+            changes.push((
+                "xp",
+                old_xp.map(|value| value.to_string()),
+                xp.map(|value| value.to_string()),
+            ));
+        }
+
+        if stat_name != old_stat_name {
+            changes.push(("stat_name", old_stat_name.clone(), stat_name.clone()));
+        }
+
+        if stat_points != old_stat_points {
+            changes.push((
+                "stat_points",
+                old_stat_points.map(|value| value.to_string()),
+                stat_points.map(|value| value.to_string()),
+            ));
+        }
+
         let updated = CharacterLevelMilestone {
             id: id.clone(),
             character_id,
             level,
             chapter_id,
             is_debuff,
+            xp,
+            stat_name,
+            stat_points,
             created_at,
             updated_at: timestamp.clone(),
         };
@@ -1336,9 +1437,19 @@ impl Db {
 
         tx.execute(
             "UPDATE character_level_milestones
-                SET level = ?1, chapter_id = ?2, is_debuff = ?3, updated_at = ?4
-              WHERE id = ?5",
-            params![level, &updated.chapter_id, is_debuff, &timestamp, &id],
+                SET level = ?1, chapter_id = ?2, is_debuff = ?3, xp = ?4,
+                    stat_name = ?5, stat_points = ?6, updated_at = ?7
+              WHERE id = ?8",
+            params![
+                level,
+                &updated.chapter_id,
+                is_debuff,
+                xp,
+                &updated.stat_name,
+                stat_points,
+                &timestamp,
+                &id
+            ],
         )?;
 
         for (field, old_value, new_value) in changes {
@@ -1413,7 +1524,7 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                    m.created_at, m.updated_at
+                    m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
              FROM character_level_milestones m
              JOIN characters c ON c.id = m.character_id
              JOIN stories st ON st.id = c.story_id
@@ -1433,7 +1544,7 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                    m.created_at, m.updated_at
+                    m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
              FROM character_level_milestones m
              JOIN characters c ON c.id = m.character_id
              JOIN stories st ON st.id = c.story_id
@@ -1442,6 +1553,293 @@ impl Db {
         )?;
 
         let rows = stmt.query_map(params![story_id], level_milestone_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    // ===== XP LEDGER =====
+    //
+    // One income row per character per chapter. A milestone can snapshot the
+    // running total, but this table is what was earned in that chapter, so the
+    // two answer different questions and neither is inferred from the other.
+
+    pub fn add_character_progress(
+        &self,
+        character_id: String,
+        chapter_id: String,
+        xp_earned: i64,
+        user: String,
+    ) -> DbResult<CharacterProgress> {
+        if xp_earned < 0 {
+            return Err(DbError::Invalid(
+                "experience earned cannot be negative".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+        let story_id = live_character_story(&tx, &character_id)?;
+        let chapter_label =
+            validate_node_reference(&tx, &story_id, Some(&chapter_id), "chapter", "chapter")?
+                .ok_or_else(|| DbError::Invalid("a chapter is required".to_string()))?;
+
+        let already_recorded: Option<String> = tx
+            .query_row(
+                "SELECT id FROM character_progress
+                  WHERE character_id = ?1 AND chapter_id = ?2",
+                params![&character_id, &chapter_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if already_recorded.is_some() {
+            return Err(DbError::Invalid(
+                "that chapter already has XP recorded for this character".to_string(),
+            ));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_progress
+             (id, character_id, chapter_id, xp_earned, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![&id, &character_id, &chapter_id, xp_earned, &timestamp],
+        )?;
+
+        for (field, value) in [
+            ("chapter", chapter_label),
+            ("xp_earned", xp_earned.to_string()),
+        ] {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_progress",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some(field),
+                    old_value: None,
+                    new_value: Some(value),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(CharacterProgress {
+            id,
+            character_id,
+            chapter_id,
+            xp_earned,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_character_progress(
+        &self,
+        id: String,
+        chapter_id: String,
+        xp_earned: i64,
+        user: String,
+    ) -> DbResult<CharacterProgress> {
+        if xp_earned < 0 {
+            return Err(DbError::Invalid(
+                "experience earned cannot be negative".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT p.character_id, p.chapter_id, p.xp_earned, p.created_at,
+                        p.updated_at, c.story_id
+                 FROM character_progress p
+                 JOIN characters c ON c.id = p.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE p.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("XP ledger row"))?;
+
+        let (character_id, old_chapter, old_xp, created_at, old_updated_at, story_id) = existing;
+
+        let chapter_label = if chapter_id == old_chapter {
+            reference_label(&tx, Some(&chapter_id))?
+        } else {
+            validate_node_reference(&tx, &story_id, Some(&chapter_id), "chapter", "chapter")?
+                .ok_or_else(|| DbError::Invalid("a chapter is required".to_string()))?
+                .into()
+        };
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if chapter_id != old_chapter {
+            changes.push((
+                "chapter",
+                reference_label(&tx, Some(&old_chapter))?,
+                chapter_label.clone(),
+            ));
+        }
+
+        if xp_earned != old_xp {
+            changes.push((
+                "xp_earned",
+                Some(old_xp.to_string()),
+                Some(xp_earned.to_string()),
+            ));
+        }
+
+        let updated = CharacterProgress {
+            id,
+            character_id,
+            chapter_id,
+            xp_earned,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        if changes.is_empty() {
+            return Ok(CharacterProgress {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        let conflict: Option<String> = tx
+            .query_row(
+                "SELECT id FROM character_progress
+                  WHERE character_id = ?1 AND chapter_id = ?2 AND id <> ?3",
+                params![&updated.character_id, &updated.chapter_id, &updated.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if conflict.is_some() {
+            return Err(DbError::Invalid(
+                "that chapter already has XP recorded for this character".to_string(),
+            ));
+        }
+
+        tx.execute(
+            "UPDATE character_progress
+                SET chapter_id = ?1, xp_earned = ?2, updated_at = ?3
+              WHERE id = ?4",
+            params![&updated.chapter_id, xp_earned, &timestamp, &updated.id],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_progress",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_character_progress(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT p.xp_earned, c.story_id
+                 FROM character_progress p
+                 JOIN characters c ON c.id = p.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE p.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((xp_earned, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_progress WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_progress",
+                entity_id: id,
+                action: "delete",
+                field_changed: Some("xp_earned"),
+                old_value: Some(xp_earned.to_string()),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_character_progress(&self, character_id: &str) -> DbResult<Vec<CharacterProgress>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT p.id, p.character_id, p.chapter_id, p.xp_earned,
+                    p.created_at, p.updated_at
+             FROM character_progress p
+             JOIN characters c ON c.id = p.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE p.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY p.created_at, p.id",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], character_progress_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    pub fn list_story_character_progress(
+        &self,
+        story_id: &str,
+    ) -> DbResult<Vec<CharacterProgress>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT p.id, p.character_id, p.chapter_id, p.xp_earned,
+                    p.created_at, p.updated_at
+             FROM character_progress p
+             JOIN characters c ON c.id = p.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY p.created_at, p.id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], character_progress_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
@@ -1744,8 +2142,9 @@ impl Db {
 
     /// The chapter cards need the same snapshot for every character assigned to
     /// every chapter, without one command per card. The database still decides
-    /// who is assigned — a chapter's linked cast and its point of view — and what
-    /// each snapshot held as the story reached that chapter.
+    /// who is assigned — a chapter's linked cast, its point of view and the
+    /// explicit cast rows — and what each snapshot held as the story reached
+    /// that chapter.
     pub fn list_chapter_cast_states(&self, story_id: &str) -> DbResult<Vec<ChapterCastState>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
@@ -1757,7 +2156,7 @@ impl Db {
              ORDER BY n.chapter_seq, n.created_at, n.id",
         )?;
 
-        let assignments = stmt
+        let nodes = stmt
             .query_map(params![story_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1769,36 +2168,225 @@ impl Db {
 
         drop(stmt);
 
-        let mut states = Vec::new();
+        let mut assignments: Vec<(String, String)> = Vec::new();
 
-        for (chapter_id, linked, pov) in assignments {
-            let mut character_ids = Vec::new();
-
+        for (chapter_id, linked, pov) in nodes {
             for character_id in [linked, pov].into_iter().flatten() {
-                if !character_ids.contains(&character_id) {
-                    character_ids.push(character_id);
-                }
-            }
-
-            for character_id in character_ids {
-                match Self::character_state_at_chapter_on(&guard, &character_id, &chapter_id) {
-                    Ok(state) => states.push(ChapterCastState {
-                        chapter_id: chapter_id.clone(),
-                        character_id,
-                        level: state.level,
-                        level_is_penalty: state.level_is_penalty,
-                        skills: state.skills,
-                    }),
-                    // A cast member in the trash has no badge to draw, and a
-                    // chapter without a reading-order place has no snapshot;
-                    // neither should keep the rest of the board from loading.
-                    Err(DbError::NotFound(_)) | Err(DbError::Invalid(_)) => {}
-                    Err(error) => return Err(error),
+                let pair = (chapter_id.clone(), character_id);
+                if !assignments.contains(&pair) {
+                    assignments.push(pair);
                 }
             }
         }
 
+        // The explicit cast joins the linked cast and point of view. Trashed
+        // chapters and characters drop out here so the board never shows a
+        // badge for someone who is no longer in the story.
+        let mut explicit_stmt = guard.prepare(
+            "SELECT cc.chapter_id, cc.character_id
+             FROM chapter_cast cc
+             JOIN nodes n ON n.id = cc.chapter_id
+             JOIN characters ch ON ch.id = cc.character_id
+             JOIN stories st ON st.id = n.story_id
+             WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+               AND n.deleted_at IS NULL AND ch.deleted_at IS NULL
+               AND st.deleted_at IS NULL
+             ORDER BY n.chapter_seq, cc.created_at, ch.name, ch.id",
+        )?;
+
+        let explicit = explicit_stmt
+            .query_map(params![story_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        drop(explicit_stmt);
+
+        for pair in explicit {
+            if !assignments.contains(&pair) {
+                assignments.push(pair);
+            }
+        }
+
+        let mut states = Vec::new();
+
+        for (chapter_id, character_id) in assignments {
+            match Self::character_state_at_chapter_on(&guard, &character_id, &chapter_id) {
+                Ok(state) => states.push(ChapterCastState {
+                    chapter_id,
+                    character_id,
+                    level: state.level,
+                    level_is_penalty: state.level_is_penalty,
+                    skills: state.skills,
+                }),
+                // A cast member in the trash has no badge to draw, and a
+                // chapter without a reading-order place has no snapshot;
+                // neither should keep the rest of the board from loading.
+                Err(DbError::NotFound(_)) | Err(DbError::Invalid(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
         Ok(states)
+    }
+
+    // ===== CHAPTER CAST =====
+    //
+    // A chapter's cast is the linked cast member and point of view, plus every
+    // character explicitly attached as present in the scene. The explicit rows
+    // are kept here so a party can share a chapter without overwriting the
+    // card's one linked cast member.
+
+    pub fn list_story_chapter_cast(&self, story_id: &str) -> DbResult<Vec<ChapterCastMember>> {
+        let guard = self.conn()?;
+
+        let mut stmt = guard.prepare(
+            "SELECT cc.id, cc.chapter_id, cc.character_id, cc.created_at, cc.updated_at
+             FROM chapter_cast cc
+             JOIN nodes n ON n.id = cc.chapter_id
+             JOIN characters ch ON ch.id = cc.character_id
+             JOIN stories st ON st.id = n.story_id
+             WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+               AND n.deleted_at IS NULL AND ch.deleted_at IS NULL
+               AND st.deleted_at IS NULL
+             ORDER BY n.chapter_seq, cc.created_at, ch.name, ch.id",
+        )?;
+
+        let rows = stmt
+            .query_map(params![story_id], |row| {
+                Ok(ChapterCastMember {
+                    id: row.get(0)?,
+                    chapter_id: row.get(1)?,
+                    character_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        Ok(rows)
+    }
+
+    pub fn add_chapter_cast_member(
+        &self,
+        chapter_id: String,
+        character_id: String,
+        user: String,
+    ) -> DbResult<ChapterCastMember> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &character_id)?;
+        validate_node_reference(&tx, &story_id, Some(&chapter_id), "chapter", "chapter")?
+            .ok_or_else(|| DbError::Invalid("a chapter is required".to_string()))?;
+
+        let existing = tx
+            .query_row(
+                "SELECT id, chapter_id, character_id, created_at, updated_at
+                 FROM chapter_cast WHERE chapter_id = ?1 AND character_id = ?2",
+                params![&chapter_id, &character_id],
+                |row| {
+                    Ok(ChapterCastMember {
+                        id: row.get(0)?,
+                        chapter_id: row.get(1)?,
+                        character_id: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        // Toggling the same person on twice is not a change worth a history
+        // entry; the scene already has them.
+        if let Some(member) = existing {
+            return Ok(member);
+        }
+
+        let name = tx
+            .query_row(
+                "SELECT name FROM characters WHERE id = ?1",
+                params![&character_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("character"))?;
+        let timestamp = now();
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO chapter_cast (id, chapter_id, character_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![&id, &chapter_id, &character_id, &timestamp],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_cast",
+                entity_id: &id,
+                action: "create",
+                field_changed: None,
+                old_value: None,
+                new_value: Some(name),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(ChapterCastMember {
+            id,
+            chapter_id,
+            character_id,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn remove_chapter_cast_member(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT ch.name, n.story_id
+                 FROM chapter_cast cc
+                 JOIN nodes n ON n.id = cc.chapter_id
+                 JOIN characters ch ON ch.id = cc.character_id
+                 JOIN stories st ON st.id = n.story_id
+                 WHERE cc.id = ?1 AND n.deleted_at IS NULL AND ch.deleted_at IS NULL
+                   AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        // Already gone: nothing to remove, nothing to record.
+        let Some((name, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM chapter_cast WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_cast",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(name),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
     }
 
     fn character_state_at_chapter_on(
@@ -1837,7 +2425,7 @@ impl Db {
         let milestone = conn
             .query_row(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.created_at, m.updated_at
+                        m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
                  FROM character_level_milestones m
                  JOIN nodes n ON n.id = m.chapter_id
                  WHERE m.character_id = ?1 AND n.deleted_at IS NULL
@@ -3762,7 +4350,7 @@ impl Db {
         let mut character_level_milestones = {
             let mut stmt = guard.prepare(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.created_at, m.updated_at
+                        m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
                  FROM character_level_milestones m
                  JOIN characters c ON c.id = m.character_id
                  WHERE c.story_id = ?1 AND c.deleted_at IS NULL
@@ -3783,6 +4371,43 @@ impl Db {
                  ORDER BY e.created_at",
             )?;
             let rows = stmt.query_map(params![story_id], skill_event_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let mut character_progress = {
+            let mut stmt = guard.prepare(
+                "SELECT p.id, p.character_id, p.chapter_id, p.xp_earned,
+                        p.created_at, p.updated_at
+                 FROM character_progress p
+                 JOIN characters c ON c.id = p.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY p.created_at, p.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], character_progress_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let chapter_cast = {
+            let mut stmt = guard.prepare(
+                "SELECT cc.id, cc.chapter_id, cc.character_id, cc.created_at, cc.updated_at
+                 FROM chapter_cast cc
+                 JOIN nodes n ON n.id = cc.chapter_id
+                 JOIN characters c ON c.id = cc.character_id
+                 JOIN stories st ON st.id = n.story_id
+                 WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+                   AND n.deleted_at IS NULL AND c.deleted_at IS NULL
+                   AND st.deleted_at IS NULL
+                 ORDER BY n.chapter_seq, cc.created_at, c.name",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(ChapterCastMember {
+                    id: row.get(0)?,
+                    chapter_id: row.get(1)?,
+                    character_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })?;
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
@@ -3855,6 +4480,11 @@ impl Db {
             }
         }
 
+        // An XP income row is meaningless without its chapter, so a row whose
+        // chapter is in the trash stays out of the file rather than pointing at
+        // a node the copy does not contain.
+        character_progress.retain(|entry| live_node_ids.contains(entry.chapter_id.as_str()));
+
         for event in &mut character_skill_events {
             if event
                 .chapter_id
@@ -3920,6 +4550,8 @@ impl Db {
             character_skills,
             character_level_milestones,
             character_skill_events,
+            character_progress,
+            chapter_cast,
             character_inventory,
             character_currency,
             nodes,
@@ -5930,6 +6562,16 @@ impl Db {
             .iter()
             .map(|event| (event.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let character_progress: HashMap<String, String> = export
+            .character_progress
+            .iter()
+            .map(|entry| (entry.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let chapter_cast: HashMap<String, String> = export
+            .chapter_cast
+            .iter()
+            .map(|member| (member.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let inventory: HashMap<String, String> = export
             .character_inventory
             .iter()
@@ -6006,6 +6648,12 @@ impl Db {
                 ));
             }
 
+            clean_milestone_metrics(
+                milestone.xp,
+                milestone.stat_name.clone(),
+                milestone.stat_points,
+            )?;
+
             if milestone
                 .chapter_id
                 .as_ref()
@@ -6013,6 +6661,26 @@ impl Db {
             {
                 return Err(DbError::Invalid(
                     "a level milestone points at a chapter the file does not contain".to_string(),
+                ));
+            }
+        }
+
+        for entry in &export.character_progress {
+            if !characters.contains_key(&entry.character_id) {
+                return Err(DbError::Invalid(
+                    "an XP ledger row belongs to a character the file does not contain".to_string(),
+                ));
+            }
+
+            if !nodes.contains_key(&entry.chapter_id) {
+                return Err(DbError::Invalid(
+                    "an XP ledger row points at a chapter the file does not contain".to_string(),
+                ));
+            }
+
+            if entry.xp_earned < 0 {
+                return Err(DbError::Invalid(
+                    "experience earned cannot be negative".to_string(),
                 ));
             }
         }
@@ -6056,6 +6724,44 @@ impl Db {
                         item.name
                     )));
                 }
+            }
+        }
+
+        let mut cast_pairs = std::collections::HashSet::new();
+
+        for member in &export.chapter_cast {
+            if !characters.contains_key(&member.character_id) {
+                return Err(DbError::Invalid(
+                    "a chapter cast member belongs to a character the file does not contain"
+                        .to_string(),
+                ));
+            }
+
+            let chapter = export
+                .nodes
+                .iter()
+                .find(|node| node.id == member.chapter_id);
+
+            match chapter {
+                Some(node) if node.node_type == "chapter" => {}
+                Some(_) => {
+                    return Err(DbError::Invalid(
+                        "a chapter cast member points at something that is not a chapter"
+                            .to_string(),
+                    ))
+                }
+                None => {
+                    return Err(DbError::Invalid(
+                        "a chapter cast member points at a chapter the file does not contain"
+                            .to_string(),
+                    ))
+                }
+            }
+
+            if !cast_pairs.insert((&member.chapter_id, &member.character_id)) {
+                return Err(DbError::Invalid(
+                    "a character is listed in the same chapter's cast more than once".to_string(),
+                ));
             }
         }
 
@@ -6224,6 +6930,21 @@ impl Db {
             )?;
         }
 
+        for member in &export.chapter_cast {
+            tx.execute(
+                "INSERT INTO chapter_cast
+                 (id, chapter_id, character_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    &chapter_cast[&member.id],
+                    &nodes[&member.chapter_id],
+                    &characters[&member.character_id],
+                    &member.created_at,
+                    &member.updated_at
+                ],
+            )?;
+        }
+
         // Skills come after the nodes they can point at, because the chapter and
         // card links are foreign keys into the copy.
         for skill in &export.character_skills {
@@ -6247,18 +6968,44 @@ impl Db {
         }
 
         for milestone in &export.character_level_milestones {
+            let (xp, stat_name, stat_points) = clean_milestone_metrics(
+                milestone.xp,
+                milestone.stat_name.clone(),
+                milestone.stat_points,
+            )?;
+
             tx.execute(
                 "INSERT INTO character_level_milestones
-                 (id, character_id, level, chapter_id, is_debuff, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
+                  stat_points, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     &level_milestones[&milestone.id],
                     &characters[&milestone.character_id],
                     milestone.level,
                     milestone.chapter_id.as_ref().and_then(|id| nodes.get(id)),
                     milestone.is_debuff,
+                    xp,
+                    &stat_name,
+                    stat_points,
                     &milestone.created_at,
                     &milestone.updated_at
+                ],
+            )?;
+        }
+
+        for entry in &export.character_progress {
+            tx.execute(
+                "INSERT INTO character_progress
+                 (id, character_id, chapter_id, xp_earned, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    &character_progress[&entry.id],
+                    &characters[&entry.character_id],
+                    &nodes[&entry.chapter_id],
+                    entry.xp_earned,
+                    &entry.created_at,
+                    &entry.updated_at
                 ],
             )?;
         }
@@ -6349,6 +7096,8 @@ impl Db {
                 "character_skill" => skills.get(&entry.entity_id).cloned(),
                 "character_level_milestone" => level_milestones.get(&entry.entity_id).cloned(),
                 "character_skill_event" => skill_events.get(&entry.entity_id).cloned(),
+                "character_progress" => character_progress.get(&entry.entity_id).cloned(),
+                "chapter_cast" => chapter_cast.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
                 "character_currency" => currencies.get(&entry.entity_id).cloned(),
                 "node" => nodes.get(&entry.entity_id).cloned(),
@@ -6508,6 +7257,27 @@ pub struct CharacterLevelMilestone {
     pub chapter_id: Option<String>,
     #[serde(default)]
     pub is_debuff: bool,
+    /// Total experience at this chapter, when the author recorded it.
+    #[serde(default)]
+    pub xp: Option<i64>,
+    /// The numeric stat snapshotted here, and its value at this chapter. Both
+    /// are optional and always stored together.
+    #[serde(default)]
+    pub stat_name: Option<String>,
+    #[serde(default)]
+    pub stat_points: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One chapter's XP income for one character. This is what was earned in the
+/// chapter, not the running total the milestone snapshots carry.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterProgress {
+    pub id: String,
+    pub character_id: String,
+    pub chapter_id: String,
+    pub xp_earned: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -6549,6 +7319,18 @@ pub struct ChapterCastState {
     pub level: Option<i64>,
     pub level_is_penalty: bool,
     pub skills: Vec<CharacterChapterSkill>,
+}
+
+/// One explicit member of a chapter's cast. The chapter's linked cast member
+/// and point of view are implicit additions to the same scene; this row is the
+/// author's additional list of who is present.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct ChapterCastMember {
+    pub id: String,
+    pub chapter_id: String,
+    pub character_id: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// One change in a skill's life: a rank gained, a use in a chapter, or a
@@ -6904,6 +7686,12 @@ pub struct StoryExport {
     pub character_level_milestones: Vec<CharacterLevelMilestone>,
     #[serde(default)]
     pub character_skill_events: Vec<CharacterSkillEvent>,
+    /// Absent from exports written before schema v18, so they default to empty.
+    #[serde(default)]
+    pub character_progress: Vec<CharacterProgress>,
+    /// Absent from exports written before schema v16, so they default to empty.
+    #[serde(default)]
+    pub chapter_cast: Vec<ChapterCastMember>,
     /// Absent from exports written before schema v13, so they default to empty.
     #[serde(default)]
     pub character_inventory: Vec<InventoryItem>,
@@ -7523,8 +8311,23 @@ fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMi
         level: row.get(2)?,
         chapter_id: row.get(3)?,
         is_debuff: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        xp: row.get(5)?,
+        stat_name: row.get(6)?,
+        stat_points: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+/// Every XP ledger read selects its columns in this order.
+fn character_progress_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterProgress> {
+    Ok(CharacterProgress {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        chapter_id: row.get(2)?,
+        xp_earned: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
     })
 }
 
@@ -7610,6 +8413,32 @@ fn live_character_story(conn: &Connection, character_id: &str) -> DbResult<Strin
     )
     .optional()?
     .ok_or(DbError::NotFound("character"))
+}
+
+/// Tidies a milestone's optional metric snapshot: XP cannot be negative, and a
+/// primary stat is either both a name and a value or neither.
+fn clean_milestone_metrics(
+    xp: Option<i64>,
+    stat_name: Option<String>,
+    stat_points: Option<i64>,
+) -> DbResult<(Option<i64>, Option<String>, Option<i64>)> {
+    if xp.is_some_and(|value| value < 0) {
+        return Err(DbError::Invalid(
+            "experience cannot be negative".to_string(),
+        ));
+    }
+
+    let stat_name = stat_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty());
+
+    match (stat_name, stat_points) {
+        (None, None) => Ok((xp, None, None)),
+        (Some(name), Some(value)) => Ok((xp, Some(name), Some(value))),
+        _ => Err(DbError::Invalid(
+            "a primary stat needs both a name and a value".to_string(),
+        )),
+    }
 }
 
 /// Checks that a skill's optional link points at a live node of the right type
@@ -7936,6 +8765,18 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_015)?;
     }
 
+    if version < 16 {
+        conn.execute_batch(MIGRATION_016)?;
+    }
+
+    if version < 17 {
+        conn.execute_batch(MIGRATION_017)?;
+    }
+
+    if version < 18 {
+        conn.execute_batch(MIGRATION_018)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -8224,6 +9065,69 @@ const MIGRATION_013: &str = "
 const MIGRATION_014: &str = "
     ALTER TABLE character_inventory
         ADD COLUMN lost_chapter_id TEXT REFERENCES nodes(id) ON DELETE SET NULL;
+";
+
+/// Schema v18: XP earned can be recorded per character per chapter.
+///
+/// A row is one chapter's income, not the character's running total. The pair is
+/// unique so a chapter cannot earn two separate amounts, and purging either side
+/// removes the row.
+const MIGRATION_018: &str = "
+    CREATE TABLE IF NOT EXISTS character_progress (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        xp_earned INTEGER NOT NULL CHECK (xp_earned >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(character_id, chapter_id),
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_progress_character
+        ON character_progress (character_id);
+
+    CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
+        ON character_progress (chapter_id);
+";
+
+/// Schema v17: a level milestone can also record the total XP and one primary
+/// stat at that chapter.
+///
+/// Both are optional snapshots, not rules: the chart draws only what the author
+/// recorded, and a milestone without them still means what it did before.
+const MIGRATION_017: &str = "
+    ALTER TABLE character_level_milestones
+        ADD COLUMN xp INTEGER CHECK (xp IS NULL OR xp >= 0);
+    ALTER TABLE character_level_milestones
+        ADD COLUMN stat_name TEXT;
+    ALTER TABLE character_level_milestones
+        ADD COLUMN stat_points INTEGER;
+";
+
+/// Schema v16: more than one cast member can be present in a chapter.
+///
+/// The chapter's linked cast member and point of view stay single links on the
+/// node. This table adds the rest of the scene's cast, one live character per
+/// chapter, and cascades when either side is purged.
+const MIGRATION_016: &str = "
+    CREATE TABLE IF NOT EXISTS chapter_cast (
+        id TEXT PRIMARY KEY,
+        chapter_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(chapter_id, character_id),
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chapter_cast_chapter
+        ON chapter_cast (chapter_id);
+
+    CREATE INDEX IF NOT EXISTS idx_chapter_cast_character
+        ON chapter_cast (character_id);
 ";
 
 /// Schema v15: progression can be placed in the reading order.
@@ -13638,6 +14542,148 @@ mod tests {
     }
 
     #[test]
+    fn a_level_milestone_can_record_xp_and_one_primary_stat() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        let milestone = db
+            .add_level_milestone_with_metrics(
+                character.id.clone(),
+                3,
+                Some(chapter.id.clone()),
+                false,
+                Some(1200),
+                Some("Strength".into()),
+                Some(18),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(milestone.xp, Some(1200));
+        assert_eq!(milestone.stat_name.as_deref(), Some("Strength"));
+        assert_eq!(milestone.stat_points, Some(18));
+
+        let listed = db.list_story_level_milestones(&story.id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].xp, Some(1200));
+        assert_eq!(listed[0].stat_name.as_deref(), Some("Strength"));
+        assert_eq!(listed[0].stat_points, Some(18));
+
+        let updated = db
+            .update_level_milestone_with_metrics(
+                milestone.id.clone(),
+                4,
+                Some(chapter.id.clone()),
+                false,
+                Some(1500),
+                Some("Strength".into()),
+                Some(20),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.level, 4);
+        assert_eq!(updated.xp, Some(1500));
+        assert_eq!(updated.stat_points, Some(20));
+
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_level_milestone"),
+                Some(&milestone.id),
+                100,
+            )
+            .unwrap();
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("xp")
+                && entry.old_value.as_deref() == Some("1200")
+                && entry.new_value.as_deref() == Some("1500")
+        }));
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("stat_points")
+                && entry.old_value.as_deref() == Some("18")
+                && entry.new_value.as_deref() == Some("20")
+        }));
+
+        let cleared = db
+            .update_level_milestone_with_metrics(
+                milestone.id.clone(),
+                4,
+                Some(chapter.id.clone()),
+                false,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(cleared.xp, None);
+        assert_eq!(cleared.stat_name, None);
+        assert_eq!(cleared.stat_points, None);
+
+        assert!(db
+            .add_level_milestone_with_metrics(
+                character.id.clone(),
+                5,
+                None,
+                false,
+                Some(-1),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+        assert!(db
+            .add_level_milestone_with_metrics(
+                character.id.clone(),
+                5,
+                None,
+                false,
+                None,
+                Some("Strength".into()),
+                None,
+                "Ada".into(),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn an_export_written_before_milestone_metrics_still_imports() {
+        let (source, story, character, chapter, _) = skill_story();
+        source
+            .add_level_milestone(
+                character.id.clone(),
+                4,
+                Some(chapter.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        let mut value = serde_json::to_value(&export).unwrap();
+        for milestone in value
+            .get_mut("character_level_milestones")
+            .and_then(|value| value.as_array_mut())
+            .expect("the milestone is in the export")
+        {
+            let object = milestone.as_object_mut().unwrap();
+            object.remove("xp");
+            object.remove("stat_name");
+            object.remove("stat_points");
+        }
+
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(older, "Grace".into()).unwrap();
+        let milestones = target.list_story_level_milestones(&restored.id).unwrap();
+
+        assert_eq!(milestones.len(), 1);
+        assert_eq!(milestones[0].level, 4);
+        assert_eq!(milestones[0].xp, None);
+        assert_eq!(milestones[0].stat_name, None);
+        assert_eq!(milestones[0].stat_points, None);
+    }
+
+    #[test]
     fn purging_a_chapter_clears_level_and_skill_links() {
         let (db, _, character, chapter, _) = skill_story();
         let skill = db
@@ -13697,11 +14743,14 @@ mod tests {
             )
             .unwrap();
         source
-            .add_level_milestone(
+            .add_level_milestone_with_metrics(
                 character.id.clone(),
                 5,
                 Some(chapter.id.clone()),
                 false,
+                Some(2400),
+                Some("Strength".into()),
+                Some(22),
                 "Ada".into(),
             )
             .unwrap();
@@ -13742,6 +14791,9 @@ mod tests {
 
         assert_eq!(milestones.len(), 1);
         assert_eq!(milestones[0].level, 5);
+        assert_eq!(milestones[0].xp, Some(2400));
+        assert_eq!(milestones[0].stat_name.as_deref(), Some("Strength"));
+        assert_eq!(milestones[0].stat_points, Some(22));
         assert_eq!(
             milestones[0].chapter_id.as_deref(),
             Some(chapter_id.as_str())
@@ -13793,6 +14845,194 @@ mod tests {
             .is_empty());
         assert!(target
             .list_story_skill_events(&restored.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn xp_income_is_one_amount_per_character_per_chapter() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        let entry = db
+            .add_character_progress(character.id.clone(), chapter.id.clone(), 500, "Ada".into())
+            .unwrap();
+
+        assert_eq!(entry.xp_earned, 500);
+        assert_eq!(entry.chapter_id, chapter.id);
+        assert_eq!(db.list_character_progress(&character.id).unwrap().len(), 1);
+        assert_eq!(
+            db.list_story_character_progress(&story.id).unwrap().len(),
+            1
+        );
+
+        let duplicate = db
+            .add_character_progress(character.id.clone(), chapter.id.clone(), 25, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(duplicate.contains("already has XP"), "{duplicate}");
+
+        let negative = db
+            .add_character_progress(character.id.clone(), chapter.id.clone(), -1, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(negative.contains("cannot be negative"), "{negative}");
+
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_character_progress(entry.id.clone(), second.id.clone(), 700, "Ada".into())
+            .unwrap();
+        assert_eq!(updated.chapter_id, second.id);
+        assert_eq!(updated.xp_earned, 700);
+
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_progress"),
+                Some(&entry.id),
+                100,
+            )
+            .unwrap();
+        assert!(history.iter().any(|event| {
+            event.field_changed.as_deref() == Some("xp_earned")
+                && event.old_value.as_deref() == Some("500")
+                && event.new_value.as_deref() == Some("700")
+        }));
+        assert!(history.iter().any(|event| {
+            event.field_changed.as_deref() == Some("chapter")
+                && event.new_value.as_deref() == Some("Chapter Two")
+        }));
+
+        let before = history.len();
+        db.update_character_progress(entry.id.clone(), second.id.clone(), 700, "Ada".into())
+            .unwrap();
+        assert_eq!(
+            db.get_audit_log(
+                Some(&story.id),
+                Some("character_progress"),
+                Some(&entry.id),
+                100,
+            )
+            .unwrap()
+            .len(),
+            before,
+            "saving the same income writes nothing"
+        );
+
+        db.delete_character_progress(&entry.id, "Ada".into())
+            .unwrap();
+        assert!(db
+            .list_story_character_progress(&story.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn xp_income_cannot_move_onto_a_chapter_that_already_has_it() {
+        let (db, story, character, first, _) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let entry = db
+            .add_character_progress(character.id.clone(), first.id.clone(), 100, "Ada".into())
+            .unwrap();
+        db.add_character_progress(character.id.clone(), second.id.clone(), 200, "Ada".into())
+            .unwrap();
+
+        let refused = db
+            .update_character_progress(entry.id.clone(), second.id.clone(), 300, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("already has XP"), "{refused}");
+    }
+
+    #[test]
+    fn purging_a_chapter_removes_its_xp_income() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        db.add_character_progress(character.id.clone(), chapter.id.clone(), 400, "Ada".into())
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+
+        assert!(db
+            .list_story_character_progress(&story.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn xp_income_travels_with_an_export() {
+        let (source, story, character, chapter, _) = skill_story();
+        source
+            .add_character_progress(character.id.clone(), chapter.id.clone(), 650, "Ada".into())
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_progress.len(), 1);
+        assert_eq!(export.character_progress[0].xp_earned, 650);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let progress = target.list_story_character_progress(&restored.id).unwrap();
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let chapter_id = nodes
+            .iter()
+            .find(|node| node.node_type == "chapter")
+            .map(|node| node.id.clone())
+            .expect("the chapter came across");
+
+        assert_eq!(progress.len(), 1);
+        assert_eq!(progress[0].xp_earned, 650);
+        assert_eq!(progress[0].chapter_id, chapter_id);
+    }
+
+    #[test]
+    fn a_trashed_chapters_xp_income_stays_out_of_an_export() {
+        let (source, story, character, chapter, _) = skill_story();
+        source
+            .add_character_progress(character.id.clone(), chapter.id.clone(), 300, "Ada".into())
+            .unwrap();
+        source.delete_node(&chapter.id, "Ada".into()).unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert!(export.character_progress.is_empty());
+    }
+
+    #[test]
+    fn an_export_written_before_xp_income_still_imports() {
+        let (source, story, _, _, _) = skill_story();
+        let export = source.export_story(&story.id).unwrap();
+        let mut value = serde_json::to_value(&export).unwrap();
+        value.as_object_mut().unwrap().remove("character_progress");
+
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        assert!(older.character_progress.is_empty());
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(older, "Grace".into()).unwrap();
+        assert!(target
+            .list_story_character_progress(&restored.id)
             .unwrap()
             .is_empty());
     }
@@ -14156,6 +15396,363 @@ mod tests {
             third.level, None,
             "a character with no milestone yet keeps a badge but no level"
         );
+    }
+
+    #[test]
+    fn an_explicit_chapter_cast_joins_the_linked_cast_and_pov_without_duplicates() {
+        let (db, story, rook, chapter, _) = skill_story();
+        let wren = db
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let tess = db
+            .create_character(story.id.clone(), "Tess".into(), None, "Ada".into())
+            .unwrap();
+
+        db.set_node_character(&chapter.id, Some(rook.id.clone()), "Ada".into())
+            .unwrap();
+        db.set_chapter_details(
+            &chapter.id,
+            None,
+            None,
+            None,
+            Some(wren.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let tess_member = db
+            .add_chapter_cast_member(chapter.id.clone(), tess.id.clone(), "Ada".into())
+            .unwrap();
+        let wren_member = db
+            .add_chapter_cast_member(chapter.id.clone(), wren.id.clone(), "Ada".into())
+            .unwrap();
+
+        let members = db.list_story_chapter_cast(&story.id).unwrap();
+        assert_eq!(members.len(), 2, "only the explicit rows are listed");
+        assert!(members.iter().any(|member| member.id == tess_member.id));
+
+        // Adding the same person again is a no-op rather than a duplicate row.
+        let again = db
+            .add_chapter_cast_member(chapter.id.clone(), wren.id.clone(), "Ada".into())
+            .unwrap();
+        assert_eq!(again.id, wren_member.id);
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 2);
+
+        let states = db.list_chapter_cast_states(&story.id).unwrap();
+        assert_eq!(states.len(), 3, "linked cast, POV and Tess, each once");
+        assert!(states.iter().all(|state| state.chapter_id == chapter.id));
+        for character in [&rook, &wren, &tess] {
+            assert!(
+                states
+                    .iter()
+                    .any(|state| state.character_id == character.id),
+                "{} has a badge exactly once",
+                character.name
+            );
+        }
+
+        db.remove_chapter_cast_member(&wren_member.id, "Ada".into())
+            .unwrap();
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 1);
+        let after = db.list_chapter_cast_states(&story.id).unwrap();
+        assert_eq!(
+            after.len(),
+            3,
+            "removing the explicit row leaves the POV badge"
+        );
+    }
+
+    #[test]
+    fn chapter_cast_refuses_a_character_or_node_from_outside_the_story() {
+        let (db, story, _, chapter, card) = skill_story();
+        let other = db.create_story("Other".into(), None, "Ada".into()).unwrap();
+        let outsider = db
+            .create_character(other.id.clone(), "Mara".into(), None, "Ada".into())
+            .unwrap();
+
+        assert!(matches!(
+            db.add_chapter_cast_member(chapter.id.clone(), outsider.id.clone(), "Ada".into(),),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(matches!(
+            db.add_chapter_cast_member(
+                card.id.clone(),
+                db.list_characters(&story.id).unwrap()[0].id.clone(),
+                "Ada".into(),
+            ),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(db.list_story_chapter_cast(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn purging_a_chapter_removes_its_cast_rows() {
+        let (db, story, character, chapter, _) = skill_story();
+        db.add_chapter_cast_member(chapter.id.clone(), character.id.clone(), "Ada".into())
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(
+            db.list_story_chapter_cast(&story.id).unwrap().is_empty(),
+            "a trashed chapter takes its explicit cast out of view"
+        );
+
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+        let remaining: i64 = db
+            .conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM chapter_cast", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "the foreign key cleans the rows up");
+    }
+
+    #[test]
+    fn a_chapter_cast_travels_with_an_export_and_an_older_file_still_imports() {
+        let (source, story, character, chapter, _) = skill_story();
+        let wren = source
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        source
+            .add_chapter_cast_member(chapter.id.clone(), character.id.clone(), "Ada".into())
+            .unwrap();
+        let member = source
+            .add_chapter_cast_member(chapter.id.clone(), wren.id.clone(), "Ada".into())
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.chapter_cast.len(), 2);
+        let mut value = serde_json::to_value(&export).unwrap();
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let restored_characters = target.list_characters(&restored.id).unwrap();
+        let restored_chapters = target.list_nodes(&restored.id).unwrap();
+        let restored_cast = target.list_story_chapter_cast(&restored.id).unwrap();
+        assert_eq!(restored_cast.len(), 2);
+        assert!(restored_cast.iter().all(|row| {
+            row.chapter_id == restored_chapters[0].id
+                && restored_characters
+                    .iter()
+                    .any(|character| character.id == row.character_id)
+        }));
+        assert!(restored_cast.iter().all(|row| row.id != member.id));
+
+        value.as_object_mut().unwrap().remove("chapter_cast");
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        assert!(older.chapter_cast.is_empty());
+        let old_copy = target.import_story(older, "Grace".into()).unwrap();
+        assert!(target
+            .list_story_chapter_cast(&old_copy.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn migrating_a_version_15_database_adds_chapter_cast() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        for block in [
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+            MIGRATION_014,
+            MIGRATION_015,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 15).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v16', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        conn.execute(
+            "INSERT INTO chapter_cast (id, chapter_id, character_id, created_at, updated_at)
+             VALUES ('cc1', 'n1', 'c1', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Written before v16");
+    }
+
+    #[test]
+    fn migrating_a_version_16_database_adds_milestone_metrics() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        for block in [
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+            MIGRATION_014,
+            MIGRATION_015,
+            MIGRATION_016,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 16).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v17', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        conn.execute(
+            "INSERT INTO character_level_milestones
+             (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
+              stat_points, created_at, updated_at)
+             VALUES ('m1', 'c1', 3, 'n1', 0, 1200, 'Strength', 18, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let values: (Option<i64>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT xp, stat_name, stat_points FROM character_level_milestones
+                  WHERE id = 'm1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(values, (Some(1200), Some("Strength".into()), Some(18)));
+    }
+
+    #[test]
+    fn migrating_a_version_17_database_adds_the_xp_ledger() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        for block in [
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+            MIGRATION_014,
+            MIGRATION_015,
+            MIGRATION_016,
+            MIGRATION_017,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 17).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v18', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        conn.execute(
+            "INSERT INTO character_progress
+             (id, character_id, chapter_id, xp_earned, created_at, updated_at)
+             VALUES ('p1', 'c1', 'n1', 450, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let earned: i64 = conn
+            .query_row(
+                "SELECT xp_earned FROM character_progress WHERE id = 'p1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(earned, 450);
     }
 
     // A story with a cast member, a chapter and an item card, which is the shape

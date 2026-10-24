@@ -207,22 +207,39 @@ string. A level starts at 1 and experience at 0, which is what the migration giv
 a character created before these fields existed.
 
 **Level milestones** sit below the progression bar: a level, the chapter it was
-reached in, and an explicit **Penalty** flag for a deliberate drop. They are a
-record of where a level applied, not the character's current level, so changing
-the sheet does not rewrite history. The Chapters tab compares them in reading
-order and warns when a level goes backwards without that penalty flag; the same
-warning is drawn on the chapter card where the drop appears. Clicking either one
-opens the holder's sheet and puts that milestone straight into its editor.
+reached in, an explicit **Penalty** flag for a deliberate drop, and optional
+**Total XP** and **Stat points** snapshots. The snapshots record what the sheet
+said at that chapter; neither is required, and the two stat fields are stored
+together. They are a record of where a level applied, not the character's current
+level, so changing the sheet does not rewrite history. The Chapters tab compares
+them in reading order and warns when a level goes backwards without that penalty
+flag; the same warning is drawn on the chapter card where the drop appears.
+Clicking either one opens the holder's sheet and puts that milestone straight
+into its editor.
+
+**XP by chapter** is a separate ledger below the milestones: one income amount
+per character per chapter, recorded on the sheet with that chapter. It is what
+the chapter paid out, not a running total and not the sheet's current experience;
+the total XP snapshot on a milestone answers the other question. A pair can hold
+only one amount, so recording the same chapter twice is refused, and a trashed
+chapter keeps its row labelled as such until the chapter is restored or purged.
+Editing or deleting a row is immediate, and the ledger travels in the JSON export
+and import. A chapter that has been purged takes its income rows with it.
 
 **Progression chart and chapter state** — the top of the Characters tab draws a
-power curve from `character_level_milestones`: one step line per character, with
-the chapters in reading order along the x-axis and levels up the y-axis. Every
-cast member with a placed milestone starts on the chart, and the legend toggles
-each line on or off so two or more curves can be compared without recolouring the
-others. The line starts at the first recorded milestone, steps at each chapter
-where the level changes, and leaves a milestone with no live chapter off the
-chart rather than guessing where it belongs. The chart is read-only; **Edit** on
-the milestone still changes the number.
+power curve from `character_level_milestones` and the XP ledger: the chapters in
+reading order along the x-axis. The y-axis switches between **Level**, **Total
+XP**, **XP earned** and a chosen **Primary stat**. Level, total XP and a stat draw
+one step line per character, where only chapters with a recorded value get a
+point and the last recorded value carries forward. **XP earned** instead draws
+one bar per character in each chapter, because income belongs to that chapter and
+is not a running total. Every cast member with a placed milestone starts on the
+chart, and the XP-earned view includes a character with income even when they
+have no milestone. The legend toggles each line or bar group on or off so two or
+more characters can be compared without recolouring the others. A milestone or
+income row with no live chapter is left off rather than guessed at. The chart is
+read-only; **Edit** on the milestone or ledger row still changes the number or
+snapshot.
 
 Below it, **As of chapter** reads a snapshot rather than redrawing the chart by
 hand: choose a chapter and the panel says each selected character's active level
@@ -236,17 +253,23 @@ before its skill was learned is ignored as a contradiction rather than used to
 rewrite later scenes. This is the same `character_state_at_chapter` query other
 screens can use to ask what a character had in any chapter.
 
-**Chapter cast badges** — a chapter card on the Graph tab names the cast assigned
-to it: the character it is linked to and the point-of-view character, if either is
-set. Each name gets a compact level badge from the same chapter snapshot, so
+**Chapter cast badges** — a chapter card on the Graph tab names everyone present
+in that chapter: the character it is linked to, the point-of-view character, and
+every cast member added with **Cast** on the Chapters tab. The picker is one
+checkbox per live cast member and marks the card's own links as **POV** and
+**Linked**, so a party can share a scene without replacing those two links. Each
+name gets a compact level badge from the same chapter snapshot, so
 "Rook (Lv 12)" is the level Rook had when the story reached that chapter, not the
 level on the sheet today. Hovering or focusing a badge lists that character's
 active skills and their ranks; clicking it opens the character sheet. A character
-with no milestone yet keeps the name badge without a level, and a chapter with
-nobody assigned gets no badge row at all. The badges are `nodrag nopan` buttons,
-so opening one does not drag the card or pan the board. Every chapter's assigned
-cast is read in one story-wide request rather than one request per card, and the
-request is repeated when the milestones, skills or assignments change.
+with no milestone yet keeps the name badge without a level; a chapter with
+nobody assigned gets no badge row at all, and every present character gets a
+badge, wrapping as needed. The badges are `nodrag nopan` buttons, so opening
+one does not drag the card or pan the board. Every chapter's cast is read in one
+story-wide request rather than one request per card, and the request is repeated
+when the milestones, skills, links or explicit cast change. The explicit cast
+travels in the JSON export and an import; older files without the table still
+import.
 
 **Skills** — a cast member's skills are rows of their own rather than attributes
 called "Skill": a name, an optional rank and effect in the author's own words,
@@ -273,9 +296,9 @@ each with the chapter it happened in and an optional rank. The sheet lists them
 under the skill in reading order, so a rank gained in one chapter and used in an
 earlier one is visible as a contradiction rather than buried in a note. Events are
 saved, edited and audited individually; a sacrifice drops its rank, because the
-skill is no longer held. Skills, milestones and events travel in the JSON export
-and an import with their skill and chapter links remapped, and older files without
-the new tables still import.
+skill is no longer held. Skills, milestones, XP income and events travel in the
+JSON export and an import with their skill and chapter links remapped, and older
+files without the new tables still import.
 
 **Inventory and currency** — a cast member's belongings are rows of their own
 rather than attributes called "Item": a name, an optional rarity and effect in
@@ -313,11 +336,14 @@ a POV link is not.
 that drops in reading order is flagged unless that milestone is marked as a
 penalty; a skill used before it was learned, a rank used before the upgrade that
 reached it, and a skill used or upgraded after it was sacrificed are flagged too.
-Each warning
-names the character and both chapters, and clicking it switches to Characters,
-selects that person, scrolls to the relevant milestone or skill event and opens
-that entry for editing. The badges on the graph use ordinary buttons with
-`nodrag` and `nopan`, so opening one never pans the board or moves a card.
+XP income is compared with every total-XP milestone as well: the ledger through
+that chapter must add up to the recorded total, and both a shortfall and an excess
+are named with the difference. A character with no income rows is left alone, so
+a story that only used totals is not warned about before it starts a ledger. Each
+warning names the character and the chapters involved, and clicking it switches
+to Characters, selects that person, scrolls to the relevant milestone or skill
+event and opens that entry for editing. The badges on the graph use ordinary buttons
+with `nodrag` and `nopan`, so opening one never pans the board or moves a card.
 
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
@@ -491,7 +517,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `15`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `18`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -520,7 +546,14 @@ neither, and nothing is inferred from attributes called "Item" or "Gold". Versio
 loss until one is chosen, which is different from an item known to be lost. Version
 15 added `character_level_milestones` and `character_skill_events`; an older story
 starts with neither, so its levels and skills are still recorded on the sheets but
-have no chapter-by-chapter history until the author adds one.
+have no chapter-by-chapter history until the author adds one. Version 16 added
+`chapter_cast`, which starts empty: a chapter keeps its single linked cast member
+and point of view, and the table holds only the additional people added with
+**Cast**. Version 17 added `character_level_milestones.xp`, `stat_name` and
+`stat_points`; an existing milestone has no snapshots until one is recorded,
+which is different from a recorded value of zero. Version 18 added
+`character_progress`; an older story starts with no income rows, and one row per
+character/chapter can be added afterwards.
 
 | Table | Contents |
 | --- | --- |
@@ -529,8 +562,10 @@ have no chapter-by-chapter history until the author adds one.
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
 | `character_skills` | Belongs to a character; `name` (unique per character), nullable `rank` and `effect`, optional `chapter_id` and `node_id` links (cleared when that node is purged) |
-| `character_level_milestones` | Belongs to a character; integer `level` (1 or higher), optional `chapter_id` link (cleared when the chapter is purged), `is_debuff` for an explicit penalty |
+| `character_level_milestones` | Belongs to a character; integer `level` (1 or higher), optional `chapter_id` link (cleared when the chapter is purged), `is_debuff` for an explicit penalty, optional `xp`, `stat_name` and `stat_points` snapshots |
+| `character_progress` | One chapter's XP income for a character; integer `xp_earned` (zero or higher), unique on the character/chapter pair, cascading when either side is purged |
 | `character_skill_events` | Belongs to a skill; `kind` (`upgraded`, `used` or `sacrificed`), optional `chapter_id` link (cleared when purged) and nullable `rank` |
+| `chapter_cast` | One row per additional cast member in a chapter, unique on the chapter/character pair and cascading when either is purged |
 | `character_inventory` | Belongs to a character; `name` (unique per character), nullable `rarity` and `effect`, integer `quantity`, optional `chapter_id`, `lost_chapter_id` and `node_id` links (cleared when that node is purged) |
 | `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
@@ -551,11 +586,12 @@ how restoring the node knows which connections to bring back with it. A
 connection deleted on its own keeps its earlier timestamp and stays in the trash.
 
 `characters`, `character_stats`, `character_attributes`, `character_skills`,
-`character_level_milestones`, `character_skill_events`, `character_inventory`,
-`character_currency`, `nodes` and `edges` all cascade from their parent,
-with `PRAGMA foreign_keys = ON`. `audit_log` deliberately has no foreign key, so
-history survives the deletion of what it describes. It is indexed on
-`(story_id, changed_at)` and `(entity_type, entity_id)`.
+`character_level_milestones`, `character_progress`, `character_skill_events`,
+`character_inventory`, `character_currency`, `chapter_cast`, `nodes` and `edges`
+all cascade from their parent, with `PRAGMA foreign_keys = ON`. `audit_log`
+deliberately has no foreign key, so history survives the deletion of what it
+describes. It is indexed on `(story_id, changed_at)` and
+`(entity_type, entity_id)`.
 
 ## Development
 
@@ -593,7 +629,7 @@ page that arrives late, and what it says when a filter matches nothing.
   **once** and passes `&Connection` down to helpers such as `log_audit`; helpers must
   never call back into a locking method, because `std::sync::Mutex` is not
   reentrant and that would deadlock.
-- **`src-tauri/src/lib.rs`** — the 45 thin `#[tauri::command]` wrappers, the JSON
+- **`src-tauri/src/lib.rs`** — the 80 thin `#[tauri::command]` wrappers, the JSON
   export writer and import reader, and startup (which opens the database and adopts
   a legacy file). The file picker for import comes from `tauri-plugin-dialog`, whose
   `dialog:default` permission is declared in `capabilities/default.json`, and the
@@ -622,10 +658,11 @@ page that arrives late, and what it says when a filter matches nothing.
   does not drive — while the ↑/↓ buttons move a chapter everywhere. Deleting a
   chapter leaves its position empty until something is moved or **Renumber** is
   pressed; that is shown in the tab, not repaired silently.
-- **A chapter's cast badge knows two links, not a scene list.** It shows the
-  character linked to the chapter and the point-of-view character. There is no
-  separate per-scene cast assignment yet, so another character who appears in the
-  scene without either link is not on the badge row.
+- **A chapter's cast is a chapter-level list, not per-scene blocking.** It joins
+  the card's linked cast member, its POV and every character ticked in **Cast**,
+  but the same list applies to the whole chapter. Every present character gets a
+  badge, so a large party makes the card taller rather than hiding names behind a
+  count.
 - **The story bible carries only what the app models.** The file and the clipboard
   hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
   the cast with their skills and inventory, and the other cards. Copying needs
@@ -640,14 +677,16 @@ page that arrives late, and what it says when a filter matches nothing.
   below the target, that a level-up is earned, or that a rank only rises: the
   fields hold whatever the author typed, and leveling up just adds one. The bar
   clamps at 100% when experience passes the target rather than inventing a
-  second level, and without a target there is no bar to fill. Level milestones and
-  skill events are also author-recorded: the continuity panel can only compare the
-  chapters someone entered, so a missing milestone means no warning rather than a
-  guessed level. The chart draws those recorded points, not a line fitted through
-  them, and a character with no milestones has no line at all; the "as of" panel
-  likewise reports "No level recorded" rather than borrowing the sheet's current
-  level. The chart's y-axis is level only for now: XP and stats are not series yet,
-  and a deliberate jump is drawn exactly where the author placed it.
+  second level, and without a target there is no bar to fill. Level milestones,
+  XP income and skill events are also author-recorded: the continuity panel can
+  only compare the chapters someone entered, so a missing milestone means no
+  warning rather than a guessed level, and income is only reconciled for a
+  character whose ledger has started. The chart draws those recorded points and
+  bars, not a line fitted through them. A character with no milestone has no line
+  in the level, total-XP or stat views, and one with no income row has no bars in
+  the XP-earned view; the "as of" panel likewise reports "No level recorded"
+  rather than borrowing the sheet's current level. A deliberate level jump is
+  drawn exactly where the author placed it.
 - **Inventory has one recorded loss, not a chapter-by-chapter history.** An item
   can name the chapter it was lost in, but the panel only compares that chapter
   with the acquisition chapter and with the item's current count. Reacquiring it

@@ -131,6 +131,21 @@ interface CharacterLevelMilestone {
   level: number;
   chapter_id: string | null;
   is_debuff: boolean;
+  // Optional snapshots: total XP and one numeric stat at this chapter.
+  xp?: number | null;
+  stat_name?: string | null;
+  stat_points?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// One chapter's XP income. This is separate from the total XP snapshot on a
+// milestone: one says what was earned there, the other what the running total was.
+interface CharacterProgress {
+  id: string;
+  character_id: string;
+  chapter_id: string;
+  xp_earned: number;
   created_at: string;
   updated_at: string;
 }
@@ -176,6 +191,16 @@ interface ChapterCastBadge {
   skills: CharacterChapterSkill[];
 }
 
+// One character the author added to a chapter's cast. The linked cast member
+// and POV are kept as links on the node, so they are not rows here.
+interface ChapterCastMember {
+  id: string;
+  chapter_id: string;
+  character_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // One line on the progression chart. The colour is fixed per cast member while
 // the chart is open, so toggling someone off does not recolour the others.
 interface ProgressionChartSeries {
@@ -183,7 +208,10 @@ interface ProgressionChartSeries {
   name: string;
   color: string;
   milestones: CharacterLevelMilestone[];
+  progress: CharacterProgress[];
 }
+
+type ProgressionMetric = 'level' | 'xp' | 'earned' | 'stat';
 
 type SkillEventKind = 'upgraded' | 'sacrificed' | 'used';
 
@@ -286,7 +314,6 @@ type NodeData = {
   // The cast whose snapshot applies to this chapter, linked in the reading
   // order by the database. The card shows a level only when one was recorded.
   chapterCast?: ChapterCastBadge[];
-  hiddenChapterCast?: number;
   onOpenChapterCast?: (characterId: string) => void;
   // Continuity warnings that belong to this chapter, short enough for the card
   // and complete in the tooltip.
@@ -366,9 +393,6 @@ function isNodeType(value: string): value is NodeType {
 
 // How many numbers a card has room for before it starts counting.
 const NODE_STAT_BADGES = 2;
-
-// A chapter card keeps its cast badges to a compact pair; the rest are counted.
-const CHAPTER_CAST_BADGES_SHOWN = 2;
 
 // Fixed, distinguishable line colours. A cast member keeps the same colour while
 // the chart is open, so hiding one line does not recolour the comparison.
@@ -557,7 +581,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           role="group"
           aria-label="Cast in this chapter"
         >
-          {chapterCast.slice(0, CHAPTER_CAST_BADGES_SHOWN).map(member => (
+          {chapterCast.map(member => (
             <button
               type="button"
               key={member.characterId}
@@ -586,11 +610,6 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
               )}
             </button>
           ))}
-          {(data.hiddenChapterCast ?? 0) > 0 && (
-            <span className="graph-node-chapter-cast-more">
-              +{data.hiddenChapterCast}
-            </span>
-          )}
         </div>
       )}
       {kind === 'chapter' && continuityFlags.length > 0 && (
@@ -1299,9 +1318,13 @@ function AuditChange({
 function ProgressionChart({
   chapters,
   series,
+  metric,
+  statName,
 }: {
   chapters: Node<NodeData>[];
   series: ProgressionChartSeries[];
+  metric: ProgressionMetric;
+  statName: string;
 }) {
   const width = 760;
   const height = 260;
@@ -1309,9 +1332,23 @@ function ProgressionChart({
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const chapterIndex = new Map(chapters.map((chapter, index) => [chapter.id, index]));
+  const metricValue = (milestone: CharacterLevelMilestone): number | null => {
+    if (metric === 'level') return milestone.level;
+    if (metric === 'xp') return milestone.xp ?? null;
+    if (metric === 'earned') return null;
+
+    return milestone.stat_name === statName ? milestone.stat_points ?? null : null;
+  };
+  const metricTitle =
+    metric === 'level'
+      ? 'Character levels'
+      : metric === 'xp'
+        ? 'Character XP'
+        : metric === 'earned'
+          ? 'XP earned'
+          : statName || 'Primary stats';
 
   const built = series.map(entry => {
-    const byChapter = new Map<number, CharacterLevelMilestone>();
     const ordered = entry.milestones
       .filter(
         milestone =>
@@ -1325,64 +1362,119 @@ function ProgressionChart({
           a.id.localeCompare(b.id)
       );
 
-    // One milestone per chapter, as in the continuity checks: the last one
-    // recorded there is the level that applied.
+    // One point per chapter per metric, as in the continuity checks: the last
+    // milestone that recorded this metric in the chapter is the one that counts.
+    // A later milestone without XP or a stat snapshot does not erase it.
+    const byChapter = new Map<
+      number,
+      { milestone: CharacterLevelMilestone; value: number }
+    >();
+
     for (const milestone of ordered) {
+      const value = metricValue(milestone);
+      if (value === null) continue;
+
       byChapter.set(
         chapterIndex.get(milestone.chapter_id as string) as number,
-        milestone
+        { milestone, value }
       );
     }
 
     const markers = [...byChapter.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([index, milestone]) => ({ index, milestone }));
-    const steps: { index: number; level: number }[] = [];
+      .map(([index, point]) => ({ index, ...point }));
+    const steps: { index: number; value: number }[] = [];
     let active: number | null = null;
 
     for (let index = 0; index < chapters.length; index += 1) {
-      const milestone = byChapter.get(index);
-      if (milestone) active = milestone.level;
-      if (active !== null) steps.push({ index, level: active });
+      const point = byChapter.get(index);
+      if (point) active = point.value;
+      if (active !== null) steps.push({ index, value: active });
     }
 
-    return { ...entry, markers, steps };
+    // Income is what happened in one chapter, so it is a bar rather than a step
+    // that carries forward. One chapter has at most one row per character.
+    const progressByChapter = new Map<number, CharacterProgress>();
+
+    for (const progressEntry of entry.progress) {
+      const index = chapterIndex.get(progressEntry.chapter_id);
+      if (index !== undefined) progressByChapter.set(index, progressEntry);
+    }
+
+    const bars = [...progressByChapter.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([index, progressEntry]) => ({
+        index,
+        progressEntry,
+        value: progressEntry.xp_earned,
+      }));
+
+    return { ...entry, markers, steps, bars };
   });
 
-  const levels = built.flatMap(entry => entry.markers.map(marker => marker.milestone.level));
-  const lowest = Math.min(...levels);
-  const highest = Math.max(...levels);
+  const values =
+    metric === 'earned'
+      ? built.flatMap(entry => entry.bars.map(bar => bar.value))
+      : built.flatMap(entry => entry.markers.map(marker => marker.value));
+  const lowest = values.length > 0 ? Math.min(...values) : 0;
+  const highest = values.length > 0 ? Math.max(...values) : 1;
   const pad = highest === lowest ? 1 : Math.max(1, Math.ceil((highest - lowest) * 0.15));
-  const yMin = Math.max(0, lowest - pad);
-  const yMax = highest + pad;
+  const yMin =
+    metric === 'xp' || metric === 'earned'
+      ? 0
+      : lowest >= 0
+        ? Math.max(0, lowest - pad)
+        : lowest - pad;
+  const yMax = Math.max(highest + pad, yMin + 1);
+  const chapterSlot = plotWidth / Math.max(1, chapters.length);
+  const chapterCenter = (index: number) =>
+    chapters.length <= 1
+      ? margin.left + plotWidth / 2
+      : margin.left + (index + 0.5) * chapterSlot;
   const x = (index: number) =>
     chapters.length <= 1
       ? margin.left + plotWidth / 2
       : margin.left + (index / (chapters.length - 1)) * plotWidth;
-  const y = (level: number) =>
-    margin.top + ((yMax - level) / Math.max(1, yMax - yMin)) * plotHeight;
+  const y = (value: number) =>
+    margin.top + ((yMax - value) / Math.max(1, yMax - yMin)) * plotHeight;
+  const barGroupWidth = chapterSlot * 0.68;
+  const barWidth = barGroupWidth / Math.max(1, built.length);
+  const barX = (index: number, seriesIndex: number) =>
+    margin.left +
+    index * chapterSlot +
+    (chapterSlot - barGroupWidth) / 2 +
+    seriesIndex * barWidth;
   const ticks = [0, 1, 2, 3, 4].map(
     step => yMin + ((yMax - yMin) * step) / 4
   );
   const labelEvery = Math.max(1, Math.ceil(chapters.length / 8));
   const names = series.map(entry => entry.name).join(', ');
+  const pointText = (marker: { milestone: CharacterLevelMilestone; value: number }) => {
+    if (metric === 'level') {
+      return `level ${marker.value}${marker.milestone.is_debuff ? ' (penalty)' : ''}`;
+    }
+    if (metric === 'xp') return `total XP ${marker.value}`;
+
+    return `${statName || 'primary stat'} ${marker.value}`;
+  };
 
   return (
     <svg
       className="progression-chart-svg"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`Character levels for ${names} across ${chapters.length} chapters in reading order`}
+      data-metric={metric}
+      aria-label={`${metricTitle} for ${names} across ${chapters.length} chapters in reading order`}
     >
       <title>
-        {`Character levels for ${names} across ${chapters.length} chapters in reading order`}
+        {`${metricTitle} for ${names} across ${chapters.length} chapters in reading order`}
       </title>
 
       {ticks.map(tick => {
         const label = Number.isInteger(tick) ? String(tick) : tick.toFixed(1);
 
         return (
-          <g key={`level-${label}`}>
+          <g key={`${metric}-${label}`}>
             <line
               className="progression-chart-grid-line"
               x1={margin.left}
@@ -1430,7 +1522,7 @@ function ProgressionChart({
           <text
             key={chapter.id}
             className="progression-chart-axis-label"
-            x={x(index)}
+            x={metric === 'earned' ? chapterCenter(index) : x(index)}
             y={height - margin.bottom + 16}
             textAnchor="middle"
           >
@@ -1448,56 +1540,94 @@ function ProgressionChart({
         Chapter in reading order
       </text>
 
-      {built.map(entry => {
+      {built.map((entry, seriesIndex) => {
         const d = entry.steps
           .map(
             (step, index) =>
               `${index === 0 ? 'M' : 'H'} ${x(step.index)} ${
-                index === 0 ? y(step.level) : ''
-              }${index === 0 ? '' : ` V ${y(step.level)}`}`
+                index === 0 ? y(step.value) : ''
+              }${index === 0 ? '' : ` V ${y(step.value)}`}`
           )
           .join(' ');
 
         return (
           <g key={entry.characterId} data-series={entry.characterId}>
             <title>
-              {entry.markers
-                .map(marker => {
-                  const chapter = chapters[marker.index];
-                  const label = chapter.data.label;
-                  const penalty = marker.milestone.is_debuff ? ' (penalty)' : '';
-                  return `${label}: level ${marker.milestone.level}${penalty}`;
-                })
-                .join(', ')}
+              {metric === 'earned'
+                ? entry.bars
+                    .map(
+                      bar =>
+                        `${chapters[bar.index].data.label}: ${bar.value} XP earned`
+                    )
+                    .join(', ')
+                : entry.markers
+                    .map(
+                      marker =>
+                        `${chapters[marker.index].data.label}: ${pointText(marker)}`
+                    )
+                    .join(', ')}
             </title>
-            <path
-              className="progression-chart-line"
-              d={d}
-              stroke={entry.color}
-              fill="none"
-            />
-            {entry.markers.map(marker => {
-              const chapter = chapters[marker.index];
-              const penalty = marker.milestone.is_debuff ? ' (penalty)' : '';
 
-              return (
-                <circle
-                  key={marker.milestone.id}
-                  className="progression-chart-marker"
-                  data-chapter-id={chapter.id}
-                  data-level={marker.milestone.level}
-                  data-penalty={marker.milestone.is_debuff ? 'true' : 'false'}
-                  cx={x(marker.index)}
-                  cy={y(marker.milestone.level)}
-                  r={marker.milestone.is_debuff ? 5 : 3.8}
-                  fill={entry.color}
-                >
-                  <title>
-                    {`${entry.name} — ${chapter.data.label}: level ${marker.milestone.level}${penalty}`}
-                  </title>
-                </circle>
-              );
-            })}
+            {metric === 'earned'
+              ? entry.bars.map(bar => {
+                  const chapter = chapters[bar.index];
+                  const barHeight = Math.max(1, y(0) - y(bar.value));
+
+                  return (
+                    <rect
+                      key={bar.progressEntry.id}
+                      className="progression-chart-bar"
+                      data-chapter-id={chapter.id}
+                      data-value={bar.value}
+                      data-metric="earned"
+                      x={barX(bar.index, seriesIndex) + 1}
+                      y={y(bar.value)}
+                      width={Math.max(1, barWidth - 2)}
+                      height={barHeight}
+                      rx={1}
+                      fill={entry.color}
+                    >
+                      <title>
+                        {`${entry.name} — ${chapter.data.label}: ${bar.value} XP earned`}
+                      </title>
+                    </rect>
+                  );
+                })
+              : (
+                  <>
+                    <path
+                      className="progression-chart-line"
+                      d={d}
+                      stroke={entry.color}
+                      fill="none"
+                    />
+                    {entry.markers.map(marker => {
+                      const chapter = chapters[marker.index];
+                      const penaltyMarker =
+                        metric === 'level' && marker.milestone.is_debuff;
+
+                      return (
+                        <circle
+                          key={marker.milestone.id}
+                          className="progression-chart-marker"
+                          data-chapter-id={chapter.id}
+                          data-level={marker.milestone.level}
+                          data-value={marker.value}
+                          data-metric={metric}
+                          data-penalty={marker.milestone.is_debuff ? 'true' : 'false'}
+                          cx={x(marker.index)}
+                          cy={y(marker.value)}
+                          r={penaltyMarker ? 5 : 3.8}
+                          fill={entry.color}
+                        >
+                          <title>
+                            {`${entry.name} — ${chapter.data.label}: ${pointText(marker)}`}
+                          </title>
+                        </circle>
+                      );
+                    })}
+                  </>
+                )}
           </g>
         );
       })}
@@ -1580,6 +1710,13 @@ function App() {
   const [chapterPovDraft, setChapterPovDraft] = useState('');
   const [chapterDayDraft, setChapterDayDraft] = useState('');
   const [chapterTimeDraft, setChapterTimeDraft] = useState('');
+
+  // The explicit cast of each chapter: everyone present beyond the card's own
+  // linked cast member and its point of view. One picker is open at a time.
+  const [storyChapterCast, setStoryChapterCast] = useState<ChapterCastMember[]>([]);
+  const [openChapterCastId, setOpenChapterCastId] = useState<string | null>(null);
+  const [chapterCastBusyId, setChapterCastBusyId] = useState<string | null>(null);
+  const [chapterCastError, setChapterCastError] = useState<string | null>(null);
 
   // The plain-text notes kept with each chapter, and the one panel that is open.
   const [chapterNotes, setChapterNotes] = useState<ChapterNote[]>([]);
@@ -1670,6 +1807,11 @@ function App() {
   const [storyLevelMilestones, setStoryLevelMilestones] = useState<
     CharacterLevelMilestone[]
   >([]);
+  // One income row per character and chapter, read with the rest of the story so
+  // the chart and a sheet share the same ledger.
+  const [storyCharacterProgress, setStoryCharacterProgress] = useState<
+    CharacterProgress[]
+  >([]);
   // One snapshot per assigned character per chapter, read in one request so a
   // board of cards does not issue one command each.
   const [storyChapterCastStates, setStoryChapterCastStates] = useState<ChapterCastState[]>(
@@ -1737,14 +1879,29 @@ function App() {
   const [skillEventKindDraft, setSkillEventKindDraft] = useState<SkillEventKind>('upgraded');
   const [skillEventChapterDraft, setSkillEventChapterDraft] = useState('');
   const [skillEventRankDraft, setSkillEventRankDraft] = useState('');
-  // The level milestone form, one row open at a time.
+  // The level milestone form, one row open at a time. XP and a primary stat are
+  // optional snapshots; the chart can read either alongside level.
   const [editingLevelMilestoneId, setEditingLevelMilestoneId] = useState<string | null>(null);
   const [levelMilestoneLevelDraft, setLevelMilestoneLevelDraft] = useState('1');
   const [levelMilestoneChapterDraft, setLevelMilestoneChapterDraft] = useState('');
   const [levelMilestoneDebuffDraft, setLevelMilestoneDebuffDraft] = useState(false);
+  const [levelMilestoneXpDraft, setLevelMilestoneXpDraft] = useState('');
+  const [levelMilestoneStatNameDraft, setLevelMilestoneStatNameDraft] = useState('');
+  const [levelMilestoneStatValueDraft, setLevelMilestoneStatValueDraft] = useState('');
   const [newLevelMilestoneLevel, setNewLevelMilestoneLevel] = useState('1');
   const [newLevelMilestoneChapter, setNewLevelMilestoneChapter] = useState('');
   const [newLevelMilestoneDebuff, setNewLevelMilestoneDebuff] = useState(false);
+  const [newLevelMilestoneXp, setNewLevelMilestoneXp] = useState('');
+  const [newLevelMilestoneStatName, setNewLevelMilestoneStatName] = useState('');
+  const [newLevelMilestoneStatValue, setNewLevelMilestoneStatValue] = useState('');
+  // The XP-by-chapter ledger, one row open at a time like the milestone form.
+  const [editingXpEntryId, setEditingXpEntryId] = useState<string | null>(null);
+  const [xpEntryChapterDraft, setXpEntryChapterDraft] = useState('');
+  const [xpEntryXpDraft, setXpEntryXpDraft] = useState('');
+  const [newXpEntryChapter, setNewXpEntryChapter] = useState('');
+  const [newXpEntryXp, setNewXpEntryXp] = useState('');
+  const [chartMetric, setChartMetric] = useState<ProgressionMetric>('level');
+  const [chartStatName, setChartStatName] = useState('');
   const [focusedProgression, setFocusedProgression] = useState<{
     kind: 'skill' | 'skill-event' | 'level';
     id: string;
@@ -1875,7 +2032,10 @@ function App() {
     setHistoryNotice(null);
     setReturnedNotice(null);
 
-    // A note panel belongs to the story it was opened in, so a switch closes it.
+    // A note or cast panel belongs to the story it was opened in, so a switch
+    // closes it.
+    setOpenChapterCastId(null);
+    setChapterCastError(null);
     setOpenNotesChapterId(null);
     setEditingNoteId(null);
     setNoteDraft('');
@@ -1891,7 +2051,17 @@ function App() {
 
       // The cast rail and the cards' badges both read from here, so the cast and
       // its numbers are loaded with the graph rather than on another tab.
-      const [cast, stats, skills, skillEvents, levels, inventory, notes] =
+      const [
+        cast,
+        stats,
+        skills,
+        skillEvents,
+        levels,
+        progress,
+        inventory,
+        notes,
+        chapterCast,
+      ] =
         await Promise.all([
           invoke<Character[]>('get_characters', { storyId: story.id }),
           invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
@@ -1900,16 +2070,22 @@ function App() {
           invoke<CharacterLevelMilestone[]>('get_story_level_milestones', {
             storyId: story.id,
           }),
+          invoke<CharacterProgress[]>('get_story_character_progress', {
+            storyId: story.id,
+          }),
           invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
           invoke<any[]>('get_chapter_notes', { storyId: story.id }),
+          invoke<ChapterCastMember[]>('get_story_chapter_cast', { storyId: story.id }),
         ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
       setStorySkills(skills ?? []);
       setStorySkillEvents(skillEvents ?? []);
       setStoryLevelMilestones(levels ?? []);
+      setStoryCharacterProgress(progress ?? []);
       setStoryInventory(inventory ?? []);
       setChapterNotes((notes ?? []).map(toChapterNote));
+      setStoryChapterCast(chapterCast ?? []);
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -2971,6 +3147,7 @@ function App() {
     currentStory,
     chapterCastAssignmentsKey,
     chapterNodes.length,
+    storyChapterCast,
     storyLevelMilestones,
     storySkills,
     storySkillEvents,
@@ -3131,10 +3308,11 @@ function App() {
     return byChapter;
   }, [inventoryContinuity]);
 
-  // Level and skill progression are compared in reading order. A level can go
-  // backward only when that milestone says it was a penalty; a skill can be used
-  // before it was learned or after it was sacrificed; a rank can be used before
-  // the upgrade that reached it.
+  // Progression is compared in reading order. A level can go backward only when
+  // that milestone says it was a penalty; a skill can be used before it was
+  // learned or after it was sacrificed; a rank can be used before the upgrade
+  // that reached it; and income through a chapter must add up to the total-XP
+  // milestone recorded there.
   const progressContinuity = useMemo(() => {
     const flags: ChapterContinuityFlag[] = [];
     const chapterById = new Map(chapterNodes.map(node => [node.id, node]));
@@ -3206,6 +3384,79 @@ function App() {
           characterId,
           characterName: owner,
           summary: `${owner}'s level drops to ${after.level} in ${afterChapter.data.label}`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+      }
+    });
+
+    // A total-XP milestone is a running total, while the ledger records income.
+    // Sum each character's income through a milestone's chapter and compare the
+    // two; the last snapshot in a chapter is the one that counts. A character
+    // with no income rows has not started a ledger, so older stories that only
+    // used totals are left alone rather than warned about on every chapter.
+    const incomeByCharacter = new Map<string, Map<string, number>>();
+
+    for (const entry of storyCharacterProgress) {
+      if (!chapterById.has(entry.chapter_id)) continue;
+
+      const byChapter = incomeByCharacter.get(entry.character_id) ?? new Map<string, number>();
+      byChapter.set(
+        entry.chapter_id,
+        (byChapter.get(entry.chapter_id) ?? 0) + entry.xp_earned
+      );
+      incomeByCharacter.set(entry.character_id, byChapter);
+    }
+
+    milestonesByCharacter.forEach((milestones, characterId) => {
+      const income = incomeByCharacter.get(characterId);
+      if (!income || income.size === 0) return;
+
+      const owner = castNames.get(characterId) ?? 'A cast member';
+      const totalsByChapter = new Map<string, CharacterLevelMilestone>();
+
+      for (const milestone of [...milestones].sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )) {
+        if (milestone.xp != null) {
+          totalsByChapter.set(milestone.chapter_id as string, milestone);
+        }
+      }
+
+      if (totalsByChapter.size === 0) return;
+
+      let earned = 0;
+
+      for (const chapter of chapterNodes) {
+        earned += income.get(chapter.id) ?? 0;
+
+        const milestone = totalsByChapter.get(chapter.id);
+        if (!milestone) continue;
+
+        const recorded = milestone.xp as number;
+        if (earned === recorded) continue;
+
+        const target: ProgressionTarget = { kind: 'level', milestoneId: milestone.id };
+        const difference = Math.abs(recorded - earned);
+        const parts: ContinuityPart[] = [
+          characterLink(characterId, owner, target),
+          `'s XP earned through `,
+          chapterLink(chapter.id, chapter.data.label, true),
+          ` adds up to ${formatCount(earned)} XP, but the total XP milestone there records ${formatCount(
+            recorded
+          )} XP (${formatCount(difference)} ${earned < recorded ? 'short' : 'over'}).`,
+        ];
+
+        flags.push({
+          id: `xp-income-${milestone.id}`,
+          kind: 'xp-income-mismatch',
+          chapterId: chapter.id,
+          characterId,
+          characterName: owner,
+          summary: `${owner}'s XP income is ${formatCount(
+            earned
+          )} XP, milestone says ${formatCount(recorded)}`,
           detail: continuityText(parts),
           parts,
           target,
@@ -3402,7 +3653,14 @@ function App() {
     });
 
     return flags;
-  }, [chapterNodes, castNames, storyLevelMilestones, storySkillEvents, storySkills]);
+  }, [
+    chapterNodes,
+    castNames,
+    storyLevelMilestones,
+    storyCharacterProgress,
+    storySkillEvents,
+    storySkills,
+  ]);
 
   const progressFlagsByChapter = useMemo(() => {
     const byChapter = new Map<string, ChapterContinuityFlag[]>();
@@ -3461,6 +3719,11 @@ function App() {
           setLevelMilestoneLevelDraft(String(milestone.level));
           setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
           setLevelMilestoneDebuffDraft(milestone.is_debuff);
+          setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
+          setLevelMilestoneStatNameDraft(milestone.stat_name ?? '');
+          setLevelMilestoneStatValueDraft(
+            milestone.stat_points == null ? '' : String(milestone.stat_points)
+          );
         }
       } else if (target.kind === 'skill-event') {
         const event = storySkillEvents.find(entry => entry.id === target.eventId);
@@ -3512,8 +3775,9 @@ function App() {
   // inconsistent — a chapter with no POV, a time with no day to place it on, a
   // day that goes backwards, a time that goes backwards inside a day, two
   // chapters at the same moment, one cast member in two chapters on the same
-  // day, an item still carried after it was lost, or a level or skill that
-  // contradicts its recorded chapters — and leaves the decision to the author.
+  // day, an item still carried after it was lost, a level or skill that
+  // contradicts its recorded chapters, or XP income that does not add up to a
+  // recorded total — and leaves the decision to the author.
   // Every chapter it names is a link that opens that chapter, and every
   // progression entry opens on the holder's sheet, so a flag leads to the
   // thing to fix.
@@ -4299,6 +4563,62 @@ function App() {
       setNotePrompt(null);
       setOpenNotesChapterId(closing ? null : chapterId);
     });
+  };
+
+  const chapterCastIsExplicit = (chapterId: string, characterId: string) =>
+    storyChapterCast.some(
+      member => member.chapter_id === chapterId && member.character_id === characterId
+    );
+
+  const toggleChapterCastPanel = (chapterId: string) => {
+    setChapterCastError(null);
+    setOpenChapterCastId(current => (current === chapterId ? null : chapterId));
+  };
+
+  // The card's linked cast member and POV are always present. This adds or
+  // removes the rest of the scene's cast, one command per person, so every
+  // change is recorded in the history like any other edit.
+  const setChapterCastPresence = async (
+    chapterId: string,
+    characterId: string,
+    present: boolean
+  ) => {
+    const existing = storyChapterCast.find(
+      member => member.chapter_id === chapterId && member.character_id === characterId
+    );
+
+    if (present && existing) return;
+    if (!present && !existing) return;
+
+    setChapterCastBusyId(characterId);
+    setChapterCastError(null);
+
+    try {
+      if (present) {
+        const created = await invoke<ChapterCastMember>('add_chapter_cast_member', {
+          chapterId,
+          characterId,
+          user: actor,
+        });
+
+        setStoryChapterCast(previous =>
+          previous.some(member => member.id === created.id) ? previous : [...previous, created]
+        );
+      } else {
+        if (!existing) return;
+        const removingId = existing.id;
+
+        await invoke('remove_chapter_cast_member', { id: removingId, user: actor });
+        setStoryChapterCast(previous =>
+          previous.filter(member => member.id !== removingId)
+        );
+      }
+    } catch (e) {
+      console.error('Failed to change the chapter cast:', e);
+      setChapterCastError(`Could not change the chapter cast: ${String(e)}`);
+    } finally {
+      setChapterCastBusyId(null);
+    }
   };
 
   const addNote = async (chapterId: string) => {
@@ -5420,12 +5740,48 @@ function App() {
     );
   }, []);
 
+  const milestoneMetricsFromDrafts = (
+    xpText: string,
+    statNameText: string,
+    statValueText: string
+  ): { xp: number | null; statName: string | null; statPoints: number | null } | null => {
+    const xp = xpText.trim();
+    const statName = statNameText.trim();
+    const statValue = statValueText.trim();
+
+    if (xp !== '' && (!/^\d+$/.test(xp) || Number(xp) < 0)) {
+      setCharacterError('Total XP is a whole number, 0 or more, or blank.');
+      return null;
+    }
+
+    if ((statName === '') !== (statValue === '')) {
+      setCharacterError('A primary stat needs both a name and a value, or both blank.');
+      return null;
+    }
+
+    if (statValue !== '' && !/^-?\d+$/.test(statValue)) {
+      setCharacterError('Stat points are a whole number, or blank.');
+      return null;
+    }
+
+    return {
+      xp: xp === '' ? null : Number(xp),
+      statName: statName === '' ? null : statName,
+      statPoints: statValue === '' ? null : Number(statValue),
+    };
+  };
+
   const startLevelMilestoneEdit = (milestone: CharacterLevelMilestone) => {
     setCharacterError(null);
     setEditingLevelMilestoneId(milestone.id);
     setLevelMilestoneLevelDraft(String(milestone.level));
     setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
     setLevelMilestoneDebuffDraft(milestone.is_debuff);
+    setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
+    setLevelMilestoneStatNameDraft(milestone.stat_name ?? '');
+    setLevelMilestoneStatValueDraft(
+      milestone.stat_points == null ? '' : String(milestone.stat_points)
+    );
   };
 
   const saveLevelMilestone = async (milestone: CharacterLevelMilestone) => {
@@ -5436,6 +5792,14 @@ function App() {
       return;
     }
 
+    const metrics = milestoneMetricsFromDrafts(
+      levelMilestoneXpDraft,
+      levelMilestoneStatNameDraft,
+      levelMilestoneStatValueDraft
+    );
+
+    if (!metrics) return;
+
     setCharacterError(null);
 
     try {
@@ -5444,6 +5808,9 @@ function App() {
         level,
         chapterId: levelMilestoneChapterDraft || null,
         isDebuff: levelMilestoneDebuffDraft,
+        xp: metrics.xp,
+        statName: metrics.statName,
+        statPoints: metrics.statPoints,
         user: actor,
       });
 
@@ -5465,6 +5832,14 @@ function App() {
       return;
     }
 
+    const metrics = milestoneMetricsFromDrafts(
+      newLevelMilestoneXp,
+      newLevelMilestoneStatName,
+      newLevelMilestoneStatValue
+    );
+
+    if (!metrics) return;
+
     setCharacterError(null);
 
     try {
@@ -5473,6 +5848,9 @@ function App() {
         level,
         chapterId: newLevelMilestoneChapter || null,
         isDebuff: newLevelMilestoneDebuff,
+        xp: metrics.xp,
+        statName: metrics.statName,
+        statPoints: metrics.statPoints,
         user: actor,
       });
 
@@ -5480,6 +5858,9 @@ function App() {
       setNewLevelMilestoneLevel(String(level));
       setNewLevelMilestoneChapter('');
       setNewLevelMilestoneDebuff(false);
+      setNewLevelMilestoneXp('');
+      setNewLevelMilestoneStatName('');
+      setNewLevelMilestoneStatValue('');
     } catch (e) {
       console.error('Failed to add a level milestone:', e);
       setCharacterError(`Could not add the level milestone: ${String(e)}`);
@@ -5498,6 +5879,103 @@ function App() {
     } catch (e) {
       console.error('Failed to delete a level milestone:', e);
       setCharacterError(`Could not delete the level milestone: ${String(e)}`);
+    }
+  };
+
+  const xpEntryAmount = (text: string): number | null => {
+    const trimmed = text.trim();
+
+    if (!/^\d+$/.test(trimmed)) {
+      setCharacterError('XP earned is a whole number, 0 or more.');
+      return null;
+    }
+
+    return Number(trimmed);
+  };
+
+  const applyXpEntry = (saved: CharacterProgress) => {
+    setStoryCharacterProgress(previous => [
+      ...previous.filter(entry => entry.id !== saved.id),
+      saved,
+    ]);
+  };
+
+  const startXpEntryEdit = (entry: CharacterProgress) => {
+    setCharacterError(null);
+    setEditingXpEntryId(entry.id);
+    setXpEntryChapterDraft(entry.chapter_id);
+    setXpEntryXpDraft(String(entry.xp_earned));
+  };
+
+  const saveXpEntry = async (entry: CharacterProgress) => {
+    if (!xpEntryChapterDraft) {
+      setCharacterError('XP earned needs a chapter.');
+      return;
+    }
+
+    const xpEarned = xpEntryAmount(xpEntryXpDraft);
+    if (xpEarned === null) return;
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterProgress = await invoke('update_character_progress', {
+        id: entry.id,
+        chapterId: xpEntryChapterDraft,
+        xpEarned,
+        user: actor,
+      });
+
+      applyXpEntry(saved);
+      setEditingXpEntryId(null);
+    } catch (e) {
+      console.error('Failed to save XP income:', e);
+      setCharacterError(`Could not save XP earned: ${String(e)}`);
+    }
+  };
+
+  const addXpEntry = async () => {
+    if (!selectedCharacterId) return;
+
+    if (!newXpEntryChapter) {
+      setCharacterError('XP earned needs a chapter.');
+      return;
+    }
+
+    const xpEarned = xpEntryAmount(newXpEntryXp);
+    if (xpEarned === null) return;
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterProgress = await invoke('add_character_progress', {
+        characterId: selectedCharacterId,
+        chapterId: newXpEntryChapter,
+        xpEarned,
+        user: actor,
+      });
+
+      applyXpEntry(saved);
+      setNewXpEntryChapter('');
+      setNewXpEntryXp('');
+    } catch (e) {
+      console.error('Failed to add XP income:', e);
+      setCharacterError(`Could not add XP earned: ${String(e)}`);
+    }
+  };
+
+  const removeXpEntry = async (entry: CharacterProgress) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_character_progress', { id: entry.id, user: actor });
+      setStoryCharacterProgress(previous =>
+        previous.filter(other => other.id !== entry.id)
+      );
+      if (editingXpEntryId === entry.id) setEditingXpEntryId(null);
+    } catch (e) {
+      console.error('Failed to delete XP income:', e);
+      setCharacterError(`Could not delete XP earned: ${String(e)}`);
     }
   };
 
@@ -6837,14 +7315,12 @@ function App() {
                 hiddenInventoryHolders: Math.max(0, itemHolders.length - 2),
               }
             : {}),
-          ...(chapterCast.length > 0
-            ? {
-                chapterCast,
-                hiddenChapterCast: Math.max(0, chapterCast.length - CHAPTER_CAST_BADGES_SHOWN),
-                onOpenChapterCast: (characterId: string) =>
-                  openCharacterSheet(characterId),
-              }
-            : {}),
+          ...(chapterCast.length > 0              ? {
+                  chapterCast,
+                  onOpenChapterCast: (characterId: string) =>
+                    openCharacterSheet(characterId),
+                }
+              : {}),
           ...(continuityFlags.length > 0
             ? {
                 continuityFlags,
@@ -6920,6 +7396,32 @@ function App() {
     [chapterNodes]
   );
 
+  // A primary-stat line needs a name that either sits on a sheet now or was
+  // snapshotted on a milestone before the sheet changed.
+  const statNameOptions = useMemo(() => {
+    const names = new Set<string>();
+
+    for (const stats of Object.values(castStats)) {
+      for (const stat of stats) names.add(stat.stat_name);
+    }
+
+    for (const milestone of storyLevelMilestones) {
+      if (milestone.stat_name) names.add(milestone.stat_name);
+    }
+
+    return [...names].sort((left, right) => left.localeCompare(right));
+  }, [castStats, storyLevelMilestones]);
+
+  useEffect(() => {
+    if (chartMetric !== 'stat') return;
+
+    setChartStatName(previous =>
+      previous && statNameOptions.includes(previous)
+        ? previous
+        : statNameOptions[0] ?? ''
+    );
+  }, [chartMetric, statNameOptions]);
+
   // The chart reads the same story-wide milestone rows the continuity checks
   // use. Only chapters that are on the board can place a point, so a milestone
   // whose chapter is in the trash is left out rather than guessed at.
@@ -6937,22 +7439,68 @@ function App() {
             milestone.chapter_id !== null &&
             chapterIds.has(milestone.chapter_id)
         ),
+        progress: storyCharacterProgress.filter(
+          entry =>
+            entry.character_id === character.id && chapterIds.has(entry.chapter_id)
+        ),
       }))
-      .filter(series => series.milestones.length > 0);
-  }, [characters, storyLevelMilestones, chapterNodes]);
+      .filter(series => series.milestones.length > 0 || series.progress.length > 0);
+  }, [characters, storyLevelMilestones, storyCharacterProgress, chapterNodes]);
+
+  const chartMilestoneSeries = useMemo(
+    () => chartSeries.filter(series => series.milestones.length > 0),
+    [chartSeries]
+  );
+
+  // Only a character with a recorded value can have a point in the chosen
+  // metric. Level is always present, XP and a stat snapshot are optional, and
+  // income comes from its own ledger rather than being inferred from totals.
+  const chartMetricSeries = useMemo(() => {
+    if (chartMetric === 'level') return chartMilestoneSeries;
+
+    if (chartMetric === 'xp') {
+      return chartMilestoneSeries.filter(series =>
+        series.milestones.some(milestone => milestone.xp != null)
+      );
+    }
+
+    if (chartMetric === 'earned') {
+      return chartSeries.filter(series => series.progress.length > 0);
+    }
+
+    if (!chartStatName) return [];
+
+    return chartMilestoneSeries.filter(series =>
+      series.milestones.some(
+        milestone =>
+          milestone.stat_name === chartStatName &&
+          milestone.stat_points != null
+      )
+    );
+  }, [chartSeries, chartMilestoneSeries, chartMetric, chartStatName]);
+
+  const visibleComparisonSeries = useMemo(
+    () =>
+      chartMilestoneSeries.filter(
+        series => !hiddenChartCharacterIds.includes(series.characterId)
+      ),
+    [chartMilestoneSeries, hiddenChartCharacterIds]
+  );
 
   const visibleChartSeries = useMemo(
     () =>
-      chartSeries.filter(
+      chartMetricSeries.filter(
         series => !hiddenChartCharacterIds.includes(series.characterId)
       ),
-    [chartSeries, hiddenChartCharacterIds]
+    [chartMetricSeries, hiddenChartCharacterIds]
   );
 
   // The chapter-state request is keyed by ids rather than by the series array.
   // `useMemo` can hand back a fresh array when the board redraws; the ids are what
-  // actually change the question being asked of the database.
-  const visibleChartCharacterIds = visibleChartSeries
+  // actually change the question being asked of the database. It follows the
+  // comparison set, not the metric, so switching to XP does not hide a character
+  // from the "as of chapter" readout.
+  const visibleChartCharacterIds = visibleComparisonSeries
     .map(series => series.characterId)
     .join('|');
 
@@ -7060,6 +7608,20 @@ function App() {
             a.id.localeCompare(b.id)
         ),
     [storyLevelMilestones, selectedCharacterId, chapterSeqById]
+  );
+
+  const selectedXpEntries = useMemo(
+    () =>
+      storyCharacterProgress
+        .filter(entry => entry.character_id === selectedCharacterId)
+        .sort(
+          (a, b) =>
+            (chapterSeqById.get(a.chapter_id) ?? Number.MAX_SAFE_INTEGER) -
+              (chapterSeqById.get(b.chapter_id) ?? Number.MAX_SAFE_INTEGER) ||
+            a.created_at.localeCompare(b.created_at) ||
+            a.id.localeCompare(b.id)
+        ),
+    [storyCharacterProgress, selectedCharacterId, chapterSeqById]
   );
 
   const skillEventsBySkill = useMemo(() => {
@@ -8388,6 +8950,17 @@ function App() {
                                 : 'Notes'}
                             </button>
                             <button
+                              aria-label={`Cast for ${node.data.label}`}
+                              title="Choose everyone present in this chapter"
+                              onClick={() => toggleChapterCastPanel(node.id)}
+                              disabled={chapterBusy}
+                            >
+                              {(() => {
+                                const count = chapterCastByChapter.get(node.id)?.length ?? 0;
+                                return count > 0 ? `Cast (${count})` : 'Cast';
+                              })()}
+                            </button>
+                            <button
                               aria-label={`Move ${node.data.label} earlier`}
                               title="Move this chapter one place earlier"
                               onClick={() => moveChapter(node.id, -1)}
@@ -8570,6 +9143,76 @@ function App() {
                                   Keep editing
                                 </button>
                               </div>
+                            </div>
+                          )}
+
+                          {openChapterCastId === node.id && (
+                            <div
+                              className="chapter-cast-panel"
+                              role="group"
+                              aria-label={`Cast present in ${node.data.label}`}
+                            >
+                              <div className="chapter-cast-panel-head">
+                                <strong>Present in this chapter</strong>
+                                <span>
+                                  The card’s linked cast member and POV are always
+                                  present; tick everyone else in the scene.
+                                </span>
+                              </div>
+
+                              {characters.length === 0 ? (
+                                <p className="chapter-cast-empty">
+                                  Add a cast member on the Characters tab first.
+                                </p>
+                              ) : (
+                                <ul className="chapter-cast-options">
+                                  {characters.map(character => {
+                                    const explicit = chapterCastIsExplicit(
+                                      node.id,
+                                      character.id
+                                    );
+                                    const isPov = node.data.chapterPov === character.id;
+                                    const isLinked = node.data.characterId === character.id;
+
+                                    return (
+                                      <li key={character.id}>
+                                        <label className="chapter-cast-option">
+                                          <input
+                                            type="checkbox"
+                                            aria-label={`${character.name} present in ${node.data.label}`}
+                                            checked={explicit}
+                                            disabled={
+                                              chapterBusy || chapterCastBusyId !== null
+                                            }
+                                            onChange={event =>
+                                              void setChapterCastPresence(
+                                                node.id,
+                                                character.id,
+                                                event.target.checked
+                                              )
+                                            }
+                                          />
+                                          <span className="chapter-cast-option-name">
+                                            {character.name}
+                                          </span>
+                                          {isPov && (
+                                            <span className="chapter-cast-tag">POV</span>
+                                          )}
+                                          {isLinked && (
+                                            <span className="chapter-cast-tag">Linked</span>
+                                          )}
+                                        </label>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              )}
+
+                              {chapterCastError && (
+                                <p className="chapter-cast-error" role="alert">
+                                  {chapterCastError}
+                                </p>
+                              )}
                             </div>
                           )}
 
@@ -8832,17 +9475,25 @@ function App() {
                     <div>
                       <h3 className="progression-chart-title">Power curve</h3>
                       <div className="progression-chart-caption">
-                        Level milestones by chapter in reading order.
+                        {chartMetric === 'level'
+                          ? 'Level milestones by chapter in reading order.'
+                          : chartMetric === 'xp'
+                            ? 'Total XP recorded at each level milestone by chapter.'
+                            : chartMetric === 'earned'
+                              ? 'XP earned in each chapter, shown as one bar per character.'
+                              : chartStatName
+                                ? `${chartStatName} snapshots recorded at each level milestone.`
+                                : 'Choose a numeric stat to plot.'}
                       </div>
                     </div>
 
-                    {chartSeries.length > 0 && (
+                    {chartMetricSeries.length > 0 && (
                       <div
                         className="progression-legend"
                         role="group"
                         aria-label="Compare characters"
                       >
-                        {chartSeries.map(series => {
+                        {chartMetricSeries.map(series => {
                           const shown = !hiddenChartCharacterIds.includes(
                             series.characterId
                           );
@@ -8854,7 +9505,9 @@ function App() {
                                 shown ? 'active' : ''
                               }`}
                               aria-pressed={shown}
-                              title={`${shown ? 'Hide' : 'Show'} ${series.name}'s level line`}
+                              title={`${shown ? 'Hide' : 'Show'} ${series.name}'s ${
+                                chartMetric === 'earned' ? 'XP bars' : 'line'
+                              }`}
                               onClick={() => toggleChartCharacter(series.characterId)}
                             >
                               <span
@@ -8870,23 +9523,96 @@ function App() {
                     )}
                   </div>
 
+                  <div className="progression-chart-controls">
+                    <span className="progression-chart-controls-label">Y-axis</span>
+                    <div
+                      className="progression-metric-toggle"
+                      role="group"
+                      aria-label="Chart metric"
+                    >
+                      {(
+                        [
+                          ['level', 'Level'],
+                          ['xp', 'Total XP'],
+                          ['earned', 'XP earned'],
+                          ['stat', 'Primary stats'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          className={`progression-metric-button ${
+                            chartMetric === value ? 'active' : ''
+                          }`}
+                          aria-pressed={chartMetric === value}
+                          onClick={() => setChartMetric(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {chartMetric === 'stat' &&
+                      (statNameOptions.length > 0 ? (
+                        <label className="progression-stat-picker">
+                          <span>Primary stat</span>
+                          <select
+                            aria-label="Stat to plot"
+                            value={chartStatName}
+                            onChange={e => setChartStatName(e.target.value)}
+                          >
+                            {statNameOptions.map(name => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <span className="progression-chart-controls-note">
+                          No numeric stats yet.
+                        </span>
+                      ))}
+                  </div>
+
                   {chapterNodes.length === 0 ? (
                     <div className="empty">
                       Add a chapter before plotting a power curve.
                     </div>
                   ) : chartSeries.length === 0 ? (
                     <div className="empty">
-                      No level milestones yet — record one on a character's sheet.
+                      No progression recorded yet — add a level milestone or XP earned on a
+                      character's sheet.
+                    </div>
+                  ) : chartMetricSeries.length === 0 ? (
+                    <div className="empty">
+                      {chartMetric === 'level'
+                        ? 'No level milestones yet — record one on a character\'s sheet.'
+                        : chartMetric === 'xp'
+                          ? 'No XP recorded on a level milestone yet — add total XP on a character\'s sheet.'
+                          : chartMetric === 'earned'
+                            ? 'No XP earned by chapter yet — record it on a character\'s sheet.'
+                            : chartStatName
+                              ? `No ${chartStatName} snapshots yet — record one on a level milestone.`
+                              : 'No numeric stats yet — add a stat on a character\'s sheet first.'}
                     </div>
                   ) : visibleChartSeries.length === 0 ? (
                     <div className="empty">
-                      Choose a character above to show a level line.
+                      {chartMetric === 'level'
+                        ? 'Choose a character above to show a level line.'
+                        : chartMetric === 'earned'
+                          ? 'Choose a character above to show its XP bars.'
+                          : 'Choose a character above to show a line.'}
                     </div>
                   ) : (
-                    <ProgressionChart chapters={chapterNodes} series={visibleChartSeries} />
+                    <ProgressionChart
+                      chapters={chapterNodes}
+                      series={visibleChartSeries}
+                      metric={chartMetric}
+                      statName={chartStatName}
+                    />
                   )}
 
-                  {chartSeries.length > 0 && chartStateChapters.length > 0 && (
+                  {chartMilestoneSeries.length > 0 && chartStateChapters.length > 0 && (
                     <div className="progression-chapter-state">
                       <label className="progression-state-picker">
                         <span>As of chapter</span>
@@ -8904,7 +9630,7 @@ function App() {
                         </select>
                       </label>
 
-                      {visibleChartSeries.length === 0 ? (
+                      {visibleComparisonSeries.length === 0 ? (
                         <div className="progression-state-note">
                           Choose a character to read a chapter state.
                         </div>
@@ -8923,7 +9649,7 @@ function App() {
                             chartStateChapter?.data.label ?? 'chapter'
                           }`}
                         >
-                          {visibleChartSeries.map(series => {
+                          {visibleComparisonSeries.map(series => {
                             const state = chartStateById.get(series.characterId);
                             const skills = state?.skills ?? [];
 
@@ -9312,6 +10038,56 @@ function App() {
                                       />
                                       Penalty
                                     </label>
+                                    <label className="level-metric-field">
+                                      Total XP
+                                      <input
+                                        aria-label="Milestone total XP"
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        placeholder="Optional"
+                                        value={levelMilestoneXpDraft}
+                                        onChange={e => setLevelMilestoneXpDraft(e.target.value)}
+                                      />
+                                    </label>
+                                    <label className="level-metric-field">
+                                      Primary stat
+                                      <select
+                                        aria-label="Milestone stat"
+                                        value={levelMilestoneStatNameDraft}
+                                        onChange={e =>
+                                          setLevelMilestoneStatNameDraft(e.target.value)
+                                        }
+                                      >
+                                        <option value="">No stat</option>
+                                        {levelMilestoneStatNameDraft &&
+                                          !statNameOptions.includes(
+                                            levelMilestoneStatNameDraft
+                                          ) && (
+                                            <option value={levelMilestoneStatNameDraft}>
+                                              {levelMilestoneStatNameDraft} (not on sheet)
+                                            </option>
+                                          )}
+                                        {statNameOptions.map(name => (
+                                          <option key={name} value={name}>
+                                            {name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="level-metric-field">
+                                      Stat points
+                                      <input
+                                        aria-label="Milestone stat points"
+                                        type="number"
+                                        step={1}
+                                        placeholder="Optional"
+                                        value={levelMilestoneStatValueDraft}
+                                        onChange={e =>
+                                          setLevelMilestoneStatValueDraft(e.target.value)
+                                        }
+                                      />
+                                    </label>
                                     <div className="level-actions">
                                       <button
                                         title={`Save this level ${milestone.level} milestone`}
@@ -9341,6 +10117,15 @@ function App() {
                                       {milestone.is_debuff && (
                                         <span className="level-penalty">Penalty</span>
                                       )}
+                                      {milestone.xp != null && (
+                                        <span className="level-xp">XP {milestone.xp}</span>
+                                      )}
+                                      {milestone.stat_name != null &&
+                                        milestone.stat_points != null && (
+                                          <span className="level-stat">
+                                            {milestone.stat_name} {milestone.stat_points}
+                                          </span>
+                                        )}
                                     </div>
                                     <button
                                       title={`Change the level and chapter of the level ${milestone.level} milestone`}
@@ -9393,11 +10178,199 @@ function App() {
                             />
                             Penalty
                           </label>
+                          <label className="level-metric-field">
+                            Total XP
+                            <input
+                              aria-label="New milestone total XP"
+                              type="number"
+                              min={0}
+                              step={1}
+                              placeholder="Optional"
+                              value={newLevelMilestoneXp}
+                              onChange={e => setNewLevelMilestoneXp(e.target.value)}
+                            />
+                          </label>
+                          <label className="level-metric-field">
+                            Primary stat
+                            <select
+                              aria-label="New milestone stat"
+                              value={newLevelMilestoneStatName}
+                              onChange={e => setNewLevelMilestoneStatName(e.target.value)}
+                            >
+                              <option value="">No stat</option>
+                              {newLevelMilestoneStatName &&
+                                !statNameOptions.includes(newLevelMilestoneStatName) && (
+                                  <option value={newLevelMilestoneStatName}>
+                                    {newLevelMilestoneStatName} (not on sheet)
+                                  </option>
+                                )}
+                              {statNameOptions.map(name => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="level-metric-field">
+                            Stat points
+                            <input
+                              aria-label="New milestone stat points"
+                              type="number"
+                              step={1}
+                              placeholder="Optional"
+                              value={newLevelMilestoneStatValue}
+                              onChange={e => setNewLevelMilestoneStatValue(e.target.value)}
+                            />
+                          </label>
                           <button
                             title="Record this level in the selected character's timeline"
                             onClick={addLevelMilestone}
                           >
                             Add milestone
+                          </button>
+                        </div>
+                      </section>
+
+                      {/* Income is what a chapter paid out, kept separate from the
+                          running total on a milestone so the chart can show either. */}
+                      <section className="xp-ledger-section" aria-label="XP by chapter">
+                        <h4 className="character-section-heading">XP by chapter</h4>
+
+                        <div className="xp-ledger-list">
+                          {selectedXpEntries.length === 0 && (
+                            <div className="empty">
+                              No XP earned by chapter yet — record what a chapter paid out.
+                            </div>
+                          )}
+
+                          {selectedXpEntries.map(entry => {
+                            const chapter = chapterChoices.find(
+                              choice => choice.id === entry.chapter_id
+                            );
+                            const chapterLabel = chapter
+                              ? chapter.data.label
+                              : 'Chapter in the trash';
+
+                            return (
+                              <div
+                                key={entry.id}
+                                className="xp-ledger-row"
+                                data-xp-entry={entry.id}
+                              >
+                                {editingXpEntryId === entry.id ? (
+                                  <div className="level-editor">
+                                    <select
+                                      aria-label="XP entry chapter"
+                                      value={xpEntryChapterDraft}
+                                      onChange={e =>
+                                        setXpEntryChapterDraft(e.target.value)
+                                      }
+                                    >
+                                      <option value="">Choose chapter</option>
+                                      {xpEntryChapterDraft &&
+                                        !chapterChoices.some(
+                                          choice => choice.id === xpEntryChapterDraft
+                                        ) && (
+                                          <option value={xpEntryChapterDraft}>
+                                            Chapter in the trash
+                                          </option>
+                                        )}
+                                      {chapterChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <label className="level-metric-field">
+                                      XP earned
+                                      <input
+                                        aria-label="XP entry earned XP"
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={xpEntryXpDraft}
+                                        onChange={e => setXpEntryXpDraft(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') saveXpEntry(entry);
+                                          if (e.key === 'Escape')
+                                            setEditingXpEntryId(null);
+                                        }}
+                                      />
+                                    </label>
+                                    <div className="level-actions">
+                                      <button
+                                        title={`Save the XP earned in ${chapterLabel}`}
+                                        onClick={() => saveXpEntry(entry)}
+                                      >
+                                        Save XP
+                                      </button>
+                                      <button
+                                        title="Leave the XP entry as it was"
+                                        onClick={() => setEditingXpEntryId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="xp-ledger-summary">
+                                      <span className="xp-ledger-chapter">
+                                        {chapterLabel}
+                                      </span>
+                                      <span className="level-xp">
+                                        {entry.xp_earned} XP earned
+                                      </span>
+                                    </div>
+                                    <button
+                                      title={`Change the XP earned in ${chapterLabel}`}
+                                      onClick={() => startXpEntryEdit(entry)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete the XP earned in ${chapterLabel}`}
+                                      onClick={() => removeXpEntry(entry)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="level-creator xp-ledger-creator">
+                          <select
+                            aria-label="New XP entry chapter"
+                            value={newXpEntryChapter}
+                            onChange={e => setNewXpEntryChapter(e.target.value)}
+                          >
+                            <option value="">Choose chapter</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <label className="level-metric-field">
+                            XP earned
+                            <input
+                              aria-label="New XP entry earned XP"
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={newXpEntryXp}
+                              onChange={e => setNewXpEntryXp(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && addXpEntry()}
+                            />
+                          </label>
+                          <button
+                            title="Record the XP this chapter paid out"
+                            onClick={addXpEntry}
+                          >
+                            Add XP
                           </button>
                         </div>
                       </section>

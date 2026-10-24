@@ -103,6 +103,18 @@ interface LevelRow {
   level: number;
   chapter_id: string | null;
   is_debuff: boolean;
+  xp?: number | null;
+  stat_name?: string | null;
+  stat_points?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProgressRow {
+  id: string;
+  character_id: string;
+  chapter_id: string;
+  xp_earned: number;
   created_at: string;
   updated_at: string;
 }
@@ -156,19 +168,26 @@ const nodeRow = (chapter: { id: string; label: string; seq: number }) => ({
 });
 
 let levels: LevelRow[] = [];
+let progress: ProgressRow[] = [];
 
 const milestone = (
   id: string,
   characterId: string,
   level: number,
   chapterId: string | null,
-  createdAt = '2026-10-22T12:00:00Z'
+  createdAt = '2026-10-22T12:00:00Z',
+  xp: number | null = null,
+  statName: string | null = null,
+  statPoints: number | null = null
 ): LevelRow => ({
   id,
   character_id: characterId,
   level,
   chapter_id: chapterId,
   is_debuff: false,
+  xp,
+  stat_name: statName,
+  stat_points: statPoints,
   created_at: createdAt,
   updated_at: createdAt,
 });
@@ -213,13 +232,48 @@ function stateAt(characterId: string, chapterId: string) {
 
 beforeEach(() => {
   levels = [
-    milestone('milestone-1', 'char-1', 3, 'n1', '2026-10-22T12:00:00Z'),
-    milestone('milestone-2', 'char-1', 5, 'n3', '2026-10-22T12:05:00Z'),
-    milestone('milestone-3', 'char-2', 2, 'n2', '2026-10-22T12:01:00Z'),
-    milestone('milestone-4', 'char-2', 4, 'n3', '2026-10-22T12:06:00Z'),
+    milestone('milestone-1', 'char-1', 3, 'n1', '2026-10-22T12:00:00Z', 100, 'Strength', 10),
+    milestone('milestone-2', 'char-1', 5, 'n3', '2026-10-22T12:05:00Z', 900, 'Strength', 16),
+    milestone('milestone-3', 'char-2', 2, 'n2', '2026-10-22T12:01:00Z', 50, 'Strength', 8),
+    milestone('milestone-4', 'char-2', 4, 'n3', '2026-10-22T12:06:00Z', 700, 'Strength', 14),
     // Neither of these can be placed on the chapter spine.
-    milestone('milestone-5', 'char-1', 9, null, '2026-10-22T12:07:00Z'),
-    milestone('milestone-6', 'char-1', 8, 'n4', '2026-10-22T12:08:00Z'),
+    milestone('milestone-5', 'char-1', 9, null, '2026-10-22T12:07:00Z', 999, 'Strength', 99),
+    milestone('milestone-6', 'char-1', 8, 'n4', '2026-10-22T12:08:00Z', 888, 'Strength', 88),
+  ];
+
+  progress = [
+    {
+      id: 'progress-1',
+      character_id: 'char-1',
+      chapter_id: 'n1',
+      xp_earned: 100,
+      created_at: '2026-10-22T12:02:00Z',
+      updated_at: '2026-10-22T12:02:00Z',
+    },
+    {
+      id: 'progress-2',
+      character_id: 'char-1',
+      chapter_id: 'n3',
+      xp_earned: 300,
+      created_at: '2026-10-22T12:03:00Z',
+      updated_at: '2026-10-22T12:03:00Z',
+    },
+    {
+      id: 'progress-3',
+      character_id: 'char-2',
+      chapter_id: 'n2',
+      xp_earned: 50,
+      created_at: '2026-10-22T12:04:00Z',
+      updated_at: '2026-10-22T12:04:00Z',
+    },
+    {
+      id: 'progress-4',
+      character_id: 'char-2',
+      chapter_id: 'n3',
+      xp_earned: 250,
+      created_at: '2026-10-22T12:05:00Z',
+      updated_at: '2026-10-22T12:05:00Z',
+    },
   ];
 
   invokeMock.mockReset();
@@ -247,6 +301,12 @@ beforeEach(() => {
         return args.storyId === story.id ? cast.map(entry => ({ ...entry })) : [];
       case 'get_story_level_milestones':
         return levels.map(entry => ({ ...entry }));
+      case 'get_story_character_progress':
+        return progress.map(entry => ({ ...entry }));
+      case 'get_character_progress':
+        return progress
+          .filter(entry => entry.character_id === args.characterId)
+          .map(entry => ({ ...entry }));
       case 'get_character_level_milestones':
         return levels
           .filter(entry => entry.character_id === args.characterId)
@@ -361,6 +421,107 @@ describe('per-character progression chart', () => {
           (call[1] as Record<string, any>).chapterId === 'n1'
       )
     ).toBe(true);
+  });
+
+  it('switches the y-axis to total XP', async () => {
+    const { user, container } = await openCharacters();
+
+    await screen.findByRole('img', { name: /Character levels for Rook, Wren/ });
+    const xpButton = screen.getByRole('button', { name: 'Total XP' });
+    expect(xpButton).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(xpButton);
+
+    const chart = await screen.findByRole('img', {
+      name: 'Character XP for Rook, Wren across 3 chapters in reading order',
+    });
+    expect(chart).toHaveAttribute('data-metric', 'xp');
+    expect(xpButton).toHaveAttribute('aria-pressed', 'true');
+
+    const rook = [...container.querySelectorAll('[data-series="char-1"] .progression-chart-marker')];
+    const wren = [...container.querySelectorAll('[data-series="char-2"] .progression-chart-marker')];
+    expect(rook.map(marker => marker.getAttribute('data-value'))).toEqual(['100', '900']);
+    expect(wren.map(marker => marker.getAttribute('data-value'))).toEqual(['50', '700']);
+    expect(rook.map(marker => marker.getAttribute('data-level'))).toEqual(['3', '5']);
+  });
+
+  it('plots one chosen primary stat per chapter', async () => {
+    const { user, container } = await openCharacters();
+
+    await screen.findByRole('img', { name: /Character levels for Rook, Wren/ });
+    await user.click(screen.getByRole('button', { name: 'Primary stats' }));
+
+    expect(await screen.findByLabelText('Stat to plot')).toHaveValue('Strength');
+    const chart = await screen.findByRole('img', {
+      name: 'Strength for Rook, Wren across 3 chapters in reading order',
+    });
+    expect(chart).toHaveAttribute('data-metric', 'stat');
+
+    const rook = [...container.querySelectorAll('[data-series="char-1"] .progression-chart-marker')];
+    expect(rook.map(marker => marker.getAttribute('data-value'))).toEqual(['10', '16']);
+    expect(rook[0]).toHaveAttribute('data-metric', 'stat');
+  });
+
+  it('plots XP earned in each chapter as bars, not a carried-forward total', async () => {
+    const { user, container } = await openCharacters();
+
+    await screen.findByRole('img', { name: /Character levels for Rook, Wren/ });
+    await user.click(screen.getByRole('button', { name: 'XP earned' }));
+
+    const chart = await screen.findByRole('img', {
+      name: 'XP earned for Rook, Wren across 3 chapters in reading order',
+    });
+    expect(chart).toHaveAttribute('data-metric', 'earned');
+    expect(container.querySelector('.progression-chart-line')).toBeNull();
+
+    const rook = [
+      ...container.querySelectorAll('[data-series="char-1"] .progression-chart-bar'),
+    ];
+    const wren = [
+      ...container.querySelectorAll('[data-series="char-2"] .progression-chart-bar'),
+    ];
+
+    expect(rook.map(bar => bar.getAttribute('data-chapter-id'))).toEqual(['n1', 'n3']);
+    expect(rook.map(bar => bar.getAttribute('data-value'))).toEqual(['100', '300']);
+    expect(wren.map(bar => bar.getAttribute('data-chapter-id'))).toEqual(['n2', 'n3']);
+    expect(wren.map(bar => bar.getAttribute('data-value'))).toEqual(['50', '250']);
+
+    // A bar is the income for its own chapter; a missing chapter is not
+    // backfilled with the last amount.
+    expect(rook).toHaveLength(2);
+    expect(wren).toHaveLength(2);
+  });
+
+  it('includes a character with XP income but no level milestone', async () => {
+    levels = levels.filter(entry => entry.character_id === 'char-1');
+    const { user, container } = await openCharacters();
+
+    await screen.findByRole('img', { name: /Character levels for Rook/ });
+    await user.click(screen.getByRole('button', { name: 'XP earned' }));
+
+    const chart = await screen.findByRole('img', {
+      name: 'XP earned for Rook, Wren across 3 chapters in reading order',
+    });
+    expect(chart).toHaveAttribute('data-metric', 'earned');
+
+    const wren = [
+      ...container.querySelectorAll('[data-series="char-2"] .progression-chart-bar'),
+    ];
+    expect(wren.map(bar => bar.getAttribute('data-value'))).toEqual(['50', '250']);
+  });
+
+  it('explains when the XP-by-chapter ledger is empty', async () => {
+    progress = [];
+    const { user } = await openCharacters();
+
+    await screen.findByRole('img', { name: /Character levels for Rook, Wren/ });
+    await user.click(screen.getByRole('button', { name: 'XP earned' }));
+
+    expect(
+      await screen.findByText(
+        'No XP earned by chapter yet — record it on a character\'s sheet.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('says what is missing when no character has a level milestone', async () => {

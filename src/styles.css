@@ -1383,6 +1383,88 @@ body {
   gap: 6px;
 }
 
+/* The cast picker under a chapter row: one checkbox per live cast member, with
+   the card's own links marked so "present" is easy to read at a glance. */
+.chapter-cast-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid #333;
+  background: #202021;
+}
+
+.chapter-cast-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.chapter-cast-panel-head strong {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #b9b9b9;
+}
+
+.chapter-cast-panel-head span {
+  font-size: 11px;
+  color: #888;
+}
+
+.chapter-cast-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapter-cast-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #d0d0d0;
+  cursor: pointer;
+}
+
+.chapter-cast-option input {
+  accent-color: #7ac47a;
+  cursor: pointer;
+}
+
+.chapter-cast-option-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-cast-tag {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(94, 200, 192, 0.16);
+  color: #9adfd9;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.chapter-cast-empty {
+  margin: 0;
+  font-size: 11px;
+  color: #888;
+}
+
+.chapter-cast-error {
+  margin: 0;
+  font-size: 11px;
+  color: #fca5a5;
+}
+
 .chapter-notes {
   display: flex;
   flex-direction: column;
@@ -2299,6 +2381,70 @@ body {
   color: #888;
 }
 
+.progression-chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.progression-chart-controls-label,
+.progression-chart-controls-note {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #777;
+}
+
+.progression-metric-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #1e1e1e;
+}
+
+.progression-metric-button {
+  background: transparent;
+  border: none;
+  color: #999;
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.progression-metric-button:hover {
+  color: #ddd;
+}
+
+.progression-metric-button.active {
+  background: #0e639c;
+  color: #fff;
+}
+
+.progression-stat-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #777;
+}
+
+.progression-stat-picker select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .progression-legend {
   display: flex;
   align-items: center;
@@ -2850,7 +2996,8 @@ body {
   white-space: nowrap;
 }
 
-.level-row button {
+.level-row button,
+.xp-ledger-row button {
   margin-left: 0;
   background: transparent;
   border: 1px solid #3c3c3c;
@@ -2861,9 +3008,55 @@ body {
   cursor: pointer;
 }
 
-.level-row button:hover {
+.level-row button:hover,
+.xp-ledger-row button:hover {
   background: #37373d;
   color: #fff;
+}
+
+.xp-ledger-section {
+  margin-bottom: 18px;
+}
+
+.xp-ledger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.xp-ledger-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #4ec9b0;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.xp-ledger-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.xp-ledger-chapter {
+  color: #ddd;
+}
+
+.progression-chart-bar {
+  opacity: 0.85;
+}
+
+.progression-chart-bar:hover {
+  opacity: 1;
 }
 
 .level-editor,
@@ -2902,6 +3095,35 @@ body {
 
 .level-penalty-field input {
   width: auto;
+}
+
+.level-metric-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #b9b9b9;
+  white-space: nowrap;
+}
+
+.level-metric-field input[type='number'] {
+  width: 70px;
+}
+
+.level-xp,
+.level-stat {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(94, 200, 192, 0.14);
+  color: #9adfd9;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.level-stat {
+  background: rgba(167, 139, 250, 0.14);
+  color: #c4b5fd;
 }
 
 .level-actions {
@@ -3545,11 +3767,6 @@ body {
 .graph-node-chapter-cast-level.penalty {
   background: rgba(248, 113, 113, 0.16);
   color: #fca5a5;
-}
-
-.graph-node-chapter-cast-more {
-  font-size: 9px;
-  color: #8a8a8a;
 }
 
 /* A linked node carries its cast member's numbers, so the board answers "who is

@@ -109,7 +109,23 @@ const cast = [
     created_at: '2026-10-22T12:00:00Z',
     updated_at: '2026-10-22T12:00:00Z',
   },
+  {
+    id: 'char-3',
+    story_id: story.id,
+    name: 'Tess',
+    description: null,
+    level: 2,
+    xp: 0,
+    rank: null,
+    xp_to_next: null,
+    created_at: '2026-10-22T12:00:00Z',
+    updated_at: '2026-10-22T12:00:00Z',
+  },
 ];
+
+// The explicit rows the picker has written. The badge command folds these in
+// with the linked cast and POV, as the database does.
+let chapterCastRows: any[] = [];
 
 const nodeRow = (
   id: string,
@@ -168,6 +184,7 @@ const chapterCastStates = [
 ];
 
 beforeEach(() => {
+  chapterCastRows = [];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, any>;
@@ -197,11 +214,36 @@ beforeEach(() => {
         return [];
       case 'get_characters':
         return args.storyId === story.id ? cast.map(entry => ({ ...entry })) : [];
+      case 'get_story_chapter_cast':
+        return chapterCastRows.map(row => ({ ...row }));
       case 'get_story_chapter_cast_states':
-        return chapterCastStates.map(state => ({
+        return [
+          ...chapterCastStates,
+          ...chapterCastRows.map(row => ({
+            chapter_id: row.chapter_id,
+            character_id: row.character_id,
+            level: null,
+            level_is_penalty: false,
+            skills: [],
+          })),
+        ].map(state => ({
           ...state,
           skills: state.skills.map(skill => ({ ...skill })),
         }));
+      case 'add_chapter_cast_member': {
+        const row = {
+          id: `cast-${args.characterId}`,
+          chapter_id: args.chapterId,
+          character_id: args.characterId,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        chapterCastRows = [...chapterCastRows, row];
+        return row;
+      }
+      case 'remove_chapter_cast_member':
+        chapterCastRows = chapterCastRows.filter(row => row.id !== args.id);
+        return null;
       default:
         return null;
     }
@@ -283,5 +325,95 @@ describe('chapter card cast badges', () => {
     await user.click(within(card).getByRole('button', { name: /Rook, Level 12/i }));
 
     expect(await screen.findByRole('heading', { name: 'Rook' })).toBeInTheDocument();
+  });
+
+  it('draws every present cast member, including one without a milestone', async () => {
+    chapterCastRows = [
+      {
+        id: 'cast-tess',
+        chapter_id: 'n1',
+        character_id: 'char-3',
+        created_at: '2026-10-22T12:00:00Z',
+        updated_at: '2026-10-22T12:00:00Z',
+      },
+    ];
+
+    const { container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await waitFor(() => {
+      expect(
+        within(card).getByRole('button', { name: /Tess, No level recorded/i })
+      ).toBeInTheDocument();
+    });
+
+    const group = within(card).getByRole('group', { name: 'Cast in this chapter' });
+    expect(within(group).getAllByRole('button')).toHaveLength(3);
+
+    const tess = within(card).getByRole('button', {
+      name: /Tess, No level recorded/i,
+    });
+    expect(tess).toHaveTextContent('Tess');
+    expect(tess).not.toHaveTextContent('Lv');
+  });
+
+  it('adds and removes present cast from a chapter row', async () => {
+    const { user, container } = await openGraph();
+
+    await user.click(screen.getByRole('button', { name: 'Chapters' }));
+    await screen.findByRole('heading', { name: 'Reading order' });
+    await user.click(screen.getByRole('button', { name: 'Cast for Chapter Three' }));
+
+    const panel = document.querySelector('.chapter-cast-panel') as HTMLElement;
+    expect(panel).not.toBeNull();
+    expect(within(panel).getByText('Rook')).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('checkbox', { name: 'Tess present in Chapter Three' })
+    ).not.toBeChecked();
+
+    await user.click(
+      within(panel).getByRole('checkbox', { name: 'Tess present in Chapter Three' })
+    );
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'add_chapter_cast_member')?.[1]
+      ).toMatchObject({ chapterId: 'n3', characterId: 'char-3' });
+    });
+    expect(
+      within(panel).getByRole('checkbox', { name: 'Tess present in Chapter Three' })
+    ).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await waitFor(() => {
+      expect(
+        within(cardFor(container, 'n3')).getByRole('button', {
+          name: /Tess, No level recorded/i,
+        })
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Chapters' }));
+    const reopened = document.querySelector('.chapter-cast-panel') as HTMLElement;
+    await user.click(
+      within(reopened).getByRole('checkbox', {
+        name: 'Tess present in Chapter Three',
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'remove_chapter_cast_member')?.[1]
+      ).toMatchObject({ id: 'cast-char-3' });
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await waitFor(() => {
+      expect(
+        within(cardFor(container, 'n3')).queryByRole('button', {
+          name: /Tess, No level recorded/i,
+        })
+      ).not.toBeInTheDocument();
+    });
   });
 });
