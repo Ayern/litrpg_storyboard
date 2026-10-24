@@ -135,6 +135,11 @@ type NodeData = {
   chapterDay?: number | null;
   // When inside that day, in the author's own words: “Dusk”, “18:40”.
   chapterTime?: string | null;
+  // The notes hanging under a chapter while the graph's note toggle is on. Only
+  // the first few are drawn; the rest are counted on the last card.
+  noteCards?: ChapterNote[];
+  hiddenNotes?: number;
+  onOpenNote?: (noteId: string | null) => void;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
@@ -152,6 +157,9 @@ function isNodeType(value: string): value is NodeType {
 
 // How many numbers a card has room for before it starts counting.
 const NODE_STAT_BADGES = 2;
+
+// How many note cards hang under one chapter before the rest are counted.
+const NOTE_CARDS_SHOWN = 3;
 
 // The search palette lists this many; the rest are still reachable by typing
 // more of the name, and the hint says how many matched.
@@ -289,6 +297,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const level = data.characterLevel ?? null;
 
   return (
+    <>
     <div className={`graph-node ${kind}`}>
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
       <span className="graph-node-topline">
@@ -335,6 +344,40 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       )}
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} />
     </div>
+
+    {/* The notes hang under their chapter like cards pinned to it: context for
+        the drawing, not another thing to arrange. */}
+    {kind === 'chapter' && data.noteCards && data.noteCards.length > 0 && (
+      <div className="graph-node-notes">
+        {data.noteCards.map(note => (
+          <button
+            key={note.id}
+            className="graph-node-note nodrag nopan"
+            title={`Open this note on the Chapters tab: ${note.text}`}
+            onClick={event => {
+              event.stopPropagation();
+              data.onOpenNote?.(note.id);
+            }}
+          >
+            {note.text}
+          </button>
+        ))}
+        {data.hiddenNotes ? (
+          <button
+            className="graph-node-note more nodrag nopan"
+            title="Open every note kept with this chapter"
+            onClick={event => {
+              event.stopPropagation();
+              data.onOpenNote?.(null);
+            }}
+          >
+            +{data.hiddenNotes} more{' '}
+            {data.hiddenNotes === 1 ? 'note' : 'notes'}
+          </button>
+        ) : null}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -812,6 +855,9 @@ function App() {
   const [newStoryTitle, setNewStoryTitle] = useState('');
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
+  // Chapter notes are context rather than cards, so the canvas stays the drawing
+  // it was until the author asks for the reminders to hang under their chapters.
+  const [showChapterNotes, setShowChapterNotes] = useState(false);
 
   // The chapter list's own controls.
   const [newChapterTitle, setNewChapterTitle] = useState('');
@@ -2913,6 +2959,16 @@ function App() {
     }, 0);
   };
 
+  // A note card on the canvas is a way into the note, not another copy of it: the
+  // Chapters tab opens with that chapter's notes showing and the card's note lit.
+  const openNoteFromGraph = useCallback(
+    (chapterId: string, noteId: string | null) => {
+      setSelectedTab('chapters');
+      openChapterNotes(chapterId, noteId);
+    },
+    []
+  );
+
   // Which node the pointer is over, read from the card the event landed on.
   // React Flow puts `data-id` on each node's wrapper, so no geometry is needed.
   const nodeUnderPointer = (event: React.DragEvent<HTMLDivElement>) => {
@@ -4582,12 +4638,16 @@ function App() {
 
   // The canvas gets the nodes plus their cast member's name and numbers, and the
   // classes for the relink target and the search hits. Only those nodes are
-  // rebuilt, so the rest keep their identity across a render.
+  // rebuilt, so the rest keep their identity across a render. Chapter notes join
+  // them while the note toggle is on, as cards pinned under the chapter.
   const canvasNodes = useMemo(() => {
     const castById = new Map(characters.map(character => [character.id, character]));
 
     return nodes.map(node => {
       const characterId = node.data.characterId;
+      const notes = showChapterNotes ? notesByChapter.get(node.id) ?? [] : [];
+      const noteCards = notes.slice(0, NOTE_CARDS_SHOWN);
+      const hiddenNotes = notes.length - noteCards.length;
       const classes = [
         node.id === dropTargetNodeId ? 'drop-target' : '',
         searchOpen && searchMatchIds.has(node.id) ? 'search-hit' : '',
@@ -4595,22 +4655,42 @@ function App() {
         .filter(Boolean)
         .join(' ');
 
-      if (!characterId && !classes) return node;
+      if (!characterId && !classes && notes.length === 0) return node;
 
       return {
         ...node,
         className: classes || undefined,
-        data: characterId
-          ? {
-              ...node.data,
-              characterName: castById.get(characterId)?.name ?? null,
-              characterStats: castStats[characterId] ?? [],
-              characterLevel: castById.get(characterId)?.level ?? null,
-            }
-          : node.data,
+        data: {
+          ...node.data,
+          ...(characterId
+            ? {
+                characterName: castById.get(characterId)?.name ?? null,
+                characterStats: castStats[characterId] ?? [],
+                characterLevel: castById.get(characterId)?.level ?? null,
+              }
+            : {}),
+          ...(notes.length > 0
+            ? {
+                noteCards,
+                hiddenNotes,
+                onOpenNote: (noteId: string | null) =>
+                  openNoteFromGraph(node.id, noteId),
+              }
+            : {}),
+        },
       };
     });
-  }, [nodes, characters, castStats, dropTargetNodeId, searchOpen, searchMatchIds]);
+  }, [
+    nodes,
+    characters,
+    castStats,
+    dropTargetNodeId,
+    searchOpen,
+    searchMatchIds,
+    showChapterNotes,
+    notesByChapter,
+    openNoteFromGraph,
+  ]);
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
@@ -5227,6 +5307,18 @@ function App() {
                     }}
                   >
                     Search
+                  </button>
+                  <button
+                    className={`notes-toggle${showChapterNotes ? ' active' : ''}`}
+                    aria-pressed={showChapterNotes}
+                    title={
+                      showChapterNotes
+                        ? 'Hide the chapter notes pinned under their chapters'
+                        : 'Show each chapter’s notes pinned under it'
+                    }
+                    onClick={() => setShowChapterNotes(shown => !shown)}
+                  >
+                    {showChapterNotes ? 'Hide notes' : 'Show notes'}
                   </button>
                   <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
                 </div>

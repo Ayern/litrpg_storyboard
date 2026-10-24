@@ -1226,6 +1226,70 @@ describe('chapter notes', () => {
   });
 });
 
+describe('notes on the graph', () => {
+  it('pins chapter notes under their cards once the toggle is on', async () => {
+    seedNotes(
+      { id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' },
+      { id: 'note-2', chapter: 'n1', text: 'The key is a tooth' }
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    const toggle = await screen.findByRole('button', { name: 'Show notes' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: /Rook owes the vault/ })).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(screen.getByRole('button', { name: 'Hide notes' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    const card = screen.getByRole('button', { name: /Rook owes the vault/ });
+    // The note hangs under its chapter rather than sitting on the board as a card.
+    expect(card.closest('.graph-node-notes')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /The key is a tooth/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide notes' }));
+
+    expect(screen.queryByRole('button', { name: /Rook owes the vault/ })).not.toBeInTheDocument();
+  });
+
+  it('opens a note from its card on the Chapters tab, lit', async () => {
+    seedNotes({ id: 'note-1', chapter: 'n1', text: 'Rook owes the vault' });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Show notes' }));
+    await user.click(screen.getByRole('button', { name: /Rook owes the vault/ }));
+
+    expect(await screen.findByRole('list', { name: 'Chapters' })).toBeInTheDocument();
+    expect(document.querySelector('.chapter-note.matched')).toHaveTextContent(
+      'Rook owes the vault'
+    );
+  });
+
+  it('counts the notes it has no room for, and opens the chapter for them', async () => {
+    seedNotes(
+      { id: 'note-1', chapter: 'n1', text: 'First reminder' },
+      { id: 'note-2', chapter: 'n1', text: 'Second reminder' },
+      { id: 'note-3', chapter: 'n1', text: 'Third reminder' },
+      { id: 'note-4', chapter: 'n1', text: 'Fourth reminder' }
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Show notes' }));
+
+    expect(screen.queryByRole('button', { name: /Fourth reminder/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '+1 more note' }));
+
+    expect(await screen.findByLabelText('New note for One')).toBeInTheDocument();
+  });
+});
+
 describe('chapter continuity', () => {
   // A flag's words, whichever elements carry them, so an assertion does not
   // depend on which chapter names happen to be links.

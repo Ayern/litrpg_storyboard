@@ -94,8 +94,12 @@ under the chapter it belongs to, and `Ctrl`/`Cmd`+`Enter` adds or saves one. A
 note is stored as a `note` node with a parent pointer, which is what lets it
 appear in the trash, name itself in the history by its first line, travel in an
 export, sit under the chapter's heading in the story bible and be found by the
-search palette. It is deliberately kept off the graph: a result opens the
-chapter's panel with the note marked rather than a card on the canvas. Deleting a
+search palette. Notes are off the canvas by default; **Show notes** on the Graph
+toolbar pins the first three under their chapter as small cards, clipped to their
+first lines, with the rest counted on a `+N more` card. Clicking a card — or that
+count — opens the chapter's panel on the Chapters tab with the note marked. They
+are context only: the cards cannot be dragged, nothing is written, and hiding
+them leaves the board exactly as it was. Deleting a
 note moves it to the trash, and trashing a chapter takes its notes with it —
 restoring the chapter brings them back, while a note trashed on its own waits in
 the trash until its chapter is live again. The row's button counts the notes

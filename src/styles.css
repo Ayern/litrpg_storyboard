@@ -2656,6 +2656,67 @@ body {
   font-style: italic;
 }
 
+/* Notes pinned beneath their chapter, joined by a short dashed stem. The node
+   wrapper is the positioned parent, and the cards sit outside the card's own
+   flow, so switching them on never moves anything. */
+.graph-node-notes {
+  position: absolute;
+  top: calc(100% + 14px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.graph-node-notes::before {
+  content: '';
+  position: absolute;
+  top: -14px;
+  left: 10px;
+  height: 14px;
+  border-left: 1px dashed #6f5ba8;
+}
+
+.graph-node-note {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 8px;
+  background: #222226;
+  border: 1px solid #3a3a44;
+  border-left: 2px solid #6f5ba8;
+  border-radius: 5px;
+  color: #d6d0e8;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  cursor: pointer;
+}
+
+.graph-node-note:hover,
+.graph-node-note:focus-visible {
+  border-color: #8f7acb;
+  background: #2b2735;
+  color: #efeaff;
+  outline: none;
+}
+
+.graph-node-note.more {
+  display: block;
+  padding: 3px 8px;
+  background: transparent;
+  border-style: dashed;
+  border-left: 1px dashed #4a4560;
+  color: #9a93b0;
+  font-size: 10px;
+  text-align: center;
+}
+
 .react-flow__node.selected .graph-node {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
