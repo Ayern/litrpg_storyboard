@@ -330,6 +330,14 @@ beforeEach(() => {
           rewards: quest.rewards.filter(row => row.id !== args.id),
         }));
         return null;
+      case 'update_character_progress': {
+        progress = progress.map(row =>
+          row.id === args.id
+            ? { ...row, chapter_id: args.chapterId, xp_earned: args.xpEarned }
+            : row
+        );
+        return progress.find(row => row.id === args.id);
+      }
       case 'add_character_progress': {
         const saved = {
           id: `progress-${progress.length + 1}`,
@@ -697,11 +705,39 @@ describe('applying a quest reward', () => {
       user: 'You',
     });
 
-    expect(await screen.findByText(/Applied 1 XP row and 1 item/)).toBeInTheDocument();
+    expect(await screen.findByText(/Rook \+250 XP/)).toBeInTheDocument();
+    expect(screen.getByText(/Rook \+Iron Key/)).toBeInTheDocument();
     expect(screen.getByText(/1 left for the sheet/)).toBeInTheDocument();
   });
 
-  it('does not add a second XP row for a chapter that already has one', async () => {
+  it('sums two XP payouts for one character into a single row', async () => {
+    quests = [
+      questRow({
+        status: 'completed',
+        completed_chapter_id: 'n2',
+        rewards: [
+          reward('reward-1', 'quest-1', 'xp', 'char-1', '120'),
+          reward('reward-2', 'quest-1', 'xp', 'char-1', '80'),
+        ],
+      }),
+    ];
+
+    const user = await openQuests();
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply rewards to chapter ledger',
+      })
+    );
+
+    expect(lastCall('add_character_progress')).toMatchObject({
+      characterId: 'char-1',
+      chapterId: 'n2',
+      xpEarned: 200,
+    });
+    expect(screen.getByText(/Rook \+200 XP/)).toBeInTheDocument();
+  });
+
+  it('adds the payout to an XP row the chapter already has', async () => {
     quests = [
       questRow({
         status: 'completed',
@@ -727,8 +763,13 @@ describe('applying a quest reward', () => {
       })
     );
 
+    expect(lastCall('update_character_progress')).toMatchObject({
+      id: 'progress-1',
+      chapterId: 'n2',
+      xpEarned: 350,
+      user: 'You',
+    });
     expect(lastCall('add_character_progress')).toBeUndefined();
-    expect(screen.getByText(/Nothing could be applied/)).toBeInTheDocument();
-    expect(screen.getByText(/1 left for the sheet/)).toBeInTheDocument();
+    expect(screen.getByText(/Rook \+250 XP \(100 → 350\)/)).toBeInTheDocument();
   });
 });

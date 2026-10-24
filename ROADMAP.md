@@ -377,8 +377,8 @@ with it on purge, while the other links are cleared. The Quests tab filters by
 status and edits one quest at a time; chapter cards badge both chapters a quest
 touches and open it in the ledger. A completed quest offers **Apply rewards to
 chapter ledger**, which prefills numeric XP rows and loot for the ending chapter
-and leaves stats and standings to the sheet; a row already recorded there is
-skipped. Export and import remap every link, and continuity flags an ending
+and leaves stats and standings to the sheet; an existing XP row in that chapter
+is added to rather than duplicated, and the notice names the old and new totals. Export and import remap every link, and continuity flags an ending
 before the acceptance, a trashed issuer on an open quest, and a payout to someone
 not in the ending chapter's cast. **L**
 

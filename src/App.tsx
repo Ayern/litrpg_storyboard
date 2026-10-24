@@ -7520,9 +7520,9 @@ function App() {
   };
 
   // Prefills the chapter ledger from a finished quest: XP into each character's
-  // income row, loot into their inventory. A stat change and a faction standing
-  // depend on the author's own wording, so those are left to the sheet; so is
-  // anything already recorded in that chapter, which is counted as skipped.
+  // income row, loot into their inventory. A row the chapter already holds is
+  // added to rather than duplicated. A stat change and a faction standing depend
+  // on the author's own wording, so those are left to the sheet.
   const applyQuestRewards = async (quest: Quest) => {
     if (!currentStory) return;
 
@@ -7544,45 +7544,52 @@ function App() {
 
     let xpRows = 0;
     let itemRows = 0;
-    let skipped = 0;
+    let manual = 0;
+    let unusable = 0;
     let failed = 0;
+    const applied: string[] = [];
+    // One payout per character and chapter, summed before writing: the ledger
+    // holds one income row per pair, so two XP rewards must not overwrite each
+    // other with the same old total.
+    const xpPayouts = new Map<string, { characterId: string; amount: number }>();
 
     try {
       for (const reward of quest.rewards) {
         const details = (reward.amount_or_details ?? '').trim();
+        const name = reward.target_id
+          ? (characterNameById.get(reward.target_id) ?? 'the target')
+          : null;
 
         if (!reward.target_id) {
-          skipped += 1;
+          unusable += 1;
+          continue;
+        }
+
+        if (reward.reward_type === 'xp') {
+          if (!/^\d+$/.test(details) || Number(details) <= 0) {
+            unusable += 1;
+            continue;
+          }
+
+          const key = `${reward.target_id}::${chapterId}`;
+          const payout = xpPayouts.get(key);
+
+          if (payout) {
+            payout.amount += Number(details);
+          } else {
+            xpPayouts.set(key, {
+              characterId: reward.target_id,
+              amount: Number(details),
+            });
+          }
+
           continue;
         }
 
         try {
-          if (reward.reward_type === 'xp') {
-            if (!/^\d+$/.test(details) || Number(details) <= 0) {
-              skipped += 1;
-              continue;
-            }
-
-            if (
-              storyCharacterProgress.some(
-                row =>
-                  row.character_id === reward.target_id && row.chapter_id === chapterId
-              )
-            ) {
-              skipped += 1;
-              continue;
-            }
-
-            await invoke('add_character_progress', {
-              characterId: reward.target_id,
-              chapterId,
-              xpEarned: Number(details),
-              user: actor,
-            });
-            xpRows += 1;
-          } else if (reward.reward_type === 'item') {
+          if (reward.reward_type === 'item') {
             if (!details) {
-              skipped += 1;
+              unusable += 1;
               continue;
             }
 
@@ -7597,14 +7604,55 @@ function App() {
               nodeId: null,
               user: actor,
             });
+            applied.push(`${name} +${details}`);
             itemRows += 1;
           } else {
             // A stat gain and a faction standing are written in the author's
             // words, so they are applied on the sheet rather than guessed at.
-            skipped += 1;
+            manual += 1;
           }
         } catch (e) {
           console.error('Failed to apply a quest reward:', e);
+          failed += 1;
+        }
+      }
+
+      for (const payout of xpPayouts.values()) {
+        const name = characterNameById.get(payout.characterId) ?? 'the target';
+
+        try {
+          const existing = storyCharacterProgress.find(
+            row =>
+              row.character_id === payout.characterId && row.chapter_id === chapterId
+          );
+
+          // One income row per character and chapter, so a payout joins the row
+          // already there rather than being refused for its existence.
+          if (existing) {
+            const newTotal = existing.xp_earned + payout.amount;
+
+            await invoke('update_character_progress', {
+              id: existing.id,
+              chapterId,
+              xpEarned: newTotal,
+              user: actor,
+            });
+            applied.push(
+              `${name} +${payout.amount} XP (${existing.xp_earned} → ${newTotal})`
+            );
+          } else {
+            await invoke('add_character_progress', {
+              characterId: payout.characterId,
+              chapterId,
+              xpEarned: payout.amount,
+              user: actor,
+            });
+            applied.push(`${name} +${payout.amount} XP`);
+          }
+
+          xpRows += 1;
+        } catch (e) {
+          console.error('Failed to apply a quest XP reward:', e);
           failed += 1;
         }
       }
@@ -7623,17 +7671,17 @@ function App() {
         setStoryInventory(rows ?? []);
       }
 
-      const applied = [
-        xpRows > 0 ? `${xpRows} XP ${xpRows === 1 ? 'row' : 'rows'}` : null,
-        itemRows > 0 ? `${itemRows} ${itemRows === 1 ? 'item' : 'items'}` : null,
-      ].filter(Boolean);
-
       setQuestNotice(
         [
           applied.length > 0
-            ? `Applied ${applied.join(' and ')} for “${quest.title}”.`
-            : `Nothing could be applied for “${quest.title}”.`,
-          skipped > 0 ? `${skipped} left for the sheet.` : null,
+            ? `Applied ${applied.join('; ')} for “${quest.title}”.`
+            : manual > 0
+              ? `No automatic payouts for “${quest.title}”.`
+              : `Nothing could be applied for “${quest.title}”.`,
+          manual > 0 ? `${manual} left for the sheet.` : null,
+          unusable > 0
+            ? `${unusable} reward${unusable === 1 ? ' has' : 's have'} no target or numeric amount.`
+            : null,
           failed > 0 ? `${failed} could not be recorded.` : null,
         ]
           .filter(Boolean)
@@ -14697,8 +14745,8 @@ function App() {
                               <button
                                 type="button"
                                 title={
-                                  `Record this quest's XP and loot in ${completedLabel}, ` +
-                                  'without touching stat gains or standings'
+                                  `Add this quest's XP and loot to ${completedLabel}, ` +
+                                  'joining any XP row already there without touching stat gains or standings'
                                 }
                                 disabled={applyingRewardsQuestId === quest.id}
                                 onClick={() => void applyQuestRewards(quest)}
