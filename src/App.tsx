@@ -353,6 +353,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           <button
             key={note.id}
             className="graph-node-note nodrag nopan"
+            aria-label={`Open the note: ${note.text}`}
             title={`Open this note on the Chapters tab: ${note.text}`}
             onClick={event => {
               event.stopPropagation();
@@ -4660,6 +4661,14 @@ function App() {
       return {
         ...node,
         className: classes || undefined,
+        // Without this the node wrapper's name is the whole card plus every note
+        // under it, since React Flow labels the wrapper from its contents.
+        ariaLabel:
+          notes.length > 0
+            ? `${node.data.label}${
+                node.data.chapterSeq != null ? `, chapter ${node.data.chapterSeq}` : ''
+              }, ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} pinned beneath`
+            : undefined,
         data: {
           ...node.data,
           ...(characterId
