@@ -123,6 +123,25 @@ interface CharacterSkill {
   updated_at: string;
 }
 
+// One stat a level-up changed. `amount` is the gained points, and `value_after`
+// is the sheet value once it applied. A row migrated from schema v18 has only
+// the latter, because the old field was a snapshot rather than a gain.
+interface CharacterLevelStatChange {
+  id: string;
+  milestone_id: string;
+  stat_name: string;
+  amount?: number | null;
+  value_after?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LevelStatChangeDraft {
+  statName: string;
+  amount: string;
+  valueAfter: string;
+}
+
 // One level a cast member had in a chapter. A lower level is only a problem when
 // it was not explicitly marked as a penalty.
 interface CharacterLevelMilestone {
@@ -131,8 +150,11 @@ interface CharacterLevelMilestone {
   level: number;
   chapter_id: string | null;
   is_debuff: boolean;
-  // Optional snapshots: total XP and one numeric stat at this chapter.
+  // Optional snapshots: total XP and every stat the level changed.
   xp?: number | null;
+  stat_changes?: CharacterLevelStatChange[];
+  // Legacy v18 fields, accepted from an older export and shown by the fallback
+  // below until the migration has copied them into a stat change.
   stat_name?: string | null;
   stat_points?: number | null;
   created_at: string;
@@ -223,6 +245,7 @@ interface CharacterSkillEvent {
   kind: SkillEventKind;
   chapter_id: string | null;
   rank: string | null;
+  milestone_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1316,6 +1339,66 @@ function AuditChange({
   );
 }
 
+// Every stat a milestone changed. A v18 milestone may still hold the old single
+// snapshot in a fixture or an import; treat it as a value-after with no gain.
+function milestoneStatChanges(
+  milestone: CharacterLevelMilestone
+): CharacterLevelStatChange[] {
+  if (milestone.stat_changes && milestone.stat_changes.length > 0) {
+    return milestone.stat_changes;
+  }
+
+  if (milestone.stat_name != null && milestone.stat_points != null) {
+    return [
+      {
+        id: `legacy-${milestone.id}`,
+        milestone_id: milestone.id,
+        stat_name: milestone.stat_name,
+        amount: null,
+        value_after: milestone.stat_points,
+        created_at: milestone.created_at,
+        updated_at: milestone.updated_at,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function signedNumber(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function statChangeText(change: CharacterLevelStatChange): string {
+  if (change.amount != null && change.value_after != null) {
+    return `${change.stat_name} ${signedNumber(change.amount)} (now ${change.value_after})`;
+  }
+
+  if (change.amount != null) {
+    return `${change.stat_name} ${signedNumber(change.amount)}`;
+  }
+
+  return `${change.stat_name} ${change.value_after ?? ''}`.trim();
+}
+
+// Level-ups are named by level rather than id wherever one is chosen, so a
+// linked skill event reads the way the author thinks of it.
+function milestoneLabel(milestone: CharacterLevelMilestone): string {
+  return `Level ${milestone.level}${milestone.is_debuff ? ' (penalty)' : ''}`;
+}
+
+function statChangesFromMilestone(milestone: CharacterLevelMilestone): LevelStatChangeDraft[] {
+  return milestoneStatChanges(milestone).map(change => ({
+    statName: change.stat_name,
+    amount: change.amount == null ? '' : String(change.amount),
+    valueAfter: change.value_after == null ? '' : String(change.value_after),
+  }));
+}
+
+function blankStatChange(): LevelStatChangeDraft {
+  return { statName: '', amount: '', valueAfter: '' };
+}
+
 // A small hand-drawn SVG chart, so the comparison needs no charting dependency.
 // The x-axis is the chapter list in reading order; each line steps at the chapter
 // where a milestone lands, which is how the ledger actually reads.
@@ -1341,7 +1424,11 @@ function ProgressionChart({
     if (metric === 'xp') return milestone.xp ?? null;
     if (metric === 'earned') return null;
 
-    return milestone.stat_name === statName ? milestone.stat_points ?? null : null;
+    return (
+      milestoneStatChanges(milestone).find(
+        change => change.stat_name === statName && change.value_after != null
+      )?.value_after ?? null
+    );
   };
   const metricTitle =
     metric === 'level'
@@ -1350,7 +1437,7 @@ function ProgressionChart({
         ? 'Character XP'
         : metric === 'earned'
           ? 'XP earned'
-          : statName || 'Primary stats';
+          : statName || 'Stats';
 
   const built = series.map(entry => {
     const ordered = entry.milestones
@@ -1885,21 +1972,24 @@ function App() {
   const [skillEventKindDraft, setSkillEventKindDraft] = useState<SkillEventKind>('upgraded');
   const [skillEventChapterDraft, setSkillEventChapterDraft] = useState('');
   const [skillEventRankDraft, setSkillEventRankDraft] = useState('');
-  // The level milestone form, one row open at a time. XP and a primary stat are
-  // optional snapshots; the chart can read either alongside level.
+  const [skillEventMilestoneDraft, setSkillEventMilestoneDraft] = useState('');
+  // The level milestone form, one row open at a time. XP is optional, and a
+  // level-up can award as many stat changes as the story needs.
   const [editingLevelMilestoneId, setEditingLevelMilestoneId] = useState<string | null>(null);
   const [levelMilestoneLevelDraft, setLevelMilestoneLevelDraft] = useState('1');
   const [levelMilestoneChapterDraft, setLevelMilestoneChapterDraft] = useState('');
   const [levelMilestoneDebuffDraft, setLevelMilestoneDebuffDraft] = useState(false);
   const [levelMilestoneXpDraft, setLevelMilestoneXpDraft] = useState('');
-  const [levelMilestoneStatNameDraft, setLevelMilestoneStatNameDraft] = useState('');
-  const [levelMilestoneStatValueDraft, setLevelMilestoneStatValueDraft] = useState('');
+  const [levelMilestoneStatChangesDraft, setLevelMilestoneStatChangesDraft] = useState<
+    LevelStatChangeDraft[]
+  >([]);
   const [newLevelMilestoneLevel, setNewLevelMilestoneLevel] = useState('1');
   const [newLevelMilestoneChapter, setNewLevelMilestoneChapter] = useState('');
   const [newLevelMilestoneDebuff, setNewLevelMilestoneDebuff] = useState(false);
   const [newLevelMilestoneXp, setNewLevelMilestoneXp] = useState('');
-  const [newLevelMilestoneStatName, setNewLevelMilestoneStatName] = useState('');
-  const [newLevelMilestoneStatValue, setNewLevelMilestoneStatValue] = useState('');
+  const [newLevelMilestoneStatChanges, setNewLevelMilestoneStatChanges] = useState<
+    LevelStatChangeDraft[]
+  >([blankStatChange()]);
   // The XP-by-chapter ledger, one row open at a time like the milestone form.
   const [editingXpEntryId, setEditingXpEntryId] = useState<string | null>(null);
   const [xpEntryChapterDraft, setXpEntryChapterDraft] = useState('');
@@ -3783,10 +3873,7 @@ function App() {
           setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
           setLevelMilestoneDebuffDraft(milestone.is_debuff);
           setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
-          setLevelMilestoneStatNameDraft(milestone.stat_name ?? '');
-          setLevelMilestoneStatValueDraft(
-            milestone.stat_points == null ? '' : String(milestone.stat_points)
-          );
+          setLevelMilestoneStatChangesDraft(statChangesFromMilestone(milestone));
         }
       } else if (target.kind === 'skill-event') {
         const event = storySkillEvents.find(entry => entry.id === target.eventId);
@@ -3800,6 +3887,7 @@ function App() {
           setSkillEventKindDraft(event.kind);
           setSkillEventChapterDraft(event.chapter_id ?? '');
           setSkillEventRankDraft(event.rank ?? '');
+          setSkillEventMilestoneDraft(event.milestone_id ?? '');
         }
       } else {
         const skill = storySkills.find(entry => entry.id === target.skillId);
@@ -5740,6 +5828,7 @@ function App() {
     setSkillEventKindDraft('upgraded');
     setSkillEventChapterDraft('');
     setSkillEventRankDraft('');
+    setSkillEventMilestoneDraft('');
   };
 
   const startSkillEventEdit = (event: CharacterSkillEvent) => {
@@ -5750,6 +5839,7 @@ function App() {
     setSkillEventKindDraft(event.kind);
     setSkillEventChapterDraft(event.chapter_id ?? '');
     setSkillEventRankDraft(event.rank ?? '');
+    setSkillEventMilestoneDraft(event.milestone_id ?? '');
   };
 
   const cancelSkillEventEdit = () => {
@@ -5770,6 +5860,7 @@ function App() {
           chapterId: skillEventChapterDraft || null,
           rank:
             skillEventKindDraft === 'sacrificed' ? null : skillEventRankDraft.trim() || null,
+          milestoneId: skillEventMilestoneDraft || null,
           user: actor,
         }
       );
@@ -5803,35 +5894,72 @@ function App() {
     );
   }, []);
 
-  const milestoneMetricsFromDrafts = (
-    xpText: string,
-    statNameText: string,
-    statValueText: string
-  ): { xp: number | null; statName: string | null; statPoints: number | null } | null => {
-    const xp = xpText.trim();
-    const statName = statNameText.trim();
-    const statValue = statValueText.trim();
+  const levelMilestoneXpFromDraft = (text: string): number | null | 'invalid' => {
+    const xp = text.trim();
 
-    if (xp !== '' && (!/^\d+$/.test(xp) || Number(xp) < 0)) {
+    if (xp === '') return null;
+
+    if (!/^\d+$/.test(xp) || Number(xp) < 0) {
       setCharacterError('Total XP is a whole number, 0 or more, or blank.');
-      return null;
+      return 'invalid';
     }
 
-    if ((statName === '') !== (statValue === '')) {
-      setCharacterError('A primary stat needs both a name and a value, or both blank.');
-      return null;
+    return Number(xp);
+  };
+
+  const statChangesFromDrafts = (
+    drafts: LevelStatChangeDraft[]
+  ): { stat_name: string; amount: number | null; value_after: number | null }[] | null => {
+    const seen = new Set<string>();
+    const changes: {
+      stat_name: string;
+      amount: number | null;
+      value_after: number | null;
+    }[] = [];
+
+    for (const draft of drafts) {
+      const statName = draft.statName.trim();
+      const amountText = draft.amount.trim();
+      const valueText = draft.valueAfter.trim();
+
+      if (statName === '' && amountText === '' && valueText === '') continue;
+
+      if (statName === '') {
+        setCharacterError('A stat change needs a stat name.');
+        return null;
+      }
+
+      if (amountText === '' && valueText === '') {
+        setCharacterError(
+          `${statName} needs a gain, a resulting value, or both.`
+        );
+        return null;
+      }
+
+      if (amountText !== '' && !/^-?\d+$/.test(amountText)) {
+        setCharacterError(`${statName}'s gain is a whole number, or blank.`);
+        return null;
+      }
+
+      if (valueText !== '' && !/^-?\d+$/.test(valueText)) {
+        setCharacterError(`${statName}'s resulting value is a whole number, or blank.`);
+        return null;
+      }
+
+      if (seen.has(statName)) {
+        setCharacterError(`${statName} is changed more than once in this level-up.`);
+        return null;
+      }
+      seen.add(statName);
+
+      changes.push({
+        stat_name: statName,
+        amount: amountText === '' ? null : Number(amountText),
+        value_after: valueText === '' ? null : Number(valueText),
+      });
     }
 
-    if (statValue !== '' && !/^-?\d+$/.test(statValue)) {
-      setCharacterError('Stat points are a whole number, or blank.');
-      return null;
-    }
-
-    return {
-      xp: xp === '' ? null : Number(xp),
-      statName: statName === '' ? null : statName,
-      statPoints: statValue === '' ? null : Number(statValue),
-    };
+    return changes;
   };
 
   const startLevelMilestoneEdit = (milestone: CharacterLevelMilestone) => {
@@ -5841,10 +5969,7 @@ function App() {
     setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
     setLevelMilestoneDebuffDraft(milestone.is_debuff);
     setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
-    setLevelMilestoneStatNameDraft(milestone.stat_name ?? '');
-    setLevelMilestoneStatValueDraft(
-      milestone.stat_points == null ? '' : String(milestone.stat_points)
-    );
+    setLevelMilestoneStatChangesDraft(statChangesFromMilestone(milestone));
   };
 
   const saveLevelMilestone = async (milestone: CharacterLevelMilestone) => {
@@ -5855,13 +5980,11 @@ function App() {
       return;
     }
 
-    const metrics = milestoneMetricsFromDrafts(
-      levelMilestoneXpDraft,
-      levelMilestoneStatNameDraft,
-      levelMilestoneStatValueDraft
-    );
+    const xp = levelMilestoneXpFromDraft(levelMilestoneXpDraft);
+    if (xp === 'invalid') return;
 
-    if (!metrics) return;
+    const statChanges = statChangesFromDrafts(levelMilestoneStatChangesDraft);
+    if (!statChanges) return;
 
     setCharacterError(null);
 
@@ -5871,9 +5994,8 @@ function App() {
         level,
         chapterId: levelMilestoneChapterDraft || null,
         isDebuff: levelMilestoneDebuffDraft,
-        xp: metrics.xp,
-        statName: metrics.statName,
-        statPoints: metrics.statPoints,
+        xp,
+        statChanges,
         user: actor,
       });
 
@@ -5895,13 +6017,11 @@ function App() {
       return;
     }
 
-    const metrics = milestoneMetricsFromDrafts(
-      newLevelMilestoneXp,
-      newLevelMilestoneStatName,
-      newLevelMilestoneStatValue
-    );
+    const xp = levelMilestoneXpFromDraft(newLevelMilestoneXp);
+    if (xp === 'invalid') return;
 
-    if (!metrics) return;
+    const statChanges = statChangesFromDrafts(newLevelMilestoneStatChanges);
+    if (!statChanges) return;
 
     setCharacterError(null);
 
@@ -5911,9 +6031,8 @@ function App() {
         level,
         chapterId: newLevelMilestoneChapter || null,
         isDebuff: newLevelMilestoneDebuff,
-        xp: metrics.xp,
-        statName: metrics.statName,
-        statPoints: metrics.statPoints,
+        xp,
+        statChanges,
         user: actor,
       });
 
@@ -5922,8 +6041,7 @@ function App() {
       setNewLevelMilestoneChapter('');
       setNewLevelMilestoneDebuff(false);
       setNewLevelMilestoneXp('');
-      setNewLevelMilestoneStatName('');
-      setNewLevelMilestoneStatValue('');
+      setNewLevelMilestoneStatChanges([blankStatChange()]);
     } catch (e) {
       console.error('Failed to add a level milestone:', e);
       setCharacterError(`Could not add the level milestone: ${String(e)}`);
@@ -5937,6 +6055,13 @@ function App() {
       await invoke('delete_level_milestone', { id: milestone.id, user: actor });
       setStoryLevelMilestones(previous =>
         previous.filter(other => other.id !== milestone.id)
+      );
+      // The database sets a skill event's level-up link to null when the
+      // milestone goes; keep the board copy in step so no row points at it.
+      setStorySkillEvents(previous =>
+        previous.map(event =>
+          event.milestone_id === milestone.id ? { ...event, milestone_id: null } : event
+        )
       );
       if (editingLevelMilestoneId === milestone.id) setEditingLevelMilestoneId(null);
     } catch (e) {
@@ -7469,7 +7594,9 @@ function App() {
     }
 
     for (const milestone of storyLevelMilestones) {
-      if (milestone.stat_name) names.add(milestone.stat_name);
+      for (const change of milestoneStatChanges(milestone)) {
+        names.add(change.stat_name);
+      }
     }
 
     return [...names].sort((left, right) => left.localeCompare(right));
@@ -7484,6 +7611,95 @@ function App() {
         : statNameOptions[0] ?? ''
     );
   }, [chartMetric, statNameOptions]);
+
+  // One editor for both the new and existing milestone forms. A level-up can
+  // carry any number of stat changes, so rows are added and removed here rather
+  // than forcing the author to save the same level several times.
+  const renderStatChangeRows = (
+    drafts: LevelStatChangeDraft[],
+    setDrafts: React.Dispatch<React.SetStateAction<LevelStatChangeDraft[]>>,
+    prefix: string
+  ) => (
+    <div className="stat-change-list">
+      {drafts.map((draft, index) => (
+        <div className="stat-change-row" key={`${prefix}-${index}`}>
+          <select
+            aria-label={`${prefix} stat ${index + 1} name`}
+            title="The stat this level changed"
+            value={draft.statName}
+            onChange={e =>
+              setDrafts(previous =>
+                previous.map((entry, at) =>
+                  at === index ? { ...entry, statName: e.target.value } : entry
+                )
+              )
+            }
+          >
+            <option value="">Choose stat</option>
+            {draft.statName &&
+              !statNameOptions.includes(draft.statName) && (
+                <option value={draft.statName}>{draft.statName} (not on sheet)</option>
+              )}
+            {statNameOptions.map(name => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label={`${prefix} stat ${index + 1} gain`}
+            title="How many points this level awarded, such as +2 or -1"
+            type="number"
+            step={1}
+            placeholder="+2"
+            value={draft.amount}
+            onChange={e =>
+              setDrafts(previous =>
+                previous.map((entry, at) =>
+                  at === index ? { ...entry, amount: e.target.value } : entry
+                )
+              )
+            }
+          />
+          <input
+            aria-label={`${prefix} stat ${index + 1} value after`}
+            title="The stat's value once the gain applied; optional"
+            type="number"
+            step={1}
+            placeholder="Now (optional)"
+            value={draft.valueAfter}
+            onChange={e =>
+              setDrafts(previous =>
+                previous.map((entry, at) =>
+                  at === index ? { ...entry, valueAfter: e.target.value } : entry
+                )
+              )
+            }
+          />
+          <button
+            type="button"
+            className="stat-change-remove"
+            title="Remove this stat change"
+            aria-label={`Remove ${prefix} stat ${index + 1}`}
+            onClick={() =>
+              setDrafts(previous => previous.filter((_, at) => at !== index))
+            }
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="stat-change-add"
+        aria-label={`Add ${prefix === 'New milestone' ? 'a new milestone' : 'a milestone'} stat`}
+        title="Add another stat this level changed"
+        onClick={() => setDrafts(previous => [...previous, blankStatChange()])}
+      >
+        Add stat
+      </button>
+    </div>
+  );
 
   // The chart reads the same story-wide milestone rows the continuity checks
   // use. Only chapters that are on the board can place a point, so a milestone
@@ -7534,10 +7750,10 @@ function App() {
     if (!chartStatName) return [];
 
     return chartMilestoneSeries.filter(series =>
-      series.milestones.some(
-        milestone =>
-          milestone.stat_name === chartStatName &&
-          milestone.stat_points != null
+      series.milestones.some(milestone =>
+        milestoneStatChanges(milestone).some(
+          change => change.stat_name === chartStatName && change.value_after != null
+        )
       )
     );
   }, [chartSeries, chartMilestoneSeries, chartMetric, chartStatName]);
@@ -9638,7 +9854,7 @@ function App() {
                           ['level', 'Level'],
                           ['xp', 'Total XP'],
                           ['earned', 'XP earned'],
-                          ['stat', 'Primary stats'],
+                          ['stat', 'Stats'],
                         ] as const
                       ).map(([value, label]) => (
                         <button
@@ -9657,7 +9873,7 @@ function App() {
                     {chartMetric === 'stat' &&
                       (statNameOptions.length > 0 ? (
                         <label className="progression-stat-picker">
-                          <span>Primary stat</span>
+                          <span>Stat</span>
                           <select
                             aria-label="Stat to plot"
                             value={chartStatName}
@@ -10153,44 +10369,11 @@ function App() {
                                         onChange={e => setLevelMilestoneXpDraft(e.target.value)}
                                       />
                                     </label>
-                                    <label className="level-metric-field">
-                                      Primary stat
-                                      <select
-                                        aria-label="Milestone stat"
-                                        value={levelMilestoneStatNameDraft}
-                                        onChange={e =>
-                                          setLevelMilestoneStatNameDraft(e.target.value)
-                                        }
-                                      >
-                                        <option value="">No stat</option>
-                                        {levelMilestoneStatNameDraft &&
-                                          !statNameOptions.includes(
-                                            levelMilestoneStatNameDraft
-                                          ) && (
-                                            <option value={levelMilestoneStatNameDraft}>
-                                              {levelMilestoneStatNameDraft} (not on sheet)
-                                            </option>
-                                          )}
-                                        {statNameOptions.map(name => (
-                                          <option key={name} value={name}>
-                                            {name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <label className="level-metric-field">
-                                      Stat points
-                                      <input
-                                        aria-label="Milestone stat points"
-                                        type="number"
-                                        step={1}
-                                        placeholder="Optional"
-                                        value={levelMilestoneStatValueDraft}
-                                        onChange={e =>
-                                          setLevelMilestoneStatValueDraft(e.target.value)
-                                        }
-                                      />
-                                    </label>
+                                    {renderStatChangeRows(
+                                      levelMilestoneStatChangesDraft,
+                                      setLevelMilestoneStatChangesDraft,
+                                      'Milestone'
+                                    )}
                                     <div className="level-actions">
                                       <button
                                         title={`Save this level ${milestone.level} milestone`}
@@ -10223,12 +10406,28 @@ function App() {
                                       {milestone.xp != null && (
                                         <span className="level-xp">XP {milestone.xp}</span>
                                       )}
-                                      {milestone.stat_name != null &&
-                                        milestone.stat_points != null && (
-                                          <span className="level-stat">
-                                            {milestone.stat_name} {milestone.stat_points}
-                                          </span>
-                                        )}
+                                      {milestoneStatChanges(milestone).map(change => (
+                                        <span className="level-stat" key={change.id}>
+                                          {statChangeText(change)}
+                                        </span>
+                                      ))}
+                                      {storySkillEvents
+                                        .filter(event => event.milestone_id === milestone.id)
+                                        .map(event => {
+                                          const skill = storySkills.find(
+                                            entry => entry.id === event.skill_id
+                                          );
+
+                                          return (
+                                            <span
+                                              className="level-stat level-skill-change"
+                                              key={event.id}
+                                            >
+                                              {skill?.name ?? 'Skill'} · {event.kind}
+                                              {event.rank ? ` ${event.rank}` : ''}
+                                            </span>
+                                          );
+                                        })}
                                     </div>
                                     <button
                                       title={`Change the level and chapter of the level ${milestone.level} milestone`}
@@ -10293,38 +10492,11 @@ function App() {
                               onChange={e => setNewLevelMilestoneXp(e.target.value)}
                             />
                           </label>
-                          <label className="level-metric-field">
-                            Primary stat
-                            <select
-                              aria-label="New milestone stat"
-                              value={newLevelMilestoneStatName}
-                              onChange={e => setNewLevelMilestoneStatName(e.target.value)}
-                            >
-                              <option value="">No stat</option>
-                              {newLevelMilestoneStatName &&
-                                !statNameOptions.includes(newLevelMilestoneStatName) && (
-                                  <option value={newLevelMilestoneStatName}>
-                                    {newLevelMilestoneStatName} (not on sheet)
-                                  </option>
-                                )}
-                              {statNameOptions.map(name => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="level-metric-field">
-                            Stat points
-                            <input
-                              aria-label="New milestone stat points"
-                              type="number"
-                              step={1}
-                              placeholder="Optional"
-                              value={newLevelMilestoneStatValue}
-                              onChange={e => setNewLevelMilestoneStatValue(e.target.value)}
-                            />
-                          </label>
+                          {renderStatChangeRows(
+                            newLevelMilestoneStatChanges,
+                            setNewLevelMilestoneStatChanges,
+                            'New milestone'
+                          )}
                           <button
                             title="Record this level in the selected character's timeline"
                             onClick={addLevelMilestone}
@@ -10621,6 +10793,38 @@ function App() {
                                     </option>
                                   ))}
                                 </select>
+                                <select
+                                  aria-label="Skill event level-up"
+                                  title="The level-up this change came with, if any"
+                                  value={skillEventMilestoneDraft}
+                                  onChange={(e) => {
+                                    const milestoneId = e.target.value;
+                                    setSkillEventMilestoneDraft(milestoneId);
+                                    // A skill change shares its level-up's chapter,
+                                    // so picking the level-up fills the chapter in.
+                                    const milestone = selectedLevelMilestones.find(
+                                      entry => entry.id === milestoneId
+                                    );
+                                    if (milestone?.chapter_id) {
+                                      setSkillEventChapterDraft(milestone.chapter_id);
+                                    }
+                                  }}
+                                >
+                                  <option value="">No level-up</option>
+                                  {skillEventMilestoneDraft &&
+                                    !selectedLevelMilestones.some(
+                                      milestone => milestone.id === skillEventMilestoneDraft
+                                    ) && (
+                                      <option value={skillEventMilestoneDraft}>
+                                        Level-up not on this sheet
+                                      </option>
+                                    )}
+                                  {selectedLevelMilestones.map(milestone => (
+                                    <option key={milestone.id} value={milestone.id}>
+                                      {milestoneLabel(milestone)}
+                                    </option>
+                                  ))}
+                                </select>
                                 <input
                                   aria-label="Skill event rank"
                                   placeholder="Rank (optional)"
@@ -10797,6 +11001,9 @@ function App() {
                                     const focused =
                                       focusedProgression?.kind === 'skill-event' &&
                                       focusedProgression.id === event.id;
+                                    const eventMilestone = selectedLevelMilestones.find(
+                                      milestone => milestone.id === event.milestone_id
+                                    );
                                     const label =
                                       event.kind === 'upgraded'
                                         ? event.rank
@@ -10827,6 +11034,11 @@ function App() {
                                                     ? 'Chapter in the trash'
                                                     : 'No chapter recorded'}
                                               </span>
+                                              {eventMilestone && (
+                                                <span className="skill-event-level">
+                                                  At {milestoneLabel(eventMilestone)}
+                                                </span>
+                                              )}
                                             </div>
                                             <button
                                               title={`Change this ${skill.name} event`}

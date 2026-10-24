@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 18;
+const SCHEMA_VERSION: i32 = 19;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -609,13 +609,7 @@ impl Db {
             "used".into(),
             Some(second.id.clone()),
             Some("Rank 1".into()),
-            user.clone(),
-        )?;
-        self.add_skill_event(
-            ash_step.id.clone(),
-            "upgraded".into(),
-            Some(third.id.clone()),
-            Some("Rank 2".into()),
+            None,
             user.clone(),
         )?;
         self.add_skill_event(
@@ -623,27 +617,81 @@ impl Db {
             "used".into(),
             Some(second.id.clone()),
             Some("Rank 1".into()),
+            None,
             user.clone(),
         )?;
 
-        for (character, level, xp, stat_name, stat_points, chapter) in [
-            (&rook, 2, 600, "Strength", 15, &first),
-            (&rook, 3, 1500, "Strength", 16, &second),
-            (&rook, 4, 2400, "Strength", 18, &third),
-            (&mira, 1, 200, "Agility", 13, &first),
-            (&mira, 2, 800, "Agility", 15, &second),
-            (&mira, 3, 1500, "Agility", 17, &third),
+        // A level-up awards more than one stat at a time, so each milestone below
+        // carries every stat it changed. The skill upgrade is grouped with the
+        // level-up it came with.
+        for (character, level, xp, changes, chapter) in [
+            (
+                &rook,
+                2,
+                600,
+                vec![stat_gain("Strength", 2, 15), stat_gain("Endurance", 1, 11)],
+                &first,
+            ),
+            (
+                &rook,
+                3,
+                1500,
+                vec![stat_gain("Strength", 1, 16), stat_gain("Endurance", 1, 12)],
+                &second,
+            ),
+            (
+                &rook,
+                4,
+                2400,
+                vec![
+                    stat_gain("Strength", 2, 18),
+                    stat_gain("Agility", 1, 12),
+                    stat_gain("Endurance", 1, 13),
+                ],
+                &third,
+            ),
+            (
+                &mira,
+                1,
+                200,
+                vec![stat_gain("Agility", 2, 13), stat_gain("Perception", 1, 12)],
+                &first,
+            ),
+            (
+                &mira,
+                2,
+                800,
+                vec![stat_gain("Agility", 2, 15), stat_gain("Perception", 1, 13)],
+                &second,
+            ),
+            (
+                &mira,
+                3,
+                1500,
+                vec![stat_gain("Agility", 2, 17), stat_gain("Perception", 1, 14)],
+                &third,
+            ),
         ] {
-            self.add_level_milestone_with_metrics(
+            let milestone = self.add_level_milestone_with_changes(
                 character.id.clone(),
                 level,
                 Some(chapter.id.clone()),
                 false,
                 Some(xp),
-                Some(stat_name.into()),
-                Some(stat_points),
+                changes,
                 user.clone(),
             )?;
+
+            if level == 4 && character.id == rook.id {
+                self.add_skill_event(
+                    ash_step.id.clone(),
+                    "upgraded".into(),
+                    Some(third.id.clone()),
+                    Some("Rank 2".into()),
+                    Some(milestone.id.clone()),
+                    user.clone(),
+                )?;
+            }
         }
 
         for (character, amount, chapter) in [
@@ -1481,7 +1529,7 @@ impl Db {
     // current level. The two stay separate so recording where a level was reached
     // does not rewrite the sheet, and a deliberate penalty can be marked as such.
 
-    /// The original milestone shape: no XP or primary-stat snapshot. Kept as a
+    /// The original milestone shape: no XP and no stat gains. Kept as a
     /// convenience for callers that only record a level.
     pub fn add_level_milestone(
         &self,
@@ -1491,18 +1539,20 @@ impl Db {
         is_debuff: bool,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
-        self.add_level_milestone_with_metrics(
+        self.add_level_milestone_with_changes(
             character_id,
             level,
             chapter_id,
             is_debuff,
             None,
-            None,
-            None,
+            Vec::new(),
             user,
         )
     }
 
+    /// The v17 shape, kept for older callers and tests: a single stat snapshot.
+    /// It becomes one child row with a value-after and no recorded gain.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_level_milestone_with_metrics(
         &self,
         character_id: String,
@@ -1514,13 +1564,38 @@ impl Db {
         stat_points: Option<i64>,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
+        let stat_changes = legacy_level_stat_changes(stat_name, stat_points)?;
+
+        self.add_level_milestone_with_changes(
+            character_id,
+            level,
+            chapter_id,
+            is_debuff,
+            xp,
+            stat_changes,
+            user,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_level_milestone_with_changes(
+        &self,
+        character_id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        xp: Option<i64>,
+        stat_changes: Vec<LevelStatChangeInput>,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
         if level < 1 {
             return Err(DbError::Invalid(
                 "a level milestone must be level 1 or higher".to_string(),
             ));
         }
 
-        let (xp, stat_name, stat_points) = clean_milestone_metrics(xp, stat_name, stat_points)?;
+        let xp = clean_level_xp(xp)?;
+        let stat_changes = clean_level_stat_changes(stat_changes)?;
         let timestamp = now();
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -1532,9 +1607,8 @@ impl Db {
 
         tx.execute(
             "INSERT INTO character_level_milestones
-             (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
-              stat_points, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+             (id, character_id, level, chapter_id, is_debuff, xp, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             params![
                 &id,
                 &character_id,
@@ -1542,8 +1616,6 @@ impl Db {
                 &chapter_id,
                 is_debuff,
                 xp,
-                &stat_name,
-                stat_points,
                 &timestamp
             ],
         )?;
@@ -1562,27 +1634,25 @@ impl Db {
             },
         )?;
 
-        for (field, value) in [
-            ("xp", xp.map(|value| value.to_string())),
-            ("stat_name", stat_name.clone()),
-            ("stat_points", stat_points.map(|value| value.to_string())),
-        ] {
-            if let Some(value) = value {
-                log_audit(
-                    &tx,
-                    AuditRecord {
-                        story_id: Some(&story_id),
-                        entity_type: "character_level_milestone",
-                        entity_id: &id,
-                        action: "create",
-                        field_changed: Some(field),
-                        old_value: None,
-                        new_value: Some(value),
-                        changed_by: &user,
-                    },
-                )?;
-            }
+        if let Some(value) = xp {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_level_milestone",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("xp"),
+                    old_value: None,
+                    new_value: Some(value.to_string()),
+                    changed_by: &user,
+                },
+            )?;
         }
+
+        apply_level_stat_changes(&tx, &id, &story_id, &[], &stat_changes, &timestamp, &user)?;
+
+        let stored_changes = load_level_stat_changes(&tx, &id)?;
 
         tx.commit()?;
 
@@ -1593,8 +1663,9 @@ impl Db {
             chapter_id,
             is_debuff,
             xp,
-            stat_name,
-            stat_points,
+            stat_changes: stored_changes,
+            stat_name: None,
+            stat_points: None,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
@@ -1608,11 +1679,18 @@ impl Db {
         is_debuff: bool,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
-        self.update_level_milestone_with_metrics(
-            id, level, chapter_id, is_debuff, None, None, None, user,
+        self.update_level_milestone_with_changes(
+            id,
+            level,
+            chapter_id,
+            is_debuff,
+            None,
+            Vec::new(),
+            user,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_level_milestone_with_metrics(
         &self,
         id: String,
@@ -1624,13 +1702,38 @@ impl Db {
         stat_points: Option<i64>,
         user: String,
     ) -> DbResult<CharacterLevelMilestone> {
+        let stat_changes = legacy_level_stat_changes(stat_name, stat_points)?;
+
+        self.update_level_milestone_with_changes(
+            id,
+            level,
+            chapter_id,
+            is_debuff,
+            xp,
+            stat_changes,
+            user,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_level_milestone_with_changes(
+        &self,
+        id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        xp: Option<i64>,
+        stat_changes: Vec<LevelStatChangeInput>,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
         if level < 1 {
             return Err(DbError::Invalid(
                 "a level milestone must be level 1 or higher".to_string(),
             ));
         }
 
-        let (xp, stat_name, stat_points) = clean_milestone_metrics(xp, stat_name, stat_points)?;
+        let xp = clean_level_xp(xp)?;
+        let stat_changes = clean_level_stat_changes(stat_changes)?;
         let timestamp = now();
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -1638,8 +1741,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.xp, m.stat_name, m.stat_points,
-                        m.created_at, m.updated_at, c.story_id
+                        m.xp, m.created_at, m.updated_at, c.story_id
                  FROM character_level_milestones m
                  JOIN characters c ON c.id = m.character_id
                  JOIN stories st ON st.id = c.story_id
@@ -1652,11 +1754,9 @@ impl Db {
                         row.get::<_, Option<String>>(2)?,
                         row.get::<_, bool>(3)?,
                         row.get::<_, Option<i64>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
-                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
-                        row.get::<_, String>(8)?,
-                        row.get::<_, String>(9)?,
                     ))
                 },
             )
@@ -1669,12 +1769,12 @@ impl Db {
             old_chapter,
             old_debuff,
             old_xp,
-            old_stat_name,
-            old_stat_points,
             created_at,
             old_updated_at,
             story_id,
         ) = existing;
+
+        let existing_changes = load_level_stat_changes(&tx, &id)?;
 
         if chapter_id != old_chapter {
             validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
@@ -1714,53 +1814,38 @@ impl Db {
             ));
         }
 
-        if stat_name != old_stat_name {
-            changes.push(("stat_name", old_stat_name.clone(), stat_name.clone()));
-        }
+        let stat_changes_changed = existing_changes.len() != stat_changes.len()
+            || existing_changes.iter().any(|old| {
+                stat_changes
+                    .iter()
+                    .find(|new| new.stat_name == old.stat_name)
+                    .is_none_or(|new| {
+                        new.amount != old.amount || new.value_after != old.value_after
+                    })
+            });
 
-        if stat_points != old_stat_points {
-            changes.push((
-                "stat_points",
-                old_stat_points.map(|value| value.to_string()),
-                stat_points.map(|value| value.to_string()),
-            ));
-        }
-
-        let updated = CharacterLevelMilestone {
-            id: id.clone(),
-            character_id,
-            level,
-            chapter_id,
-            is_debuff,
-            xp,
-            stat_name,
-            stat_points,
-            created_at,
-            updated_at: timestamp.clone(),
-        };
-
-        if changes.is_empty() {
+        if changes.is_empty() && !stat_changes_changed {
             return Ok(CharacterLevelMilestone {
+                id,
+                character_id,
+                level,
+                chapter_id,
+                is_debuff,
+                xp,
+                stat_changes: existing_changes,
+                stat_name: None,
+                stat_points: None,
+                created_at,
                 updated_at: old_updated_at,
-                ..updated
             });
         }
 
         tx.execute(
             "UPDATE character_level_milestones
                 SET level = ?1, chapter_id = ?2, is_debuff = ?3, xp = ?4,
-                    stat_name = ?5, stat_points = ?6, updated_at = ?7
-              WHERE id = ?8",
-            params![
-                level,
-                &updated.chapter_id,
-                is_debuff,
-                xp,
-                &updated.stat_name,
-                stat_points,
-                &timestamp,
-                &id
-            ],
+                    updated_at = ?5
+              WHERE id = ?6",
+            params![level, &chapter_id, is_debuff, xp, &timestamp, &id],
         )?;
 
         for (field, old_value, new_value) in changes {
@@ -1769,7 +1854,7 @@ impl Db {
                 AuditRecord {
                     story_id: Some(&story_id),
                     entity_type: "character_level_milestone",
-                    entity_id: &updated.id,
+                    entity_id: &id,
                     action: "update",
                     field_changed: Some(field),
                     old_value,
@@ -1779,9 +1864,33 @@ impl Db {
             )?;
         }
 
+        apply_level_stat_changes(
+            &tx,
+            &id,
+            &story_id,
+            &existing_changes,
+            &stat_changes,
+            &timestamp,
+            &user,
+        )?;
+
+        let stored_changes = load_level_stat_changes(&tx, &id)?;
+
         tx.commit()?;
 
-        Ok(updated)
+        Ok(CharacterLevelMilestone {
+            id,
+            character_id,
+            level,
+            chapter_id,
+            is_debuff,
+            xp,
+            stat_changes: stored_changes,
+            stat_name: None,
+            stat_points: None,
+            created_at,
+            updated_at: timestamp,
+        })
     }
 
     pub fn delete_level_milestone(&self, id: &str, user: String) -> DbResult<()> {
@@ -1835,7 +1944,7 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                    m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
+                    m.xp, m.created_at, m.updated_at
              FROM character_level_milestones m
              JOIN characters c ON c.id = m.character_id
              JOIN stories st ON st.id = c.story_id
@@ -1844,8 +1953,10 @@ impl Db {
         )?;
 
         let rows = stmt.query_map(params![character_id], level_milestone_row)?;
+        let mut milestones = rows.collect::<SqliteResult<Vec<_>>>()?;
+        attach_level_stat_changes(&guard, &mut milestones)?;
 
-        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+        Ok(milestones)
     }
 
     pub fn list_story_level_milestones(
@@ -1855,7 +1966,7 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                    m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
+                    m.xp, m.created_at, m.updated_at
              FROM character_level_milestones m
              JOIN characters c ON c.id = m.character_id
              JOIN stories st ON st.id = c.story_id
@@ -1864,8 +1975,10 @@ impl Db {
         )?;
 
         let rows = stmt.query_map(params![story_id], level_milestone_row)?;
+        let mut milestones = rows.collect::<SqliteResult<Vec<_>>>()?;
+        attach_level_stat_changes(&guard, &mut milestones)?;
 
-        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+        Ok(milestones)
     }
 
     // ===== XP LEDGER =====
@@ -2160,12 +2273,14 @@ impl Db {
     // A skill row says what the skill is now. These events say when it changed:
     // when a rank was reached, when it was used, and when it was sacrificed.
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_skill_event(
         &self,
         skill_id: String,
         kind: String,
         chapter_id: Option<String>,
         rank: Option<String>,
+        milestone_id: Option<String>,
         user: String,
     ) -> DbResult<CharacterSkillEvent> {
         let kind = clean_skill_event_kind(&kind)?;
@@ -2180,18 +2295,33 @@ impl Db {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
-        let story_id = tx
+        let (character_id, story_id) = tx
             .query_row(
-                "SELECT c.story_id
+                "SELECT s.character_id, c.story_id
                  FROM character_skills s
                  JOIN characters c ON c.id = s.character_id
                  JOIN stories st ON st.id = c.story_id
                  WHERE s.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
                 params![&skill_id],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
             .ok_or(DbError::NotFound("skill"))?;
+
+        let milestone = milestone_id
+            .as_deref()
+            .map(|id| resolve_level_milestone(&tx, id, &character_id))
+            .transpose()?;
+
+        let chapter_id = match (&chapter_id, &milestone) {
+            (Some(chapter), Some((Some(milestone_chapter), _))) if chapter != milestone_chapter => {
+                return Err(DbError::Invalid(
+                    "a skill change and its level-up must be in the same chapter".to_string(),
+                ));
+            }
+            (None, Some((Some(milestone_chapter), _))) => Some(milestone_chapter.clone()),
+            _ => chapter_id,
+        };
 
         validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
 
@@ -2199,15 +2329,15 @@ impl Db {
 
         tx.execute(
             "INSERT INTO character_skill_events
-             (id, skill_id, kind, chapter_id, rank, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (id, skill_id, kind, chapter_id, rank, milestone_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             params![
                 &id,
                 &skill_id,
                 &kind,
                 &chapter_id,
                 &rank,
-                &timestamp,
+                &milestone_id,
                 &timestamp
             ],
         )?;
@@ -2226,6 +2356,22 @@ impl Db {
             },
         )?;
 
+        if let Some((_, label)) = &milestone {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_skill_event",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("milestone"),
+                    old_value: None,
+                    new_value: Some(label.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
         tx.commit()?;
 
         Ok(CharacterSkillEvent {
@@ -2234,17 +2380,20 @@ impl Db {
             kind,
             chapter_id,
             rank,
+            milestone_id,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_skill_event(
         &self,
         id: String,
         kind: String,
         chapter_id: Option<String>,
         rank: Option<String>,
+        milestone_id: Option<String>,
         user: String,
     ) -> DbResult<CharacterSkillEvent> {
         let kind = clean_skill_event_kind(&kind)?;
@@ -2259,8 +2408,8 @@ impl Db {
 
         let existing = tx
             .query_row(
-                "SELECT e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at,
-                        e.updated_at, c.story_id
+                "SELECT e.skill_id, e.kind, e.chapter_id, e.rank, e.milestone_id,
+                        e.created_at, e.updated_at, c.story_id, s.character_id
                  FROM character_skill_events e
                  JOIN character_skills s ON s.id = e.skill_id
                  JOIN characters c ON c.id = s.character_id
@@ -2273,17 +2422,49 @@ impl Db {
                         row.get::<_, String>(1)?,
                         row.get::<_, Option<String>>(2)?,
                         row.get::<_, Option<String>>(3)?,
-                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(4)?,
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(DbError::NotFound("skill event"))?;
 
-        let (skill_id, old_kind, old_chapter, old_rank, created_at, old_updated_at, story_id) =
-            existing;
+        let (
+            skill_id,
+            old_kind,
+            old_chapter,
+            old_rank,
+            old_milestone,
+            created_at,
+            old_updated_at,
+            story_id,
+            character_id,
+        ) = existing;
+
+        let milestone = milestone_id
+            .as_deref()
+            .map(|milestone_id| resolve_level_milestone(&tx, milestone_id, &character_id))
+            .transpose()?;
+        let old_milestone_label = old_milestone
+            .as_deref()
+            .map(|milestone_id| resolve_level_milestone(&tx, milestone_id, &character_id))
+            .transpose()?
+            .map(|(_, label)| label);
+        let new_milestone_label = milestone.as_ref().map(|(_, label)| label.clone());
+
+        let chapter_id = match (&chapter_id, &milestone) {
+            (Some(chapter), Some((Some(milestone_chapter), _))) if chapter != milestone_chapter => {
+                return Err(DbError::Invalid(
+                    "a skill change and its level-up must be in the same chapter".to_string(),
+                ));
+            }
+            (None, Some((Some(milestone_chapter), _))) => Some(milestone_chapter.clone()),
+            _ => chapter_id,
+        };
 
         if chapter_id != old_chapter {
             validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
@@ -2304,6 +2485,9 @@ impl Db {
         if rank != old_rank {
             changes.push(("rank", old_rank.clone(), rank.clone()));
         }
+        if milestone_id != old_milestone {
+            changes.push(("milestone", old_milestone_label, new_milestone_label));
+        }
 
         let updated = CharacterSkillEvent {
             id: id.clone(),
@@ -2311,6 +2495,7 @@ impl Db {
             kind,
             chapter_id,
             rank,
+            milestone_id,
             created_at,
             updated_at: timestamp.clone(),
         };
@@ -2324,12 +2509,14 @@ impl Db {
 
         tx.execute(
             "UPDATE character_skill_events
-                SET kind = ?1, chapter_id = ?2, rank = ?3, updated_at = ?4
-              WHERE id = ?5",
+                SET kind = ?1, chapter_id = ?2, rank = ?3, milestone_id = ?4,
+                    updated_at = ?5
+              WHERE id = ?6",
             params![
                 &updated.kind,
                 &updated.chapter_id,
                 &updated.rank,
+                &updated.milestone_id,
                 &timestamp,
                 &id
             ],
@@ -2404,7 +2591,8 @@ impl Db {
     pub fn list_skill_events(&self, skill_id: &str) -> DbResult<Vec<CharacterSkillEvent>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at, e.updated_at
+            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.milestone_id,
+                    e.created_at, e.updated_at
              FROM character_skill_events e
              JOIN character_skills s ON s.id = e.skill_id
              JOIN characters c ON c.id = s.character_id
@@ -2421,7 +2609,8 @@ impl Db {
     pub fn list_story_skill_events(&self, story_id: &str) -> DbResult<Vec<CharacterSkillEvent>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at, e.updated_at
+            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.milestone_id,
+                    e.created_at, e.updated_at
              FROM character_skill_events e
              JOIN character_skills s ON s.id = e.skill_id
              JOIN characters c ON c.id = s.character_id
@@ -2736,7 +2925,7 @@ impl Db {
         let milestone = conn
             .query_row(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
+                        m.xp, m.created_at, m.updated_at
                  FROM character_level_milestones m
                  JOIN nodes n ON n.id = m.chapter_id
                  WHERE m.character_id = ?1 AND n.deleted_at IS NULL
@@ -2793,8 +2982,8 @@ impl Db {
         let mut events_by_skill: HashMap<String, Vec<(CharacterSkillEvent, i64)>> = HashMap::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at,
-                        e.updated_at, n.chapter_seq
+                "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.milestone_id,
+                        e.created_at, e.updated_at, n.chapter_seq
                  FROM character_skill_events e
                  JOIN character_skills s ON s.id = e.skill_id
                  JOIN characters c ON c.id = s.character_id
@@ -2808,7 +2997,7 @@ impl Db {
             )?;
 
             let rows = stmt.query_map(params![character_id, chapter_seq], |row| {
-                Ok((skill_event_row(row)?, row.get::<_, i64>(7)?))
+                Ok((skill_event_row(row)?, row.get::<_, i64>(8)?))
             })?;
 
             for row in rows {
@@ -4661,20 +4850,22 @@ impl Db {
         let mut character_level_milestones = {
             let mut stmt = guard.prepare(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.xp, m.stat_name, m.stat_points, m.created_at, m.updated_at
+                        m.xp, m.created_at, m.updated_at
                  FROM character_level_milestones m
                  JOIN characters c ON c.id = m.character_id
                  WHERE c.story_id = ?1 AND c.deleted_at IS NULL
                  ORDER BY m.created_at",
             )?;
             let rows = stmt.query_map(params![story_id], level_milestone_row)?;
-            rows.collect::<SqliteResult<Vec<_>>>()?
+            let mut milestones = rows.collect::<SqliteResult<Vec<_>>>()?;
+            attach_level_stat_changes(&guard, &mut milestones)?;
+            milestones
         };
 
         let mut character_skill_events = {
             let mut stmt = guard.prepare(
                 "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank,
-                        e.created_at, e.updated_at
+                        e.milestone_id, e.created_at, e.updated_at
                  FROM character_skill_events e
                  JOIN character_skills s ON s.id = e.skill_id
                  JOIN characters c ON c.id = s.character_id
@@ -6959,11 +7150,8 @@ impl Db {
                 ));
             }
 
-            clean_milestone_metrics(
-                milestone.xp,
-                milestone.stat_name.clone(),
-                milestone.stat_points,
-            )?;
+            clean_level_xp(milestone.xp)?;
+            imported_level_stat_changes(milestone)?;
 
             if milestone
                 .chapter_id
@@ -7013,6 +7201,40 @@ impl Db {
                 return Err(DbError::Invalid(
                     "a skill event points at a chapter the file does not contain".to_string(),
                 ));
+            }
+
+            if let Some(milestone_id) = &event.milestone_id {
+                let skill = export
+                    .character_skills
+                    .iter()
+                    .find(|skill| &skill.id == &event.skill_id)
+                    .expect("the skill was checked above");
+                let milestone = export
+                    .character_level_milestones
+                    .iter()
+                    .find(|milestone| &milestone.id == milestone_id)
+                    .ok_or_else(|| {
+                        DbError::Invalid(
+                            "a skill event points at a level-up the file does not contain"
+                                .to_string(),
+                        )
+                    })?;
+
+                if milestone.character_id != skill.character_id {
+                    return Err(DbError::Invalid(
+                        "a skill event links to a level-up of another character".to_string(),
+                    ));
+                }
+
+                if let (Some(event_chapter), Some(milestone_chapter)) =
+                    (&event.chapter_id, &milestone.chapter_id)
+                {
+                    if event_chapter != milestone_chapter {
+                        return Err(DbError::Invalid(
+                            "a skill event and its level-up are in different chapters".to_string(),
+                        ));
+                    }
+                }
             }
         }
 
@@ -7279,30 +7501,42 @@ impl Db {
         }
 
         for milestone in &export.character_level_milestones {
-            let (xp, stat_name, stat_points) = clean_milestone_metrics(
-                milestone.xp,
-                milestone.stat_name.clone(),
-                milestone.stat_points,
-            )?;
+            let xp = clean_level_xp(milestone.xp)?;
+            let stat_changes = imported_level_stat_changes(milestone)?;
+            let milestone_id = &level_milestones[&milestone.id];
 
             tx.execute(
                 "INSERT INTO character_level_milestones
-                 (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
-                  stat_points, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 (id, character_id, level, chapter_id, is_debuff, xp, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
-                    &level_milestones[&milestone.id],
+                    milestone_id,
                     &characters[&milestone.character_id],
                     milestone.level,
                     milestone.chapter_id.as_ref().and_then(|id| nodes.get(id)),
                     milestone.is_debuff,
                     xp,
-                    &stat_name,
-                    stat_points,
                     &milestone.created_at,
                     &milestone.updated_at
                 ],
             )?;
+
+            for change in stat_changes {
+                tx.execute(
+                    "INSERT INTO character_level_stat_changes
+                     (id, milestone_id, stat_name, amount, value_after, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        milestone_id,
+                        &change.stat_name,
+                        change.amount,
+                        change.value_after,
+                        &milestone.created_at,
+                        &milestone.updated_at
+                    ],
+                )?;
+            }
         }
 
         for entry in &export.character_progress {
@@ -7324,14 +7558,18 @@ impl Db {
         for event in &export.character_skill_events {
             tx.execute(
                 "INSERT INTO character_skill_events
-                 (id, skill_id, kind, chapter_id, rank, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (id, skill_id, kind, chapter_id, rank, milestone_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     &skill_events[&event.id],
                     &skills[&event.skill_id],
                     &event.kind,
                     event.chapter_id.as_ref().and_then(|id| nodes.get(id)),
                     &event.rank,
+                    event
+                        .milestone_id
+                        .as_ref()
+                        .and_then(|id| level_milestones.get(id)),
                     &event.created_at,
                     &event.updated_at
                 ],
@@ -7558,6 +7796,33 @@ pub struct CharacterSkill {
     pub updated_at: String,
 }
 
+/// One stat a level-up changed. `amount` is what the level awarded (`+2`), and
+/// `value_after` is the sheet's value once it applied (`16`), when the author
+/// recorded it. A row moved over from schema v18 has only `value_after`.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct CharacterLevelStatChange {
+    pub id: String,
+    pub milestone_id: String,
+    pub stat_name: String,
+    #[serde(default)]
+    pub amount: Option<i64>,
+    #[serde(default)]
+    pub value_after: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What the editor sends for one stat change. The row's identity and timestamps
+/// belong to the database.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct LevelStatChangeInput {
+    pub stat_name: String,
+    #[serde(default)]
+    pub amount: Option<i64>,
+    #[serde(default)]
+    pub value_after: Option<i64>,
+}
+
 /// One level a cast member had in a chapter. `is_debuff` says whether a lower
 /// level was deliberate, so a regression can be told from a penalty.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -7571,11 +7836,14 @@ pub struct CharacterLevelMilestone {
     /// Total experience at this chapter, when the author recorded it.
     #[serde(default)]
     pub xp: Option<i64>,
-    /// The numeric stat snapshotted here, and its value at this chapter. Both
-    /// are optional and always stored together.
-    #[serde(default)]
+    /// Every stat this level changed, one row per stat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stat_changes: Vec<CharacterLevelStatChange>,
+    /// Legacy v18 columns, read only so an export written before v19 still
+    /// imports. New rows never set them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stat_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stat_points: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
@@ -7654,6 +7922,10 @@ pub struct CharacterSkillEvent {
     pub kind: String,
     pub chapter_id: Option<String>,
     pub rank: Option<String>,
+    /// The level-up that granted this change, when it belongs to one. The skill
+    /// keeps its own ledger; this link only groups the event on the milestone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -8614,7 +8886,8 @@ fn character_skill_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkill> 
     })
 }
 
-/// Every level milestone read selects its columns in this order.
+/// Every level milestone read selects its columns in this order. Stat changes
+/// are loaded separately and attached by the caller.
 fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMilestone> {
     Ok(CharacterLevelMilestone {
         id: row.get(0)?,
@@ -8623,10 +8896,24 @@ fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMi
         chapter_id: row.get(3)?,
         is_debuff: row.get(4)?,
         xp: row.get(5)?,
-        stat_name: row.get(6)?,
-        stat_points: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        stat_changes: Vec::new(),
+        stat_name: None,
+        stat_points: None,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+/// Every stat change read selects its columns in this order.
+fn level_stat_change_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelStatChange> {
+    Ok(CharacterLevelStatChange {
+        id: row.get(0)?,
+        milestone_id: row.get(1)?,
+        stat_name: row.get(2)?,
+        amount: row.get(3)?,
+        value_after: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -8650,8 +8937,9 @@ fn skill_event_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkillEvent>
         kind: row.get(2)?,
         chapter_id: row.get(3)?,
         rank: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        milestone_id: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
@@ -8726,30 +9014,302 @@ fn live_character_story(conn: &Connection, character_id: &str) -> DbResult<Strin
     .ok_or(DbError::NotFound("character"))
 }
 
-/// Tidies a milestone's optional metric snapshot: XP cannot be negative, and a
-/// primary stat is either both a name and a value or neither.
-fn clean_milestone_metrics(
-    xp: Option<i64>,
-    stat_name: Option<String>,
-    stat_points: Option<i64>,
-) -> DbResult<(Option<i64>, Option<String>, Option<i64>)> {
+/// XP is an optional running total, but it can never be negative. The stat
+/// changes are cleaned separately because a level-up may award several.
+fn clean_level_xp(xp: Option<i64>) -> DbResult<Option<i64>> {
     if xp.is_some_and(|value| value < 0) {
         return Err(DbError::Invalid(
             "experience cannot be negative".to_string(),
         ));
     }
 
+    Ok(xp)
+}
+
+/// A stat a level-up raised, with both what it gained and what it became.
+fn stat_gain(stat_name: &str, amount: i64, value_after: i64) -> LevelStatChangeInput {
+    LevelStatChangeInput {
+        stat_name: stat_name.to_string(),
+        amount: Some(amount),
+        value_after: Some(value_after),
+    }
+}
+
+/// Turns the old single snapshot into a child row. The old value was the stat
+/// after the chapter, not a gain, so only `value_after` is known.
+fn legacy_level_stat_changes(
+    stat_name: Option<String>,
+    stat_points: Option<i64>,
+) -> DbResult<Vec<LevelStatChangeInput>> {
     let stat_name = stat_name
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty());
 
     match (stat_name, stat_points) {
-        (None, None) => Ok((xp, None, None)),
-        (Some(name), Some(value)) => Ok((xp, Some(name), Some(value))),
+        (None, None) => Ok(Vec::new()),
+        (Some(stat_name), Some(value_after)) => Ok(vec![LevelStatChangeInput {
+            stat_name,
+            amount: None,
+            value_after: Some(value_after),
+        }]),
         _ => Err(DbError::Invalid(
             "a primary stat needs both a name and a value".to_string(),
         )),
     }
+}
+
+/// Trims stat names, drops fully blank rows, and refuses two changes to the same
+/// stat in one level-up. A row needs at least a gain or a resulting value.
+fn clean_level_stat_changes(
+    changes: Vec<LevelStatChangeInput>,
+) -> DbResult<Vec<LevelStatChangeInput>> {
+    let mut cleaned = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for change in changes {
+        let stat_name = change.stat_name.trim().to_string();
+
+        if stat_name.is_empty() {
+            if change.amount.is_none() && change.value_after.is_none() {
+                continue;
+            }
+
+            return Err(DbError::Invalid(
+                "a stat change needs a stat name".to_string(),
+            ));
+        }
+
+        if change.amount.is_none() && change.value_after.is_none() {
+            return Err(DbError::Invalid(format!(
+                "the {stat_name} change needs a gain, a resulting value, or both"
+            )));
+        }
+
+        if !seen.insert(stat_name.clone()) {
+            return Err(DbError::Invalid(format!(
+                "{stat_name} is changed more than once in this level-up"
+            )));
+        }
+
+        cleaned.push(LevelStatChangeInput {
+            stat_name,
+            amount: change.amount,
+            value_after: change.value_after,
+        });
+    }
+
+    Ok(cleaned)
+}
+
+/// The stat changes an imported milestone carries. A v19 file puts them in
+/// `stat_changes`; an older file has the one legacy snapshot instead. New data
+/// wins when both are present, so a file round-tripped through a newer build
+/// never doubles its rows.
+fn imported_level_stat_changes(
+    milestone: &CharacterLevelMilestone,
+) -> DbResult<Vec<LevelStatChangeInput>> {
+    if !milestone.stat_changes.is_empty() {
+        return clean_level_stat_changes(
+            milestone
+                .stat_changes
+                .iter()
+                .map(|change| LevelStatChangeInput {
+                    stat_name: change.stat_name.clone(),
+                    amount: change.amount,
+                    value_after: change.value_after,
+                })
+                .collect(),
+        );
+    }
+
+    legacy_level_stat_changes(milestone.stat_name.clone(), milestone.stat_points)
+}
+
+fn describe_level_stat_change(amount: Option<i64>, value_after: Option<i64>) -> String {
+    match (amount, value_after) {
+        (Some(amount), Some(value)) => format!("{amount:+} (now {value})"),
+        (Some(amount), None) => format!("{amount:+}"),
+        (None, Some(value)) => format!("now {value}"),
+        (None, None) => String::new(),
+    }
+}
+
+fn load_level_stat_changes(
+    conn: &Connection,
+    milestone_id: &str,
+) -> DbResult<Vec<CharacterLevelStatChange>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, milestone_id, stat_name, amount, value_after, created_at, updated_at
+         FROM character_level_stat_changes
+         WHERE milestone_id = ?1
+         ORDER BY stat_name COLLATE NOCASE, id",
+    )?;
+
+    let rows = stmt.query_map(params![milestone_id], level_stat_change_row)?;
+
+    Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+}
+
+fn attach_level_stat_changes(
+    conn: &Connection,
+    milestones: &mut [CharacterLevelMilestone],
+) -> DbResult<()> {
+    for milestone in milestones {
+        milestone.stat_changes = load_level_stat_changes(conn, &milestone.id)?;
+    }
+
+    Ok(())
+}
+
+/// Adds, updates and removes the stat changes of one milestone. The incoming
+/// list is the whole new set, so a stat left out is removed. Returns whether
+/// anything was written, which lets a no-op save keep its old timestamp.
+fn apply_level_stat_changes(
+    conn: &Connection,
+    milestone_id: &str,
+    story_id: &str,
+    existing: &[CharacterLevelStatChange],
+    incoming: &[LevelStatChangeInput],
+    timestamp: &str,
+    user: &str,
+) -> DbResult<bool> {
+    let existing_by_name: HashMap<&str, &CharacterLevelStatChange> = existing
+        .iter()
+        .map(|change| (change.stat_name.as_str(), change))
+        .collect();
+    let incoming_by_name: HashMap<&str, &LevelStatChangeInput> = incoming
+        .iter()
+        .map(|change| (change.stat_name.as_str(), change))
+        .collect();
+    let mut changed = false;
+
+    for old in existing {
+        if incoming_by_name.contains_key(old.stat_name.as_str()) {
+            continue;
+        }
+
+        conn.execute(
+            "DELETE FROM character_level_stat_changes WHERE id = ?1",
+            params![&old.id],
+        )?;
+
+        let field = format!("stat:{}", old.stat_name);
+        log_audit(
+            conn,
+            AuditRecord {
+                story_id: Some(story_id),
+                entity_type: "character_level_milestone",
+                entity_id: milestone_id,
+                action: "delete",
+                field_changed: Some(field.as_str()),
+                old_value: Some(describe_level_stat_change(old.amount, old.value_after)),
+                new_value: None,
+                changed_by: user,
+            },
+        )?;
+        changed = true;
+    }
+
+    for change in incoming {
+        if let Some(old) = existing_by_name.get(change.stat_name.as_str()) {
+            if old.amount == change.amount && old.value_after == change.value_after {
+                continue;
+            }
+
+            conn.execute(
+                "UPDATE character_level_stat_changes
+                    SET amount = ?1, value_after = ?2, updated_at = ?3
+                  WHERE id = ?4",
+                params![change.amount, change.value_after, timestamp, &old.id],
+            )?;
+
+            let field = format!("stat:{}", change.stat_name);
+            log_audit(
+                conn,
+                AuditRecord {
+                    story_id: Some(story_id),
+                    entity_type: "character_level_milestone",
+                    entity_id: milestone_id,
+                    action: "update",
+                    field_changed: Some(field.as_str()),
+                    old_value: Some(describe_level_stat_change(old.amount, old.value_after)),
+                    new_value: Some(describe_level_stat_change(
+                        change.amount,
+                        change.value_after,
+                    )),
+                    changed_by: user,
+                },
+            )?;
+            changed = true;
+            continue;
+        }
+
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO character_level_stat_changes
+             (id, milestone_id, stat_name, amount, value_after, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![
+                &id,
+                milestone_id,
+                &change.stat_name,
+                change.amount,
+                change.value_after,
+                timestamp
+            ],
+        )?;
+
+        let field = format!("stat:{}", change.stat_name);
+        log_audit(
+            conn,
+            AuditRecord {
+                story_id: Some(story_id),
+                entity_type: "character_level_milestone",
+                entity_id: milestone_id,
+                action: "create",
+                field_changed: Some(field.as_str()),
+                old_value: None,
+                new_value: Some(describe_level_stat_change(
+                    change.amount,
+                    change.value_after,
+                )),
+                changed_by: user,
+            },
+        )?;
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+/// Checks that a level-up belongs to the skill's character and answers its
+/// chapter and a readable label for the history.
+fn resolve_level_milestone(
+    conn: &Connection,
+    milestone_id: &str,
+    character_id: &str,
+) -> DbResult<(Option<String>, String)> {
+    conn.query_row(
+        "SELECT m.chapter_id, m.level
+         FROM character_level_milestones m
+         JOIN characters c ON c.id = m.character_id
+         JOIN stories st ON st.id = c.story_id
+         WHERE m.id = ?1 AND m.character_id = ?2
+           AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+        params![milestone_id, character_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                format!("Level {}", row.get::<_, i64>(1)?),
+            ))
+        },
+    )
+    .optional()?
+    .ok_or_else(|| {
+        DbError::Invalid(
+            "a skill event can only link to a level-up of its own character".to_string(),
+        )
+    })
 }
 
 /// Checks that a skill's optional link points at a live node of the right type
@@ -9088,6 +9648,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_018)?;
     }
 
+    if version < 19 {
+        conn.execute_batch(MIGRATION_019)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -9403,6 +9967,49 @@ const MIGRATION_018: &str = "
         ON character_progress (chapter_id);
 ";
 
+/// Schema v19: a level-up can award several stat increases, and a skill event
+/// can name the level-up it belongs to.
+///
+/// The old single `stat_name`/`stat_points` pair was a snapshot, not a gain. It
+/// is copied into the new child table as a value-after row, so an older story
+/// keeps its chart point without inventing a gain it never recorded. New rows
+/// may carry a signed amount, a resulting value, or both. Skill events keep
+/// their own ledger; `milestone_id` only groups an upgrade under its level-up.
+const MIGRATION_019: &str = "
+    CREATE TABLE IF NOT EXISTS character_level_stat_changes (
+        id TEXT PRIMARY KEY,
+        milestone_id TEXT NOT NULL,
+        stat_name TEXT NOT NULL,
+        amount INTEGER,
+        value_after INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (amount IS NOT NULL OR value_after IS NOT NULL),
+        UNIQUE(milestone_id, stat_name),
+        FOREIGN KEY(milestone_id) REFERENCES character_level_milestones(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_level_stat_changes_milestone
+        ON character_level_stat_changes (milestone_id);
+
+    INSERT INTO character_level_stat_changes
+        (id, milestone_id, stat_name, amount, value_after, created_at, updated_at)
+    SELECT lower(hex(randomblob(16))), id, stat_name, NULL, stat_points,
+           created_at, updated_at
+    FROM character_level_milestones
+    WHERE stat_name IS NOT NULL AND stat_points IS NOT NULL;
+
+    ALTER TABLE character_skill_events
+        ADD COLUMN milestone_id TEXT REFERENCES character_level_milestones(id)
+            ON DELETE SET NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_character_skill_events_milestone
+        ON character_skill_events (milestone_id);
+
+    ALTER TABLE character_level_milestones DROP COLUMN stat_name;
+    ALTER TABLE character_level_milestones DROP COLUMN stat_points;
+";
+
 /// Schema v17: a level milestone can also record the total XP and one primary
 /// stat at that chapter.
 ///
@@ -9553,6 +10160,31 @@ mod tests {
             })
             .expect("Mira's last total is recorded");
         assert_eq!(mira_total.xp, Some(1500));
+
+        // A demo level-up carries every stat it awarded, not one summary row.
+        let rook_last = milestones
+            .iter()
+            .find(|milestone| {
+                milestone.character_id == rook.id
+                    && milestone.chapter_id.as_deref() == Some(chapters[2].id.as_str())
+            })
+            .expect("Rook's last level is recorded");
+        assert_eq!(rook_last.level, 4);
+        assert_eq!(rook_last.stat_changes.len(), 3);
+        assert!(rook_last
+            .stat_changes
+            .iter()
+            .any(|change| change.stat_name == "Agility"
+                && change.amount == Some(1)
+                && change.value_after == Some(12)));
+
+        let upgrade = db
+            .list_story_skill_events(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.kind == "upgraded")
+            .expect("Ash Step is upgraded in the demo");
+        assert_eq!(upgrade.milestone_id.as_deref(), Some(rook_last.id.as_str()));
 
         let progress = db.list_story_character_progress(&story.id).unwrap();
         assert_eq!(progress.len(), 6);
@@ -14910,6 +15542,7 @@ mod tests {
                 "UPGRADED".into(),
                 Some(chapter.id.clone()),
                 Some("  Rank 2  ".into()),
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -14923,6 +15556,7 @@ mod tests {
                 "used".into(),
                 Some(second.id.clone()),
                 Some("Rank 2".into()),
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -14933,13 +15567,21 @@ mod tests {
                 "sacrificed".into(),
                 Some(second.id.clone()),
                 Some("Rank 9".into()),
+                None,
                 "Ada".into(),
             )
             .unwrap();
         assert_eq!(sacrificed.rank, None, "a sacrifice has no rank to carry");
 
         let error = db
-            .add_skill_event(skill.id.clone(), "lost".into(), None, None, "Ada".into())
+            .add_skill_event(
+                skill.id.clone(),
+                "lost".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
             .unwrap_err()
             .to_string();
         assert!(error.contains("upgrade, a sacrifice or a use"), "{error}");
@@ -14949,6 +15591,7 @@ mod tests {
                 skill.id.clone(),
                 "used".into(),
                 Some(card.id.clone()),
+                None,
                 None,
                 "Ada".into(),
             )
@@ -14965,6 +15608,7 @@ mod tests {
                 "upgraded".into(),
                 Some(second.id.clone()),
                 Some("Rank 3".into()),
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -15027,14 +15671,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(milestone.xp, Some(1200));
-        assert_eq!(milestone.stat_name.as_deref(), Some("Strength"));
-        assert_eq!(milestone.stat_points, Some(18));
+        assert_eq!(milestone.stat_changes.len(), 1);
+        assert_eq!(milestone.stat_changes[0].stat_name, "Strength");
+        assert_eq!(milestone.stat_changes[0].amount, None);
+        assert_eq!(milestone.stat_changes[0].value_after, Some(18));
 
         let listed = db.list_story_level_milestones(&story.id).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].xp, Some(1200));
-        assert_eq!(listed[0].stat_name.as_deref(), Some("Strength"));
-        assert_eq!(listed[0].stat_points, Some(18));
+        assert_eq!(listed[0].stat_changes.len(), 1);
+        assert_eq!(listed[0].stat_changes[0].value_after, Some(18));
 
         let updated = db
             .update_level_milestone_with_metrics(
@@ -15050,7 +15696,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.level, 4);
         assert_eq!(updated.xp, Some(1500));
-        assert_eq!(updated.stat_points, Some(20));
+        assert_eq!(updated.stat_changes[0].value_after, Some(20));
 
         let history = db
             .get_audit_log(
@@ -15066,9 +15712,9 @@ mod tests {
                 && entry.new_value.as_deref() == Some("1500")
         }));
         assert!(history.iter().any(|entry| {
-            entry.field_changed.as_deref() == Some("stat_points")
-                && entry.old_value.as_deref() == Some("18")
-                && entry.new_value.as_deref() == Some("20")
+            entry.field_changed.as_deref() == Some("stat:Strength")
+                && entry.old_value.as_deref() == Some("now 18")
+                && entry.new_value.as_deref() == Some("now 20")
         }));
 
         let cleared = db
@@ -15084,8 +15730,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cleared.xp, None);
-        assert_eq!(cleared.stat_name, None);
-        assert_eq!(cleared.stat_points, None);
+        assert!(cleared.stat_changes.is_empty());
 
         assert!(db
             .add_level_milestone_with_metrics(
@@ -15111,6 +15756,95 @@ mod tests {
                 "Ada".into(),
             )
             .is_err());
+    }
+
+    #[test]
+    fn a_level_up_can_award_several_stats_and_group_its_skill_changes() {
+        let (db, story, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let milestone = db
+            .add_level_milestone_with_changes(
+                character.id.clone(),
+                2,
+                Some(chapter.id.clone()),
+                false,
+                Some(900),
+                vec![
+                    LevelStatChangeInput {
+                        stat_name: " Strength ".into(),
+                        amount: Some(2),
+                        value_after: Some(18),
+                    },
+                    LevelStatChangeInput {
+                        stat_name: "Agility".into(),
+                        amount: Some(1),
+                        value_after: None,
+                    },
+                ],
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(milestone.stat_changes.len(), 2);
+        assert_eq!(milestone.stat_changes[0].stat_name, "Agility");
+        assert_eq!(milestone.stat_changes[0].amount, Some(1));
+        assert_eq!(milestone.stat_changes[0].value_after, None);
+        assert_eq!(milestone.stat_changes[1].stat_name, "Strength");
+        assert_eq!(milestone.stat_changes[1].amount, Some(2));
+        assert_eq!(milestone.stat_changes[1].value_after, Some(18));
+
+        let event = db
+            .add_skill_event(
+                skill.id.clone(),
+                "upgraded".into(),
+                None,
+                Some("Rank 2".into()),
+                Some(milestone.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(event.milestone_id.as_deref(), Some(milestone.id.as_str()));
+        assert_eq!(
+            event.chapter_id.as_deref(),
+            Some(chapter.id.as_str()),
+            "a linked event inherits the level-up's chapter"
+        );
+
+        // A level-up from another character is not a valid link.
+        let other = db
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let other_milestone = db
+            .add_level_milestone(other.id.clone(), 1, None, false, "Ada".into())
+            .unwrap();
+        assert!(db
+            .add_skill_event(
+                skill.id.clone(),
+                "used".into(),
+                Some(chapter.id.clone()),
+                None,
+                Some(other_milestone.id.clone()),
+                "Ada".into(),
+            )
+            .is_err());
+
+        // Deleting the level-up unlinks its skill change instead of deleting it.
+        db.delete_level_milestone(&milestone.id, "Ada".into())
+            .unwrap();
+        let events = db.list_skill_events(&skill.id).unwrap();
+        assert_eq!(events[0].id, event.id);
+        assert_eq!(events[0].milestone_id, None);
     }
 
     #[test]
@@ -15180,6 +15914,7 @@ mod tests {
                 "upgraded".into(),
                 Some(chapter.id.clone()),
                 Some("Rank 2".into()),
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -15210,15 +15945,25 @@ mod tests {
                 "Ada".into(),
             )
             .unwrap();
-        source
-            .add_level_milestone_with_metrics(
+        let milestone = source
+            .add_level_milestone_with_changes(
                 character.id.clone(),
                 5,
                 Some(chapter.id.clone()),
                 false,
                 Some(2400),
-                Some("Strength".into()),
-                Some(22),
+                vec![
+                    LevelStatChangeInput {
+                        stat_name: "Strength".into(),
+                        amount: Some(2),
+                        value_after: Some(22),
+                    },
+                    LevelStatChangeInput {
+                        stat_name: "Agility".into(),
+                        amount: Some(1),
+                        value_after: Some(12),
+                    },
+                ],
                 "Ada".into(),
             )
             .unwrap();
@@ -15228,6 +15973,7 @@ mod tests {
                 "upgraded".into(),
                 Some(chapter.id.clone()),
                 Some("Rank 2".into()),
+                Some(milestone.id.clone()),
                 "Ada".into(),
             )
             .unwrap();
@@ -15239,9 +15985,14 @@ mod tests {
             export.character_level_milestones[0].chapter_id.as_deref(),
             Some(chapter.id.as_str())
         );
+        assert_eq!(export.character_level_milestones[0].stat_changes.len(), 2);
         assert_eq!(
             export.character_skill_events[0].chapter_id.as_deref(),
             Some(chapter.id.as_str())
+        );
+        assert_eq!(
+            export.character_skill_events[0].milestone_id.as_deref(),
+            Some(milestone.id.as_str())
         );
 
         let target = Db::open_in_memory().unwrap();
@@ -15260,8 +16011,13 @@ mod tests {
         assert_eq!(milestones.len(), 1);
         assert_eq!(milestones[0].level, 5);
         assert_eq!(milestones[0].xp, Some(2400));
-        assert_eq!(milestones[0].stat_name.as_deref(), Some("Strength"));
-        assert_eq!(milestones[0].stat_points, Some(22));
+        assert_eq!(milestones[0].stat_changes.len(), 2);
+        assert_eq!(milestones[0].stat_changes[0].stat_name, "Agility");
+        assert_eq!(milestones[0].stat_changes[0].amount, Some(1));
+        assert_eq!(milestones[0].stat_changes[0].value_after, Some(12));
+        assert_eq!(milestones[0].stat_changes[1].stat_name, "Strength");
+        assert_eq!(milestones[0].stat_changes[1].amount, Some(2));
+        assert_eq!(milestones[0].stat_changes[1].value_after, Some(22));
         assert_eq!(
             milestones[0].chapter_id.as_deref(),
             Some(chapter_id.as_str())
@@ -15271,6 +16027,10 @@ mod tests {
         assert_eq!(events[0].skill_id, skills[0].id);
         assert_eq!(events[0].chapter_id.as_deref(), Some(chapter_id.as_str()));
         assert_eq!(events[0].rank.as_deref(), Some("Rank 2"));
+        assert_eq!(
+            events[0].milestone_id.as_deref(),
+            Some(milestones[0].id.as_str())
+        );
 
         let history = target
             .get_audit_log(Some(&restored.id), None, None, 500)
@@ -15705,6 +16465,7 @@ mod tests {
             "upgraded".into(),
             Some(two.id.clone()),
             Some("Rank 2".into()),
+            None,
             "Ada".into(),
         )
         .unwrap();
@@ -15712,6 +16473,7 @@ mod tests {
             shield.id.clone(),
             "sacrificed".into(),
             Some(three.id.clone()),
+            None,
             None,
             "Ada".into(),
         )
@@ -15722,6 +16484,7 @@ mod tests {
             "used".into(),
             Some(three.id.clone()),
             Some("Novice".into()),
+            None,
             "Ada".into(),
         )
         .unwrap();
@@ -16083,7 +16846,7 @@ mod tests {
     }
 
     #[test]
-    fn migrating_a_version_16_database_adds_milestone_metrics() {
+    fn migrating_a_version_18_database_moves_the_stat_snapshot_into_a_change() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(BASE_SCHEMA).unwrap();
         conn.execute_batch(INDEXES).unwrap();
@@ -16103,13 +16866,15 @@ mod tests {
             MIGRATION_014,
             MIGRATION_015,
             MIGRATION_016,
+            MIGRATION_017,
+            MIGRATION_018,
         ] {
             conn.execute_batch(block).unwrap();
         }
-        conn.pragma_update(None, "user_version", 16).unwrap();
+        conn.pragma_update(None, "user_version", 18).unwrap();
         conn.execute(
             "INSERT INTO stories (id, title, description, created_at, updated_at)
-             VALUES ('s1', 'Written before v17', NULL, 'then', 'then')",
+             VALUES ('s1', 'Written before v19', NULL, 'then', 'then')",
             [],
         )
         .unwrap();
@@ -16125,14 +16890,6 @@ mod tests {
             [],
         )
         .unwrap();
-
-        migrate(&conn).unwrap();
-
-        let version: i32 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
-
         conn.execute(
             "INSERT INTO character_level_milestones
              (id, character_id, level, chapter_id, is_debuff, xp, stat_name,
@@ -16142,15 +16899,48 @@ mod tests {
         )
         .unwrap();
 
-        let values: (Option<i64>, Option<String>, Option<i64>) = conn
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let change: (String, Option<i64>, Option<i64>) = conn
             .query_row(
-                "SELECT xp, stat_name, stat_points FROM character_level_milestones
-                  WHERE id = 'm1'",
+                "SELECT stat_name, amount, value_after
+                 FROM character_level_stat_changes WHERE milestone_id = 'm1'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(values, (Some(1200), Some("Strength".into()), Some(18)));
+        assert_eq!(change, ("Strength".into(), None, Some(18)));
+
+        // A skill event can now point at the migrated level-up.
+        conn.execute(
+            "INSERT INTO character_skills
+             (id, character_id, name, rank, effect, chapter_id, node_id,
+              created_at, updated_at)
+             VALUES ('sk1', 'c1', 'Dash', NULL, NULL, 'n1', NULL, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_skill_events
+             (id, skill_id, kind, chapter_id, rank, milestone_id, created_at, updated_at)
+             VALUES ('e1', 'sk1', 'upgraded', 'n1', 'Rank 2', 'm1', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let linked: Option<String> = conn
+            .query_row(
+                "SELECT milestone_id FROM character_skill_events WHERE id = 'e1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked.as_deref(), Some("m1"));
     }
 
     #[test]

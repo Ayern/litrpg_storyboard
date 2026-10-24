@@ -449,7 +449,7 @@ describe('per-character progression chart', () => {
     const { user, container } = await openCharacters();
 
     await screen.findByRole('img', { name: /Character levels for Rook, Wren/ });
-    await user.click(screen.getByRole('button', { name: 'Primary stats' }));
+    await user.click(screen.getByRole('button', { name: 'Stats' }));
 
     expect(await screen.findByLabelText('Stat to plot')).toHaveValue('Strength');
     const chart = await screen.findByRole('img', {

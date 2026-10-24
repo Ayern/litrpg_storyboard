@@ -215,15 +215,19 @@ string. A level starts at 1 and experience at 0, which is what the migration giv
 a character created before these fields existed.
 
 **Level milestones** sit below the progression bar: a level, the chapter it was
-reached in, an explicit **Penalty** flag for a deliberate drop, and optional
-**Total XP** and **Stat points** snapshots. The snapshots record what the sheet
-said at that chapter; neither is required, and the two stat fields are stored
-together. They are a record of where a level applied, not the character's current
-level, so changing the sheet does not rewrite history. The Chapters tab compares
-them in reading order and warns when a level goes backwards without that penalty
-flag; the same warning is drawn on the chapter card where the drop appears.
-Clicking either one opens the holder's sheet and puts that milestone straight
-into its editor.
+reached in, an explicit **Penalty** flag for a deliberate drop, optional **Total
+XP**, and any number of **stat changes**. One level-up is one milestone, and each
+stat change on it records the gain (such as `Agility +2`), the value it became, or
+both; listing two stats on level 2 is how a sheet says "2 agility and 1 strength"
+without entering the same level twice. A stat can appear only once per level-up.
+A **skill event** can name the level-up it belongs to, so an upgrade groups under
+the milestone that caused it instead of needing a second level-2 row. The numbers
+record what the sheet said at that chapter; none are required. A milestone is a
+record of where a level applied, not the character's current level, so changing
+the sheet does not rewrite history. The Chapters tab compares them in reading
+order and warns when a level goes backwards without that penalty flag; the same
+warning is drawn on the chapter card where the drop appears. Clicking either one
+opens the holder's sheet and puts that milestone straight into its editor.
 
 **XP by chapter** is a separate ledger below the milestones: one income amount
 per character per chapter, recorded on the sheet with that chapter. It is what
@@ -237,7 +241,7 @@ and import. A chapter that has been purged takes its income rows with it.
 **Progression chart and chapter state** — the top of the Characters tab draws a
 power curve from `character_level_milestones` and the XP ledger: the chapters in
 reading order along the x-axis. The y-axis switches between **Level**, **Total
-XP**, **XP earned** and a chosen **Primary stat**. Level, total XP and a stat draw
+XP**, **XP earned** and a chosen **stat**. Level, total XP and a stat draw
 one step line per character, where only chapters with a recorded value get a
 point and the last recorded value carries forward. **XP earned** instead draws
 one bar per character in each chapter, because income belongs to that chapter and

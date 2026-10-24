@@ -109,6 +109,16 @@ interface SkillRow {
   updated_at: string;
 }
 
+interface StatChangeRow {
+  id: string;
+  milestone_id: string;
+  stat_name: string;
+  amount: number | null;
+  value_after: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface LevelRow {
   id: string;
   character_id: string;
@@ -116,8 +126,7 @@ interface LevelRow {
   chapter_id: string | null;
   is_debuff: boolean;
   xp?: number | null;
-  stat_name?: string | null;
-  stat_points?: number | null;
+  stat_changes?: StatChangeRow[];
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +156,7 @@ interface EventRow {
   kind: 'upgraded' | 'sacrificed' | 'used';
   chapter_id: string | null;
   rank: string | null;
+  milestone_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -194,8 +204,17 @@ beforeEach(() => {
       chapter_id: 'n1',
       is_debuff: false,
       xp: 900,
-      stat_name: 'Strength',
-      stat_points: 10,
+      stat_changes: [
+        {
+          id: 'change-1',
+          milestone_id: 'milestone-1',
+          stat_name: 'Strength',
+          amount: 2,
+          value_after: 10,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        },
+      ],
       created_at: '2026-10-22T12:00:00Z',
       updated_at: '2026-10-22T12:00:00Z',
     },
@@ -206,8 +225,17 @@ beforeEach(() => {
       chapter_id: 'n2',
       is_debuff: false,
       xp: 2400,
-      stat_name: 'Strength',
-      stat_points: 12,
+      stat_changes: [
+        {
+          id: 'change-2',
+          milestone_id: 'milestone-2',
+          stat_name: 'Strength',
+          amount: 2,
+          value_after: 12,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        },
+      ],
       created_at: '2026-10-22T12:00:00Z',
       updated_at: '2026-10-22T12:00:00Z',
     },
@@ -318,8 +346,17 @@ beforeEach(() => {
           chapter_id: args.chapterId ?? null,
           is_debuff: args.isDebuff,
           xp: args.xp ?? null,
-          stat_name: args.statName ?? null,
-          stat_points: args.statPoints ?? null,
+          stat_changes: (args.statChanges ?? []).map(
+            (change: { stat_name: string; amount: number | null; value_after: number | null }, at: number) => ({
+              id: `change-new-${at + 1}`,
+              milestone_id: `milestone-${levels.length + 1}`,
+              stat_name: change.stat_name,
+              amount: change.amount,
+              value_after: change.value_after,
+              created_at: '2026-10-22T12:00:00Z',
+              updated_at: '2026-10-22T12:00:00Z',
+            })
+          ),
           created_at: '2026-10-22T12:00:00Z',
           updated_at: '2026-10-22T12:00:00Z',
         };
@@ -336,8 +373,17 @@ beforeEach(() => {
           chapter_id: args.chapterId ?? null,
           is_debuff: args.isDebuff,
           xp: args.xp ?? null,
-          stat_name: args.statName ?? null,
-          stat_points: args.statPoints ?? null,
+          stat_changes: (args.statChanges ?? []).map(
+            (change: { stat_name: string; amount: number | null; value_after: number | null }, at: number) => ({
+              id: `change-updated-${at + 1}`,
+              milestone_id: existing.id,
+              stat_name: change.stat_name,
+              amount: change.amount,
+              value_after: change.value_after,
+              created_at: '2026-10-22T12:00:00Z',
+              updated_at: '2026-10-22T12:00:00Z',
+            })
+          ),
         };
         levels = levels.map(level => (level.id === updated.id ? updated : level));
         return { ...updated };
@@ -379,6 +425,7 @@ beforeEach(() => {
           kind: args.kind,
           chapter_id: args.chapterId ?? null,
           rank: args.kind === 'sacrificed' ? null : (args.rank ?? null),
+          milestone_id: args.milestoneId ?? null,
           created_at: '2026-10-22T12:00:00Z',
           updated_at: '2026-10-22T12:00:00Z',
         };
@@ -394,6 +441,7 @@ beforeEach(() => {
           kind: args.kind,
           chapter_id: args.chapterId ?? null,
           rank: args.kind === 'sacrificed' ? null : (args.rank ?? null),
+          milestone_id: args.milestoneId ?? null,
         };
         events = events.map(event => (event.id === updated.id ? updated : event));
         return { ...updated };
@@ -719,8 +767,12 @@ describe('level milestones and skill events on the sheet', () => {
     await user.clear(screen.getByLabelText('New milestone level'));
     await user.type(screen.getByLabelText('New milestone level'), '6');
     await user.selectOptions(screen.getByLabelText('New milestone chapter'), 'n3');
-    await user.selectOptions(screen.getByLabelText('New milestone stat'), 'Strength');
-    await user.type(screen.getByLabelText('New milestone stat points'), '14');
+    await user.selectOptions(screen.getByLabelText('New milestone stat 1 name'), 'Strength');
+    await user.type(screen.getByLabelText('New milestone stat 1 gain'), '2');
+    await user.type(screen.getByLabelText('New milestone stat 1 value after'), '14');
+    await user.click(screen.getByRole('button', { name: 'Add a new milestone stat' }));
+    await user.selectOptions(screen.getByLabelText('New milestone stat 2 name'), 'Dexterity');
+    await user.type(screen.getByLabelText('New milestone stat 2 gain'), '1');
     await user.type(screen.getByLabelText('New milestone total XP'), '3600');
     await user.click(screen.getByLabelText('New milestone is a penalty'));
     await user.click(screen.getByRole('button', { name: 'Add milestone' }));
@@ -731,10 +783,18 @@ describe('level milestones and skill events on the sheet', () => {
       chapterId: 'n3',
       isDebuff: true,
       xp: 3600,
-      statName: 'Strength',
-      statPoints: 14,
+      statChanges: [
+        { stat_name: 'Strength', amount: 2, value_after: 14 },
+        { stat_name: 'Dexterity', amount: 1, value_after: null },
+      ],
       user: 'You',
     });
+    expect(
+      document.querySelector('[data-progression="level-milestone-3"]')
+    ).toHaveTextContent('Strength +2 (now 14)');
+    expect(
+      document.querySelector('[data-progression="level-milestone-3"]')
+    ).toHaveTextContent('Dexterity +1');
     expect(document.querySelector('[data-progression="level-milestone-3"]')).toBeInTheDocument();
     expect(
       within(document.querySelector('[data-progression="level-milestone-3"]') as HTMLElement)
@@ -745,14 +805,18 @@ describe('level milestones and skill events on the sheet', () => {
       screen.getByTitle('Change the level and chapter of the level 3 milestone')
     );
     expect(screen.getByLabelText('Milestone total XP')).toHaveValue(900);
-    expect(screen.getByLabelText('Milestone stat')).toHaveValue('Strength');
-    expect(screen.getByLabelText('Milestone stat points')).toHaveValue(10);
+    expect(screen.getByLabelText('Milestone stat 1 name')).toHaveValue('Strength');
+    expect(screen.getByLabelText('Milestone stat 1 gain')).toHaveValue(2);
+    expect(screen.getByLabelText('Milestone stat 1 value after')).toHaveValue(10);
     await user.clear(screen.getByLabelText('Milestone level'));
     await user.type(screen.getByLabelText('Milestone level'), '5');
     await user.selectOptions(screen.getByLabelText('Milestone chapter'), 'n2');
-    await user.selectOptions(screen.getByLabelText('Milestone stat'), 'Dexterity');
-    await user.clear(screen.getByLabelText('Milestone stat points'));
-    await user.type(screen.getByLabelText('Milestone stat points'), '11');
+    await user.selectOptions(screen.getByLabelText('Milestone stat 1 name'), 'Dexterity');
+    await user.clear(screen.getByLabelText('Milestone stat 1 value after'));
+    await user.type(screen.getByLabelText('Milestone stat 1 value after'), '11');
+    await user.click(screen.getByRole('button', { name: 'Add a milestone stat' }));
+    await user.selectOptions(screen.getByLabelText('Milestone stat 2 name'), 'Strength');
+    await user.type(screen.getByLabelText('Milestone stat 2 gain'), '1');
     await user.clear(screen.getByLabelText('Milestone total XP'));
     await user.type(screen.getByLabelText('Milestone total XP'), '1500');
     await user.click(screen.getByRole('button', { name: 'Save milestone' }));
@@ -763,8 +827,10 @@ describe('level milestones and skill events on the sheet', () => {
       chapterId: 'n2',
       isDebuff: false,
       xp: 1500,
-      statName: 'Dexterity',
-      statPoints: 11,
+      statChanges: [
+        { stat_name: 'Dexterity', amount: 2, value_after: 11 },
+        { stat_name: 'Strength', amount: 1, value_after: null },
+      ],
       user: 'You',
     });
 
@@ -789,11 +855,11 @@ describe('level milestones and skill events on the sheet', () => {
     ).toHaveLength(0);
 
     await user.clear(screen.getByLabelText('New milestone total XP'));
-    await user.selectOptions(screen.getByLabelText('New milestone stat'), 'Strength');
+    await user.selectOptions(screen.getByLabelText('New milestone stat 1 name'), 'Strength');
     await user.click(screen.getByRole('button', { name: 'Add milestone' }));
 
     expect(
-      await screen.findByText('A primary stat needs both a name and a value, or both blank.')
+      await screen.findByText('Strength needs a gain, a resulting value, or both.')
     ).toBeInTheDocument();
     expect(
       invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
@@ -933,5 +999,50 @@ describe('level milestones and skill events on the sheet', () => {
       user: 'You',
     });
     expect(document.querySelector('[data-progression="skill-event-event-1"]')).toBeNull();
+  });
+
+  it('groups a skill upgrade under the level-up it came with', async () => {
+    const user = await openSheet();
+
+    await user.click(
+      screen.getByTitle('Record an upgrade, use or sacrifice of Fireball')
+    );
+    expect(screen.getByLabelText('Skill event level-up')).toHaveValue('');
+    await user.selectOptions(screen.getByLabelText('Skill event level-up'), 'milestone-1');
+    await user.type(screen.getByLabelText('Skill event rank'), 'Rank 2');
+    await user.click(screen.getByRole('button', { name: 'Save event' }));
+
+    expect(lastCall('add_skill_event')).toMatchObject({
+      skillId: 'skill-1',
+      kind: 'upgraded',
+      milestoneId: 'milestone-1',
+      rank: 'Rank 2',
+      user: 'You',
+    });
+
+    const milestoneRow = document.querySelector(
+      '[data-progression="level-milestone-1"]'
+    ) as HTMLElement;
+    expect(milestoneRow).toHaveTextContent('Fireball · upgraded Rank 2');
+    expect(
+      document.querySelector('[data-progression="skill-event-event-2"]')
+    ).toHaveTextContent('At Level 3');
+
+    const event = document.querySelector(
+      '[data-progression="skill-event-event-2"]'
+    ) as HTMLElement;
+    await user.click(within(event).getByTitle('Change this Fireball event'));
+    expect(screen.getByLabelText('Skill event level-up')).toHaveValue('milestone-1');
+    await user.selectOptions(screen.getByLabelText('Skill event level-up'), '');
+    await user.click(screen.getByRole('button', { name: 'Save event' }));
+
+    expect(lastCall('update_skill_event')).toMatchObject({
+      id: 'event-2',
+      milestoneId: null,
+      user: 'You',
+    });
+    expect(
+      document.querySelector('[data-progression="level-milestone-1"]')
+    ).not.toHaveTextContent('Fireball · upgraded');
   });
 });

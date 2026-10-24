@@ -291,11 +291,12 @@ moments that can only be described in words. **M**
 
 **9. Progression ledger.** **Started.** A per-chapter level milestone now exists
 (`character_level_milestones`), entered on the sheet with a chapter, an explicit
-penalty flag and optional **Total XP** and **Stat points** snapshots, and compared
+penalty flag, optional **Total XP** and any number of **stat changes** (schema v19:
+gain, resulting value, or both, one row per stat), and compared
 in reading order on the Chapters tab and the chapter cards. The Characters tab now
 draws a **Power curve**: one step line per character, chapters in reading order on
 the x-axis, and a y-axis that switches between level, total XP, XP earned and any
-recorded primary stat, with a toggle for every plotted line or bar group so power
+recorded stat, with a toggle for every plotted line or bar group so power
 curves can be compared side by side. Level and total XP come from milestone rows;
 an unplaced or trashed chapter is left off rather than guessed at, and a milestone
 without the chosen snapshot does not erase the last recorded value. XP earned now
@@ -324,9 +325,10 @@ names its holders with each one's rank and chapter. A reference whose node is
 purged is cleared rather than left dangling; trashing one alone keeps it.
 `character_skills` is schema v12, carried by export, import and the story bible,
 and covered by database and UI tests. **Skill events** (schema v15) record an
-upgrade, a use or a sacrifice against a chapter, with an optional rank; they are
-listed in reading order under the skill, audited individually, and carried by
-export and import. **M**
+upgrade, a use or a sacrifice against a chapter, with an optional rank, and can
+name the level-up they came with so an upgrade groups under that one milestone;
+they are listed in reading order under the skill, audited individually, and
+carried by export and import. **M**
 
 **11. Inventory and currency.** **Done.** A cast member's items are rows with a
 name, an optional rarity and effect, a quantity, the chapter acquired in, the

@@ -1,8 +1,8 @@
 use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
     CharacterChapterState, CharacterCurrency, CharacterLevelMilestone, CharacterProgress,
-    CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge, InventoryItem, Node,
-    Story, StoryExport,
+    CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge, InventoryItem,
+    LevelStatChangeInput, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -290,18 +290,16 @@ fn add_level_milestone(
     chapter_id: Option<String>,
     is_debuff: bool,
     xp: Option<i64>,
-    stat_name: Option<String>,
-    stat_points: Option<i64>,
+    stat_changes: Vec<LevelStatChangeInput>,
     user: String,
 ) -> Result<CharacterLevelMilestone, String> {
-    db.add_level_milestone_with_metrics(
+    db.add_level_milestone_with_changes(
         character_id,
         level,
         chapter_id,
         is_debuff,
         xp,
-        stat_name,
-        stat_points,
+        stat_changes,
         user,
     )
     .map_err(|e| e.to_string())
@@ -315,21 +313,11 @@ fn update_level_milestone(
     chapter_id: Option<String>,
     is_debuff: bool,
     xp: Option<i64>,
-    stat_name: Option<String>,
-    stat_points: Option<i64>,
+    stat_changes: Vec<LevelStatChangeInput>,
     user: String,
 ) -> Result<CharacterLevelMilestone, String> {
-    db.update_level_milestone_with_metrics(
-        id,
-        level,
-        chapter_id,
-        is_debuff,
-        xp,
-        stat_name,
-        stat_points,
-        user,
-    )
-    .map_err(|e| e.to_string())
+    db.update_level_milestone_with_changes(id, level, chapter_id, is_debuff, xp, stat_changes, user)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -467,9 +455,10 @@ fn add_skill_event(
     kind: String,
     chapter_id: Option<String>,
     rank: Option<String>,
+    milestone_id: Option<String>,
     user: String,
 ) -> Result<CharacterSkillEvent, String> {
-    db.add_skill_event(skill_id, kind, chapter_id, rank, user)
+    db.add_skill_event(skill_id, kind, chapter_id, rank, milestone_id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -480,9 +469,10 @@ fn update_skill_event(
     kind: String,
     chapter_id: Option<String>,
     rank: Option<String>,
+    milestone_id: Option<String>,
     user: String,
 ) -> Result<CharacterSkillEvent, String> {
-    db.update_skill_event(id, kind, chapter_id, rank, user)
+    db.update_skill_event(id, kind, chapter_id, rank, milestone_id, user)
         .map_err(|e| e.to_string())
 }
 

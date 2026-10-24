@@ -2929,6 +2929,15 @@ body {
   white-space: nowrap;
 }
 
+.skill-event-level {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.14);
+  color: #c4b5fd;
+  white-space: nowrap;
+}
+
 .skill-event-row button {
   margin-left: 0;
 }
@@ -3141,6 +3150,56 @@ body {
 
 .level-metric-field input[type='number'] {
   width: 70px;
+}
+
+/* A level-up can carry several stat gains, so they are rows of their own. */
+.stat-change-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-change-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-change-list select,
+.stat-change-list input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.stat-change-list input[type='number'] {
+  width: 64px;
+}
+
+.stat-change-add,
+.stat-change-remove {
+  background: transparent;
+  border: 1px dashed #3c3c3c;
+  color: #9a9a9a;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stat-change-add:hover,
+.stat-change-remove:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.stat-change-remove {
+  border-style: solid;
+  padding: 3px 7px;
 }
 
 .level-xp,
