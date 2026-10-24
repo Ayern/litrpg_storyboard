@@ -401,7 +401,9 @@ ledger** on a completed quest prefills numeric XP into each character's income r
 and item payouts into their inventory for the ending chapter; stat gains and
 standings are left for the sheet because they are written in your words, and an
 XP row the character already has in that chapter is added to rather than
-duplicated, with the previous and new totals named in the notice. Quests and
+duplicated, with the previous and new totals named in the notice. Applying the
+same bundle a second time asks for confirmation in the quest card first, since a
+repeat payout is almost never wanted. Quests and
 rewards travel in the JSON export with every link remapped, and the story is
 warned when a contract ends before it is accepted, when an active quest's giver or
 faction is in the trash, or when a reward goes to somebody not in the ending

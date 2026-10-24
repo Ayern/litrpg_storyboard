@@ -737,6 +737,61 @@ describe('applying a quest reward', () => {
     expect(screen.getByText(/Rook \+200 XP/)).toBeInTheDocument();
   });
 
+  it('asks before applying the same quest a second time', async () => {
+    quests = [
+      questRow({
+        status: 'completed',
+        completed_chapter_id: 'n2',
+        rewards: [reward('reward-1', 'quest-1', 'xp', 'char-1', '100')],
+      }),
+    ];
+
+    const applyWrites = () =>
+      invokeMock.mock.calls.filter(
+        ([command]) =>
+          command === 'add_character_progress' || command === 'update_character_progress'
+      ).length;
+
+    const user = await openQuests();
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply rewards to chapter ledger',
+      })
+    );
+    expect(applyWrites()).toBe(1);
+
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply rewards again',
+      })
+    );
+
+    const prompt = within(questCard('The Ledger')).getByRole('alertdialog', {
+      name: 'Apply rewards again',
+    });
+    expect(prompt).toHaveTextContent('already went into Chapter Two');
+    expect(prompt).toHaveTextContent('records the same XP and loot a second time');
+    // Nothing is written until the question is answered.
+    expect(applyWrites()).toBe(1);
+
+    await user.click(within(prompt).getByRole('button', { name: 'Cancel' }));
+    expect(applyWrites()).toBe(1);
+    expect(
+      within(questCard('The Ledger')).queryByRole('alertdialog', {
+        name: 'Apply rewards again',
+      })
+    ).toBeNull();
+
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply rewards again',
+      })
+    );
+    await user.click(screen.getByRole('button', { name: 'Add again' }));
+
+    expect(applyWrites()).toBe(2);
+  });
+
   it('adds the payout to an XP row the chapter already has', async () => {
     quests = [
       questRow({

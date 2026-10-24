@@ -2633,6 +2633,10 @@ function App() {
   const [applyingRewardsQuestId, setApplyingRewardsQuestId] = useState<string | null>(
     null
   );
+  // Quests whose rewards have already gone into the ledger this session, and the
+  // one waiting on an answer before it is applied a second time.
+  const [appliedQuestIds, setAppliedQuestIds] = useState<string[]>([]);
+  const [questApplyConfirmId, setQuestApplyConfirmId] = useState<string | null>(null);
   // One income row per character and chapter, read with the rest of the story so
   // the chart and a sheet share the same ledger.
   const [storyCharacterProgress, setStoryCharacterProgress] = useState<
@@ -2960,6 +2964,8 @@ function App() {
       setQuestNotice(null);
       setFocusedQuestId(null);
       setQuestFilter('all');
+      setAppliedQuestIds([]);
+      setQuestApplyConfirmId(null);
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -7418,6 +7424,7 @@ function App() {
 
       applyQuest(saved);
       setQuestDraft(null);
+      setQuestApplyConfirmId(null);
     } catch (e) {
       console.error('Failed to save a quest:', e);
       setQuestError(`Could not save the quest: ${String(e)}`);
@@ -7491,6 +7498,8 @@ function App() {
         )
       );
       setRewardDraft(null);
+      // A changed bundle is a different payout, so the warning is recalculated.
+      setQuestApplyConfirmId(null);
     } catch (e) {
       console.error('Failed to save a quest reward:', e);
       setQuestError(`Could not save the reward: ${String(e)}`);
@@ -7513,6 +7522,7 @@ function App() {
         )
       );
       if (rewardDraft?.id === reward.id) setRewardDraft(null);
+      setQuestApplyConfirmId(null);
     } catch (e) {
       console.error('Failed to delete a quest reward:', e);
       setQuestError(`Could not delete the reward: ${String(e)}`);
@@ -7687,9 +7697,26 @@ function App() {
           .filter(Boolean)
           .join(' ')
       );
+
+      // Remember that this quest has paid into the ledger, so a second click
+      // asks first instead of quietly doubling the payout.
+      if (applied.length > 0) {
+        setAppliedQuestIds(previous =>
+          previous.includes(quest.id) ? previous : [...previous, quest.id]
+        );
+      }
     } finally {
       setApplyingRewardsQuestId(null);
     }
+  };
+
+  const requestQuestRewardApply = (quest: Quest) => {
+    if (appliedQuestIds.includes(quest.id)) {
+      setQuestApplyConfirmId(quest.id);
+      return;
+    }
+
+    void applyQuestRewards(quest);
   };
 
   const levelMilestoneXpFromDraft = (text: string): number | null | 'invalid' => {
@@ -14742,19 +14769,55 @@ function App() {
 
                           {quest.completed_chapter_id && quest.rewards.length > 0 && (
                             <div className="quest-apply">
-                              <button
-                                type="button"
-                                title={
-                                  `Add this quest's XP and loot to ${completedLabel}, ` +
-                                  'joining any XP row already there without touching stat gains or standings'
-                                }
-                                disabled={applyingRewardsQuestId === quest.id}
-                                onClick={() => void applyQuestRewards(quest)}
-                              >
-                                {applyingRewardsQuestId === quest.id
-                                  ? 'Applying…'
-                                  : 'Apply rewards to chapter ledger'}
-                              </button>
+                              {questApplyConfirmId === quest.id ? (
+                                <div
+                                  className="quest-apply-confirm"
+                                  role="alertdialog"
+                                  aria-label="Apply rewards again"
+                                >
+                                  <p>
+                                    These rewards already went into {completedLabel} for
+                                    “{quest.title}”. Adding them again records the same XP
+                                    and loot a second time.
+                                  </p>
+                                  <div className="quest-apply-confirm-actions">
+                                    <button
+                                      type="button"
+                                      title="Add the same rewards a second time"
+                                      onClick={() => {
+                                        setQuestApplyConfirmId(null);
+                                        void applyQuestRewards(quest);
+                                      }}
+                                    >
+                                      Add again
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="Keep the ledger as it is"
+                                      onClick={() => setQuestApplyConfirmId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  title={
+                                    appliedQuestIds.includes(quest.id)
+                                      ? `These rewards were already applied to ${completedLabel}; applying again asks first`
+                                      : `Add this quest's XP and loot to ${completedLabel}, joining any XP row already there without touching stat gains or standings`
+                                  }
+                                  disabled={applyingRewardsQuestId === quest.id}
+                                  onClick={() => requestQuestRewardApply(quest)}
+                                >
+                                  {applyingRewardsQuestId === quest.id
+                                    ? 'Applying…'
+                                    : appliedQuestIds.includes(quest.id)
+                                      ? 'Apply rewards again'
+                                      : 'Apply rewards to chapter ledger'}
+                                </button>
+                              )}
                             </div>
                           )}
                         </section>

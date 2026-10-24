@@ -5201,3 +5201,48 @@ body {
 .standing-creator .faction-quick-add {
   flex: 1 1 180px;
 }
+
+/* A second application of the same rewards is almost never wanted, so it
+   asks inside the card rather than opening a modal over the board. */
+.quest-apply-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid #6b5a2e;
+  border-radius: 4px;
+  background: rgba(227, 203, 148, 0.07);
+}
+
+.quest-apply-confirm p {
+  margin: 0;
+  color: #d8c9a4;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.quest-apply-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.quest-apply-confirm-actions button {
+  padding: 4px 9px;
+  border: 1px solid #4a4230;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #d8c9a4;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.quest-apply-confirm-actions button:hover {
+  border-color: #8a7440;
+  color: #f2e2b8;
+}
+
+.quest-apply-confirm-actions button:last-child {
+  border-color: #3c3c3c;
+  color: #bbb;
+}
