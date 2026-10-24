@@ -103,6 +103,11 @@ beforeEach(() => {
           node('n1', 'Opening', 'chapter'),
           node('n2', 'Rook', 'character'),
           node('n3', 'Stray', 'nonsense'),
+          node('n4', 'System notice', 'system'),
+          node('n5', 'Fireball', 'skill'),
+          node('n6', 'Tooth key', 'item'),
+          node('n7', 'Find the vault', 'quest'),
+          node('n8', 'The Guild', 'faction'),
         ];
       case 'get_graph_edges':
       case 'get_characters':
@@ -134,6 +139,28 @@ describe('the graph canvas', () => {
     expect(stray).toHaveTextContent('Stray');
   });
 
+  it('draws the LitRPG vocabulary as its own cards', async () => {
+    const { container } = render(<App />);
+
+    await screen.findAllByText('Ledger');
+    await screen.findByText('System notice');
+
+    const cards: [string, string][] = [
+      ['system', 'System notice'],
+      ['skill', 'Fireball'],
+      ['item', 'Tooth key'],
+      ['quest', 'Find the vault'],
+      ['faction', 'The Guild'],
+    ];
+
+    for (const [type, label] of cards) {
+      const card = container.querySelector(`.graph-node.${type}`);
+      expect(card).not.toBeNull();
+      expect(card).toHaveTextContent(type);
+      expect(card).toHaveTextContent(label);
+    }
+  });
+
   it('keeps the legend in step with the types the cards use', async () => {
     const { container } = render(<App />);
 
@@ -148,6 +175,11 @@ describe('the graph canvas', () => {
       'location',
       'event',
       'plot',
+      'system',
+      'skill',
+      'item',
+      'quest',
+      'faction',
       'misc',
     ]);
 

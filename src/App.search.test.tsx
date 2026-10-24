@@ -476,6 +476,15 @@ describe('the canvas search', () => {
     expect(screen.getByText('Edit connection')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Label (optional)')).toHaveValue('guards');
     expect(screen.getByPlaceholderText('Relation type (optional)')).toHaveValue('protects');
+
+    // The field is still free text, but the LitRPG verbs are offered by name.
+    const relation = screen.getByPlaceholderText('Relation type (optional)');
+    expect(relation).toHaveAttribute('list', 'edge-relation-types');
+    expect(
+      Array.from(document.querySelectorAll('#edge-relation-types option')).map(
+        option => option.getAttribute('value')
+      )
+    ).toEqual(['unlocks', 'requires', 'rewards']);
     expect(flowMock.setCenter).toHaveBeenCalledWith(200, 250, { zoom: 1, duration: 300 });
   });
 

@@ -18,10 +18,13 @@ What comes next, and the invariants every change keeps, are in
 touched.
 
 **Idea graph** — a pan/zoom canvas built on React Flow. Nodes have a type
-(`chapter`, `idea`, `character`, `location`, `event`, `plot`, `misc`) and can be
-connected with edges. Each type draws as its own colour with the type named on the
-card, and the legend uses the same palette, so a board of a hundred notes reads by
-shape and colour before any of it is read. An unrecognised type is drawn as `misc`
+(`chapter`, `idea`, `character`, `location`, `event`, `plot`, `system`, `skill`,
+`item`, `quest`, `faction`, `misc`) and can be connected with edges. Each type
+draws as its own colour with the type named on the card, and the legend uses the
+same palette, so a board of a hundred notes reads by shape and colour before any
+of it is read. The five LitRPG types make the board read in the genre's own
+vocabulary, and a `system` card is drawn as the genre's blue box: monospace text,
+a cyan edge and a faint glow. An unrecognised type is drawn as `misc`
 rather than unstyled. Dragging a node saves its position. Deleting a node removes
 the connections attached to it, and the node plus each removed connection are
 recorded in the history.
@@ -177,8 +180,10 @@ note marked for a moment, and a story result opens that story. The filter row
 under the query narrows the list to one kind, and the count follows the filter.
 
 **Editing a connection** — click an edge to open the same kind of editor for its
-label and relation type (`leads_to`, `foreshadows`). Both are optional, and each
-change is recorded per field like a node edit. The canvas shows the label when
+label and relation type (`leads_to`, `foreshadows`). The field suggests the
+LitRPG verbs `unlocks`, `requires` and `rewards`, but stays free text for a
+story's own words. Both fields are optional, and each change is recorded per
+field like a node edit. The canvas shows the label when
 there is one and falls back to the relation type. Only one editor is open at a
 time: selecting a node closes the connection editor and vice versa.
 

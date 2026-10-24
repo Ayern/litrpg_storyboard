@@ -147,9 +147,28 @@ type EdgeData = { label?: string; relationType?: string; createdBy: string };
 // names as a part that opens that chapter when clicked.
 type ContinuityPart = string | { id: string; text: string };
 
-// We'll use ReactFlow's internal types but cast our data
-const nodeTypes = ['chapter', 'idea', 'character', 'location', 'event', 'plot', 'misc'] as const;
+// We'll use ReactFlow's internal types but cast our data. The last five are the
+// LitRPG vocabulary: the System, what it grants, and the factions and quests it
+// hands out. They are ordinary cards with their own colour and caption.
+const nodeTypes = [
+  'chapter',
+  'idea',
+  'character',
+  'location',
+  'event',
+  'plot',
+  'system',
+  'skill',
+  'item',
+  'quest',
+  'faction',
+  'misc',
+] as const;
 type NodeType = typeof nodeTypes[number];
+
+// Suggested relation types for a connection. The field stays free text, because
+// a story's own verbs matter more than a fixed list.
+const relationTypes = ['unlocks', 'requires', 'rewards'] as const;
 
 function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
@@ -5568,6 +5587,7 @@ function App() {
                           <input
                             className="node-editor-label"
                             placeholder="Relation type (optional)"
+                            list="edge-relation-types"
                             value={edgeRelationDraft}
                             onChange={e => setEdgeRelationDraft(e.target.value)}
                             onKeyDown={e => {
@@ -5575,6 +5595,11 @@ function App() {
                               if (e.key === 'Escape') setSelectedEdgeId(null);
                             }}
                           />
+                          <datalist id="edge-relation-types">
+                            {relationTypes.map(type => (
+                              <option key={type} value={type} />
+                            ))}
+                          </datalist>
                           {edgeEditError && (
                             <div className="node-editor-error">{edgeEditError}</div>
                           )}

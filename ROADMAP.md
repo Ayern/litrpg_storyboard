@@ -37,9 +37,10 @@ the next begins.
 - **Unsaved edits vanish.** `Escape` or `×` closes the drawer and silently drops
   the label and notes drafts.
 - **It is only part of a LitRPG storyboard.** Level, XP and rank are real
-  fields, but skills, items and system messages are still just `character_stats`
-  rows and free-text attributes, and nothing checks whether a level-up was
-  earned or a rank only rose.
+  fields, and the board now has `system`, `skill`, `item`, `quest` and `faction`
+  cards, but those cards still carry only a label, notes and connections — no
+  rank, quantity or effect — and nothing checks whether a level-up was earned or
+  a rank only rose.
 - **In-world time is a day and a typed label.** A chapter can name its POV, its
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
@@ -308,12 +309,13 @@ listed on each character. Relations carry history like everything else. Later,
 the continuity check can use them ("mentor is dead in chapter 14 but teaches in
 16"). **M**
 
-**13. LitRPG vocabulary.** New node types — `system`, `skill`, `item`, `quest`,
-`faction` — with their own colours and legend entries, plus a `system` card styled
-as the genre's blue box (monospace, cyan border) and new relation types
-(`unlocks`, `requires`, `rewards`). Small, visible, and it makes the board read as
-LitRPG at a glance. Export/import and the legend test follow automatically.
-**S**
+**13. LitRPG vocabulary.** **Done.** `system`, `skill`, `item`, `quest` and
+`faction` are first-class node types with their own colours, legend entries and
+captions, so the board reads in the genre's own words. A `system` card is drawn as
+the genre's blue box — monospace, cyan edge, faint glow. The connection editor
+suggests `unlocks`, `requires` and `rewards` while staying free text. No schema
+change: a node's type was already a string, so export and import carry the new
+names unchanged, and the legend test covers them. **S**
 
 ### Phase 4 — see the story
 
