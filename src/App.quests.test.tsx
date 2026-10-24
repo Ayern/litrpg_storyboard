@@ -124,6 +124,7 @@ interface RewardRow {
   reward_type: string;
   target_id: string | null;
   amount_or_details: string | null;
+  applied_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -170,6 +171,7 @@ const reward = (
   reward_type: type,
   target_id: target,
   amount_or_details: details,
+  applied_at: null,
   created_at: '2026-10-22T12:00:00Z',
   updated_at: '2026-10-22T12:00:00Z',
 });
@@ -328,6 +330,16 @@ beforeEach(() => {
         quests = quests.map(quest => ({
           ...quest,
           rewards: quest.rewards.filter(row => row.id !== args.id),
+        }));
+        return null;
+      case 'mark_quest_rewards_applied':
+        quests = quests.map(quest => ({
+          ...quest,
+          rewards: quest.rewards.map(row =>
+            (args.ids as string[]).includes(row.id)
+              ? { ...row, applied_at: '2026-10-22T12:30:00Z' }
+              : row
+          ),
         }));
         return null;
       case 'update_character_progress': {
@@ -735,6 +747,63 @@ describe('applying a quest reward', () => {
       xpEarned: 200,
     });
     expect(screen.getByText(/Rook \+200 XP/)).toBeInTheDocument();
+  });
+
+  it('remembers an earlier application without asking on the first click', async () => {
+    const paid = reward('reward-1', 'quest-1', 'xp', 'char-1', '100');
+    paid.applied_at = '2026-10-22T12:30:00Z';
+    quests = [
+      questRow({
+        status: 'completed',
+        completed_chapter_id: 'n2',
+        rewards: [paid],
+      }),
+    ];
+
+    const user = await openQuests();
+
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply rewards again',
+      })
+    );
+
+    const prompt = within(questCard('The Ledger')).getByRole('alertdialog', {
+      name: 'Apply rewards again',
+    });
+    expect(prompt).toHaveTextContent('already went into Chapter Two');
+    expect(lastCall('add_character_progress')).toBeUndefined();
+    expect(lastCall('update_character_progress')).toBeUndefined();
+  });
+
+  it('applies only rewards that have not been paid yet', async () => {
+    const paid = reward('reward-1', 'quest-1', 'xp', 'char-1', '100');
+    paid.applied_at = '2026-10-22T12:30:00Z';
+    quests = [
+      questRow({
+        status: 'completed',
+        completed_chapter_id: 'n2',
+        rewards: [paid, reward('reward-2', 'quest-1', 'xp', 'char-1', '80')],
+      }),
+    ];
+
+    const user = await openQuests();
+
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', {
+        name: 'Apply new rewards',
+      })
+    );
+
+    expect(lastCall('add_character_progress')).toMatchObject({
+      characterId: 'char-1',
+      chapterId: 'n2',
+      xpEarned: 80,
+    });
+    expect(lastCall('mark_quest_rewards_applied')).toMatchObject({
+      ids: ['reward-2'],
+    });
+    expect(screen.getByText(/1 reward was already applied/)).toBeInTheDocument();
   });
 
   it('asks before applying the same quest a second time', async () => {

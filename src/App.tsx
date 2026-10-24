@@ -220,6 +220,8 @@ interface QuestReward {
   reward_type: string;
   target_id: string | null;
   amount_or_details: string | null;
+  // When this payout last reached the chapter ledger; null until it has.
+  applied_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2633,9 +2635,7 @@ function App() {
   const [applyingRewardsQuestId, setApplyingRewardsQuestId] = useState<string | null>(
     null
   );
-  // Quests whose rewards have already gone into the ledger this session, and the
-  // one waiting on an answer before it is applied a second time.
-  const [appliedQuestIds, setAppliedQuestIds] = useState<string[]>([]);
+  // The quest waiting on an answer before its rewards are applied again.
   const [questApplyConfirmId, setQuestApplyConfirmId] = useState<string | null>(null);
   // One income row per character and chapter, read with the rest of the story so
   // the chart and a sheet share the same ledger.
@@ -2964,7 +2964,6 @@ function App() {
       setQuestNotice(null);
       setFocusedQuestId(null);
       setQuestFilter('all');
-      setAppliedQuestIds([]);
       setQuestApplyConfirmId(null);
 
       // A node or connection from the previous story is no longer on the canvas.
@@ -7533,7 +7532,7 @@ function App() {
   // income row, loot into their inventory. A row the chapter already holds is
   // added to rather than duplicated. A stat change and a faction standing depend
   // on the author's own wording, so those are left to the sheet.
-  const applyQuestRewards = async (quest: Quest) => {
+  const applyQuestRewards = async (quest: Quest, again = false) => {
     if (!currentStory) return;
 
     const chapterId = quest.completed_chapter_id;
@@ -7555,13 +7554,18 @@ function App() {
     let xpRows = 0;
     let itemRows = 0;
     let manual = 0;
+    let already = 0;
     let unusable = 0;
     let failed = 0;
     const applied: string[] = [];
+    const appliedRewardIds: string[] = [];
     // One payout per character and chapter, summed before writing: the ledger
     // holds one income row per pair, so two XP rewards must not overwrite each
     // other with the same old total.
-    const xpPayouts = new Map<string, { characterId: string; amount: number }>();
+    const xpPayouts = new Map<
+      string,
+      { characterId: string; amount: number; rewardIds: string[] }
+    >();
 
     try {
       for (const reward of quest.rewards) {
@@ -7569,6 +7573,17 @@ function App() {
         const name = reward.target_id
           ? (characterNameById.get(reward.target_id) ?? 'the target')
           : null;
+
+        // A reward the ledger already received is left alone unless the author
+        // explicitly confirmed a second application.
+        if (
+          reward.applied_at &&
+          !again &&
+          (reward.reward_type === 'xp' || reward.reward_type === 'item')
+        ) {
+          already += 1;
+          continue;
+        }
 
         if (!reward.target_id) {
           unusable += 1;
@@ -7586,10 +7601,12 @@ function App() {
 
           if (payout) {
             payout.amount += Number(details);
+            payout.rewardIds.push(reward.id);
           } else {
             xpPayouts.set(key, {
               characterId: reward.target_id,
               amount: Number(details),
+              rewardIds: [reward.id],
             });
           }
 
@@ -7615,6 +7632,7 @@ function App() {
               user: actor,
             });
             applied.push(`${name} +${details}`);
+            appliedRewardIds.push(reward.id);
             itemRows += 1;
           } else {
             // A stat gain and a faction standing are written in the author's
@@ -7660,6 +7678,7 @@ function App() {
             applied.push(`${name} +${payout.amount} XP`);
           }
 
+          appliedRewardIds.push(...payout.rewardIds);
           xpRows += 1;
         } catch (e) {
           console.error('Failed to apply a quest XP reward:', e);
@@ -7681,6 +7700,37 @@ function App() {
         setStoryInventory(rows ?? []);
       }
 
+      // The database remembers which payouts reached the ledger, so the warning
+      // survives a restart. A failure here only weakens that memory; the XP and
+      // loot themselves are already written.
+      let remembered = true;
+
+      if (appliedRewardIds.length > 0) {
+        try {
+          await invoke('mark_quest_rewards_applied', { ids: appliedRewardIds });
+        } catch (e) {
+          console.error('Failed to remember the applied quest rewards:', e);
+          remembered = false;
+        }
+
+        const stamp = new Date().toISOString();
+
+        setStoryQuests(previous =>
+          previous.map(other =>
+            other.id === quest.id
+              ? {
+                  ...other,
+                  rewards: other.rewards.map(row =>
+                    appliedRewardIds.includes(row.id)
+                      ? { ...row, applied_at: stamp }
+                      : row
+                  ),
+                }
+              : other
+          )
+        );
+      }
+
       setQuestNotice(
         [
           applied.length > 0
@@ -7688,30 +7738,34 @@ function App() {
             : manual > 0
               ? `No automatic payouts for “${quest.title}”.`
               : `Nothing could be applied for “${quest.title}”.`,
+          already > 0
+            ? `${already} reward${already === 1 ? ' was' : 's were'} already applied.`
+            : null,
           manual > 0 ? `${manual} left for the sheet.` : null,
           unusable > 0
             ? `${unusable} reward${unusable === 1 ? ' has' : 's have'} no target or numeric amount.`
             : null,
           failed > 0 ? `${failed} could not be recorded.` : null,
+          remembered
+            ? null
+            : 'The applied rewards could not be remembered, so a restart may not warn before applying them again.',
         ]
           .filter(Boolean)
           .join(' ')
       );
-
-      // Remember that this quest has paid into the ledger, so a second click
-      // asks first instead of quietly doubling the payout.
-      if (applied.length > 0) {
-        setAppliedQuestIds(previous =>
-          previous.includes(quest.id) ? previous : [...previous, quest.id]
-        );
-      }
     } finally {
       setApplyingRewardsQuestId(null);
     }
   };
 
+  // Apply pays only what has not reached the ledger yet; paying everything again
+  // is offered behind the confirmation instead.
   const requestQuestRewardApply = (quest: Quest) => {
-    if (appliedQuestIds.includes(quest.id)) {
+    const automatic = quest.rewards.filter(
+      reward => reward.reward_type === 'xp' || reward.reward_type === 'item'
+    );
+
+    if (automatic.length > 0 && automatic.every(reward => reward.applied_at)) {
       setQuestApplyConfirmId(quest.id);
       return;
     }
@@ -14548,6 +14602,16 @@ function App() {
                       const statusKey = quest.status
                         .toLowerCase()
                         .replace(/[^a-z0-9-]+/g, '-');
+                      const automaticRewards = quest.rewards.filter(
+                        reward =>
+                          reward.reward_type === 'xp' || reward.reward_type === 'item'
+                      );
+                      const pendingRewards = automaticRewards.filter(
+                        reward => !reward.applied_at
+                      ).length;
+                      const allApplied =
+                        automaticRewards.length > 0 && pendingRewards === 0;
+                      const anyApplied = quest.rewards.some(reward => reward.applied_at);
 
                       return (
                         <section
@@ -14786,7 +14850,7 @@ function App() {
                                       title="Add the same rewards a second time"
                                       onClick={() => {
                                         setQuestApplyConfirmId(null);
-                                        void applyQuestRewards(quest);
+                                        void applyQuestRewards(quest, true);
                                       }}
                                     >
                                       Add again
@@ -14804,18 +14868,22 @@ function App() {
                                 <button
                                   type="button"
                                   title={
-                                    appliedQuestIds.includes(quest.id)
+                                    allApplied
                                       ? `These rewards were already applied to ${completedLabel}; applying again asks first`
-                                      : `Add this quest's XP and loot to ${completedLabel}, joining any XP row already there without touching stat gains or standings`
+                                      : anyApplied
+                                        ? `Add only the rewards that have not reached ${completedLabel} yet`
+                                        : `Add this quest's XP and loot to ${completedLabel}, joining any XP row already there without touching stat gains or standings`
                                   }
                                   disabled={applyingRewardsQuestId === quest.id}
                                   onClick={() => requestQuestRewardApply(quest)}
                                 >
                                   {applyingRewardsQuestId === quest.id
                                     ? 'Applying…'
-                                    : appliedQuestIds.includes(quest.id)
+                                    : allApplied
                                       ? 'Apply rewards again'
-                                      : 'Apply rewards to chapter ledger'}
+                                      : anyApplied
+                                        ? 'Apply new rewards'
+                                        : 'Apply rewards to chapter ledger'}
                                 </button>
                               )}
                             </div>

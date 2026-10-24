@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 21;
+const SCHEMA_VERSION: i32 = 22;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -2535,6 +2535,15 @@ impl Db {
             ],
         )?;
 
+        // A payout that went into one chapter has not been paid in a different
+        // one, so changing where the quest ended makes its rewards fresh again.
+        if old_completed != completed_chapter_id {
+            tx.execute(
+                "UPDATE quest_rewards SET applied_at = NULL WHERE quest_id = ?1",
+                params![&id],
+            )?;
+        }
+
         for (field, old_value, new_value) in changes {
             log_audit(
                 &tx,
@@ -2554,7 +2563,7 @@ impl Db {
         let rewards = {
             let mut stmt = tx.prepare(
                 "SELECT id, quest_id, reward_type, target_id, amount_or_details,
-                        created_at, updated_at
+                        created_at, updated_at, applied_at
                  FROM quest_rewards WHERE quest_id = ?1
                  ORDER BY created_at, id",
             )?;
@@ -2684,6 +2693,7 @@ impl Db {
             reward_type,
             target_id,
             amount_or_details: details,
+            applied_at: None,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         })
@@ -2707,7 +2717,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
-                        r.created_at, q.story_id
+                        r.created_at, q.story_id, r.applied_at
                  FROM quest_rewards r
                  JOIN quests q ON q.id = r.quest_id
                  WHERE r.id = ?1",
@@ -2720,13 +2730,15 @@ impl Db {
                         row.get::<_, Option<String>>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
+                        row.get::<_, Option<String>>(6)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(DbError::NotFound("quest reward"))?;
 
-        let (quest_id, old_type, old_target, old_details, created_at, story_id) = existing;
+        let (quest_id, old_type, old_target, old_details, created_at, story_id, old_applied) =
+            existing;
 
         if reward_type != old_type || target_id != old_target {
             validate_reward_target(&tx, &story_id, &reward_type, target_id.as_deref())?;
@@ -2755,11 +2767,27 @@ impl Db {
             changes.push(("details", old_details, details.clone()));
         }
 
+        // Changing what a payout is means the earlier application no longer
+        // describes it, so the next one is a first application again.
+        let applied_at = if changes.is_empty() {
+            old_applied
+        } else {
+            None
+        };
+
         tx.execute(
             "UPDATE quest_rewards
-                SET reward_type = ?1, target_id = ?2, amount_or_details = ?3, updated_at = ?4
-              WHERE id = ?5",
-            params![&reward_type, &target_id, &details, &timestamp, &id],
+                SET reward_type = ?1, target_id = ?2, amount_or_details = ?3,
+                    updated_at = ?4, applied_at = ?5
+              WHERE id = ?6",
+            params![
+                &reward_type,
+                &target_id,
+                &details,
+                &timestamp,
+                &applied_at,
+                &id
+            ],
         )?;
 
         for (field, old_value, new_value) in changes {
@@ -2786,9 +2814,34 @@ impl Db {
             reward_type,
             target_id,
             amount_or_details: details,
+            applied_at,
             created_at,
             updated_at: timestamp,
         })
+    }
+
+    /// Remembers that a payout reached the chapter ledger, so the next session
+    /// can warn before adding it a second time. Not audited: this is the app's
+    /// memory of what it wrote, not an edit to the reward.
+    pub fn mark_quest_rewards_applied(&self, ids: &[String]) -> DbResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+        let timestamp = now();
+
+        for id in ids {
+            tx.execute(
+                "UPDATE quest_rewards SET applied_at = ?1 WHERE id = ?2",
+                params![&timestamp, id],
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
     }
 
     pub fn delete_quest_reward(&self, id: &str, user: String) -> DbResult<()> {
@@ -6426,7 +6479,7 @@ impl Db {
         {
             let mut stmt = guard.prepare(
                 "SELECT r.id, r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
-                        r.created_at, r.updated_at
+                        r.created_at, r.updated_at, r.applied_at
                  FROM quest_rewards r
                  JOIN quests q ON q.id = r.quest_id
                  JOIN nodes a ON a.id = q.accepted_chapter_id
@@ -9438,8 +9491,8 @@ impl Db {
                 tx.execute(
                     "INSERT INTO quest_rewards
                      (id, quest_id, reward_type, target_id, amount_or_details,
-                      created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                      created_at, updated_at, applied_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         &reward_ids[&reward.id],
                         &quest_ids[&quest.id],
@@ -9453,7 +9506,8 @@ impl Db {
                         }),
                         &reward.amount_or_details,
                         &reward.created_at,
-                        &reward.updated_at
+                        &reward.updated_at,
+                        &reward.applied_at
                     ],
                 )?;
             }
@@ -9861,6 +9915,10 @@ pub struct QuestReward {
     pub target_id: Option<String>,
     #[serde(default)]
     pub amount_or_details: Option<String>,
+    /// When this payout last reached the chapter ledger, if it has. Cleared when
+    /// the reward or its chapter changes, so a new fact is not called applied.
+    #[serde(default)]
+    pub applied_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -11101,6 +11159,7 @@ fn quest_reward_row(row: &rusqlite::Row<'_>) -> SqliteResult<QuestReward> {
         amount_or_details: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        applied_at: row.get(7)?,
     })
 }
 
@@ -11116,7 +11175,7 @@ fn attach_quest_rewards(conn: &Connection, story_id: &str, quests: &mut [Quest])
     {
         let mut stmt = conn.prepare(
             "SELECT r.id, r.quest_id, r.reward_type, r.target_id, r.amount_or_details,
-                    r.created_at, r.updated_at
+                    r.created_at, r.updated_at, r.applied_at
              FROM quest_rewards r
              JOIN quests q ON q.id = r.quest_id
              WHERE q.story_id = ?1
@@ -12076,6 +12135,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_021)?;
     }
 
+    if version < 22 {
+        conn.execute_batch(MIGRATION_022)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -12389,6 +12452,13 @@ const MIGRATION_018: &str = "
 
     CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
         ON character_progress (chapter_id);
+";
+
+/// Schema v22: remembers which reward payouts already reached the chapter
+/// ledger, so a repeat application can warn after a restart. NULL on every reward
+/// written before this version, which is treated as not yet applied.
+const MIGRATION_022: &str = "
+    ALTER TABLE quest_rewards ADD COLUMN applied_at TEXT;
 ";
 
 /// Schema v21: quests and their reward bundles.
@@ -21443,6 +21513,73 @@ mod tests {
                     || copy_nodes.iter().any(|node| &node.id == id)
             })
         }));
+    }
+
+    #[test]
+    fn applied_rewards_are_remembered_until_the_payout_changes() {
+        let (db, story, rook, _, first, second, _) = quests_story();
+
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "The Ledger".into(),
+                None,
+                None,
+                first.id.clone(),
+                Some(second.id.clone()),
+                "completed".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let reward = db
+            .add_quest_reward(
+                quest.id.clone(),
+                "xp".into(),
+                Some(rook.id.clone()),
+                Some("100".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert!(reward.applied_at.is_none());
+
+        db.mark_quest_rewards_applied(&[reward.id.clone()]).unwrap();
+
+        // A fresh read, as a restart would do, still knows the payout was made.
+        let saved = db.list_story_quests(&story.id, None).unwrap();
+        assert!(saved[0].rewards[0].applied_at.is_some());
+
+        // Editing the payout makes it a new fact, so it is no longer called applied.
+        db.update_quest_reward(
+            reward.id.clone(),
+            "xp".into(),
+            Some(rook.id.clone()),
+            Some("150".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        let saved = db.list_story_quests(&story.id, None).unwrap();
+        assert!(saved[0].rewards[0].applied_at.is_none());
+
+        db.mark_quest_rewards_applied(&[reward.id.clone()]).unwrap();
+
+        // So does ending the quest in a different chapter.
+        db.update_quest(
+            quest.id.clone(),
+            "The Ledger".into(),
+            None,
+            None,
+            first.id.clone(),
+            Some(first.id.clone()),
+            "completed".into(),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        let saved = db.list_story_quests(&story.id, None).unwrap();
+        assert!(saved[0].rewards[0].applied_at.is_none());
     }
 
     #[test]

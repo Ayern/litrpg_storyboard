@@ -568,6 +568,12 @@ fn delete_quest_reward(db: tauri::State<'_, Db>, id: String, user: String) -> Re
 }
 
 #[tauri::command]
+fn mark_quest_rewards_applied(db: tauri::State<'_, Db>, ids: Vec<String>) -> Result<(), String> {
+    db.mark_quest_rewards_applied(&ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_character_progress(
     db: tauri::State<'_, Db>,
     character_id: String,
@@ -1314,6 +1320,7 @@ pub fn run() {
             add_quest_reward,
             update_quest_reward,
             delete_quest_reward,
+            mark_quest_rewards_applied,
             delete_faction_standing,
             get_character_progress,
             get_story_character_progress,
