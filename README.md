@@ -502,7 +502,7 @@ An entry records:
 | Column | Meaning |
 | --- | --- |
 | `story_id` | Which story the change belongs to, so history can be shown per story |
-| `entity_type` | `story`, `character`, `character_stat`, `character_attribute`, `node` or `edge` |
+| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, or a `node`, `edge` or `chapter_cast` row |
 | `entity_id` | The row that changed |
 | `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore` or `purge` |
 | `field_changed` | Name of the changed field, for updates and reverts |
@@ -540,6 +540,12 @@ Behaviour worth knowing:
   worked out when the page is read, by the same function `revert_change` runs
   before writing. It is derived per request, never stored, so the history cannot
   go on claiming a revert is possible after the story has moved on.
+- **Words revert; links are labels.** A character's, skill's, item's, relation's
+  or standing's text can be put back from the history. A link to a chapter or a
+  card cannot: the entry records the label it had, and turning a label back into
+  an id would be a guess. Putting a relation's kind back also restores the fixed
+  end order a symmetric bond is stored in, and is refused if the author has since
+  recorded that bond again.
 - **No-ops write nothing.** Renaming to the existing title, or ending a drag where
   it started, produces no entry and no timestamp bump.
 - **Deleting a story keeps its history.** The audit rows are not cascaded away — the

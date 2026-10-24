@@ -7744,6 +7744,32 @@ impl Db {
         let field = entry.field_changed.clone().unwrap_or_default();
         let timestamp = now();
 
+        // A symmetric relation is stored with its ids in a fixed order. Putting
+        // the kind back has to put that order back too, or the pair would only
+        // look the same until someone tried to add the same bond again.
+        if entry.entity_type == "character_relation" && field == "kind" {
+            if let Some(kind) = entry.old_value.as_deref() {
+                let pair = tx
+                    .query_row(
+                        "SELECT from_character_id, to_character_id FROM character_relations WHERE id = ?1",
+                        params![entity_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+
+                if let Some((from, to)) = pair {
+                    let (from, to) = relation_ends(&from, &to, kind);
+
+                    tx.execute(
+                        "UPDATE character_relations
+                            SET from_character_id = ?1, to_character_id = ?2
+                          WHERE id = ?3",
+                        params![&from, &to, entity_id],
+                    )?;
+                }
+            }
+        }
+
         match spec.kind {
             RevertKind::Text => {
                 if spec.touched {
@@ -9405,6 +9431,10 @@ const INVENTORY_FROM: &str =
     "character_inventory t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
 const CURRENCY_FROM: &str =
     "character_currency t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
+const RELATION_FROM: &str =
+    "character_relations t JOIN characters c ON c.id = t.from_character_id JOIN stories s ON s.id = c.story_id";
+const STANDING_FROM: &str =
+    "faction_standings t JOIN characters c ON c.id = t.character_id JOIN stories s ON s.id = c.story_id";
 
 /// A story's own children are visible while they and the story are live.
 const OWN_LIVE: &str = "t.deleted_at IS NULL AND s.deleted_at IS NULL";
@@ -9560,6 +9590,36 @@ fn revert_spec(entity_type: &str, field: &str) -> Option<RevertSpec> {
         ),
         ("character_currency", "amount") => {
             number_spec("character_currency", "amount", CURRENCY_FROM, CHILD_LIVE)
+        }
+        // A relation's words are revertible. Its chapters are not: the history
+        // records their labels, and turning a label back into an id would be a
+        // guess. The pair itself never changes, so putting the kind back also
+        // puts the two ends back in the fixed order a symmetric kind is stored in.
+        ("character_relation", "kind") => text_spec(
+            "character_relations",
+            "kind",
+            RELATION_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("character_relation", "note") => optional_text_spec(
+            "character_relations",
+            "note",
+            RELATION_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        // A standing's word and note are revertible; the faction card and the
+        // chapter it began in are labels in the history, not ids.
+        ("faction_standing", "standing") => text_spec(
+            "faction_standings",
+            "standing",
+            STANDING_FROM,
+            CHILD_LIVE,
+            true,
+        ),
+        ("faction_standing", "note") => {
+            optional_text_spec("faction_standings", "note", STANDING_FROM, CHILD_LIVE, true)
         }
         ("node", "label") => text_spec("nodes", "label", NODE_FROM, OWN_LIVE, true),
         ("node", "content") => optional_text_spec("nodes", "content", NODE_FROM, OWN_LIVE, true),
@@ -9792,6 +9852,44 @@ fn check_revert(conn: &Connection, entry: &AuditEntry) -> SqliteResult<RevertChe
                 current.as_deref().unwrap_or("nothing")
             ),
         ));
+    }
+
+    // A relation's kind is half of its identity. Putting the old word back could
+    // collide with a bond recorded since, which the unique pair would refuse as
+    // a raw constraint error; the same test `add_relation` makes runs here first,
+    // including the fixed order a symmetric kind is stored in.
+    if entry.entity_type == "character_relation" && field == "kind" {
+        if let Some(restore) = entry.old_value.as_deref() {
+            let pair = conn
+                .query_row(
+                    "SELECT from_character_id, to_character_id FROM character_relations WHERE id = ?1",
+                    params![&entry.entity_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+
+            if let Some((from, to)) = pair {
+                let (from, to) = relation_ends(&from, &to, restore);
+                let taken: Option<i64> = conn
+                    .query_row(
+                        "SELECT 1 FROM character_relations
+                          WHERE id <> ?1 AND from_character_id = ?2
+                            AND to_character_id = ?3 AND lower(kind) = lower(?4)",
+                        params![&entry.entity_id, &from, &to, restore],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+
+                if taken.is_some() {
+                    return Ok(RevertCheck::blocked(
+                        RevertState::ChangedSince,
+                        format!(
+                            "a {restore} relation is already recorded between these two, so the old kind cannot be put back"
+                        ),
+                    ));
+                }
+            }
+        }
     }
 
     Ok(RevertCheck::Ready {
@@ -18410,6 +18508,201 @@ mod tests {
             .unwrap()
             .iter()
             .any(|entry| entry.action == "delete"));
+    }
+
+    #[test]
+    fn a_relation_kind_and_note_can_be_put_back_from_the_history() {
+        let (db, story, rook, mira, first, _, _) = relations_story();
+
+        let relation = db
+            .add_relation(
+                rook.id.clone(),
+                mira.id.clone(),
+                "ally".into(),
+                Some("Saved her in the pass".into()),
+                Some(first.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_relation(
+            relation.id.clone(),
+            "rival".into(),
+            Some("The pass changed that".into()),
+            Some(first.id.clone()),
+            None,
+            "Grace".into(),
+        )
+        .unwrap();
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_relation"), None, 50)
+            .unwrap();
+        let kind_entry = history
+            .iter()
+            .find(|entry| {
+                entry.entity_id == relation.id
+                    && entry.action == "update"
+                    && entry.field_changed.as_deref() == Some("kind")
+            })
+            .expect("the kind change is in the history")
+            .clone();
+
+        assert!(db.revert_change(&kind_entry.id, "Grace".into()).unwrap());
+
+        let restored = db
+            .list_story_relations(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == relation.id)
+            .unwrap();
+        assert_eq!(restored.kind, "ally");
+        assert_eq!(restored.note.as_deref(), Some("The pass changed that"));
+        assert!(
+            restored.from_character_id <= restored.to_character_id,
+            "a symmetric kind keeps its ends in the fixed order"
+        );
+
+        let note_entry = history
+            .iter()
+            .find(|entry| {
+                entry.entity_id == relation.id
+                    && entry.action == "update"
+                    && entry.field_changed.as_deref() == Some("note")
+            })
+            .expect("the note change is in the history")
+            .clone();
+
+        db.revert_change(&note_entry.id, "Grace".into()).unwrap();
+
+        let restored = db
+            .list_story_relations(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == relation.id)
+            .unwrap();
+        assert_eq!(restored.note.as_deref(), Some("Saved her in the pass"));
+
+        assert!(db
+            .get_audit_log(Some(&story.id), Some("character_relation"), None, 80)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.action == "revert"));
+    }
+
+    #[test]
+    fn putting_a_relation_kind_back_is_refused_when_that_bond_exists() {
+        let (db, story, rook, mira, _, _, _) = relations_story();
+
+        let relation = db
+            .add_relation(
+                rook.id.clone(),
+                mira.id.clone(),
+                "ally".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_relation(
+            relation.id.clone(),
+            "rival".into(),
+            None,
+            None,
+            None,
+            "Grace".into(),
+        )
+        .unwrap();
+
+        // The author recorded the alliance again while the first row read as a
+        // rivalry, so putting the old kind back would make two allies.
+        db.add_relation(
+            rook.id.clone(),
+            mira.id.clone(),
+            "ally".into(),
+            None,
+            None,
+            None,
+            "Grace".into(),
+        )
+        .unwrap();
+
+        let kind_entry = db
+            .get_audit_log(Some(&story.id), Some("character_relation"), None, 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| {
+                entry.entity_id == relation.id
+                    && entry.action == "update"
+                    && entry.field_changed.as_deref() == Some("kind")
+            })
+            .expect("the kind change is in the history");
+
+        let refused = db.revert_change(&kind_entry.id, "Ada".into());
+        assert!(matches!(refused, Err(DbError::Invalid(_))));
+
+        let still = db
+            .list_story_relations(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == relation.id)
+            .unwrap();
+        assert_eq!(still.kind, "rival");
+    }
+
+    #[test]
+    fn a_faction_standing_word_can_be_put_back_from_the_history() {
+        let (db, story, rook, _, first, _, faction) = relations_story();
+
+        let standing = db
+            .add_faction_standing(
+                rook.id.clone(),
+                Some(faction.id.clone()),
+                "Captain".into(),
+                None,
+                first.id.clone(),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_faction_standing(
+            standing.id.clone(),
+            Some(faction.id.clone()),
+            "Exiled".into(),
+            Some("The gate fell".into()),
+            first.id.clone(),
+            None,
+            "Grace".into(),
+        )
+        .unwrap();
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("faction_standing"), None, 50)
+            .unwrap();
+        let entry = history
+            .iter()
+            .find(|entry| {
+                entry.entity_id == standing.id
+                    && entry.action == "update"
+                    && entry.field_changed.as_deref() == Some("standing")
+            })
+            .expect("the word change is in the history")
+            .clone();
+
+        assert!(db.revert_change(&entry.id, "Grace".into()).unwrap());
+
+        let restored = db
+            .list_story_faction_standings(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id == standing.id)
+            .unwrap();
+        assert_eq!(restored.standing, "Captain");
+        assert_eq!(restored.note.as_deref(), Some("The gate fell"));
     }
 
     #[test]
