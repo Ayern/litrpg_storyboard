@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -377,6 +377,35 @@ function rowsInList() {
   return within(list()).getAllByRole('listitem');
 }
 
+// jsdom has no DataTransfer, so a chapter drag carries a plain payload object.
+function chapterDrag(id: string) {
+  const store: Record<string, string> = {};
+
+  return {
+    types: ['application/x-litrpg-chapter'],
+    effectAllowed: '',
+    dropEffect: '',
+    setData: (type: string, value: string) => {
+      store[type] = value;
+    },
+    getData: (type: string) => store[type] ?? '',
+  };
+}
+
+// The drop side is read from the pointer's height in the row; with no layout in
+// jsdom the midpoint is 0, so a negative y is above it and a positive one below.
+function dragOverAt(element: HTMLElement, dataTransfer: object, clientY: number) {
+  const event = new MouseEvent('dragover', { bubbles: true, cancelable: true, clientY });
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  fireEvent(element, event);
+}
+
+function dropAt(element: HTMLElement, dataTransfer: object, clientY: number) {
+  const event = new MouseEvent('drop', { bubbles: true, cancelable: true, clientY });
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  fireEvent(element, event);
+}
+
 describe('the chapter list', () => {
   it('numbers the chapters and leaves other cards out', async () => {
     await openChapters();
@@ -536,6 +565,105 @@ describe('the chapter list', () => {
       screen.getByText(/No chapters yet — add one here, or add a chapter card on the Graph tab/i)
     ).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Chapters' })).not.toBeInTheDocument();
+  });
+});
+
+describe('reordering chapters by dragging', () => {
+  const grip = (row: HTMLElement) => row.querySelector('.chapter-drag') as HTMLElement;
+
+  it('moves a chapter before the row it is dropped on', async () => {
+    await openChapters();
+
+    const [one, two] = rowsInList();
+    const payload = chapterDrag('n3');
+
+    fireEvent.dragStart(grip(two), { dataTransfer: payload });
+    dragOverAt(one, payload, -1);
+
+    // The line shows the side it would land on before the drop.
+    expect(one).toHaveClass('chapter-row-drop-before');
+
+    dropAt(one, payload, -1);
+
+    await waitFor(() =>
+      expect(lastCall('set_chapter_order')).toEqual({
+        storyId: story.id,
+        orderedIds: ['n3', 'n1', 'n4'],
+        user: 'You',
+      })
+    );
+
+    await waitFor(() => {
+      const moved = rowsInList();
+      expect(within(moved[0]).getByText('Two')).toBeInTheDocument();
+      expect(within(moved[0]).getByText('1')).toBeInTheDocument();
+      expect(within(moved[1]).getByText('One')).toBeInTheDocument();
+      expect(within(moved[2]).getByText('Three')).toBeInTheDocument();
+    });
+
+    // One ordered write, and the drag state is gone.
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'set_chapter_order')
+    ).toHaveLength(1);
+    expect(one).not.toHaveClass('chapter-row-drop-before');
+    expect(two).not.toHaveClass('chapter-row-dragging');
+  });
+
+  it('moves a chapter after the row it is dropped on', async () => {
+    await openChapters();
+
+    const [one, , three] = rowsInList();
+    const payload = chapterDrag('n1');
+
+    fireEvent.dragStart(grip(one), { dataTransfer: payload });
+    dragOverAt(three, payload, 1);
+
+    expect(three).toHaveClass('chapter-row-drop-after');
+
+    dropAt(three, payload, 1);
+
+    await waitFor(() =>
+      expect(lastCall('set_chapter_order')).toEqual({
+        storyId: story.id,
+        orderedIds: ['n3', 'n4', 'n1'],
+        user: 'You',
+      })
+    );
+  });
+
+  it('writes nothing when a chapter is dropped where it already was', async () => {
+    await openChapters();
+
+    const [, two] = rowsInList();
+    const payload = chapterDrag('n3');
+
+    fireEvent.dragStart(grip(two), { dataTransfer: payload });
+    dragOverAt(two, payload, 1);
+
+    // Dropping a row on itself is not a move, so there is no line to show.
+    expect(two).not.toHaveClass('chapter-row-drop-after');
+
+    dropAt(two, payload, 1);
+
+    expect(lastCall('set_chapter_order')).toBeUndefined();
+  });
+
+  it('clears the drop line when the drag is abandoned', async () => {
+    await openChapters();
+
+    const [one, two] = rowsInList();
+    const payload = chapterDrag('n3');
+    const handle = grip(two);
+
+    fireEvent.dragStart(handle, { dataTransfer: payload });
+    dragOverAt(one, payload, -1);
+    expect(one).toHaveClass('chapter-row-drop-before');
+
+    fireEvent.dragEnd(handle, { dataTransfer: payload });
+
+    expect(one).not.toHaveClass('chapter-row-drop-before');
+    expect(two).not.toHaveClass('chapter-row-dragging');
+    expect(lastCall('set_chapter_order')).toBeUndefined();
   });
 });
 

@@ -44,9 +44,9 @@ the next begins.
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
   is flagged only when both labels can be read that way, and a time with no day
-  is flagged so it is not lost. Chapters are still
-  reordered with buttons rather than by dragging in the list, so "where is Rook
-  at chapter 9?" is answered by the timeline, not by a search.
+  is flagged so it is not lost. Chapters can be dragged by a row's grip or moved
+  with the arrow buttons, but "where is Rook at chapter 9?" is still answered by
+  the timeline, not by a search.
 - **No continuity checking.** Nothing warns that a character is in two places, a
   skill is used before it is learned, or a chapter is missing.
 - **Visuals are unverified.** Every UI claim in this project is proven through
@@ -227,10 +227,11 @@ over, a target below the current XP simply fills the bar, and a rank is whatever
 was typed. Export, import and the launch copies carry the new columns, and an
 older export imports at the defaults. **M**
 
-**7. Chapter spine.** **Almost done — only dragging in the list is left.**
+**7. Chapter spine.** **Done.**
 Migration v7 gives `nodes.chapter_seq`; existing chapter cards are numbered by
 creation order, and each new chapter takes the next number. The Chapters tab
-lists them from 1 with **New chapter** appending, ↑/↓ moving one place, and
+lists them from 1 with **New chapter** appending, ↑/↓ moving one place, a grip
+on each row to drag it anywhere in the list, and
 **Renumber** to repair repeated, missing or absent numbers; a gap left by a
 deleted chapter is reported rather than silently closed. The whole order is
 written in one `set_chapter_order` command (partial or doubled lists are
@@ -249,9 +250,10 @@ bible, found by the search palette (which opens the chapter's panel on the note)
 and trashed and purged with its chapter. Closing the panel, moving it to another
 chapter, switching stories, following a search result away, or cancelling the
 editor with **Cancel** or `Escape` asks before an unsaved note draft is dropped;
-a second `Escape` dismisses that question.
-Remaining: dragging rows to reorder them (the ↑/↓ buttons do the job meanwhile),
-and any formatting at all in a note. **M**
+a second `Escape` dismisses that question. A dragged row shows which side of the
+target it would land on and writes the whole order once; the arrows remain the
+keyboard route, and dropping a row where it already was writes nothing.
+Remaining: any formatting at all in a note. **M**
 
 **8. POV and in-world time.** **Started.** Migration v9 gives chapters
 `chapter_pov` (a live cast id, named in the history and cleared when its cast

@@ -1133,6 +1133,38 @@ body {
   animation: chapter-row-glow 1.2s ease-out;
 }
 
+/* The grip is the pointer route; the arrow buttons stay the keyboard route. */
+.chapter-drag {
+  flex-shrink: 0;
+  padding: 0 2px;
+  color: #707078;
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.chapter-drag:hover {
+  color: #c9bff0;
+}
+
+.chapter-row-dragging {
+  opacity: 0.5;
+}
+
+.chapter-row-dragging .chapter-drag {
+  cursor: grabbing;
+}
+
+/* A line inside the target row says which side the chapter would land on. */
+.chapter-row-drop-before {
+  box-shadow: inset 0 2px 0 #a78bfa;
+}
+
+.chapter-row-drop-after {
+  box-shadow: inset 0 -2px 0 #a78bfa;
+}
+
 @keyframes chapter-row-glow {
   from {
     border-color: #e3cb94;

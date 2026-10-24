@@ -28,14 +28,17 @@ recorded in the history.
 
 **Chapter order** — the Chapters tab lists every live `chapter` card in reading
 order, numbered from 1, with **New chapter** (which creates the card and puts it
-last), **↑**/**↓** to move one place, and **Renumber** whenever positions repeat,
-are missing, or a chapter has none. A move writes the whole order in one command
-and renumbers the rest, so the list is 1..n unless a chapter was deleted or an
-older file was imported — and then the tab says which positions are empty or
-doubled rather than renumbering behind your back. A chapter card shows `Ch. N`
-beside its type on the canvas, both directions of a move are recorded in the
-history, and a move is undone like any canvas change. Cards that are not chapters
-are never numbered.
+last), **↑**/**↓** to move one place, a grip on each row to drag it anywhere in
+the list, and **Renumber** whenever positions repeat, are missing, or a chapter
+has none. A drag shows a line on the side of the row it would land on, and a
+pointer is not required: the arrows move the same chapters from the keyboard. A
+move writes the whole order in one command and renumbers the rest, so the list is
+1..n unless a chapter was deleted or an older file was imported — and then the
+tab says which positions are empty or doubled rather than renumbering behind your
+back. A chapter card shows `Ch. N` beside its type on the canvas, both directions
+of a move are recorded in the history, a move is undone like any canvas change,
+and dropping a row where it already was writes nothing. Cards that are not
+chapters are never numbered.
 
 **Chapter arcs, counts, POV, days and times** — a chapter can also name the arc it
 belongs to, record the words written against an optional target, say whose point
@@ -474,10 +477,11 @@ page that arrives late, and what it says when a filter matches nothing.
   stored and flagged, but cannot be placed until a day is typed. A shared moment
   is caught only when both labels read as a time of day — two chapters that both
   say "after the fire" are not compared.
-- **Only chapters have these fields.** POV, a day and a time belong to chapters, and
-  chapters are reordered with the ↑/↓ buttons rather than by dragging in the
-  list. Deleting a chapter leaves its position empty until something is moved
-  or **Renumber** is pressed; that is shown in the tab, not repaired silently.
+- **Only chapters have these fields.** POV, a day and a time belong to chapters.
+  Reordering by drag needs a pointer — HTML5 drag and drop, which a touch screen
+  does not drive — while the ↑/↓ buttons move a chapter everywhere. Deleting a
+  chapter leaves its position empty until something is moved or **Renumber** is
+  pressed; that is shown in the tab, not repaired silently.
 - **The story bible carries only what the app models.** The file and the clipboard
   hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
   the cast with their sheets, and the other cards. Skills and inventory have no

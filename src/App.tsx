@@ -567,6 +567,9 @@ const shortcutGroups: {
 // file or a link from being mistaken for a cast member.
 const CAST_DRAG_TYPE = 'application/x-litrpg-character';
 
+// A chapter row's grip carries this, so the list only reacts to its own drags.
+const CHAPTER_DRAG_TYPE = 'application/x-litrpg-chapter';
+
 // One stat list per character, from the story-wide read.
 function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[]> {
   const grouped: Record<string, CharacterStat[]> = {};
@@ -864,6 +867,12 @@ function App() {
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [chapterError, setChapterError] = useState<string | null>(null);
   const [chapterBusy, setChapterBusy] = useState(false);
+  // A chapter being dragged, and the row under the pointer with the side the
+  // drop would land on. Both are cleared when the drag ends, however it ends.
+  const [draggedChapterId, setDraggedChapterId] = useState<string | null>(null);
+  const [chapterDrop, setChapterDrop] = useState<{ id: string; after: boolean } | null>(
+    null
+  );
 
   // The arc and word counts, edited one chapter at a time in the list.
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
@@ -2555,6 +2564,91 @@ function App() {
     const next = [...order];
     [next[from], next[to]] = [next[to], next[from]];
     void saveChapterOrder(next, order);
+  };
+
+  // The grip on a row starts a pointer drag; the row under the pointer shows the
+  // side the chapter would land on. One ordered write follows, the same command
+  // the arrows use, so the whole list stays consistent and the move is undoable.
+  const startChapterDrag = (
+    event: React.DragEvent<HTMLElement>,
+    nodeId: string
+  ) => {
+    if (chapterBusy) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(CHAPTER_DRAG_TYPE, nodeId);
+    setDraggedChapterId(nodeId);
+    setChapterDrop(null);
+  };
+
+  const chapterDropIsAfter = (
+    event: React.DragEvent<HTMLElement>,
+    element: HTMLElement
+  ) => {
+    const rect = element.getBoundingClientRect();
+
+    return event.clientY > rect.top + rect.height / 2;
+  };
+
+  const dragOverChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
+    if (!draggedChapterId || draggedChapterId === nodeId || chapterBusy) return;
+
+    // Only a chapter drag is accepted; a cast card in the air keeps its own drop
+    // targets and must not be treated as a move.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const after = chapterDropIsAfter(event, event.currentTarget);
+
+    setChapterDrop(current =>
+      current?.id === nodeId && current.after === after
+        ? current
+        : { id: nodeId, after }
+    );
+  };
+
+  const dragLeaveChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
+    // Moving between the row's own children is not leaving the row.
+    if (event.currentTarget.contains(event.relatedTarget as HTMLElement | null)) return;
+
+    setChapterDrop(current => (current?.id === nodeId ? null : current));
+  };
+
+  const dropChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
+    event.preventDefault();
+
+    const draggedId = draggedChapterId;
+
+    setDraggedChapterId(null);
+    setChapterDrop(null);
+
+    if (!draggedId || chapterBusy || draggedId === nodeId) return;
+
+    const order = chapterNodes.map(node => node.id);
+    const from = order.indexOf(draggedId);
+    const target = order.indexOf(nodeId);
+
+    if (from < 0 || target < 0) return;
+
+    const after = chapterDropIsAfter(event, event.currentTarget);
+    const next = order.filter(id => id !== draggedId);
+    // Removing the dragged row first shifts every position after it down one.
+    let insertAt = target + (after ? 1 : 0);
+    if (from < insertAt) insertAt -= 1;
+    next.splice(insertAt, 0, draggedId);
+
+    // A drop that leaves the list as it was writes nothing.
+    if (next.every((id, index) => id === order[index])) return;
+
+    void saveChapterOrder(next, order);
+  };
+
+  const endChapterDrag = () => {
+    setDraggedChapterId(null);
+    setChapterDrop(null);
   };
 
   // The escape hatch for data that arrived numbered badly: number what is shown,
@@ -5807,7 +5901,8 @@ function App() {
                     <h3 className="chapters-heading">Reading order</h3>
                     <p className="chapters-hint">
                       Chapter cards on the Graph tab, numbered from 1. Moving one
-                      renumbers the rest. A new chapter joins the end.
+                      renumbers the rest. Drag a row's grip, or use the arrows, to
+                      move it; a new chapter joins the end.
                     </p>
                   </div>
 
@@ -5904,14 +5999,34 @@ function App() {
                       {chapterNodes.map((node, index) => (
                         <li
                           key={node.id}
-                          className={
-                            revealedChapterId === node.id
-                              ? 'chapter-row chapter-row-revealed'
-                              : 'chapter-row'
-                          }
+                          className={[
+                            'chapter-row',
+                            revealedChapterId === node.id ? 'chapter-row-revealed' : '',
+                            draggedChapterId === node.id ? 'chapter-row-dragging' : '',
+                            chapterDrop?.id === node.id
+                              ? chapterDrop.after
+                                ? 'chapter-row-drop-after'
+                                : 'chapter-row-drop-before'
+                              : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
                           data-chapter-id={node.id}
+                          onDragOver={event => dragOverChapter(event, node.id)}
+                          onDragLeave={event => dragLeaveChapter(event, node.id)}
+                          onDrop={event => dropChapter(event, node.id)}
                         >
                           <div className="chapter-row-main">
+                            <span
+                              className="chapter-drag"
+                              draggable={!chapterBusy}
+                              aria-hidden="true"
+                              title={`Drag ${node.data.label} to another place; the arrows move it without the pointer`}
+                              onDragStart={event => startChapterDrag(event, node.id)}
+                              onDragEnd={endChapterDrag}
+                            >
+                              ⠿
+                            </span>
                             <span className="chapter-number">
                               {node.data.chapterSeq ?? '—'}
                             </span>
