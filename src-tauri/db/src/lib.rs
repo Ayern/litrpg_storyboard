@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -1160,6 +1160,568 @@ impl Db {
         )?;
 
         let rows = stmt.query_map(params![story_id], character_skill_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    // ===== LEVEL MILESTONES =====
+    //
+    // A milestone is the level a character had in a chapter, not the character's
+    // current level. The two stay separate so recording where a level was reached
+    // does not rewrite the sheet, and a deliberate penalty can be marked as such.
+
+    pub fn add_level_milestone(
+        &self,
+        character_id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
+        if level < 1 {
+            return Err(DbError::Invalid(
+                "a level milestone must be level 1 or higher".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+        let story_id = live_character_story(&tx, &character_id)?;
+
+        validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_level_milestones
+             (id, character_id, level, chapter_id, is_debuff, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                &id,
+                &character_id,
+                level,
+                &chapter_id,
+                is_debuff,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_level_milestone",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("level"),
+                old_value: None,
+                new_value: Some(level.to_string()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterLevelMilestone {
+            id,
+            character_id,
+            level,
+            chapter_id,
+            is_debuff,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_level_milestone(
+        &self,
+        id: String,
+        level: i64,
+        chapter_id: Option<String>,
+        is_debuff: bool,
+        user: String,
+    ) -> DbResult<CharacterLevelMilestone> {
+        if level < 1 {
+            return Err(DbError::Invalid(
+                "a level milestone must be level 1 or higher".to_string(),
+            ));
+        }
+
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT m.character_id, m.level, m.chapter_id, m.is_debuff,
+                        m.created_at, m.updated_at, c.story_id
+                 FROM character_level_milestones m
+                 JOIN characters c ON c.id = m.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE m.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, bool>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("level milestone"))?;
+
+        let (
+            character_id,
+            old_level,
+            old_chapter,
+            old_debuff,
+            created_at,
+            old_updated_at,
+            story_id,
+        ) = existing;
+
+        if chapter_id != old_chapter {
+            validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        }
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if level != old_level {
+            changes.push((
+                "level",
+                Some(old_level.to_string()),
+                Some(level.to_string()),
+            ));
+        }
+
+        if chapter_id != old_chapter {
+            changes.push((
+                "chapter",
+                reference_label(&tx, old_chapter.as_deref())?,
+                reference_label(&tx, chapter_id.as_deref())?,
+            ));
+        }
+
+        if is_debuff != old_debuff {
+            changes.push((
+                "is_debuff",
+                Some(yes_no(old_debuff)),
+                Some(yes_no(is_debuff)),
+            ));
+        }
+
+        let updated = CharacterLevelMilestone {
+            id: id.clone(),
+            character_id,
+            level,
+            chapter_id,
+            is_debuff,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        if changes.is_empty() {
+            return Ok(CharacterLevelMilestone {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        tx.execute(
+            "UPDATE character_level_milestones
+                SET level = ?1, chapter_id = ?2, is_debuff = ?3, updated_at = ?4
+              WHERE id = ?5",
+            params![level, &updated.chapter_id, is_debuff, &timestamp, &id],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_level_milestone",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_level_milestone(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT m.level, c.story_id
+                 FROM character_level_milestones m
+                 JOIN characters c ON c.id = m.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE m.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((level, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "DELETE FROM character_level_milestones WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_level_milestone",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(level.to_string()),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_level_milestones(
+        &self,
+        character_id: &str,
+    ) -> DbResult<Vec<CharacterLevelMilestone>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
+                    m.created_at, m.updated_at
+             FROM character_level_milestones m
+             JOIN characters c ON c.id = m.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE m.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY m.created_at, m.id",
+        )?;
+
+        let rows = stmt.query_map(params![character_id], level_milestone_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    pub fn list_story_level_milestones(
+        &self,
+        story_id: &str,
+    ) -> DbResult<Vec<CharacterLevelMilestone>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
+                    m.created_at, m.updated_at
+             FROM character_level_milestones m
+             JOIN characters c ON c.id = m.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY m.created_at, m.id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], level_milestone_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    // ===== SKILL EVENTS =====
+    //
+    // A skill row says what the skill is now. These events say when it changed:
+    // when a rank was reached, when it was used, and when it was sacrificed.
+
+    pub fn add_skill_event(
+        &self,
+        skill_id: String,
+        kind: String,
+        chapter_id: Option<String>,
+        rank: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterSkillEvent> {
+        let kind = clean_skill_event_kind(&kind)?;
+        // A sacrifice ends the skill; it has no rank to carry, and keeping one
+        // would let a later use look like a rank that was never lost.
+        let rank = if kind == "sacrificed" {
+            None
+        } else {
+            clean_optional(rank)
+        };
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = tx
+            .query_row(
+                "SELECT c.story_id
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE s.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&skill_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("skill"))?;
+
+        validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_skill_events
+             (id, skill_id, kind, chapter_id, rank, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                &id,
+                &skill_id,
+                &kind,
+                &chapter_id,
+                &rank,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_skill_event",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("event"),
+                old_value: None,
+                new_value: Some(kind.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterSkillEvent {
+            id,
+            skill_id,
+            kind,
+            chapter_id,
+            rank,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn update_skill_event(
+        &self,
+        id: String,
+        kind: String,
+        chapter_id: Option<String>,
+        rank: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterSkillEvent> {
+        let kind = clean_skill_event_kind(&kind)?;
+        let rank = if kind == "sacrificed" {
+            None
+        } else {
+            clean_optional(rank)
+        };
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at,
+                        e.updated_at, c.story_id
+                 FROM character_skill_events e
+                 JOIN character_skills s ON s.id = e.skill_id
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE e.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("skill event"))?;
+
+        let (skill_id, old_kind, old_chapter, old_rank, created_at, old_updated_at, story_id) =
+            existing;
+
+        if chapter_id != old_chapter {
+            validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+        }
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if kind != old_kind {
+            changes.push(("event", Some(old_kind.clone()), Some(kind.clone())));
+        }
+        if chapter_id != old_chapter {
+            changes.push((
+                "chapter",
+                reference_label(&tx, old_chapter.as_deref())?,
+                reference_label(&tx, chapter_id.as_deref())?,
+            ));
+        }
+        if rank != old_rank {
+            changes.push(("rank", old_rank.clone(), rank.clone()));
+        }
+
+        let updated = CharacterSkillEvent {
+            id: id.clone(),
+            skill_id,
+            kind,
+            chapter_id,
+            rank,
+            created_at,
+            updated_at: timestamp.clone(),
+        };
+
+        if changes.is_empty() {
+            return Ok(CharacterSkillEvent {
+                updated_at: old_updated_at,
+                ..updated
+            });
+        }
+
+        tx.execute(
+            "UPDATE character_skill_events
+                SET kind = ?1, chapter_id = ?2, rank = ?3, updated_at = ?4
+              WHERE id = ?5",
+            params![
+                &updated.kind,
+                &updated.chapter_id,
+                &updated.rank,
+                &timestamp,
+                &id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_skill_event",
+                    entity_id: &updated.id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(updated)
+    }
+
+    pub fn delete_skill_event(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT e.kind, c.story_id
+                 FROM character_skill_events e
+                 JOIN character_skills s ON s.id = e.skill_id
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE e.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((kind, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "DELETE FROM character_skill_events WHERE id = ?1",
+            params![id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_skill_event",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(kind),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_skill_events(&self, skill_id: &str) -> DbResult<Vec<CharacterSkillEvent>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at, e.updated_at
+             FROM character_skill_events e
+             JOIN character_skills s ON s.id = e.skill_id
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE e.skill_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY e.created_at, e.id",
+        )?;
+
+        let rows = stmt.query_map(params![skill_id], skill_event_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    pub fn list_story_skill_events(&self, story_id: &str) -> DbResult<Vec<CharacterSkillEvent>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank, e.created_at, e.updated_at
+             FROM character_skill_events e
+             JOIN character_skills s ON s.id = e.skill_id
+             JOIN characters c ON c.id = s.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY e.created_at, e.id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], skill_event_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
@@ -2953,6 +3515,33 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let mut character_level_milestones = {
+            let mut stmt = guard.prepare(
+                "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
+                        m.created_at, m.updated_at
+                 FROM character_level_milestones m
+                 JOIN characters c ON c.id = m.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY m.created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], level_milestone_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        let mut character_skill_events = {
+            let mut stmt = guard.prepare(
+                "SELECT e.id, e.skill_id, e.kind, e.chapter_id, e.rank,
+                        e.created_at, e.updated_at
+                 FROM character_skill_events e
+                 JOIN character_skills s ON s.id = e.skill_id
+                 JOIN characters c ON c.id = s.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY e.created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], skill_event_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let mut character_inventory = {
             let mut stmt = guard.prepare(
                 "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
@@ -3012,6 +3601,26 @@ impl Db {
             }
         }
 
+        for milestone in &mut character_level_milestones {
+            if milestone
+                .chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                milestone.chapter_id = None;
+            }
+        }
+
+        for event in &mut character_skill_events {
+            if event
+                .chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                event.chapter_id = None;
+            }
+        }
+
         for item in &mut character_inventory {
             if item
                 .chapter_id
@@ -3065,6 +3674,8 @@ impl Db {
             character_stats,
             character_attributes,
             character_skills,
+            character_level_milestones,
+            character_skill_events,
             character_inventory,
             character_currency,
             nodes,
@@ -5065,6 +5676,16 @@ impl Db {
             .iter()
             .map(|skill| (skill.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let level_milestones: HashMap<String, String> = export
+            .character_level_milestones
+            .iter()
+            .map(|milestone| (milestone.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let skill_events: HashMap<String, String> = export
+            .character_skill_events
+            .iter()
+            .map(|event| (event.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let inventory: HashMap<String, String> = export
             .character_inventory
             .iter()
@@ -5124,6 +5745,51 @@ impl Db {
                         skill.name
                     )));
                 }
+            }
+        }
+
+        for milestone in &export.character_level_milestones {
+            if !characters.contains_key(&milestone.character_id) {
+                return Err(DbError::Invalid(
+                    "a level milestone belongs to a character the file does not contain"
+                        .to_string(),
+                ));
+            }
+
+            if milestone.level < 1 {
+                return Err(DbError::Invalid(
+                    "a level milestone must be level 1 or higher".to_string(),
+                ));
+            }
+
+            if milestone
+                .chapter_id
+                .as_ref()
+                .is_some_and(|id| !nodes.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "a level milestone points at a chapter the file does not contain".to_string(),
+                ));
+            }
+        }
+
+        for event in &export.character_skill_events {
+            if !skills.contains_key(&event.skill_id) {
+                return Err(DbError::Invalid(
+                    "a skill event belongs to a skill the file does not contain".to_string(),
+                ));
+            }
+
+            clean_skill_event_kind(&event.kind)?;
+
+            if event
+                .chapter_id
+                .as_ref()
+                .is_some_and(|id| !nodes.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "a skill event points at a chapter the file does not contain".to_string(),
+                ));
             }
         }
 
@@ -5336,6 +6002,40 @@ impl Db {
             )?;
         }
 
+        for milestone in &export.character_level_milestones {
+            tx.execute(
+                "INSERT INTO character_level_milestones
+                 (id, character_id, level, chapter_id, is_debuff, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &level_milestones[&milestone.id],
+                    &characters[&milestone.character_id],
+                    milestone.level,
+                    milestone.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    milestone.is_debuff,
+                    &milestone.created_at,
+                    &milestone.updated_at
+                ],
+            )?;
+        }
+
+        for event in &export.character_skill_events {
+            tx.execute(
+                "INSERT INTO character_skill_events
+                 (id, skill_id, kind, chapter_id, rank, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &skill_events[&event.id],
+                    &skills[&event.skill_id],
+                    &event.kind,
+                    event.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    &event.rank,
+                    &event.created_at,
+                    &event.updated_at
+                ],
+            )?;
+        }
+
         // Inventory follows the nodes for the same reason a skill does: its
         // chapter and item-card links are foreign keys into the copy.
         for item in &export.character_inventory {
@@ -5403,6 +6103,8 @@ impl Db {
                 "character_stat" => stats.get(&entry.entity_id).cloned(),
                 "character_attribute" => attributes.get(&entry.entity_id).cloned(),
                 "character_skill" => skills.get(&entry.entity_id).cloned(),
+                "character_level_milestone" => level_milestones.get(&entry.entity_id).cloned(),
+                "character_skill_event" => skill_events.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
                 "character_currency" => currencies.get(&entry.entity_id).cloned(),
                 "node" => nodes.get(&entry.entity_id).cloned(),
@@ -5548,6 +6250,34 @@ pub struct CharacterSkill {
     pub effect: Option<String>,
     pub chapter_id: Option<String>,
     pub node_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One level a cast member had in a chapter. `is_debuff` says whether a lower
+/// level was deliberate, so a regression can be told from a penalty.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterLevelMilestone {
+    pub id: String,
+    pub character_id: String,
+    pub level: i64,
+    pub chapter_id: Option<String>,
+    #[serde(default)]
+    pub is_debuff: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One change in a skill's life: a rank gained, a use in a chapter, or a
+/// sacrifice. The chapter is optional so an event can be recorded before its
+/// place in the reading order is known.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterSkillEvent {
+    pub id: String,
+    pub skill_id: String,
+    pub kind: String,
+    pub chapter_id: Option<String>,
+    pub rank: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -5886,6 +6616,11 @@ pub struct StoryExport {
     /// Absent from exports written before schema v12, so it defaults to empty.
     #[serde(default)]
     pub character_skills: Vec<CharacterSkill>,
+    /// Absent from exports written before schema v15, so they default to empty.
+    #[serde(default)]
+    pub character_level_milestones: Vec<CharacterLevelMilestone>,
+    #[serde(default)]
+    pub character_skill_events: Vec<CharacterSkillEvent>,
     /// Absent from exports written before schema v13, so they default to empty.
     #[serde(default)]
     pub character_inventory: Vec<InventoryItem>,
@@ -6497,6 +7232,32 @@ fn character_skill_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkill> 
     })
 }
 
+/// Every level milestone read selects its columns in this order.
+fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMilestone> {
+    Ok(CharacterLevelMilestone {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        level: row.get(2)?,
+        chapter_id: row.get(3)?,
+        is_debuff: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+/// Every skill event read selects its columns in this order.
+fn skill_event_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkillEvent> {
+    Ok(CharacterSkillEvent {
+        id: row.get(0)?,
+        skill_id: row.get(1)?,
+        kind: row.get(2)?,
+        chapter_id: row.get(3)?,
+        rank: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
 /// Every inventory read selects its columns in this order.
 fn inventory_item_row(row: &rusqlite::Row<'_>) -> SqliteResult<InventoryItem> {
     Ok(InventoryItem {
@@ -6524,6 +7285,25 @@ fn character_currency_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterCurr
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
     })
+}
+
+/// A recorded boolean reads as a word in the history rather than as 1 or 0.
+fn yes_no(value: bool) -> String {
+    if value { "yes" } else { "no" }.to_string()
+}
+
+/// Skill events are deliberately a small vocabulary; anything else is a typo
+/// rather than a new kind of progression.
+fn clean_skill_event_kind(value: &str) -> DbResult<String> {
+    let kind = value.trim().to_lowercase();
+
+    if matches!(kind.as_str(), "upgraded" | "sacrificed" | "used") {
+        return Ok(kind);
+    }
+
+    Err(DbError::Invalid(
+        "a skill event must be an upgrade, a sacrifice or a use".to_string(),
+    ))
 }
 
 /// An optional text field with its edges trimmed; blank means absent, so a skill
@@ -6869,6 +7649,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_014)?;
     }
 
+    if version < 15 {
+        conn.execute_batch(MIGRATION_015)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -7157,6 +7941,45 @@ const MIGRATION_013: &str = "
 const MIGRATION_014: &str = "
     ALTER TABLE character_inventory
         ADD COLUMN lost_chapter_id TEXT REFERENCES nodes(id) ON DELETE SET NULL;
+";
+
+/// Schema v15: progression can be placed in the reading order.
+///
+/// A level milestone records the level a character had in a chapter, with a
+/// penalty flag for a deliberately lower level. A skill event records an
+/// upgrade, a use or a sacrifice against a chapter, so acquisition and later
+/// changes can be compared in reading order. Both chapter links are nullable
+/// and cleared when their chapter is purged.
+const MIGRATION_015: &str = "
+    CREATE TABLE IF NOT EXISTS character_level_milestones (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        level INTEGER NOT NULL CHECK (level >= 1),
+        chapter_id TEXT,
+        is_debuff INTEGER NOT NULL DEFAULT 0 CHECK (is_debuff IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_level_milestones_character
+        ON character_level_milestones (character_id);
+
+    CREATE TABLE IF NOT EXISTS character_skill_events (
+        id TEXT PRIMARY KEY,
+        skill_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('upgraded', 'sacrificed', 'used')),
+        chapter_id TEXT,
+        rank TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(skill_id) REFERENCES character_skills(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_skill_events_skill
+        ON character_skill_events (skill_id);
 ";
 
 /// Schema v4: app-wide settings, starting with how long the trash is kept.
@@ -8046,6 +8869,91 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Iron Sword", "the item itself is untouched");
+    }
+
+    #[test]
+    fn migrating_a_version_14_database_adds_level_and_skill_progression() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASE_SCHEMA).unwrap();
+        conn.execute_batch(INDEXES).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        for block in [
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+            MIGRATION_006,
+            MIGRATION_007,
+            MIGRATION_008,
+            MIGRATION_009,
+            MIGRATION_010,
+            MIGRATION_011,
+            MIGRATION_012,
+            MIGRATION_013,
+            MIGRATION_014,
+        ] {
+            conn.execute_batch(block).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 14).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Written before v15', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, pos_x, pos_y, created_by, created_at, updated_at)
+             VALUES ('n1', 's1', 'chapter', 'Chapter One', 0, 0, 'Ada', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_skills (id, character_id, name, rank, created_at, updated_at)
+             VALUES ('k1', 'c1', 'Fireball', 'Rank 1', 'then', 'then')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // The new tables exist: these inserts are the assertion.
+        conn.execute(
+            "INSERT INTO character_level_milestones
+             (id, character_id, level, chapter_id, is_debuff, created_at, updated_at)
+             VALUES ('m1', 'c1', 3, 'n1', 0, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_skill_events
+             (id, skill_id, kind, chapter_id, rank, created_at, updated_at)
+             VALUES ('e1', 'k1', 'upgraded', 'n1', 'Rank 2', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let skills: i64 = conn
+            .query_row("SELECT count(*) FROM character_skills", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(skills, 1, "the skill that was there is untouched");
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 's1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Written before v15");
     }
 
     #[test]
@@ -12186,6 +13094,424 @@ mod tests {
         assert!(bible
             .markdown
             .contains("- **Fireball** · Rank 2 — 3d6 fire (learned in \"Chapter One\")"));
+    }
+
+    #[test]
+    fn a_level_milestone_keeps_its_level_chapter_and_penalty() {
+        let (db, story, character, chapter, card) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let first = db
+            .add_level_milestone(
+                character.id.clone(),
+                3,
+                Some(chapter.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(first.level, 3);
+        assert_eq!(first.chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert!(!first.is_debuff);
+
+        let error = db
+            .add_level_milestone(character.id.clone(), 0, None, false, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("level 1 or higher"), "{error}");
+
+        let error = db
+            .add_level_milestone(
+                character.id.clone(),
+                2,
+                Some(card.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live chapter"), "{error}");
+
+        let penalty = db
+            .add_level_milestone(
+                character.id.clone(),
+                2,
+                Some(second.id.clone()),
+                true,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(db.list_level_milestones(&character.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 2);
+
+        let updated = db
+            .update_level_milestone(
+                penalty.id.clone(),
+                4,
+                Some(second.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.level, 4);
+        assert!(!updated.is_debuff);
+
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_level_milestone"),
+                Some(&penalty.id),
+                100,
+            )
+            .unwrap();
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("level")
+                && entry.old_value.as_deref() == Some("2")
+                && entry.new_value.as_deref() == Some("4")
+        }));
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("is_debuff")
+                && entry.old_value.as_deref() == Some("yes")
+                && entry.new_value.as_deref() == Some("no")
+        }));
+
+        let before = history.len();
+        db.update_level_milestone(
+            penalty.id.clone(),
+            4,
+            Some(second.id.clone()),
+            false,
+            "Ada".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            db.get_audit_log(
+                Some(&story.id),
+                Some("character_level_milestone"),
+                Some(&penalty.id),
+                100,
+            )
+            .unwrap()
+            .len(),
+            before,
+            "saving the same milestone writes nothing"
+        );
+
+        db.delete_level_milestone(&penalty.id, "Ada".into())
+            .unwrap();
+        assert_eq!(db.list_level_milestones(&character.id).unwrap().len(), 1);
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_level_milestone"),
+                Some(&penalty.id),
+                100,
+            )
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.action == "delete"));
+    }
+
+    #[test]
+    fn a_skill_event_keeps_its_kind_chapter_and_rank() {
+        let (db, story, character, chapter, card) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let upgraded = db
+            .add_skill_event(
+                skill.id.clone(),
+                "UPGRADED".into(),
+                Some(chapter.id.clone()),
+                Some("  Rank 2  ".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(upgraded.kind, "upgraded");
+        assert_eq!(upgraded.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(upgraded.chapter_id.as_deref(), Some(chapter.id.as_str()));
+
+        let used = db
+            .add_skill_event(
+                skill.id.clone(),
+                "used".into(),
+                Some(second.id.clone()),
+                Some("Rank 2".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let sacrificed = db
+            .add_skill_event(
+                skill.id.clone(),
+                "sacrificed".into(),
+                Some(second.id.clone()),
+                Some("Rank 9".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(sacrificed.rank, None, "a sacrifice has no rank to carry");
+
+        let error = db
+            .add_skill_event(skill.id.clone(), "lost".into(), None, None, "Ada".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("upgrade, a sacrifice or a use"), "{error}");
+
+        let error = db
+            .add_skill_event(
+                skill.id.clone(),
+                "used".into(),
+                Some(card.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live chapter"), "{error}");
+
+        assert_eq!(db.list_skill_events(&skill.id).unwrap().len(), 3);
+        assert_eq!(db.list_story_skill_events(&story.id).unwrap().len(), 3);
+
+        let updated = db
+            .update_skill_event(
+                used.id.clone(),
+                "upgraded".into(),
+                Some(second.id.clone()),
+                Some("Rank 3".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.kind, "upgraded");
+        assert_eq!(updated.rank.as_deref(), Some("Rank 3"));
+
+        let history = db
+            .get_audit_log(
+                Some(&story.id),
+                Some("character_skill_event"),
+                Some(&used.id),
+                100,
+            )
+            .unwrap();
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("event")
+                && entry.old_value.as_deref() == Some("used")
+                && entry.new_value.as_deref() == Some("upgraded")
+        }));
+        assert!(history.iter().any(|entry| {
+            entry.field_changed.as_deref() == Some("rank")
+                && entry.old_value.as_deref() == Some("Rank 2")
+                && entry.new_value.as_deref() == Some("Rank 3")
+        }));
+
+        db.delete_skill_event(&sacrificed.id, "Ada".into()).unwrap();
+        assert_eq!(db.list_skill_events(&skill.id).unwrap().len(), 2);
+
+        db.delete_skill(&skill.id, "Ada".into()).unwrap();
+        assert!(db.list_story_skill_events(&story.id).unwrap().is_empty());
+        assert_eq!(
+            db.get_audit_log(
+                Some(&story.id),
+                Some("character_skill_event"),
+                Some(&updated.id),
+                100,
+            )
+            .unwrap()
+            .len(),
+            3,
+            "deleting the skill removes its events from the ledger"
+        );
+    }
+
+    #[test]
+    fn purging_a_chapter_clears_level_and_skill_links() {
+        let (db, _, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let milestone = db
+            .add_level_milestone(
+                character.id.clone(),
+                3,
+                Some(chapter.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+        let event = db
+            .add_skill_event(
+                skill.id.clone(),
+                "upgraded".into(),
+                Some(chapter.id.clone()),
+                Some("Rank 2".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+
+        let milestones = db.list_level_milestones(&character.id).unwrap();
+        assert_eq!(milestones[0].id, milestone.id);
+        assert_eq!(milestones[0].chapter_id, None);
+
+        let events = db.list_skill_events(&skill.id).unwrap();
+        assert_eq!(events[0].id, event.id);
+        assert_eq!(events[0].chapter_id, None);
+    }
+
+    #[test]
+    fn levels_and_skill_events_travel_with_an_export() {
+        let (source, story, character, chapter, _) = skill_story();
+        let skill = source
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 2".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .add_level_milestone(
+                character.id.clone(),
+                5,
+                Some(chapter.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .add_skill_event(
+                skill.id.clone(),
+                "upgraded".into(),
+                Some(chapter.id.clone()),
+                Some("Rank 2".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.character_level_milestones.len(), 1);
+        assert_eq!(export.character_skill_events.len(), 1);
+        assert_eq!(
+            export.character_level_milestones[0].chapter_id.as_deref(),
+            Some(chapter.id.as_str())
+        );
+        assert_eq!(
+            export.character_skill_events[0].chapter_id.as_deref(),
+            Some(chapter.id.as_str())
+        );
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let skills = target.list_story_skills(&restored.id).unwrap();
+        let milestones = target.list_story_level_milestones(&restored.id).unwrap();
+        let events = target.list_story_skill_events(&restored.id).unwrap();
+
+        let chapter_id = nodes
+            .iter()
+            .find(|node| node.node_type == "chapter")
+            .map(|node| node.id.clone())
+            .expect("the chapter came across");
+
+        assert_eq!(milestones.len(), 1);
+        assert_eq!(milestones[0].level, 5);
+        assert_eq!(
+            milestones[0].chapter_id.as_deref(),
+            Some(chapter_id.as_str())
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].skill_id, skills[0].id);
+        assert_eq!(events[0].chapter_id.as_deref(), Some(chapter_id.as_str()));
+        assert_eq!(events[0].rank.as_deref(), Some("Rank 2"));
+
+        let history = target
+            .get_audit_log(Some(&restored.id), None, None, 500)
+            .unwrap();
+        assert!(history
+            .iter()
+            .any(|entry| entry.entity_id == milestones[0].id));
+        assert!(history.iter().any(|entry| entry.entity_id == events[0].id));
+    }
+
+    #[test]
+    fn an_export_written_before_level_and_skill_events_still_imports() {
+        let (source, story, character, chapter, _) = skill_story();
+        source
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                None,
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        let mut value = serde_json::to_value(&export).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("character_level_milestones");
+        object.remove("character_skill_events");
+        let older: StoryExport = serde_json::from_value(value).unwrap();
+        assert!(older.character_level_milestones.is_empty());
+        assert!(older.character_skill_events.is_empty());
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(older, "Grace".into()).unwrap();
+        assert!(target
+            .list_story_level_milestones(&restored.id)
+            .unwrap()
+            .is_empty());
+        assert!(target
+            .list_story_skill_events(&restored.id)
+            .unwrap()
+            .is_empty());
     }
 
     // A story with a cast member, a chapter and an item card, which is the shape

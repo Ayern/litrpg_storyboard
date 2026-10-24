@@ -206,6 +206,14 @@ a level, and clearing the rank or the target stores nothing rather than an empty
 string. A level starts at 1 and experience at 0, which is what the migration gives
 a character created before these fields existed.
 
+**Level milestones** sit below the progression bar: a level, the chapter it was
+reached in, and an explicit **Penalty** flag for a deliberate drop. They are a
+record of where a level applied, not the character's current level, so changing
+the sheet does not rewrite history. The Chapters tab compares them in reading
+order and warns when a level goes backwards without that penalty flag; the same
+warning is drawn on the chapter card where the drop appears. Clicking either one
+opens the holder's sheet and puts that milestone straight into its editor.
+
 **Skills** — a cast member's skills are rows of their own rather than attributes
 called "Skill": a name, an optional rank and effect in the author's own words,
 and the chapter it was learned in. Each row can also name the `skill` card it
@@ -225,6 +233,15 @@ bible and an import with their chapter and card remapped like every other
 reference, and they appear in the Audit tab under **Skills**. A skill's name, rank
 and effect are revertible from the history; its chapter and card links are
 recorded by name and are not, for the same reason a POV link is not.
+
+Each skill also keeps its changes as **events**: an upgrade, a use or a sacrifice,
+each with the chapter it happened in and an optional rank. The sheet lists them
+under the skill in reading order, so a rank gained in one chapter and used in an
+earlier one is visible as a contradiction rather than buried in a note. Events are
+saved, edited and audited individually; a sacrifice drops its rank, because the
+skill is no longer held. Skills, milestones and events travel in the JSON export
+and an import with their skill and chapter links remapped, and older files without
+the new tables still import.
 
 **Inventory and currency** — a cast member's belongings are rows of their own
 rather than attributes called "Item": a name, an optional rarity and effect in
@@ -257,6 +274,16 @@ and **Currency**. An item's name, rarity, effect and quantity and a currency's
 name and amount are revertible from the history; an item's acquired chapter,
 lost chapter and card links are recorded by name and are not, for the same reason
 a POV link is not.
+
+**Progression continuity** uses the same panel and the same chapter cards. A level
+that drops in reading order is flagged unless that milestone is marked as a
+penalty; a skill used before it was learned, a rank used before the upgrade that
+reached it, and a skill used or upgraded after it was sacrificed are flagged too.
+Each warning
+names the character and both chapters, and clicking it switches to Characters,
+selects that person, scrolls to the relevant milestone or skill event and opens
+that entry for editing. The badges on the graph use ordinary buttons with
+`nodrag` and `nopan`, so opening one never pans the board or moves a card.
 
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
@@ -430,7 +457,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `14`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `15`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -456,7 +483,10 @@ empty on upgrade rather than inferred from attributes called "Skill". Version 13
 added `character_inventory` and `character_currency`; an older story starts with
 neither, and nothing is inferred from attributes called "Item" or "Gold". Version
 14 added `character_inventory.lost_chapter_id`; an existing item has no recorded
-loss until one is chosen, which is different from an item known to be lost.
+loss until one is chosen, which is different from an item known to be lost. Version
+15 added `character_level_milestones` and `character_skill_events`; an older story
+starts with neither, so its levels and skills are still recorded on the sheets but
+have no chapter-by-chapter history until the author adds one.
 
 | Table | Contents |
 | --- | --- |
@@ -465,6 +495,8 @@ loss until one is chosen, which is different from an item known to be lost.
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
 | `character_skills` | Belongs to a character; `name` (unique per character), nullable `rank` and `effect`, optional `chapter_id` and `node_id` links (cleared when that node is purged) |
+| `character_level_milestones` | Belongs to a character; integer `level` (1 or higher), optional `chapter_id` link (cleared when the chapter is purged), `is_debuff` for an explicit penalty |
+| `character_skill_events` | Belongs to a skill; `kind` (`upgraded`, `used` or `sacrificed`), optional `chapter_id` link (cleared when purged) and nullable `rank` |
 | `character_inventory` | Belongs to a character; `name` (unique per character), nullable `rarity` and `effect`, integer `quantity`, optional `chapter_id`, `lost_chapter_id` and `node_id` links (cleared when that node is purged) |
 | `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
@@ -485,8 +517,8 @@ how restoring the node knows which connections to bring back with it. A
 connection deleted on its own keeps its earlier timestamp and stays in the trash.
 
 `characters`, `character_stats`, `character_attributes`, `character_skills`,
-`character_inventory`, `character_currency`, `nodes` and `edges` all cascade from
-their parent,
+`character_level_milestones`, `character_skill_events`, `character_inventory`,
+`character_currency`, `nodes` and `edges` all cascade from their parent,
 with `PRAGMA foreign_keys = ON`. `audit_log` deliberately has no foreign key, so
 history survives the deletion of what it describes. It is indexed on
 `(story_id, changed_at)` and `(entity_type, entity_id)`.
@@ -508,7 +540,7 @@ npm run tauri build    # package a desktop installer
 Tests:
 
 ```bash
-npm test                             # canvas, search, inspector, cast drag-and-drop, progression, chapters, POV, in-world days and times, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
+npm test                             # canvas, search, inspector, cast drag-and-drop, progression links, skills and inventory, chapters, POV, in-world days and times, export and clipboard, audit paging, reverts and the trash (vitest, jsdom)
 cd src-tauri && cargo test -p litrpg-db   # database layer, in-memory SQLite
 ```
 
@@ -570,7 +602,10 @@ page that arrives late, and what it says when a filter matches nothing.
   below the target, that a level-up is earned, or that a rank only rises: the
   fields hold whatever the author typed, and leveling up just adds one. The bar
   clamps at 100% when experience passes the target rather than inventing a
-  second level, and without a target there is no bar to fill.
+  second level, and without a target there is no bar to fill. Level milestones and
+  skill events are also author-recorded: the continuity panel can only compare the
+  chapters someone entered, so a missing milestone means no warning rather than a
+  guessed level.
 - **Inventory has one recorded loss, not a chapter-by-chapter history.** An item
   can name the chapter it was lost in, but the panel only compares that chapter
   with the acquisition chapter and with the item's current count. Reacquiring it

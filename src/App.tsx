@@ -123,6 +123,32 @@ interface CharacterSkill {
   updated_at: string;
 }
 
+// One level a cast member had in a chapter. A lower level is only a problem when
+// it was not explicitly marked as a penalty.
+interface CharacterLevelMilestone {
+  id: string;
+  character_id: string;
+  level: number;
+  chapter_id: string | null;
+  is_debuff: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+type SkillEventKind = 'upgraded' | 'sacrificed' | 'used';
+
+// One change in a skill's life. The chapter places it in the reading order; the
+// rank is only meaningful for upgrades and uses.
+interface CharacterSkillEvent {
+  id: string;
+  skill_id: string;
+  kind: SkillEventKind;
+  chapter_id: string | null;
+  rank: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // A skill card names the cast members who have it, and where they learned it.
 interface SkillHolder {
   id: string;
@@ -207,35 +233,53 @@ type NodeData = {
   // Who is carrying this item, filled in when the canvas is drawn.
   inventoryHolders?: InventoryHolder[];
   hiddenInventoryHolders?: number;
-  // Lost-item warnings that belong to this chapter, short enough for the card
+  // Continuity warnings that belong to this chapter, short enough for the card
   // and complete in the tooltip.
-  continuityFlags?: InventoryContinuityFlag[];
+  continuityFlags?: ChapterContinuityFlag[];
   hiddenContinuityFlags?: number;
-  // Opens the sheet of the cast member a continuity warning names.
-  onOpenCharacter?: (characterId: string) => void;
+  // Opens the sheet entry a continuity warning names.
+  onOpenContinuity?: (characterId: string, target: ProgressionTarget) => void;
   // Clears a recorded loss without leaving the board.
   onMarkItemReturned?: (itemId: string) => void;
   returningItemId?: string | null;
 };
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
 
-// One advisory line in the continuity panel: its words, with every chapter it
-// names as a part that opens that chapter when clicked.
-type ContinuityPart = string | { id: string; text: string };
+// One advisory line in the continuity panel: its words, with every chapter or
+// cast entry it names as a part that opens when clicked.
+type ContinuityPart =
+  | string
+  | { id: string; text: string; kind?: 'chapter' }
+  | {
+      id: string;
+      text: string;
+      kind: 'character';
+      target: ProgressionTarget;
+    };
 
-// One lost-item warning, kept with the chapter whose card it belongs on. The
+// What a warning should open on the character sheet. Inventory warnings open the
+// sheet itself; progression warnings open the exact row that needs editing.
+type ProgressionTarget =
+  | { kind: 'inventory'; itemId: string }
+  | { kind: 'skill'; skillId: string }
+  | { kind: 'skill-event'; eventId: string; skillId: string }
+  | { kind: 'level'; milestoneId: string };
+
+// One continuity warning, kept with the chapter whose card it belongs on. The
 // summary is short enough for a card; the detail is the whole sentence and goes
 // in the tooltip and the continuity panel.
-interface InventoryContinuityFlag {
-  itemId: string;
-  itemName: string;
-  kind: 'still-carried' | 'lost-before-acquired';
+interface ChapterContinuityFlag {
+  id: string;
+  itemId?: string;
+  itemName?: string;
+  kind: string;
   chapterId: string | null;
   characterId: string;
   characterName: string;
   summary: string;
   detail: string;
   parts: ContinuityPart[];
+  target: ProgressionTarget;
 }
 
 // We'll use ReactFlow's internal types but cast our data. The last five are the
@@ -409,6 +453,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const itemHolders = data.inventoryHolders ?? [];
   const continuityFlags = data.continuityFlags ?? [];
 
+
   return (
     <>
     <div className={`graph-node ${kind}`}>
@@ -428,7 +473,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           title={continuityFlags.map(flag => flag.detail).join('\n')}
         >
           {continuityFlags.slice(0, 2).map((flag, index) => (
-            <div className="graph-node-continuity-line" key={`${flag.itemId}-${flag.kind}`}>
+            <div className="graph-node-continuity-line" key={flag.id}>
               <button
                 type="button"
                 className="graph-node-continuity-open nodrag nopan"
@@ -436,7 +481,7 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 aria-label={`Open ${flag.characterName}'s sheet: ${flag.detail}`}
                 onClick={event => {
                   event.stopPropagation();
-                  data.onOpenCharacter?.(flag.characterId);
+                  data.onOpenContinuity?.(flag.characterId, flag.target);
                 }}
               >
                 <span className="graph-node-continuity-mark" aria-hidden="true">
@@ -444,21 +489,23 @@ function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 </span>
                 {flag.summary}
               </button>
-              {continuityFlags.findIndex(other => other.itemId === flag.itemId) === index && (
-                <button
-                  type="button"
-                  className="graph-node-continuity-return nodrag nopan"
-                  title={`Clear the lost chapter for “${flag.itemName}” and mark it returned`}
-                  aria-label={`Mark ${flag.itemName} returned`}
-                  disabled={data.returningItemId === flag.itemId}
-                  onClick={event => {
-                    event.stopPropagation();
-                    data.onMarkItemReturned?.(flag.itemId);
-                  }}
-                >
-                  {data.returningItemId === flag.itemId ? 'Returning…' : 'Mark returned'}
-                </button>
-              )}
+              {flag.itemId &&
+                continuityFlags.findIndex(other => other.itemId === flag.itemId) === index && (
+
+                  <button
+                    type="button"
+                    className="graph-node-continuity-return nodrag nopan"
+                    title={`Clear the lost chapter for “${flag.itemName}” and mark it returned`}
+                    aria-label={`Mark ${flag.itemName} returned`}
+                    disabled={data.returningItemId === flag.itemId}
+                    onClick={event => {
+                      event.stopPropagation();
+                      data.onMarkItemReturned?.(flag.itemId!);
+                    }}
+                  >
+                    {data.returningItemId === flag.itemId ? 'Returning…' : 'Mark returned'}
+                  </button>
+                )}
             </div>
           ))}
           {(data.hiddenContinuityFlags ?? 0) > 0 && (
@@ -1279,6 +1326,12 @@ function App() {
   // Every live cast member's skills, so a skill card can name who has it without
   // one read per card.
   const [storySkills, setStorySkills] = useState<CharacterSkill[]>([]);
+  // Progression is read for the whole story so continuity can compare every
+  // character's chapters without one request per character.
+  const [storySkillEvents, setStorySkillEvents] = useState<CharacterSkillEvent[]>([]);
+  const [storyLevelMilestones, setStoryLevelMilestones] = useState<
+    CharacterLevelMilestone[]
+  >([]);
 
   const [characterInventory, setCharacterInventory] = useState<InventoryItem[]>([]);
   const [storyInventory, setStoryInventory] = useState<InventoryItem[]>([]);
@@ -1327,6 +1380,24 @@ function App() {
   const [skillEffectDraft, setSkillEffectDraft] = useState('');
   const [skillChapterDraft, setSkillChapterDraft] = useState('');
   const [skillNodeDraft, setSkillNodeDraft] = useState('');
+  const [addingSkillEventFor, setAddingSkillEventFor] = useState<string | null>(null);
+  const [editingSkillEventId, setEditingSkillEventId] = useState<string | null>(null);
+  const [skillEventKindDraft, setSkillEventKindDraft] = useState<SkillEventKind>('upgraded');
+  const [skillEventChapterDraft, setSkillEventChapterDraft] = useState('');
+  const [skillEventRankDraft, setSkillEventRankDraft] = useState('');
+  // The level milestone form, one row open at a time.
+  const [editingLevelMilestoneId, setEditingLevelMilestoneId] = useState<string | null>(null);
+  const [levelMilestoneLevelDraft, setLevelMilestoneLevelDraft] = useState('1');
+  const [levelMilestoneChapterDraft, setLevelMilestoneChapterDraft] = useState('');
+  const [levelMilestoneDebuffDraft, setLevelMilestoneDebuffDraft] = useState(false);
+  const [newLevelMilestoneLevel, setNewLevelMilestoneLevel] = useState('1');
+  const [newLevelMilestoneChapter, setNewLevelMilestoneChapter] = useState('');
+  const [newLevelMilestoneDebuff, setNewLevelMilestoneDebuff] = useState(false);
+  const [focusedProgression, setFocusedProgression] = useState<{
+    kind: 'skill' | 'skill-event' | 'level';
+    id: string;
+  } | null>(null);
+  const progressionFocusTimer = useRef<number | null>(null);
 
   // Every live cast member's stats, which is what the cards on the canvas show.
   // Kept here rather than fetched per card so one read covers the whole board.
@@ -1468,16 +1539,23 @@ function App() {
 
       // The cast rail and the cards' badges both read from here, so the cast and
       // its numbers are loaded with the graph rather than on another tab.
-      const [cast, stats, skills, inventory, notes] = await Promise.all([
-        invoke<Character[]>('get_characters', { storyId: story.id }),
-        invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
-        invoke<CharacterSkill[]>('get_story_skills', { storyId: story.id }),
-        invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
-        invoke<any[]>('get_chapter_notes', { storyId: story.id }),
-      ]);
+      const [cast, stats, skills, skillEvents, levels, inventory, notes] =
+        await Promise.all([
+          invoke<Character[]>('get_characters', { storyId: story.id }),
+          invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
+          invoke<CharacterSkill[]>('get_story_skills', { storyId: story.id }),
+          invoke<CharacterSkillEvent[]>('get_story_skill_events', { storyId: story.id }),
+          invoke<CharacterLevelMilestone[]>('get_story_level_milestones', {
+            storyId: story.id,
+          }),
+          invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
+          invoke<any[]>('get_chapter_notes', { storyId: story.id }),
+        ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
       setStorySkills(skills ?? []);
+      setStorySkillEvents(skillEvents ?? []);
+      setStoryLevelMilestones(levels ?? []);
       setStoryInventory(inventory ?? []);
       setChapterNotes((notes ?? []).map(toChapterNote));
 
@@ -2538,7 +2616,7 @@ function App() {
   // cards say the same thing. A flag belongs to the chapter it was lost in; one
   // whose chapter is in the trash has no card of its own and stays in the panel.
   const inventoryContinuity = useMemo(() => {
-    const flags: InventoryContinuityFlag[] = [];
+    const flags: ChapterContinuityFlag[] = [];
     const chapterById = new Map(chapterNodes.map(node => [node.id, node]));
 
     storyInventory.forEach(item => {
@@ -2558,6 +2636,7 @@ function App() {
         ];
 
         flags.push({
+          id: `inventory-${item.id}-still-carried`,
           itemId: item.id,
           itemName: item.name,
           kind: 'still-carried',
@@ -2567,6 +2646,7 @@ function App() {
           summary: `${owner} still has “${item.name}” (×${formatCount(item.quantity)})`,
           detail: continuityText(parts),
           parts,
+          target: { kind: 'inventory', itemId: item.id },
         });
       }
 
@@ -2594,6 +2674,7 @@ function App() {
         ];
 
         flags.push({
+          id: `inventory-${item.id}-lost-before-acquired`,
           itemId: item.id,
           itemName: item.name,
           kind: 'lost-before-acquired',
@@ -2603,6 +2684,7 @@ function App() {
           summary: `${owner}'s “${item.name}” lost before acquired`,
           detail: continuityText(parts),
           parts,
+          target: { kind: 'inventory', itemId: item.id },
         });
       }
     });
@@ -2613,7 +2695,7 @@ function App() {
   // A chapter card carries the lost-item warnings filed under the chapter whose
   // card it is, so the problem is visible where the chapter sits on the board.
   const inventoryFlagsByChapter = useMemo(() => {
-    const byChapter = new Map<string, InventoryContinuityFlag[]>();
+    const byChapter = new Map<string, ChapterContinuityFlag[]>();
 
     inventoryContinuity.forEach(flag => {
       if (!flag.chapterId) return;
@@ -2626,30 +2708,392 @@ function App() {
     return byChapter;
   }, [inventoryContinuity]);
 
-  // A warning names the cast member whose ledger contradicts it. Opening their
-  // sheet from the card puts the item and its lost chapter in front of the
-  // author, so the fix starts where the warning is rather than in a search.
-  const openCharacterSheet = useCallback((characterId: string) => {
-    setSelectedTab('characters');
-    setSelectedCharacterId(characterId);
-    setEditingProgress(false);
+  // Level and skill progression are compared in reading order. A level can go
+  // backward only when that milestone says it was a penalty; a skill can be used
+  // before it was learned or after it was sacrificed; a rank can be used before
+  // the upgrade that reached it.
+  const progressContinuity = useMemo(() => {
+    const flags: ChapterContinuityFlag[] = [];
+    const chapterById = new Map(chapterNodes.map(node => [node.id, node]));
+    const seqById = new Map(
+      chapterNodes.map(node => [
+        node.id,
+        node.data.chapterSeq ?? Number.MAX_SAFE_INTEGER,
+      ])
+    );
+    const seqOf = (chapterId: string | null) =>
+      chapterId ? seqById.get(chapterId) ?? null : null;
+    const characterLink = (
+      characterId: string,
+      name: string,
+      target: ProgressionTarget
+    ): ContinuityPart => ({ id: characterId, text: name, kind: 'character', target });
 
-    // The sheet is rendered by the tab that was just switched to, so scroll its
-    // row into view after that render rather than against the old list.
-    setTimeout(() => {
-      document
-        .querySelector(`[data-character-id="${characterId}"]`)
-        ?.scrollIntoView?.({ block: 'nearest' });
-    }, 0);
-  }, []);
+    // One level per chapter: the last one recorded there is the one that counts,
+    // so two notes on the same chapter cannot make a false regression.
+    const milestonesByCharacter = new Map<string, CharacterLevelMilestone[]>();
+
+    for (const milestone of storyLevelMilestones) {
+      if (!milestone.chapter_id || seqOf(milestone.chapter_id) == null) continue;
+      const existing = milestonesByCharacter.get(milestone.character_id) ?? [];
+      existing.push(milestone);
+      milestonesByCharacter.set(milestone.character_id, existing);
+    }
+
+    milestonesByCharacter.forEach((milestones, characterId) => {
+      const owner = castNames.get(characterId) ?? 'A cast member';
+      const byChapter = new Map<string, CharacterLevelMilestone>();
+
+      for (const milestone of [...milestones].sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )) {
+        byChapter.set(milestone.chapter_id as string, milestone);
+      }
+
+      const ordered = [...byChapter.values()].sort(
+        (a, b) =>
+          (seqOf(a.chapter_id) ?? Number.MAX_SAFE_INTEGER) -
+          (seqOf(b.chapter_id) ?? Number.MAX_SAFE_INTEGER)
+      );
+
+      for (let index = 1; index < ordered.length; index += 1) {
+        const before = ordered[index - 1];
+        const after = ordered[index];
+
+        if (after.level >= before.level || after.is_debuff) continue;
+
+        const beforeChapter = chapterById.get(before.chapter_id as string);
+        const afterChapter = chapterById.get(after.chapter_id as string);
+        if (!beforeChapter || !afterChapter) continue;
+
+        const target: ProgressionTarget = { kind: 'level', milestoneId: after.id };
+        const parts: ContinuityPart[] = [
+          characterLink(characterId, owner, target),
+          `'s level goes back from ${before.level} in `,
+          chapterLink(beforeChapter.id, beforeChapter.data.label, true),
+          ` to ${after.level} in `,
+          chapterLink(afterChapter.id, afterChapter.data.label, true),
+          '.',
+        ];
+
+        flags.push({
+          id: `level-${after.id}`,
+          kind: 'level-regression',
+          chapterId: afterChapter.id,
+          characterId,
+          characterName: owner,
+          summary: `${owner}'s level drops to ${after.level} in ${afterChapter.data.label}`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+      }
+    });
+
+    const skillById = new Map(storySkills.map(skill => [skill.id, skill]));
+    const eventsBySkill = new Map<string, CharacterSkillEvent[]>();
+
+    for (const event of storySkillEvents) {
+      if (!event.chapter_id || seqOf(event.chapter_id) == null) continue;
+      const existing = eventsBySkill.get(event.skill_id) ?? [];
+      existing.push(event);
+      eventsBySkill.set(event.skill_id, existing);
+    }
+
+    eventsBySkill.forEach((events, skillId) => {
+      const skill = skillById.get(skillId);
+      if (!skill) return;
+
+      const owner = castNames.get(skill.character_id) ?? 'A cast member';
+      const ordered = [...events].sort(
+        (a, b) =>
+          (seqOf(a.chapter_id) ?? Number.MAX_SAFE_INTEGER) -
+          (seqOf(b.chapter_id) ?? Number.MAX_SAFE_INTEGER) ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+      );
+      const acquisitionChapter = skill.chapter_id
+        ? chapterById.get(skill.chapter_id)
+        : undefined;
+      const acquisitionSeq = seqOf(skill.chapter_id);
+      const upgrades = ordered.filter(
+        event => event.kind === 'upgraded' && event.rank?.trim()
+      );
+      const sacrifices = ordered.filter(event => event.kind === 'sacrificed');
+
+      for (const use of ordered) {
+        if (use.kind !== 'used') continue;
+
+        const useChapter = chapterById.get(use.chapter_id as string);
+        const useSeq = seqOf(use.chapter_id);
+        if (!useChapter || useSeq == null) continue;
+
+        const target: ProgressionTarget = {
+          kind: 'skill-event',
+          eventId: use.id,
+          skillId,
+        };
+
+        if (
+          acquisitionChapter &&
+          acquisitionSeq != null &&
+          useSeq < acquisitionSeq
+        ) {
+          const parts: ContinuityPart[] = [
+            characterLink(skill.character_id, owner, target),
+            `'s “${skill.name}” is used in `,
+            chapterLink(useChapter.id, useChapter.data.label, true),
+            ` before it was learned in `,
+            chapterLink(acquisitionChapter.id, acquisitionChapter.data.label, true),
+            '.',
+          ];
+
+          flags.push({
+            id: `skill-${use.id}-before-acquired`,
+            kind: 'skill-before-acquired',
+            chapterId: useChapter.id,
+            characterId: skill.character_id,
+            characterName: owner,
+            summary: `${owner}'s “${skill.name}” used before learned`,
+            detail: continuityText(parts),
+            parts,
+            target,
+          });
+          continue;
+        }
+
+        const usedRank = use.rank?.trim();
+
+        if (usedRank) {
+          const upgrade = upgrades.find(
+            event =>
+              event.rank?.trim().toLowerCase() === usedRank.toLowerCase() &&
+              seqOf(event.chapter_id) != null &&
+              (seqOf(event.chapter_id) as number) > useSeq
+          );
+
+          if (upgrade) {
+            const upgradeChapter = chapterById.get(upgrade.chapter_id as string);
+
+            if (upgradeChapter) {
+              const parts: ContinuityPart[] = [
+                characterLink(skill.character_id, owner, target),
+                `'s “${skill.name}” is used at ${usedRank} in `,
+                chapterLink(useChapter.id, useChapter.data.label, true),
+                ` before that rank is gained in `,
+                chapterLink(upgradeChapter.id, upgradeChapter.data.label, true),
+                '.',
+              ];
+
+              flags.push({
+                id: `skill-${use.id}-rank-before-upgrade`,
+                kind: 'skill-rank-before-upgrade',
+                chapterId: useChapter.id,
+                characterId: skill.character_id,
+                characterName: owner,
+                summary: `${owner}'s “${skill.name}” ${usedRank} used early`,
+                detail: continuityText(parts),
+                parts,
+                target,
+              });
+            }
+          }
+        }
+
+        const sacrifice = sacrifices
+          .filter(event => (seqOf(event.chapter_id) ?? Number.MAX_SAFE_INTEGER) < useSeq)
+          .pop();
+
+        if (sacrifice) {
+          const sacrificeChapter = chapterById.get(sacrifice.chapter_id as string);
+
+          if (sacrificeChapter) {
+            const parts: ContinuityPart[] = [
+              characterLink(skill.character_id, owner, target),
+              `'s “${skill.name}” is used in `,
+              chapterLink(useChapter.id, useChapter.data.label, true),
+              ` after it was sacrificed in `,
+              chapterLink(sacrificeChapter.id, sacrificeChapter.data.label, true),
+              '.',
+            ];
+
+            flags.push({
+              id: `skill-${use.id}-after-sacrifice`,
+              kind: 'skill-after-sacrifice',
+              chapterId: useChapter.id,
+              characterId: skill.character_id,
+              characterName: owner,
+              summary: `${owner}'s “${skill.name}” used after sacrifice`,
+              detail: continuityText(parts),
+              parts,
+              target,
+            });
+          }
+        }
+      }
+
+      // An upgrade after a sacrifice is the same contradiction from the other
+      // side: the skill is gone, yet it is still being made stronger.
+      for (const upgrade of upgrades) {
+        const upgradeChapter = chapterById.get(upgrade.chapter_id as string);
+        const upgradeSeq = seqOf(upgrade.chapter_id);
+        if (!upgradeChapter || upgradeSeq == null) continue;
+
+        const sacrifice = sacrifices
+          .filter(
+            event => (seqOf(event.chapter_id) ?? Number.MAX_SAFE_INTEGER) < upgradeSeq
+          )
+          .pop();
+
+        if (!sacrifice) continue;
+
+        const sacrificeChapter = chapterById.get(sacrifice.chapter_id as string);
+        if (!sacrificeChapter) continue;
+
+        const target: ProgressionTarget = {
+          kind: 'skill-event',
+          eventId: upgrade.id,
+          skillId,
+        };
+        const parts: ContinuityPart[] = [
+          characterLink(skill.character_id, owner, target),
+          `'s “${skill.name}” is upgraded in `,
+          chapterLink(upgradeChapter.id, upgradeChapter.data.label, true),
+          ` after it was sacrificed in `,
+          chapterLink(sacrificeChapter.id, sacrificeChapter.data.label, true),
+          '.',
+        ];
+
+        flags.push({
+          id: `skill-${upgrade.id}-upgraded-after-sacrifice`,
+          kind: 'skill-after-sacrifice',
+          chapterId: upgradeChapter.id,
+          characterId: skill.character_id,
+          characterName: owner,
+          summary: `${owner}'s “${skill.name}” upgraded after sacrifice`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+      }
+    });
+
+    return flags;
+  }, [chapterNodes, castNames, storyLevelMilestones, storySkillEvents, storySkills]);
+
+  const progressFlagsByChapter = useMemo(() => {
+    const byChapter = new Map<string, ChapterContinuityFlag[]>();
+
+    progressContinuity.forEach(flag => {
+      if (!flag.chapterId) return;
+      const existing = byChapter.get(flag.chapterId) ?? [];
+      existing.push(flag);
+      byChapter.set(flag.chapterId, existing);
+    });
+
+    return byChapter;
+  }, [progressContinuity]);
+
+  // A warning names the cast member whose ledger contradicts it. Opening their
+  // sheet from the card puts the item, level or skill event in front of the
+  // author, so the fix starts where the warning is rather than in a search.
+  const openCharacterSheet = useCallback(
+    (characterId: string, target?: ProgressionTarget) => {
+      setSelectedTab('characters');
+      setSelectedCharacterId(characterId);
+      setEditingProgress(false);
+      setCharacterError(null);
+
+      if (progressionFocusTimer.current != null) {
+        window.clearTimeout(progressionFocusTimer.current);
+        progressionFocusTimer.current = null;
+      }
+
+      if (!target || target.kind === 'inventory') {
+        setFocusedProgression(null);
+
+        // The sheet is rendered by the tab that was just switched to, so scroll
+        // its row into view after that render rather than against the old list.
+        setTimeout(() => {
+          document
+            .querySelector(`[data-character-id="${characterId}"]`)
+            ?.scrollIntoView?.({ block: 'nearest' });
+        }, 0);
+        return;
+      }
+
+      // A progression warning names the exact entry that contradicts the story.
+      // Opening its editor puts the fix in front of the author instead of making
+      // them find the row by hand.
+      let focusId = target.kind === 'level' ? target.milestoneId : target.skillId;
+
+      if (target.kind === 'level') {
+        const milestone = storyLevelMilestones.find(entry => entry.id === target.milestoneId);
+
+        if (milestone) {
+          setAddingSkillEventFor(null);
+          setEditingSkillEventId(null);
+          setEditingSkillId(null);
+          setEditingLevelMilestoneId(milestone.id);
+          setLevelMilestoneLevelDraft(String(milestone.level));
+          setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
+          setLevelMilestoneDebuffDraft(milestone.is_debuff);
+        }
+      } else if (target.kind === 'skill-event') {
+        const event = storySkillEvents.find(entry => entry.id === target.eventId);
+        focusId = target.eventId;
+
+        if (event) {
+          setEditingLevelMilestoneId(null);
+          setEditingSkillId(null);
+          setAddingSkillEventFor(null);
+          setEditingSkillEventId(event.id);
+          setSkillEventKindDraft(event.kind);
+          setSkillEventChapterDraft(event.chapter_id ?? '');
+          setSkillEventRankDraft(event.rank ?? '');
+        }
+      } else {
+        const skill = storySkills.find(entry => entry.id === target.skillId);
+
+        if (skill) {
+          setEditingLevelMilestoneId(null);
+          setAddingSkillEventFor(null);
+          setEditingSkillEventId(null);
+          setEditingSkillId(skill.id);
+          setSkillNameDraft(skill.name);
+          setSkillRankDraft(skill.rank ?? '');
+          setSkillEffectDraft(skill.effect ?? '');
+          setSkillChapterDraft(skill.chapter_id ?? '');
+          setSkillNodeDraft(skill.node_id ?? '');
+        }
+      }
+
+      setFocusedProgression({ kind: target.kind, id: focusId });
+      progressionFocusTimer.current = window.setTimeout(() => {
+        setFocusedProgression(null);
+        progressionFocusTimer.current = null;
+      }, 5000);
+
+      // The sheet is rendered by the tab that was just switched to, so scroll its
+      // entry into view after that render rather than against the old list.
+      setTimeout(() => {
+        document
+          .querySelector(`[data-progression="${target.kind}-${focusId}"]`)
+          ?.scrollIntoView?.({ block: 'nearest' });
+      }, 0);
+    },
+    [storyLevelMilestones, storySkillEvents, storySkills]
+  );
 
   // Continuity is advisory: nothing here blocks a save. It names what looks
   // inconsistent — a chapter with no POV, a time with no day to place it on, a
   // day that goes backwards, a time that goes backwards inside a day, two
   // chapters at the same moment, one cast member in two chapters on the same
-  // day, or an item still carried after it was lost — and leaves the decision
-  // to the author. Every chapter it names is a link that opens that chapter, so
-  // a flag leads to the thing to fix.
+  // day, an item still carried after it was lost, or a level or skill that
+  // contradicts its recorded chapters — and leaves the decision to the author.
+  // Every chapter it names is a link that opens that chapter, and every
+  // progression entry opens on the holder's sheet, so a flag leads to the
+  // thing to fix.
   const chapterContinuity = useMemo(() => {
     const warnings: ContinuityPart[][] = [];
 
@@ -2835,9 +3279,10 @@ function App() {
     });
 
     warnings.push(...inventoryContinuity.map(flag => flag.parts));
+    warnings.push(...progressContinuity.map(flag => flag.parts));
 
     return warnings;
-  }, [chapterNodes, castNames, inventoryContinuity]);
+  }, [chapterNodes, castNames, inventoryContinuity, progressContinuity]);
 
   const focusChapterRow = (chapterId: string) => {
     document
@@ -4386,6 +4831,8 @@ function App() {
 
   const startSkillEdit = (skill: CharacterSkill) => {
     setCharacterError(null);
+    setAddingSkillEventFor(null);
+    setEditingSkillEventId(null);
     setEditingSkillId(skill.id);
     setSkillNameDraft(skill.name);
     setSkillRankDraft(skill.rank ?? '');
@@ -4458,10 +4905,176 @@ function App() {
       await invoke('delete_skill', { id: skill.id, user: actor });
       setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
       setStorySkills(prev => prev.filter(other => other.id !== skill.id));
+      // The database cascades the events with the skill; keep the board copy in
+      // step so continuity cannot read a skill that is no longer there.
+      setStorySkillEvents(prev => prev.filter(event => event.skill_id !== skill.id));
+      if (editingSkillEventId && storySkillEvents.some(event => event.id === editingSkillEventId && event.skill_id === skill.id)) {
+        cancelSkillEventEdit();
+      }
       setEditingSkillId(null);
     } catch (e) {
       console.error('Failed to delete skill:', e);
       setCharacterError(`Could not delete skill: ${String(e)}`);
+    }
+  };
+
+  const applySkillEvent = useCallback((saved: CharacterSkillEvent) => {
+    setStorySkillEvents(previous =>
+      [...previous.filter(event => event.id !== saved.id), saved].sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )
+    );
+  }, []);
+
+  const startAddSkillEvent = (skillId: string) => {
+    setCharacterError(null);
+    setEditingSkillId(null);
+    setAddingSkillEventFor(skillId);
+    setEditingSkillEventId(null);
+    setSkillEventKindDraft('upgraded');
+    setSkillEventChapterDraft('');
+    setSkillEventRankDraft('');
+  };
+
+  const startSkillEventEdit = (event: CharacterSkillEvent) => {
+    setCharacterError(null);
+    setEditingSkillId(null);
+    setAddingSkillEventFor(null);
+    setEditingSkillEventId(event.id);
+    setSkillEventKindDraft(event.kind);
+    setSkillEventChapterDraft(event.chapter_id ?? '');
+    setSkillEventRankDraft(event.rank ?? '');
+  };
+
+  const cancelSkillEventEdit = () => {
+    setAddingSkillEventFor(null);
+    setEditingSkillEventId(null);
+    setCharacterError(null);
+  };
+
+  const saveSkillEvent = async (skillId: string, eventId: string | null) => {
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterSkillEvent = await invoke(
+        eventId ? 'update_skill_event' : 'add_skill_event',
+        {
+          ...(eventId ? { id: eventId } : { skillId }),
+          kind: skillEventKindDraft,
+          chapterId: skillEventChapterDraft || null,
+          rank:
+            skillEventKindDraft === 'sacrificed' ? null : skillEventRankDraft.trim() || null,
+          user: actor,
+        }
+      );
+
+      applySkillEvent(saved);
+      cancelSkillEventEdit();
+    } catch (e) {
+      console.error('Failed to save a skill event:', e);
+      setCharacterError(`Could not save the skill event: ${String(e)}`);
+    }
+  };
+
+  const removeSkillEvent = async (event: CharacterSkillEvent) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_skill_event', { id: event.id, user: actor });
+      setStorySkillEvents(previous => previous.filter(other => other.id !== event.id));
+      if (editingSkillEventId === event.id) cancelSkillEventEdit();
+    } catch (e) {
+      console.error('Failed to delete a skill event:', e);
+      setCharacterError(`Could not delete the skill event: ${String(e)}`);
+    }
+  };
+
+  const applyLevelMilestone = useCallback((saved: CharacterLevelMilestone) => {
+    setStoryLevelMilestones(previous =>
+      [...previous.filter(milestone => milestone.id !== saved.id), saved].sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )
+    );
+  }, []);
+
+  const startLevelMilestoneEdit = (milestone: CharacterLevelMilestone) => {
+    setCharacterError(null);
+    setEditingLevelMilestoneId(milestone.id);
+    setLevelMilestoneLevelDraft(String(milestone.level));
+    setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
+    setLevelMilestoneDebuffDraft(milestone.is_debuff);
+  };
+
+  const saveLevelMilestone = async (milestone: CharacterLevelMilestone) => {
+    const level = Number(levelMilestoneLevelDraft);
+
+    if (!/^\d+$/.test(levelMilestoneLevelDraft.trim()) || level < 1) {
+      setCharacterError('A level milestone needs a whole-number level of 1 or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterLevelMilestone = await invoke('update_level_milestone', {
+        id: milestone.id,
+        level,
+        chapterId: levelMilestoneChapterDraft || null,
+        isDebuff: levelMilestoneDebuffDraft,
+        user: actor,
+      });
+
+      applyLevelMilestone(saved);
+      setEditingLevelMilestoneId(null);
+    } catch (e) {
+      console.error('Failed to save a level milestone:', e);
+      setCharacterError(`Could not save the level milestone: ${String(e)}`);
+    }
+  };
+
+  const addLevelMilestone = async () => {
+    if (!selectedCharacterId) return;
+
+    const level = Number(newLevelMilestoneLevel);
+
+    if (!/^\d+$/.test(newLevelMilestoneLevel.trim()) || level < 1) {
+      setCharacterError('A level milestone needs a whole-number level of 1 or more.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterLevelMilestone = await invoke('add_level_milestone', {
+        characterId: selectedCharacterId,
+        level,
+        chapterId: newLevelMilestoneChapter || null,
+        isDebuff: newLevelMilestoneDebuff,
+        user: actor,
+      });
+
+      applyLevelMilestone(saved);
+      setNewLevelMilestoneLevel(String(level));
+      setNewLevelMilestoneChapter('');
+      setNewLevelMilestoneDebuff(false);
+    } catch (e) {
+      console.error('Failed to add a level milestone:', e);
+      setCharacterError(`Could not add the level milestone: ${String(e)}`);
+    }
+  };
+
+  const removeLevelMilestone = async (milestone: CharacterLevelMilestone) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_level_milestone', { id: milestone.id, user: actor });
+      setStoryLevelMilestones(previous =>
+        previous.filter(other => other.id !== milestone.id)
+      );
+      if (editingLevelMilestoneId === milestone.id) setEditingLevelMilestoneId(null);
+    } catch (e) {
+      console.error('Failed to delete a level milestone:', e);
+      setCharacterError(`Could not delete the level milestone: ${String(e)}`);
     }
   };
 
@@ -4811,10 +5424,22 @@ function App() {
       await invoke('delete_character', { id: removedId, user: actor });
 
       const remaining = characters.filter(character => character.id !== removedId);
+      const removedSkillIds = new Set(
+        storySkills.filter(skill => skill.character_id === removedId).map(skill => skill.id)
+      );
+
       setCharacters(remaining);
       setSelectedCharacterId(remaining[0]?.id ?? null);
       setCharacterStats([]);
       setCharacterAttributes([]);
+      setCharacterSkills([]);
+      setStorySkills(previous => previous.filter(skill => skill.character_id !== removedId));
+      setStorySkillEvents(previous =>
+        previous.filter(event => !removedSkillIds.has(event.skill_id))
+      );
+      setStoryLevelMilestones(previous =>
+        previous.filter(milestone => milestone.character_id !== removedId)
+      );
       setEditingCharacter(false);
     } catch (e) {
       console.error('Failed to delete character:', e);
@@ -5725,7 +6350,10 @@ function App() {
       const hiddenNotes = notes.length - noteCards.length;
       const holders = holdersByNode[node.id] ?? [];
       const itemHolders = inventoryByNode[node.id] ?? [];
-      const continuityFlags = inventoryFlagsByChapter.get(node.id) ?? [];
+      const continuityFlags = [
+        ...(inventoryFlagsByChapter.get(node.id) ?? []),
+        ...(progressFlagsByChapter.get(node.id) ?? []),
+      ];
       const classes = [
         node.id === dropTargetNodeId ? 'drop-target' : '',
         searchOpen && searchMatchIds.has(node.id) ? 'search-hit' : '',
@@ -5788,7 +6416,7 @@ function App() {
             ? {
                 continuityFlags,
                 hiddenContinuityFlags: Math.max(0, continuityFlags.length - 2),
-                onOpenCharacter: openCharacterSheet,
+                onOpenContinuity: openCharacterSheet,
                 onMarkItemReturned: markItemReturned,
                 returningItemId,
               }
@@ -5809,6 +6437,7 @@ function App() {
     notesByChapter,
     openNoteFromGraph,
     inventoryFlagsByChapter,
+    progressFlagsByChapter,
     openCharacterSheet,
     markItemReturned,
     returningItemId,
@@ -5846,8 +6475,55 @@ function App() {
     [nodes]
   );
 
+  const chapterSeqById = useMemo(
+    () =>
+      new Map(
+        chapterNodes.map(node => [
+          node.id,
+          node.data.chapterSeq ?? Number.MAX_SAFE_INTEGER,
+        ])
+      ),
+    [chapterNodes]
+  );
+
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
+
+  // A chapter without a position sorts after every placed chapter, then by the
+  // order it was recorded. The same order is used on the board and the sheet.
+  const selectedLevelMilestones = useMemo(
+    () =>
+      storyLevelMilestones
+        .filter(milestone => milestone.character_id === selectedCharacterId)
+        .sort(
+          (a, b) =>
+            (chapterSeqById.get(a.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) -
+              (chapterSeqById.get(b.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) ||
+            a.created_at.localeCompare(b.created_at) ||
+            a.id.localeCompare(b.id)
+        ),
+    [storyLevelMilestones, selectedCharacterId, chapterSeqById]
+  );
+
+  const skillEventsBySkill = useMemo(() => {
+    const grouped = new Map<string, CharacterSkillEvent[]>();
+
+    for (const event of storySkillEvents) {
+      grouped.set(event.skill_id, [...(grouped.get(event.skill_id) ?? []), event]);
+    }
+
+    for (const events of grouped.values()) {
+      events.sort(
+        (a, b) =>
+          (chapterSeqById.get(a.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) -
+            (chapterSeqById.get(b.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+      );
+    }
+
+    return grouped;
+  }, [storySkillEvents, chapterSeqById]);
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
 
@@ -7561,8 +8237,16 @@ function App() {
                                     key={partIndex}
                                     type="button"
                                     className="chapter-continuity-link"
-                                    title="Open this chapter's details"
-                                    onClick={() => revealChapter(part.id)}
+                                    title={
+                                      part.kind === 'character'
+                                        ? "Open this entry on the character's sheet"
+                                        : "Open this chapter's details"
+                                    }
+                                    onClick={() =>
+                                      part.kind === 'character'
+                                        ? openCharacterSheet(part.id, part.target)
+                                        : revealChapter(part.id)
+                                    }
                                   >
                                     {part.text}
                                   </button>
@@ -7858,6 +8542,168 @@ function App() {
                         )}
                       </section>
 
+                      {/* A milestone is where a level was reached, not the level
+                          the sheet shows now. It is what continuity compares in
+                          reading order, and a deliberate drop can say so. */}
+                      <section className="level-section" aria-label="Level milestones">
+                        <h4 className="character-section-heading">Level milestones</h4>
+
+                        <div className="level-list">
+                          {selectedLevelMilestones.length === 0 && (
+                            <div className="empty">
+                              No level milestones yet — record where a level was reached.
+                            </div>
+                          )}
+
+                          {selectedLevelMilestones.map(milestone => {
+                            const chapter = chapterChoices.find(
+                              choice => choice.id === milestone.chapter_id
+                            );
+                            const focused =
+                              focusedProgression?.kind === 'level' &&
+                              focusedProgression.id === milestone.id;
+
+                            return (
+                              <div
+                                key={milestone.id}
+                                className={`level-row${focused ? ' progression-row-focused' : ''}`}
+                                data-progression={`level-${milestone.id}`}
+                              >
+                                {editingLevelMilestoneId === milestone.id ? (
+                                  <div className="level-editor">
+                                    <input
+                                      aria-label="Milestone level"
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      autoFocus
+                                      value={levelMilestoneLevelDraft}
+                                      onChange={(e) => setLevelMilestoneLevelDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveLevelMilestone(milestone);
+                                        if (e.key === 'Escape') setEditingLevelMilestoneId(null);
+                                      }}
+                                    />
+                                    <select
+                                      aria-label="Milestone chapter"
+                                      title="The chapter where this level was reached"
+                                      value={levelMilestoneChapterDraft}
+                                      onChange={(e) => setLevelMilestoneChapterDraft(e.target.value)}
+                                    >
+                                      <option value="">No chapter</option>
+                                      {levelMilestoneChapterDraft &&
+                                        !chapterChoices.some(
+                                          choice => choice.id === levelMilestoneChapterDraft
+                                        ) && (
+                                          <option value={levelMilestoneChapterDraft}>
+                                            Chapter in the trash
+                                          </option>
+                                        )}
+                                      {chapterChoices.map(choice => (
+                                        <option key={choice.id} value={choice.id}>
+                                          {choice.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <label className="level-penalty-field">
+                                      <input
+                                        aria-label="Level drop is a penalty"
+                                        type="checkbox"
+                                        checked={levelMilestoneDebuffDraft}
+                                        onChange={(e) => setLevelMilestoneDebuffDraft(e.target.checked)}
+                                      />
+                                      Penalty
+                                    </label>
+                                    <div className="level-actions">
+                                      <button
+                                        title={`Save this level ${milestone.level} milestone`}
+                                        onClick={() => saveLevelMilestone(milestone)}
+                                      >
+                                        Save milestone
+                                      </button>
+                                      <button
+                                        title="Leave the milestone as it was"
+                                        onClick={() => setEditingLevelMilestoneId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="level-summary">
+                                      <span className="level-value">Level {milestone.level}</span>
+                                      <span className="level-chapter">
+                                        {chapter
+                                          ? `Reached in ${chapter.data.label}`
+                                          : milestone.chapter_id
+                                            ? 'Chapter in the trash'
+                                            : 'No chapter recorded'}
+                                      </span>
+                                      {milestone.is_debuff && (
+                                        <span className="level-penalty">Penalty</span>
+                                      )}
+                                    </div>
+                                    <button
+                                      title={`Change the level and chapter of the level ${milestone.level} milestone`}
+                                      onClick={() => startLevelMilestoneEdit(milestone)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete the level ${milestone.level} milestone`}
+                                      onClick={() => removeLevelMilestone(milestone)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="level-creator">
+                          <input
+                            aria-label="New milestone level"
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={newLevelMilestoneLevel}
+                            onChange={(e) => setNewLevelMilestoneLevel(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addLevelMilestone()}
+                          />
+                          <select
+                            aria-label="New milestone chapter"
+                            title="The chapter where this level was reached"
+                            value={newLevelMilestoneChapter}
+                            onChange={(e) => setNewLevelMilestoneChapter(e.target.value)}
+                          >
+                            <option value="">No chapter</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <label className="level-penalty-field">
+                            <input
+                              aria-label="New milestone is a penalty"
+                              type="checkbox"
+                              checked={newLevelMilestoneDebuff}
+                              onChange={(e) => setNewLevelMilestoneDebuff(e.target.checked)}
+                            />
+                            Penalty
+                          </label>
+                          <button
+                            title="Record this level in the selected character's timeline"
+                            onClick={addLevelMilestone}
+                          >
+                            Add milestone
+                          </button>
+                        </div>
+                      </section>
+
                       <div className="attribute-section">
                         <h4 className="character-section-heading">Attributes</h4>
 
@@ -7962,9 +8808,85 @@ function App() {
                             const card = skillCardChoices.find(
                               choice => choice.id === skill.node_id
                             );
+                            const events = skillEventsBySkill.get(skill.id) ?? [];
+                            const skillFocused =
+                              focusedProgression?.kind === 'skill' &&
+                              focusedProgression.id === skill.id;
+                            const renderEventForm = (event: CharacterSkillEvent | null) => (
+                              <div className="skill-event-editor">
+                                <select
+                                  aria-label="Skill event kind"
+                                  title="What happened to this skill in that chapter"
+                                  value={skillEventKindDraft}
+                                  onChange={(e) =>
+                                    setSkillEventKindDraft(e.target.value as SkillEventKind)
+                                  }
+                                >
+                                  <option value="upgraded">Upgraded</option>
+                                  <option value="used">Used</option>
+                                  <option value="sacrificed">Sacrificed or lost</option>
+                                </select>
+                                <select
+                                  aria-label="Skill event chapter"
+                                  title="The chapter where this happened"
+                                  value={skillEventChapterDraft}
+                                  onChange={(e) => setSkillEventChapterDraft(e.target.value)}
+                                >
+                                  <option value="">No chapter</option>
+                                  {skillEventChapterDraft &&
+                                    !chapterChoices.some(
+                                      choice => choice.id === skillEventChapterDraft
+                                    ) && (
+                                      <option value={skillEventChapterDraft}>
+                                        Chapter in the trash
+                                      </option>
+                                    )}
+                                  {chapterChoices.map(choice => (
+                                    <option key={choice.id} value={choice.id}>
+                                      {choice.data.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  aria-label="Skill event rank"
+                                  placeholder="Rank (optional)"
+                                  title="The rank reached or used; a sacrifice has none"
+                                  disabled={skillEventKindDraft === 'sacrificed'}
+                                  value={
+                                    skillEventKindDraft === 'sacrificed'
+                                      ? ''
+                                      : skillEventRankDraft
+                                  }
+                                  onChange={(e) => setSkillEventRankDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveSkillEvent(skill.id, event?.id ?? null);
+                                    if (e.key === 'Escape') cancelSkillEventEdit();
+                                  }}
+                                />
+                                <div className="skill-event-actions">
+                                  <button
+                                    title={`Save this change to ${skill.name}`}
+                                    onClick={() => saveSkillEvent(skill.id, event?.id ?? null)}
+                                  >
+                                    Save event
+                                  </button>
+                                  <button
+                                    title="Leave this skill event as it was"
+                                    onClick={cancelSkillEventEdit}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            );
 
                             return (
-                              <div key={skill.id} className="skill-row">
+                              <div
+                                key={skill.id}
+                                className={`skill-row${skillFocused ? ' progression-row-focused' : ''}`}
+                                data-progression={`skill-${skill.id}`}
+                              >
+                                <div className="skill-row-head">
                                 {editingSkillId === skill.id ? (
                                   <div className="skill-editor">
                                     <input
@@ -8091,6 +9013,77 @@ function App() {
                                     </button>
                                   </>
                                 )}
+                                </div>
+
+                                <div className="skill-events" aria-label={`${skill.name} events`}>
+                                  {events.map(event => {
+                                    const eventChapter = chapterChoices.find(
+                                      choice => choice.id === event.chapter_id
+                                    );
+                                    const focused =
+                                      focusedProgression?.kind === 'skill-event' &&
+                                      focusedProgression.id === event.id;
+                                    const label =
+                                      event.kind === 'upgraded'
+                                        ? event.rank
+                                          ? `Upgraded to ${event.rank}`
+                                          : 'Upgraded'
+                                        : event.kind === 'used'
+                                          ? event.rank
+                                            ? `Used at ${event.rank}`
+                                            : 'Used'
+                                          : 'Sacrificed or lost';
+
+                                    return (
+                                      <div
+                                        key={event.id}
+                                        className={`skill-event-row${focused ? ' progression-row-focused' : ''}`}
+                                        data-progression={`skill-event-${event.id}`}
+                                      >
+                                        {editingSkillEventId === event.id ? (
+                                          renderEventForm(event)
+                                        ) : (
+                                          <>
+                                            <div className="skill-event-summary">
+                                              <span className="skill-event-kind">{label}</span>
+                                              <span className="skill-event-chapter">
+                                                {eventChapter
+                                                  ? eventChapter.data.label
+                                                  : event.chapter_id
+                                                    ? 'Chapter in the trash'
+                                                    : 'No chapter recorded'}
+                                              </span>
+                                            </div>
+                                            <button
+                                              title={`Change this ${skill.name} event`}
+                                              onClick={() => startSkillEventEdit(event)}
+                                            >
+                                              Edit
+                                            </button>
+                                            <button
+                                              title={`Delete this ${skill.name} event`}
+                                              onClick={() => removeSkillEvent(event)}
+                                            >
+                                              Delete
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {addingSkillEventFor === skill.id ? (
+                                    renderEventForm(null)
+                                  ) : editingSkillEventId == null ? (
+                                    <button
+                                      className="skill-event-add"
+                                      title={`Record an upgrade, use or sacrifice of ${skill.name}`}
+                                      onClick={() => startAddSkillEvent(skill.id)}
+                                    >
+                                      Add event
+                                    </button>
+                                  ) : null}
+                                </div>
                               </div>
                             );
                           })}

@@ -39,10 +39,10 @@ the next begins.
 - **It is only part of a LitRPG storyboard.** Level, XP and rank are real
   fields, and the board now has `system`, `skill`, `item`, `quest` and `faction`
   cards. Skills and inventory are real rows with the chapter they arrived in,
-  an item can record where it was lost, and a `skill` or `item` card names who
-  has it — but `quest` and `faction` cards
-  still carry only a label, notes and connections, and nothing checks whether a
-  level-up was earned or a rank only rose.
+  an item can record where it was lost, skills keep upgrades, uses and sacrifices
+  in reading order, and a `skill` or `item` card names who has it — but `quest`
+  and `faction` cards still carry only a label, notes and connections, and nothing
+  checks whether a level-up was earned or a rank only rose.
 - **In-world time is a day and a typed label.** A chapter can name its POV, its
   day and a free-text time, and appears on a timeline, but there is no calendar
   and only labels that read as a clock or a day part are ordered; a shared moment
@@ -51,10 +51,12 @@ the next begins.
   with the arrow buttons, but "where is Rook at chapter 9?" is still answered by
   the timeline, not by a search.
 - **Continuity checking is partial.** The Chapters tab warns about chapter
-  timing, a cast member in two places on one day, and an item still carried or
-  acquired after its recorded loss. Nothing checks that a character is in two
-  places across days, that a skill is used before it is learned, or that a chapter
-  is missing.
+  timing, a cast member in two places on one day, an item still carried or
+  acquired after its recorded loss, a level drop without a penalty flag, a skill
+  used before it was learned or upgraded, and a skill used after it was sacrificed.
+  Nothing checks that a character is in two places across days, that a chapter is
+  missing, or that an event was entered at all; warnings only exist where the
+  author recorded the chapter.
 - **Visuals are unverified.** Every UI claim in this project is proven through
   jsdom and synthetic events; the desktop window has never been looked at during
   development.
@@ -287,12 +289,12 @@ window asks before a chapter or note draft goes, with **Keep working** focused.
 Remaining: cast in two places at once across different days, and
 moments that can only be described in words. **M**
 
-**9. Progression ledger.** A per-chapter record of level and XP for each cast
-member (`character_progress`, unique on character + chapter), entered in a small
-grid, then drawn as a power curve — one line per character, chapter on the x-axis
-and the choice of level, XP or any stat on the y. Warn on drops and on jumps
-larger than the author declares. This is the feature a LitRPG writer will open
-every session once it exists. **L**
+**9. Progression ledger.** **Started.** A per-chapter level milestone now exists
+(`character_level_milestones`), entered on the sheet with a chapter and an
+explicit penalty flag, and compared in reading order on the Chapters tab and the
+chapter cards. Remaining: XP per chapter (`character_progress`), a grid entry
+flow, and a power curve — one line per character, chapter on the x-axis and the
+choice of level, XP or any stat on the y, with declared jumps allowed. **L**
 
 ### Phase 3 — the world
 
@@ -303,7 +305,10 @@ character sheet lists them alphabetically with their chapter, and a skill's card
 names its holders with each one's rank and chapter. A reference whose node is
 purged is cleared rather than left dangling; trashing one alone keeps it.
 `character_skills` is schema v12, carried by export, import and the story bible,
-and covered by database and UI tests. **M**
+and covered by database and UI tests. **Skill events** (schema v15) record an
+upgrade, a use or a sacrifice against a chapter, with an optional rank; they are
+listed in reading order under the skill, audited individually, and carried by
+export and import. **M**
 
 **11. Inventory and currency.** **Done.** A cast member's items are rows with a
 name, an optional rarity and effect, a quantity, the chapter acquired in, the
@@ -338,12 +343,16 @@ names unchanged, and the legend test covers them. **S**
 
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
 Chapters tab currently flags chapter timing and duplication, a cast member in two
-chapters on one day, an item still carried after its recorded loss, and an item
-lost before it was acquired. Remaining: chapter gaps, cast linked after they are
-dead or trashed, skills used before acquisition, level drops between chapters,
-nodes untouched for 30 days, and dangling plot threads with no `resolves` edge.
-Every finding names its node and chapter, and clicking it pans there. Warnings
-are derived on read, so they cannot go stale. **M–L**
+chapters on one day, an item still carried after its recorded loss or lost before
+acquisition, a level drop without a penalty flag, a skill used before acquisition,
+a rank used before its upgrade, and a skill used after sacrifice. The last three
+and the level drop also appear as buttons on the affected chapter card; clicking
+one selects the holder and opens the exact milestone or skill event. Remaining:
+chapter gaps, cast linked after they are dead or trashed, nodes untouched for 30
+days, and dangling plot threads with no `resolves` edge. Every finding names its
+node and chapter; chapter links pan to that chapter, and progression links cross
+to the character sheet. Warnings are derived on read, so they cannot go stale.
+**M–L**
 
 **15. Story dashboard.** The landing view for a story: counts by type, chapters
 written vs drafted (a small status on chapter nodes), word totals, the cast with

@@ -1,6 +1,7 @@
 use litrpg_db::{
-    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterCurrency, CharacterSkill,
-    CharacterStat, Db, DeletedItem, Edge, InventoryItem, Node, Story, StoryExport,
+    AuditPage, BackupInfo, Character, CharacterAttribute, CharacterCurrency,
+    CharacterLevelMilestone, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem,
+    Edge, InventoryItem, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -245,6 +246,108 @@ fn get_story_skills(
     story_id: String,
 ) -> Result<Vec<CharacterSkill>, String> {
     db.list_story_skills(&story_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_level_milestones(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<CharacterLevelMilestone>, String> {
+    db.list_level_milestones(&character_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_level_milestones(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterLevelMilestone>, String> {
+    db.list_story_level_milestones(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_level_milestone(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    level: i64,
+    chapter_id: Option<String>,
+    is_debuff: bool,
+    user: String,
+) -> Result<CharacterLevelMilestone, String> {
+    db.add_level_milestone(character_id, level, chapter_id, is_debuff, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_level_milestone(
+    db: tauri::State<'_, Db>,
+    id: String,
+    level: i64,
+    chapter_id: Option<String>,
+    is_debuff: bool,
+    user: String,
+) -> Result<CharacterLevelMilestone, String> {
+    db.update_level_milestone(id, level, chapter_id, is_debuff, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_level_milestone(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
+    db.delete_level_milestone(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_skill_events(
+    db: tauri::State<'_, Db>,
+    skill_id: String,
+) -> Result<Vec<CharacterSkillEvent>, String> {
+    db.list_skill_events(&skill_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_skill_events(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterSkillEvent>, String> {
+    db.list_story_skill_events(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_skill_event(
+    db: tauri::State<'_, Db>,
+    skill_id: String,
+    kind: String,
+    chapter_id: Option<String>,
+    rank: Option<String>,
+    user: String,
+) -> Result<CharacterSkillEvent, String> {
+    db.add_skill_event(skill_id, kind, chapter_id, rank, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_skill_event(
+    db: tauri::State<'_, Db>,
+    id: String,
+    kind: String,
+    chapter_id: Option<String>,
+    rank: Option<String>,
+    user: String,
+) -> Result<CharacterSkillEvent, String> {
+    db.update_skill_event(id, kind, chapter_id, rank, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_skill_event(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_skill_event(&id, user).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -821,6 +924,16 @@ pub fn run() {
             delete_skill,
             get_character_skills,
             get_story_skills,
+            get_character_level_milestones,
+            get_story_level_milestones,
+            add_level_milestone,
+            update_level_milestone,
+            delete_level_milestone,
+            get_skill_events,
+            get_story_skill_events,
+            add_skill_event,
+            update_skill_event,
+            delete_skill_event,
             add_inventory_item,
             update_inventory_item,
             delete_inventory_item,

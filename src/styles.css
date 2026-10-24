@@ -2517,6 +2517,234 @@ body {
   cursor: not-allowed;
 }
 
+/* A skill keeps its changes as events: an upgrade, a use, a sacrifice. They sit
+   under the skill so the reading order reads down one column. */
+.skill-row {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.skill-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.skill-events {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 10px;
+  padding: 5px 0 0 10px;
+  border-top: 1px dashed #3a3a3a;
+}
+
+.skill-event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.skill-event-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-event-kind {
+  color: #c9c2a8;
+}
+
+.skill-event-chapter {
+  font-size: 10px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+
+.skill-event-row button {
+  margin-left: 0;
+}
+
+.skill-events > .skill-event-add {
+  align-self: flex-start;
+  margin-left: 0;
+  border-style: dashed;
+  color: #9a9a9a;
+}
+
+.skill-event-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.skill-event-editor select,
+.skill-event-editor input {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.skill-event-editor input {
+  flex: 1;
+  min-width: 90px;
+}
+
+.skill-event-editor input:disabled {
+  color: #666;
+}
+
+.skill-event-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.skill-event-actions button {
+  margin-left: 0;
+}
+
+/* Level milestones are the same idea for the sheet's level: a level in a
+   chapter, with an explicit penalty for a deliberate drop. */
+.level-section {
+  margin-bottom: 18px;
+}
+
+.level-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #d4b106;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.level-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.level-value {
+  color: #ddd;
+}
+
+.level-chapter {
+  font-size: 10px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+
+.level-penalty {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.16);
+  color: #fca5a5;
+  white-space: nowrap;
+}
+
+.level-row button {
+  margin-left: 0;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.level-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.level-editor,
+.level-creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.level-editor input,
+.level-editor select,
+.level-creator input,
+.level-creator select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.level-editor input[type='number'],
+.level-creator input[type='number'] {
+  width: 70px;
+}
+
+.level-penalty-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #b9b9b9;
+}
+
+.level-penalty-field input {
+  width: auto;
+}
+
+.level-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.level-creator button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* A warning opened from the board or the panel marks the exact row to edit. */
+.progression-row-focused {
+  outline: 2px solid #f0b429;
+  outline-offset: 1px;
+  background: rgba(240, 180, 41, 0.08);
+}
+
 /* Inventory and currency (a ledger, not a game engine) */
 .inventory-section,
 .currency-section {
@@ -3129,8 +3357,8 @@ body {
   font-style: italic;
 }
 
-/* A lost-item warning sits on the chapter card it belongs to, so the problem is
-   visible on the board rather than only in the panel below it. */
+/* A continuity warning sits on the chapter card it belongs to, so the problem
+   is visible on the board rather than only in the panel below it. */
 .graph-node-continuity {
   display: flex;
   flex-direction: column;
