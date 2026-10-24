@@ -161,6 +161,38 @@ interface CharacterLevelMilestone {
   updated_at: string;
 }
 
+// One cast-to-cast bond. Symmetric kinds are stored with the two ids in a fixed
+// order, so the same alliance cannot be recorded from both sides.
+interface CharacterRelation {
+  id: string;
+  story_id: string;
+  from_character_id: string;
+  to_character_id: string;
+  kind: string;
+  note: string | null;
+  since_chapter_id: string | null;
+  until_chapter_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// One character's place in a faction for an arc. The faction is a card; a purged
+// card clears the link rather than deleting the recorded standing.
+interface FactionStanding {
+  id: string;
+  story_id: string;
+  character_id: string;
+  faction_node_id: string | null;
+  standing: string;
+  note: string | null;
+  since_chapter_id: string | null;
+  until_chapter_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // One chapter's XP income. This is separate from the total XP snapshot on a
 // milestone: one says what was earned there, the other what the running total was.
 interface CharacterProgress {
@@ -371,7 +403,9 @@ type ProgressionTarget =
   | { kind: 'inventory'; itemId: string }
   | { kind: 'skill'; skillId: string }
   | { kind: 'skill-event'; eventId: string; skillId: string }
-  | { kind: 'level'; milestoneId: string };
+  | { kind: 'level'; milestoneId: string }
+  | { kind: 'relation'; relationId: string }
+  | { kind: 'faction-standing'; standingId: string };
 
 // One continuity warning, kept with the chapter whose card it belongs on. The
 // summary is short enough for a card; the detail is the whole sentence and goes
@@ -1122,6 +1156,8 @@ const entityLabels: Record<string, string> = {
   character_skill: 'Character skill',
   character_inventory: 'Inventory item',
   character_currency: 'Currency',
+  character_relation: 'Relation',
+  faction_standing: 'Faction standing',
   node: 'Graph node',
   edge: 'Graph connection',
 };
@@ -1146,6 +1182,8 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
   { value: 'character_skill', label: 'Skills' },
   { value: 'character_inventory', label: 'Inventory' },
   { value: 'character_currency', label: 'Currency' },
+  { value: 'character_relation', label: 'Relations' },
+  { value: 'faction_standing', label: 'Faction standings' },
   { value: 'node', label: 'Nodes' },
   { value: 'edge', label: 'Connections' },
 ];
@@ -1191,6 +1229,12 @@ const fieldLabels: Record<string, string> = {
   card: 'skill card',
   item_card: 'item card',
   lost_chapter: 'chapter lost in',
+  kind: 'kind',
+  note: 'note',
+  standing: 'standing',
+  faction: 'faction card',
+  since: 'began in',
+  until: 'ended in',
 };
 
 // The chapter list's one-sentence warning. Positions start at 1, so a story
@@ -1753,6 +1797,402 @@ function ProgressionChart({
   );
 }
 
+// How each relation kind is drawn. The five suggested kinds have their own
+// colour and line shape so the map reads without the legend; anything the author
+// types gets a neutral grey line rather than being hidden.
+const RELATION_STYLES: Record<string, { color: string; dash?: string; arrow?: boolean }> = {
+  ally: { color: '#6fbf8f' },
+  rival: { color: '#d77a7a', dash: '6 4' },
+  mentor: { color: '#d9b36c', arrow: true },
+  family: { color: '#b18fd6', dash: '2 4' },
+  owes: { color: '#9aa4b2', dash: '4 3', arrow: true },
+};
+
+function relationStyle(kind: string) {
+  return RELATION_STYLES[kind.trim().toLowerCase()] ?? { color: '#8a8a8a' };
+}
+
+// SVG text never wraps, so a long name is shortened in the box and kept whole in
+// the hover title rather than spilling over its neighbours.
+function mapLabel(label: string, limit = 18) {
+  return label.length > limit ? `${label.slice(0, limit - 1)}…` : label;
+}
+
+// The cast map in the Characters tab. It is a schematic rather than another
+// canvas: people sit on a ring, factions in the middle, and a line joins every
+// recorded bond. Clicking a name focuses that person and dims the rest; clicking
+// a line opens the relation's own editor on the sheet, where it is changed.
+function RelationsMap({
+  characters,
+  relations,
+  standings,
+  factions,
+  onOpenRelation,
+  onOpenStanding,
+}: {
+  characters: Character[];
+  relations: CharacterRelation[];
+  standings: FactionStanding[];
+  factions: { id: string; label: string }[];
+  onOpenRelation: (relation: CharacterRelation) => void;
+  onOpenStanding: (standing: FactionStanding) => void;
+}) {
+  const [focusedCharacterId, setFocusedCharacterId] = useState<string | null>(null);
+
+  const width = 760;
+  const height = 480;
+  const center = { x: width / 2, y: height / 2 };
+
+  const castPoints = useMemo(() => {
+    const points = new Map<string, { x: number; y: number }>();
+    const radius = Math.min(210, 80 + characters.length * 22);
+
+    characters.forEach((character, index) => {
+      const angle =
+        (2 * Math.PI * index) / Math.max(characters.length, 1) - Math.PI / 2;
+      points.set(character.id, {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius * 0.82,
+      });
+    });
+
+    return points;
+  }, [characters]);
+
+  const factionPoints = useMemo(() => {
+    const points = new Map<string, { x: number; y: number }>();
+    const gap = 62;
+    const startY = center.y - ((factions.length - 1) * gap) / 2;
+
+    factions.forEach((faction, index) => {
+      points.set(faction.id, { x: center.x, y: startY + index * gap });
+    });
+
+    return points;
+  }, [factions]);
+
+  const nameById = useMemo(
+    () => new Map(characters.map(character => [character.id, character.name])),
+    [characters]
+  );
+
+  const factionLabel = (id: string | null) =>
+    factions.find(faction => faction.id === id)?.label ?? 'a faction no longer on the board';
+
+  const focus = (characterId: string) =>
+    setFocusedCharacterId(current => (current === characterId ? null : characterId));
+
+  if (characters.length === 0) {
+    return (
+      <div className="relations-map-empty">
+        No cast yet — add a character and the map has something to join.
+      </div>
+    );
+  }
+
+  return (
+    <div className="relations-map-panel">
+      <div className="relations-map-head">
+        <p className="relations-map-caption">
+          Rivalries, alliances and mentorships between the cast, with faction
+          standings in the middle. Click a name to focus it; click a line to open
+          its entry.
+        </p>
+        {focusedCharacterId && (
+          <button
+            type="button"
+            className="relations-map-clear"
+            title="Show every character again"
+            onClick={() => setFocusedCharacterId(null)}
+          >
+            Clear focus
+          </button>
+        )}
+      </div>
+
+      <svg
+        className="relations-map"
+        viewBox={`0 0 ${width} ${height}`}
+        role="group"
+        aria-label="Cast relations map"
+      >
+        <defs>
+          <marker
+            id="relations-arrow"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#d9b36c" />
+          </marker>
+        </defs>
+
+        <rect
+          className="relations-map-background"
+          width={width}
+          height={height}
+          onClick={() => setFocusedCharacterId(null)}
+        />
+
+        {standings.map(standing => {
+          const from = castPoints.get(standing.character_id);
+          const to = standing.faction_node_id
+            ? factionPoints.get(standing.faction_node_id)
+            : null;
+
+          if (!from || !to) return null;
+
+          const dimmed =
+            focusedCharacterId != null && focusedCharacterId !== standing.character_id;
+          const person = nameById.get(standing.character_id) ?? 'A cast member';
+
+          return (
+            <g
+              key={`standing-${standing.id}`}
+              className={`relations-membership${dimmed ? ' dimmed' : ''}`}
+            >
+              <line
+                className="relations-edge-hit"
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                role="button"
+                tabIndex={0}
+                aria-label={`Edit ${person}'s ${standing.standing} standing in ${factionLabel(
+                  standing.faction_node_id
+                )}`}
+                onClick={() => onOpenStanding(standing)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenStanding(standing);
+                  }
+                }}
+              />
+              <line
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke="#7f8fa6"
+                strokeWidth={1.5}
+                strokeDasharray="3 4"
+                pointerEvents="none"
+              />
+              <text
+                className="relations-membership-label"
+                x={(from.x + to.x) / 2}
+                y={(from.y + to.y) / 2 + 12}
+                textAnchor="middle"
+              >
+                {standing.standing}
+              </text>
+            </g>
+          );
+        })}
+
+        {relations.map(relation => {
+          const from = castPoints.get(relation.from_character_id);
+          const to = castPoints.get(relation.to_character_id);
+
+          if (!from || !to) return null;
+
+          const style = relationStyle(relation.kind);
+          const dimmed =
+            focusedCharacterId != null &&
+            relation.from_character_id !== focusedCharacterId &&
+            relation.to_character_id !== focusedCharacterId;
+          const fromName =
+            nameById.get(relation.from_character_id) ?? 'a cast member in the trash';
+          const toName =
+            nameById.get(relation.to_character_id) ?? 'a cast member in the trash';
+
+          return (
+            <g
+              key={`relation-${relation.id}`}
+              className={`relations-edge${dimmed ? ' dimmed' : ''}`}
+            >
+              <line
+                className="relations-edge-hit"
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                role="button"
+                tabIndex={0}
+                aria-label={`Edit the ${relation.kind} relation between ${fromName} and ${toName}`}
+                onClick={() => onOpenRelation(relation)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenRelation(relation);
+                  }
+                }}
+              />
+              <line
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke={style.color}
+                strokeWidth={2}
+                strokeDasharray={style.dash}
+                markerEnd={style.arrow ? 'url(#relations-arrow)' : undefined}
+                pointerEvents="none"
+              />
+              <text
+                className="relations-edge-label"
+                x={(from.x + to.x) / 2}
+                y={(from.y + to.y) / 2 - 6}
+                textAnchor="middle"
+              >
+                {relation.kind}
+              </text>
+            </g>
+          );
+        })}
+
+        {factions.map(faction => {
+          const point = factionPoints.get(faction.id);
+
+          if (!point) return null;
+
+          const dimmed =
+            focusedCharacterId != null &&
+            !standings.some(
+              standing =>
+                standing.character_id === focusedCharacterId &&
+                standing.faction_node_id === faction.id
+            );
+
+          return (
+            <g
+              key={`faction-${faction.id}`}
+              className={`relations-faction${dimmed ? ' dimmed' : ''}`}
+              transform={`translate(${point.x} ${point.y})`}
+            >
+              <rect x={-72} y={-16} width={144} height={32} rx={6} />
+              <text textAnchor="middle" y={4}>
+                {mapLabel(faction.label, 24)}
+              </text>
+            </g>
+          );
+        })}
+
+        {characters.map(character => {
+          const point = castPoints.get(character.id);
+
+          if (!point) return null;
+
+          const focused = focusedCharacterId === character.id;
+          const dimmed = focusedCharacterId != null && !focused;
+
+          return (
+            <g
+              key={`cast-${character.id}`}
+              className={`relations-cast${focused ? ' focused' : ''}${
+                dimmed ? ' dimmed' : ''
+              }`}
+              transform={`translate(${point.x} ${point.y})`}
+              role="button"
+              tabIndex={0}
+              aria-pressed={focused}
+              aria-label={
+                focused ? `Stop focusing ${character.name}` : `Focus ${character.name}`
+              }
+              onClick={() => focus(character.id)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  focus(character.id);
+                }
+              }}
+            >
+              <rect x={-62} y={-18} width={124} height={36} rx={8} />
+              <text textAnchor="middle" y={5}>
+                {mapLabel(character.name)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+
+      <div className="relations-legend" role="group" aria-label="Relation styles">
+        {['ally', 'rival', 'mentor', 'family', 'owes'].map(kind => {
+          const style = relationStyle(kind);
+          return (
+            <span key={kind} className="relations-legend-item">
+              <svg width={26} height={8} aria-hidden="true">
+                <line
+                  x1={1}
+                  y1={4}
+                  x2={25}
+                  y2={4}
+                  stroke={style.color}
+                  strokeWidth={2}
+                  strokeDasharray={style.dash}
+                />
+              </svg>
+              {kind}
+            </span>
+          );
+        })}
+        <span className="relations-legend-item">
+          <svg width={26} height={8} aria-hidden="true">
+            <line
+              x1={1}
+              y1={4}
+              x2={25}
+              y2={4}
+              stroke="#7f8fa6"
+              strokeWidth={1.5}
+              strokeDasharray="3 4"
+            />
+          </svg>
+          faction
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// The two views of the Characters tab, in one place so the sheet and the map
+// describe the switch the same way.
+function CharacterViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'sheet' | 'relations';
+  onChange: (view: 'sheet' | 'relations') => void;
+}) {
+  return (
+    <div className="character-view-toggle" role="group" aria-label="Characters view">
+      <button
+        type="button"
+        className={view === 'sheet' ? 'active' : ''}
+        aria-pressed={view === 'sheet'}
+        title="Edit the selected character's sheet"
+        onClick={() => onChange('sheet')}
+      >
+        Sheets
+      </button>
+      <button
+        type="button"
+        className={view === 'relations' ? 'active' : ''}
+        aria-pressed={view === 'relations'}
+        title="Map the cast's relations and faction standings"
+        onClick={() => onChange('relations')}
+      >
+        Relations
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [currentStory, setCurrentStory] = useState<Story | null>(null);
@@ -1936,6 +2376,12 @@ function App() {
     xp: number;
   } | null>(null);
   const [syncingXpMilestoneId, setSyncingXpMilestoneId] = useState<string | null>(null);
+  // Cast relations and faction standings are story-wide, like the progression
+  // ledgers, so the map, the sheets and the continuity checks read one copy.
+  const [storyRelations, setStoryRelations] = useState<CharacterRelation[]>([]);
+  const [storyFactionStandings, setStoryFactionStandings] = useState<FactionStanding[]>([]);
+  // The Characters tab opens on the sheets; the map is a mode, not another tab.
+  const [characterView, setCharacterView] = useState<'sheet' | 'relations'>('sheet');
   // One income row per character and chapter, read with the rest of the story so
   // the chart and a sheet share the same ledger.
   const [storyCharacterProgress, setStoryCharacterProgress] = useState<
@@ -1962,6 +2408,31 @@ function App() {
   // chapter back does not also put the item's other fields back.
   const storyInventoryRef = useRef<InventoryItem[]>([]);
   const [characterCurrency, setCharacterCurrency] = useState<CharacterCurrency[]>([]);
+
+  // The relations form, and the one row open for editing at a time. A relation's
+  // other end is fixed once made: changing who it joins means a different bond,
+  // so it is deleted and recorded again rather than silently rewritten.
+  const [newRelationKind, setNewRelationKind] = useState('ally');
+  const [newRelationToId, setNewRelationToId] = useState('');
+  const [newRelationChapterId, setNewRelationChapterId] = useState('');
+  const [newRelationNote, setNewRelationNote] = useState('');
+  const [editingRelationId, setEditingRelationId] = useState<string | null>(null);
+  const [relationKindDraft, setRelationKindDraft] = useState('');
+  const [relationChapterDraft, setRelationChapterDraft] = useState('');
+  const [relationUntilChapterDraft, setRelationUntilChapterDraft] = useState('');
+  const [relationNoteDraft, setRelationNoteDraft] = useState('');
+
+  // The faction standing form, one row open at a time like the rest.
+  const [newStandingFactionId, setNewStandingFactionId] = useState('');
+  const [newStandingText, setNewStandingText] = useState('');
+  const [newStandingChapterId, setNewStandingChapterId] = useState('');
+  const [newStandingNote, setNewStandingNote] = useState('');
+  const [editingStandingId, setEditingStandingId] = useState<string | null>(null);
+  const [standingFactionDraft, setStandingFactionDraft] = useState('');
+  const [standingTextDraft, setStandingTextDraft] = useState('');
+  const [standingChapterDraft, setStandingChapterDraft] = useState('');
+  const [standingUntilChapterDraft, setStandingUntilChapterDraft] = useState('');
+  const [standingNoteDraft, setStandingNoteDraft] = useState('');
 
   // The item form, one row open at a time like skills. Quantities are kept as
   // typed text so a field can be cleared while it is being changed.
@@ -2035,7 +2506,7 @@ function App() {
   const [chartMetric, setChartMetric] = useState<ProgressionMetric>('level');
   const [chartStatName, setChartStatName] = useState('');
   const [focusedProgression, setFocusedProgression] = useState<{
-    kind: 'skill' | 'skill-event' | 'level';
+    kind: 'skill' | 'skill-event' | 'level' | 'relation' | 'faction-standing';
     id: string;
   } | null>(null);
   const progressionFocusTimer = useRef<number | null>(null);
@@ -2197,6 +2668,8 @@ function App() {
         inventory,
         notes,
         chapterCast,
+        relations,
+        standings,
       ] =
         await Promise.all([
           invoke<Character[]>('get_characters', { storyId: story.id }),
@@ -2212,6 +2685,8 @@ function App() {
           invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
           invoke<any[]>('get_chapter_notes', { storyId: story.id }),
           invoke<ChapterCastMember[]>('get_story_chapter_cast', { storyId: story.id }),
+          invoke<CharacterRelation[]>('get_story_relations', { storyId: story.id }),
+          invoke<FactionStanding[]>('get_story_faction_standings', { storyId: story.id }),
         ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
@@ -2222,6 +2697,8 @@ function App() {
       setStoryInventory(inventory ?? []);
       setChapterNotes((notes ?? []).map(toChapterNote));
       setStoryChapterCast(chapterCast ?? []);
+      setStoryRelations(relations ?? []);
+      setStoryFactionStandings(standings ?? []);
 
       // A node or connection from the previous story is no longer on the canvas.
       setSelectedNodeId(null);
@@ -3023,9 +3500,10 @@ function App() {
       } else {
         setTrash(previous => previous.filter(other => other.id !== item.id));
 
-        // Purging a cast member clears every node linked to it, so the graph is
+        // Purging a cast member clears every node linked to it, and purging a
+        // faction card clears the standings that named it, so the story is
         // re-read instead of being left pointing at a row that no longer exists.
-        if (item.kind === 'character' && currentStory) {
+        if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
           await loadStory(currentStory);
         }
       }
@@ -3670,6 +4148,207 @@ function App() {
       }
     });
 
+    // A relation or a standing can point at the trash, or describe an arc that
+    // ends before it began. The same advisory pass names those, because they are
+    // read from the same chapter order as the rest of progression.
+    const factionLabels = new Map(
+      nodes
+        .filter(node => node.data.nodeType === 'faction')
+        .map(node => [node.id, node.data.label])
+    );
+
+    for (const relation of storyRelations) {
+      const fromName = castNames.get(relation.from_character_id);
+      const toName = castNames.get(relation.to_character_id);
+
+      // Both ends in the trash: there is no sheet left to open, so nothing is
+      // claimed about a bond that cannot be read on either side.
+      if (!fromName && !toName) continue;
+
+      const target: ProgressionTarget = { kind: 'relation', relationId: relation.id };
+      const chapterId = relation.since_chapter_id ?? relation.until_chapter_id;
+
+      if (!fromName || !toName) {
+        const liveId = fromName ? relation.from_character_id : relation.to_character_id;
+        const liveName = (fromName ?? toName) as string;
+        const parts: ContinuityPart[] = [
+          characterLink(liveId, liveName, target),
+          `'s ${relation.kind} relation points at a cast member in the trash.`,
+        ];
+
+        flags.push({
+          id: `relation-trashed-${relation.id}`,
+          kind: 'relation-trashed-cast',
+          chapterId,
+          characterId: liveId,
+          characterName: liveName,
+          summary: `${liveName}'s ${relation.kind} is in the trash`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+        continue;
+      }
+
+      const sinceSeq = seqOf(relation.since_chapter_id);
+      const untilSeq = seqOf(relation.until_chapter_id);
+
+      if (sinceSeq == null || untilSeq == null || untilSeq >= sinceSeq) continue;
+
+      const sinceChapter = chapterById.get(relation.since_chapter_id as string);
+      const untilChapter = chapterById.get(relation.until_chapter_id as string);
+
+      if (!sinceChapter || !untilChapter) continue;
+
+      const parts: ContinuityPart[] = [
+        characterLink(relation.from_character_id, fromName, target),
+        `'s ${relation.kind} relation with ${toName} ends in `,
+        chapterLink(untilChapter.id, untilChapter.data.label, true),
+        ' before it begins in ',
+        chapterLink(sinceChapter.id, sinceChapter.data.label, true),
+        '.',
+      ];
+
+      flags.push({
+        id: `relation-order-${relation.id}`,
+        kind: 'relation-ends-before-it-begins',
+        chapterId: relation.until_chapter_id,
+        characterId: relation.from_character_id,
+        characterName: fromName,
+        summary: `${fromName}'s ${relation.kind} ends before it begins`,
+        detail: continuityText(parts),
+        parts,
+        target,
+      });
+    }
+
+    for (const standing of storyFactionStandings) {
+      const owner = castNames.get(standing.character_id);
+
+      if (!owner) continue;
+
+      const target: ProgressionTarget = {
+        kind: 'faction-standing',
+        standingId: standing.id,
+      };
+      const factionName = standing.faction_node_id
+        ? factionLabels.get(standing.faction_node_id)
+        : undefined;
+      const chapterId = standing.since_chapter_id ?? standing.until_chapter_id;
+
+      if (!factionName) {
+        const parts: ContinuityPart[] = [
+          characterLink(standing.character_id, owner, target),
+          `'s ${standing.standing} standing is on a faction card in the trash.`,
+        ];
+
+        flags.push({
+          id: `standing-trashed-${standing.id}`,
+          kind: 'standing-faction-trashed',
+          chapterId,
+          characterId: standing.character_id,
+          characterName: owner,
+          summary: `${owner}'s ${standing.standing} faction is in the trash`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+        continue;
+      }
+
+      const sinceSeq = seqOf(standing.since_chapter_id);
+      const untilSeq = seqOf(standing.until_chapter_id);
+
+      if (
+        standing.since_chapter_id &&
+        standing.until_chapter_id &&
+        sinceSeq != null &&
+        untilSeq != null &&
+        untilSeq < sinceSeq
+      ) {
+        const sinceChapter = chapterById.get(standing.since_chapter_id);
+        const untilChapter = chapterById.get(standing.until_chapter_id);
+
+        if (sinceChapter && untilChapter) {
+          const parts: ContinuityPart[] = [
+            characterLink(standing.character_id, owner, target),
+            `'s ${standing.standing} standing in ${factionName} ends in `,
+            chapterLink(untilChapter.id, untilChapter.data.label, true),
+            ' before it begins in ',
+            chapterLink(sinceChapter.id, sinceChapter.data.label, true),
+            '.',
+          ];
+
+          flags.push({
+            id: `standing-order-${standing.id}`,
+            kind: 'standing-ends-before-it-begins',
+            chapterId: standing.until_chapter_id,
+            characterId: standing.character_id,
+            characterName: owner,
+            summary: `${owner}'s ${standing.standing} standing ends before it begins`,
+            detail: continuityText(parts),
+            parts,
+            target,
+          });
+        }
+      }
+
+      // Two stints in one faction that share a chapter contradict each other:
+      // a person cannot be a captain and an exile at the same moment. Each pair
+      // is named once, against the stint that starts later.
+      for (const other of storyFactionStandings) {
+        if (
+          other.id <= standing.id ||
+          other.character_id !== standing.character_id ||
+          other.faction_node_id !== standing.faction_node_id
+        ) {
+          continue;
+        }
+
+        const leftStart = seqOf(standing.since_chapter_id);
+        const rightStart = seqOf(other.since_chapter_id);
+
+        if (leftStart == null || rightStart == null) continue;
+
+        const leftEnd = seqOf(standing.until_chapter_id) ?? Number.MAX_SAFE_INTEGER;
+        const rightEnd = seqOf(other.until_chapter_id) ?? Number.MAX_SAFE_INTEGER;
+
+        if (leftStart > rightEnd || rightStart > leftEnd) continue;
+
+        const later = rightStart >= leftStart ? other : standing;
+        const earlier = later.id === standing.id ? other : standing;
+        const laterChapter = chapterById.get(later.since_chapter_id as string);
+        const earlierChapter = chapterById.get(earlier.since_chapter_id as string);
+
+        if (!laterChapter || !earlierChapter) continue;
+
+        const laterTarget: ProgressionTarget = {
+          kind: 'faction-standing',
+          standingId: later.id,
+        };
+        const parts: ContinuityPart[] = [
+          characterLink(standing.character_id, owner, laterTarget),
+          ` holds two standings in ${factionName} at once: ${earlier.standing} since `,
+          chapterLink(earlierChapter.id, earlierChapter.data.label, true),
+          ` and ${later.standing} since `,
+          chapterLink(laterChapter.id, laterChapter.data.label, true),
+          '.',
+        ];
+
+        flags.push({
+          id: `standing-overlap-${earlier.id}-${later.id}`,
+          kind: 'standing-overlap',
+          chapterId: later.since_chapter_id,
+          characterId: standing.character_id,
+          characterName: owner,
+          summary: `${owner} holds two standings in ${factionName} at once`,
+          detail: continuityText(parts),
+          parts,
+          target: laterTarget,
+        });
+      }
+    }
+
     const skillById = new Map(storySkills.map(skill => [skill.id, skill]));
     const eventsBySkill = new Map<string, CharacterSkillEvent[]>();
 
@@ -3866,6 +4545,9 @@ function App() {
     storyCharacterProgress,
     storySkillEvents,
     storySkills,
+    storyRelations,
+    storyFactionStandings,
+    nodes,
   ]);
 
   const progressFlagsByChapter = useMemo(() => {
@@ -3887,6 +4569,8 @@ function App() {
   const openCharacterSheet = useCallback(
     (characterId: string, target?: ProgressionTarget) => {
       setSelectedTab('characters');
+      // A warning or a map edge opens the entry on the sheet, not the map.
+      setCharacterView('sheet');
       setSelectedCharacterId(characterId);
       setEditingProgress(false);
       setCharacterError(null);
@@ -3912,9 +4596,53 @@ function App() {
       // A progression warning names the exact entry that contradicts the story.
       // Opening its editor puts the fix in front of the author instead of making
       // them find the row by hand.
-      let focusId = target.kind === 'level' ? target.milestoneId : target.skillId;
+      let focusId =
+        target.kind === 'level'
+          ? target.milestoneId
+          : target.kind === 'skill-event'
+            ? target.eventId
+            : target.kind === 'relation'
+              ? target.relationId
+              : target.kind === 'faction-standing'
+                ? target.standingId
+                : target.skillId;
 
-      if (target.kind === 'level') {
+      if (target.kind === 'relation') {
+        const relation = storyRelations.find(entry => entry.id === target.relationId);
+
+        setEditingLevelMilestoneId(null);
+        setEditingSkillId(null);
+        setEditingSkillEventId(null);
+        setAddingSkillEventFor(null);
+        setEditingStandingId(null);
+
+        if (relation) {
+          setEditingRelationId(relation.id);
+          setRelationKindDraft(relation.kind);
+          setRelationChapterDraft(relation.since_chapter_id ?? '');
+          setRelationUntilChapterDraft(relation.until_chapter_id ?? '');
+          setRelationNoteDraft(relation.note ?? '');
+        }
+      } else if (target.kind === 'faction-standing') {
+        const standing = storyFactionStandings.find(
+          entry => entry.id === target.standingId
+        );
+
+        setEditingLevelMilestoneId(null);
+        setEditingSkillId(null);
+        setEditingSkillEventId(null);
+        setAddingSkillEventFor(null);
+        setEditingRelationId(null);
+
+        if (standing) {
+          setEditingStandingId(standing.id);
+          setStandingFactionDraft(standing.faction_node_id ?? '');
+          setStandingTextDraft(standing.standing);
+          setStandingChapterDraft(standing.since_chapter_id ?? '');
+          setStandingUntilChapterDraft(standing.until_chapter_id ?? '');
+          setStandingNoteDraft(standing.note ?? '');
+        }
+      } else if (target.kind === 'level') {
         const milestone = storyLevelMilestones.find(entry => entry.id === target.milestoneId);
 
         if (milestone) {
@@ -3972,7 +4700,7 @@ function App() {
           ?.scrollIntoView?.({ block: 'nearest' });
       }, 0);
     },
-    [storyLevelMilestones, storySkillEvents, storySkills]
+    [storyLevelMilestones, storySkillEvents, storySkills, storyRelations, storyFactionStandings]
   );
 
   // Continuity is advisory: nothing here blocks a save. It names what looks
@@ -6025,6 +6753,222 @@ function App() {
     [actor, applyLevelMilestone, recordStep]
   );
 
+  const applyRelation = useCallback((saved: CharacterRelation) => {
+    setStoryRelations(previous =>
+      [...previous.filter(relation => relation.id !== saved.id), saved].sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )
+    );
+  }, []);
+
+  const addRelation = async () => {
+    if (!selectedCharacterId) return;
+
+    const kind = newRelationKind.trim();
+
+    if (!kind) {
+      setCharacterError('A relation needs a kind.');
+      return;
+    }
+
+    if (!newRelationToId) {
+      setCharacterError('Choose the cast member the relation joins.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterRelation = await invoke('add_relation', {
+        fromCharacterId: selectedCharacterId,
+        toCharacterId: newRelationToId,
+        kind,
+        note: newRelationNote.trim() || null,
+        sinceChapterId: newRelationChapterId || null,
+        untilChapterId: null,
+        user: actor,
+      });
+
+      applyRelation(saved);
+      setNewRelationToId('');
+      setNewRelationChapterId('');
+      setNewRelationNote('');
+    } catch (e) {
+      console.error('Failed to add a relation:', e);
+      setCharacterError(`Could not add the relation: ${String(e)}`);
+    }
+  };
+
+  const startRelationEdit = (relation: CharacterRelation) => {
+    setCharacterError(null);
+    setEditingRelationId(relation.id);
+    setRelationKindDraft(relation.kind);
+    setRelationChapterDraft(relation.since_chapter_id ?? '');
+    setRelationUntilChapterDraft(relation.until_chapter_id ?? '');
+    setRelationNoteDraft(relation.note ?? '');
+  };
+
+  const saveRelation = async (relation: CharacterRelation) => {
+    const kind = relationKindDraft.trim();
+
+    if (!kind) {
+      setCharacterError('A relation needs a kind.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterRelation = await invoke('update_relation', {
+        id: relation.id,
+        kind,
+        note: relationNoteDraft.trim() || null,
+        sinceChapterId: relationChapterDraft || null,
+        untilChapterId: relationUntilChapterDraft || null,
+        user: actor,
+      });
+
+      applyRelation(saved);
+      setEditingRelationId(null);
+    } catch (e) {
+      console.error('Failed to save a relation:', e);
+      setCharacterError(`Could not save the relation: ${String(e)}`);
+    }
+  };
+
+  const removeRelation = async (relation: CharacterRelation) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_relation', { id: relation.id, user: actor });
+      setStoryRelations(previous =>
+        previous.filter(other => other.id !== relation.id)
+      );
+      if (editingRelationId === relation.id) setEditingRelationId(null);
+    } catch (e) {
+      console.error('Failed to delete a relation:', e);
+      setCharacterError(`Could not delete the relation: ${String(e)}`);
+    }
+  };
+
+  const applyStanding = useCallback((saved: FactionStanding) => {
+    setStoryFactionStandings(previous =>
+      [...previous.filter(standing => standing.id !== saved.id), saved].sort(
+        (a, b) =>
+          (a.since_chapter_id ?? '').localeCompare(b.since_chapter_id ?? '') ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+      )
+    );
+  }, []);
+
+  const addStanding = async () => {
+    if (!selectedCharacterId) return;
+
+    const standing = newStandingText.trim();
+
+    if (!newStandingFactionId) {
+      setCharacterError('Choose the faction this standing belongs to.');
+      return;
+    }
+
+    if (!standing) {
+      setCharacterError('A faction standing needs a word for it.');
+      return;
+    }
+
+    if (!newStandingChapterId) {
+      setCharacterError('A faction standing needs the chapter it began in.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: FactionStanding = await invoke('add_faction_standing', {
+        characterId: selectedCharacterId,
+        factionNodeId: newStandingFactionId,
+        standing,
+        note: newStandingNote.trim() || null,
+        sinceChapterId: newStandingChapterId,
+        untilChapterId: null,
+        user: actor,
+      });
+
+      applyStanding(saved);
+      setNewStandingText('');
+      setNewStandingChapterId('');
+      setNewStandingNote('');
+    } catch (e) {
+      console.error('Failed to add a faction standing:', e);
+      setCharacterError(`Could not add the faction standing: ${String(e)}`);
+    }
+  };
+
+  const startStandingEdit = (standing: FactionStanding) => {
+    setCharacterError(null);
+    setEditingStandingId(standing.id);
+    setStandingFactionDraft(standing.faction_node_id ?? '');
+    setStandingTextDraft(standing.standing);
+    setStandingChapterDraft(standing.since_chapter_id ?? '');
+    setStandingUntilChapterDraft(standing.until_chapter_id ?? '');
+    setStandingNoteDraft(standing.note ?? '');
+  };
+
+  const saveStanding = async (standing: FactionStanding) => {
+    const text = standingTextDraft.trim();
+
+    if (!standingFactionDraft) {
+      setCharacterError('Choose the faction this standing belongs to.');
+      return;
+    }
+
+    if (!text) {
+      setCharacterError('A faction standing needs a word for it.');
+      return;
+    }
+
+    if (!standingChapterDraft) {
+      setCharacterError('A faction standing needs the chapter it began in.');
+      return;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: FactionStanding = await invoke('update_faction_standing', {
+        id: standing.id,
+        factionNodeId: standingFactionDraft,
+        standing: text,
+        note: standingNoteDraft.trim() || null,
+        sinceChapterId: standingChapterDraft,
+        untilChapterId: standingUntilChapterDraft || null,
+        user: actor,
+      });
+
+      applyStanding(saved);
+      setEditingStandingId(null);
+    } catch (e) {
+      console.error('Failed to save a faction standing:', e);
+      setCharacterError(`Could not save the faction standing: ${String(e)}`);
+    }
+  };
+
+  const removeStanding = async (standing: FactionStanding) => {
+    setCharacterError(null);
+
+    try {
+      await invoke('delete_faction_standing', { id: standing.id, user: actor });
+      setStoryFactionStandings(previous =>
+        previous.filter(other => other.id !== standing.id)
+      );
+      if (editingStandingId === standing.id) setEditingStandingId(null);
+    } catch (e) {
+      console.error('Failed to delete a faction standing:', e);
+      setCharacterError(`Could not delete the faction standing: ${String(e)}`);
+    }
+  };
+
   const levelMilestoneXpFromDraft = (text: string): number | null | 'invalid' => {
     const xp = text.trim();
 
@@ -7706,6 +8650,54 @@ function App() {
         .filter(node => node.data.nodeType === 'item')
         .sort((a, b) => a.data.label.localeCompare(b.data.label)),
     [nodes]
+  );
+
+  const factionCardChoices = useMemo(
+    () =>
+      nodes
+        .filter(node => node.data.nodeType === 'faction')
+        .sort((a, b) => a.data.label.localeCompare(b.data.label)),
+    [nodes]
+  );
+
+  // The sheet lists the bonds that touch this character from either side, and
+  // the standings recorded for them, from the one story-wide copy.
+  const selectedRelations = useMemo(
+    () =>
+      storyRelations.filter(
+        relation =>
+          relation.from_character_id === selectedCharacterId ||
+          relation.to_character_id === selectedCharacterId
+      ),
+    [storyRelations, selectedCharacterId]
+  );
+
+  const selectedStandings = useMemo(() => {
+    const seq = new Map(
+      chapterChoices.map(node => [
+        node.id,
+        node.data.chapterSeq ?? Number.MAX_SAFE_INTEGER,
+      ])
+    );
+
+    return storyFactionStandings
+      .filter(standing => standing.character_id === selectedCharacterId)
+      .sort(
+        (left, right) =>
+          (seq.get(left.since_chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) -
+            (seq.get(right.since_chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) ||
+          left.created_at.localeCompare(right.created_at)
+      );
+  }, [storyFactionStandings, selectedCharacterId, chapterChoices]);
+
+  const characterNameById = useMemo(
+    () => new Map(characters.map(character => [character.id, character.name])),
+    [characters]
+  );
+
+  const chapterLabelById = useMemo(
+    () => new Map(chapterChoices.map(node => [node.id, node.data.label])),
+    [chapterChoices]
   );
 
   const chapterSeqById = useMemo(
@@ -9961,8 +10953,40 @@ function App() {
           </div>
         )}
 
-        {selectedTab === 'characters' && (
+        {selectedTab === 'characters' && characterView === 'relations' && (
           <div className="tab-content">
+            <CharacterViewToggle view="relations" onChange={setCharacterView} />
+            {!currentStory ? (
+              <div className="empty-state">Load a story to map its cast</div>
+            ) : (
+              <RelationsMap
+                characters={characters}
+                relations={storyRelations}
+                standings={storyFactionStandings}
+                factions={factionCardChoices.map(node => ({
+                  id: node.id,
+                  label: node.data.label,
+                }))}
+                onOpenRelation={relation =>
+                  openCharacterSheet(relation.from_character_id, {
+                    kind: 'relation',
+                    relationId: relation.id,
+                  })
+                }
+                onOpenStanding={standing =>
+                  openCharacterSheet(standing.character_id, {
+                    kind: 'faction-standing',
+                    standingId: standing.id,
+                  })
+                }
+              />
+            )}
+          </div>
+        )}
+
+        {selectedTab === 'characters' && characterView === 'sheet' && (
+          <div className="tab-content">
+            <CharacterViewToggle view="sheet" onChange={setCharacterView} />
             {!currentStory ? (
               <div className="empty-state">Load a story to manage characters</div>
             ) : (
@@ -11694,6 +12718,428 @@ function App() {
                             disabled={!newCurrencyName.trim()}
                           >
                             Add currency
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Relations join two cast members, so they live on the
+                          sheet beside the skills and items rather than on a card. */}
+                      <div className="relations-section">
+                        <h4 className="character-section-heading">Relations</h4>
+
+                        <div className="relation-list">
+                          {selectedRelations.length === 0 && (
+                            <div className="empty">
+                              No relations yet — a bond with another cast member is
+                              recorded below.
+                            </div>
+                          )}
+
+                          {selectedRelations.map(relation => {
+                            const otherId =
+                              relation.from_character_id === selectedCharacterId
+                                ? relation.to_character_id
+                                : relation.from_character_id;
+                            const otherName =
+                              characterNameById.get(otherId) ??
+                              'a cast member in the trash';
+                            const sinceLabel = relation.since_chapter_id
+                              ? chapterLabelById.get(relation.since_chapter_id) ??
+                                'a chapter in the trash'
+                              : null;
+                            const untilLabel = relation.until_chapter_id
+                              ? chapterLabelById.get(relation.until_chapter_id) ??
+                                'a chapter in the trash'
+                              : null;
+                            const focused =
+                              focusedProgression?.kind === 'relation' &&
+                              focusedProgression.id === relation.id;
+
+                            return (
+                              <div
+                                key={relation.id}
+                                data-progression={`relation-${relation.id}`}
+                                className={`relation-row${
+                                  focused ? ' progression-row-focused' : ''
+                                }`}
+                              >
+                                {editingRelationId === relation.id ? (
+                                  <div className="relation-editor">
+                                    <input
+                                      aria-label="Relation kind"
+                                      autoFocus
+                                      value={relationKindDraft}
+                                      onChange={(e) => setRelationKindDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void saveRelation(relation);
+                                        if (e.key === 'Escape') setEditingRelationId(null);
+                                      }}
+                                    />
+                                    <span className="relation-other">{otherName}</span>
+                                    <select
+                                      aria-label="Relation since chapter"
+                                      title="The chapter this bond began in"
+                                      value={relationChapterDraft}
+                                      onChange={(e) => setRelationChapterDraft(e.target.value)}
+                                    >
+                                      <option value="">No chapter recorded</option>
+                                      {chapterChoices.map(node => (
+                                        <option key={node.id} value={node.id}>
+                                          {node.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      aria-label="Relation until chapter"
+                                      title="The chapter this bond ended in, if it did"
+                                      value={relationUntilChapterDraft}
+                                      onChange={(e) =>
+                                        setRelationUntilChapterDraft(e.target.value)
+                                      }
+                                    >
+                                      <option value="">Still current</option>
+                                      {chapterChoices.map(node => (
+                                        <option key={node.id} value={node.id}>
+                                          {node.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      aria-label="Relation note"
+                                      placeholder="Note"
+                                      value={relationNoteDraft}
+                                      onChange={(e) => setRelationNoteDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void saveRelation(relation);
+                                        if (e.key === 'Escape') setEditingRelationId(null);
+                                      }}
+                                    />
+                                    <div className="relation-actions">
+                                      <button
+                                        title={`Save this ${relation.kind} relation`}
+                                        onClick={() => void saveRelation(relation)}
+                                      >
+                                        Save relation
+                                      </button>
+                                      <button
+                                        title="Leave the relation as it was"
+                                        onClick={() => setEditingRelationId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="relation-summary">
+                                      <span className="relation-kind">
+                                        {relation.kind}
+                                      </span>
+                                      <span className="relation-other">{otherName}</span>
+                                      <span className="relation-when">
+                                        {sinceLabel
+                                          ? `since ${sinceLabel}`
+                                          : 'no chapter recorded'}
+                                        {untilLabel ? ` – ${untilLabel}` : ''}
+                                      </span>
+                                    </div>
+                                    {relation.note && (
+                                      <span className="relation-note">
+                                        {relation.note}
+                                      </span>
+                                    )}
+                                    <button
+                                      title={`Change this ${relation.kind} relation`}
+                                      onClick={() => startRelationEdit(relation)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete this ${relation.kind} relation`}
+                                      onClick={() => void removeRelation(relation)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="relation-creator">
+                          <input
+                            aria-label="New relation kind"
+                            list="relation-kind-options"
+                            title="Ally, rival, mentor, family and owes are only suggestions"
+                            placeholder="Kind (ally)"
+                            value={newRelationKind}
+                            onChange={(e) => setNewRelationKind(e.target.value)}
+                          />
+                          <datalist id="relation-kind-options">
+                            {['ally', 'rival', 'mentor', 'family', 'owes'].map(kind => (
+                              <option key={kind} value={kind} />
+                            ))}
+                          </datalist>
+                          <select
+                            aria-label="New relation with"
+                            title="The other cast member in this relation"
+                            value={newRelationToId}
+                            onChange={(e) => setNewRelationToId(e.target.value)}
+                          >
+                            <option value="">Choose cast…</option>
+                            {characters
+                              .filter(character => character.id !== selectedCharacterId)
+                              .map(character => (
+                                <option key={character.id} value={character.id}>
+                                  {character.name}
+                                </option>
+                              ))}
+                          </select>
+                          <select
+                            aria-label="New relation since chapter"
+                            title="The chapter this bond began in"
+                            value={newRelationChapterId}
+                            onChange={(e) => setNewRelationChapterId(e.target.value)}
+                          >
+                            <option value="">No chapter recorded</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label="New relation note"
+                            placeholder="Note"
+                            value={newRelationNote}
+                            onChange={(e) => setNewRelationNote(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && void addRelation()}
+                          />
+                          <button
+                            title="Record this relation on the character's sheet"
+                            onClick={() => void addRelation()}
+                            disabled={!newRelationToId || !newRelationKind.trim()}
+                          >
+                            Add relation
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* A faction is a card, so the standing names it by its
+                          label and keeps the arc it began in. */}
+                      <div className="standings-section">
+                        <h4 className="character-section-heading">
+                          Faction standings
+                        </h4>
+
+                        <div className="standing-list">
+                          {selectedStandings.length === 0 && (
+                            <div className="empty">
+                              No faction standings yet — record one below.
+                            </div>
+                          )}
+
+                          {selectedStandings.map(standing => {
+                            const factionName =
+                              (standing.faction_node_id
+                                ? factionCardChoices.find(
+                                    node => node.id === standing.faction_node_id
+                                  )?.data.label
+                                : null) ?? 'a faction no longer on the board';
+                            const sinceLabel = standing.since_chapter_id
+                              ? chapterLabelById.get(standing.since_chapter_id) ??
+                                'a chapter in the trash'
+                              : null;
+                            const untilLabel = standing.until_chapter_id
+                              ? chapterLabelById.get(standing.until_chapter_id) ??
+                                'a chapter in the trash'
+                              : null;
+                            const focused =
+                              focusedProgression?.kind === 'faction-standing' &&
+                              focusedProgression.id === standing.id;
+
+                            return (
+                              <div
+                                key={standing.id}
+                                data-progression={`faction-standing-${standing.id}`}
+                                className={`standing-row${
+                                  focused ? ' progression-row-focused' : ''
+                                }`}
+                              >
+                                {editingStandingId === standing.id ? (
+                                  <div className="standing-editor">
+                                    <select
+                                      aria-label="Standing faction"
+                                      title="The faction card this standing belongs to"
+                                      value={standingFactionDraft}
+                                      onChange={(e) =>
+                                        setStandingFactionDraft(e.target.value)
+                                      }
+                                    >
+                                      <option value="">Choose faction…</option>
+                                      {factionCardChoices.map(node => (
+                                        <option key={node.id} value={node.id}>
+                                          {node.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      aria-label="Standing role"
+                                      placeholder="Standing (Member)"
+                                      autoFocus
+                                      value={standingTextDraft}
+                                      onChange={(e) => setStandingTextDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void saveStanding(standing);
+                                        if (e.key === 'Escape') setEditingStandingId(null);
+                                      }}
+                                    />
+                                    <select
+                                      aria-label="Standing since chapter"
+                                      title="The chapter this standing began in"
+                                      value={standingChapterDraft}
+                                      onChange={(e) =>
+                                        setStandingChapterDraft(e.target.value)
+                                      }
+                                    >
+                                      <option value="">Choose chapter…</option>
+                                      {chapterChoices.map(node => (
+                                        <option key={node.id} value={node.id}>
+                                          {node.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      aria-label="Standing until chapter"
+                                      title="The chapter this standing ended in, if it did"
+                                      value={standingUntilChapterDraft}
+                                      onChange={(e) =>
+                                        setStandingUntilChapterDraft(e.target.value)
+                                      }
+                                    >
+                                      <option value="">Still standing</option>
+                                      {chapterChoices.map(node => (
+                                        <option key={node.id} value={node.id}>
+                                          {node.data.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      aria-label="Standing note"
+                                      placeholder="Note"
+                                      value={standingNoteDraft}
+                                      onChange={(e) => setStandingNoteDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void saveStanding(standing);
+                                        if (e.key === 'Escape') setEditingStandingId(null);
+                                      }}
+                                    />
+                                    <div className="standing-actions">
+                                      <button
+                                        title="Save this faction standing"
+                                        onClick={() => void saveStanding(standing)}
+                                      >
+                                        Save standing
+                                      </button>
+                                      <button
+                                        title="Leave the standing as it was"
+                                        onClick={() => setEditingStandingId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="standing-summary">
+                                      <span className="standing-faction">
+                                        {factionName}
+                                      </span>
+                                      <span className="standing-role">
+                                        {standing.standing}
+                                      </span>
+                                      <span className="standing-when">
+                                        {sinceLabel
+                                          ? `since ${sinceLabel}`
+                                          : 'no chapter recorded'}
+                                        {untilLabel ? ` – ${untilLabel}` : ''}
+                                      </span>
+                                    </div>
+                                    {standing.note && (
+                                      <span className="standing-note">
+                                        {standing.note}
+                                      </span>
+                                    )}
+                                    <button
+                                      title={`Change this ${standing.standing} standing`}
+                                      onClick={() => startStandingEdit(standing)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      title={`Delete this ${standing.standing} standing`}
+                                      onClick={() => void removeStanding(standing)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="standing-creator">
+                          <select
+                            aria-label="New standing faction"
+                            title="The faction card this standing belongs to"
+                            value={newStandingFactionId}
+                            onChange={(e) => setNewStandingFactionId(e.target.value)}
+                          >
+                            <option value="">Choose faction…</option>
+                            {factionCardChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label="New standing role"
+                            placeholder="Standing (Member)"
+                            value={newStandingText}
+                            onChange={(e) => setNewStandingText(e.target.value)}
+                          />
+                          <select
+                            aria-label="New standing since chapter"
+                            title="The chapter this standing began in"
+                            value={newStandingChapterId}
+                            onChange={(e) => setNewStandingChapterId(e.target.value)}
+                          >
+                            <option value="">Choose chapter…</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label="New standing note"
+                            placeholder="Note"
+                            value={newStandingNote}
+                            onChange={(e) => setNewStandingNote(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && void addStanding()}
+                          />
+                          <button
+                            title="Record this faction standing on the character's sheet"
+                            onClick={() => void addStanding()}
+                            disabled={
+                              !newStandingFactionId ||
+                              !newStandingText.trim() ||
+                              !newStandingChapterId
+                            }
+                          >
+                            Add standing
                           </button>
                         </div>
                       </div>

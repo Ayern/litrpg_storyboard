@@ -4312,3 +4312,286 @@ body {
   color: #777;
   font-size: 11px;
 }
+
+/* The Characters tab holds two views: the sheets and the cast map. The switch
+   sits at the top of either one, so the way back never moves. */
+.character-view-toggle {
+  display: inline-flex;
+  margin-bottom: 14px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.character-view-toggle button {
+  padding: 6px 14px;
+  border: 0;
+  background: #252526;
+  color: #bbb;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.character-view-toggle button + button {
+  border-left: 1px solid #333;
+}
+
+.character-view-toggle button:hover {
+  color: #e3cb94;
+}
+
+.character-view-toggle button.active {
+  background: #3a3320;
+  color: #e3cb94;
+}
+
+.character-view-toggle button:focus-visible {
+  outline: 1px solid #e3cb94;
+  outline-offset: -2px;
+}
+
+/* Relations and faction standings on the sheet. A row reads as one sentence:
+   the bond, the other person, then the stretch of the story it covers. */
+.relations-section,
+.standings-section {
+  margin-bottom: 18px;
+  padding: 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.relation-list,
+.standing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relation-row,
+.standing-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid #2f2f2f;
+  font-size: 12px;
+}
+
+.relation-row:last-child,
+.standing-row:last-child {
+  border-bottom: 0;
+}
+
+.relation-summary,
+.standing-summary {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.relation-kind,
+.standing-role {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(227, 203, 148, 0.14);
+  color: #e3cb94;
+}
+
+.relation-other,
+.standing-faction {
+  font-weight: 600;
+  color: #ddd;
+  overflow-wrap: anywhere;
+}
+
+.relation-when,
+.standing-when {
+  color: #888;
+  font-size: 11px;
+}
+
+.relation-note,
+.standing-note {
+  flex: 1 1 100%;
+  color: #9c9c9c;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.relation-editor,
+.standing-editor {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.relation-actions,
+.standing-actions {
+  display: flex;
+  flex: 1 1 100%;
+  gap: 6px;
+}
+
+.relation-creator,
+.standing-creator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* The cast map: a schematic of people on a ring, factions in the middle. */
+.relations-map-panel {
+  max-width: 980px;
+  padding: 12px;
+  background: #252526;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.relations-map-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.relations-map-caption {
+  margin: 0;
+  max-width: 600px;
+  color: #999;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.relations-map-clear {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.relations-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #1e1e1e;
+  border: 1px solid #303030;
+  border-radius: 6px;
+}
+
+.relations-map-background {
+  fill: transparent;
+}
+
+.relations-cast {
+  cursor: pointer;
+}
+
+.relations-cast rect {
+  fill: #2d2d2d;
+  stroke: #4a4a4a;
+  stroke-width: 1;
+}
+
+.relations-cast text {
+  fill: #e6e6e6;
+  font-size: 12px;
+}
+
+.relations-cast:hover rect,
+.relations-cast:focus-visible rect {
+  stroke: #e3cb94;
+}
+
+.relations-cast:focus-visible {
+  outline: none;
+}
+
+.relations-cast.focused rect {
+  fill: #3a3320;
+  stroke: #e3cb94;
+  stroke-width: 2;
+}
+
+.relations-cast.dimmed {
+  opacity: 0.35;
+}
+
+.relations-faction rect {
+  fill: rgba(94, 200, 192, 0.1);
+  stroke: #3f6f6b;
+}
+
+.relations-faction text {
+  fill: #a9e3de;
+  font-size: 11px;
+}
+
+.relations-faction.dimmed {
+  opacity: 0.3;
+}
+
+/* The wide invisible line under each drawn one is the click target; a 2px line
+   is far too thin to hit on purpose. */
+.relations-edge-hit {
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.relations-edge-hit:focus-visible {
+  stroke: rgba(227, 203, 148, 0.35);
+  outline: none;
+}
+
+.relations-edge.dimmed,
+.relations-membership.dimmed {
+  opacity: 0.18;
+}
+
+.relations-edge-label {
+  fill: #bdbdbd;
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: #1e1e1e;
+  stroke-width: 3px;
+}
+
+.relations-membership-label {
+  fill: #8f9bab;
+  font-size: 9px;
+  paint-order: stroke;
+  stroke: #1e1e1e;
+  stroke-width: 3px;
+}
+
+.relations-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  color: #999;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.relations-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.relations-map-empty {
+  padding: 24px;
+  background: #252526;
+  border: 1px dashed #333;
+  border-radius: 6px;
+  color: #888;
+}

@@ -347,11 +347,20 @@ recorded as one board history step. A purged chapter or card clears only the lin
 `character_currency` are schema v13, and `lost_chapter_id` is schema v14, with
 database and UI tests. **M**
 
-**12. Relationship map.** Cast-to-cast relations (`ally`, `rival`, `mentor`,
-`family`, `owes`) stored per story, drawn as a small graph in a new Cast view and
-listed on each character. Relations carry history like everything else. Later,
-the continuity check can use them ("mentor is dead in chapter 14 but teaches in
-16"). **M**
+**12. Relationship map.** **Done.** `character_relations` (schema v20) joins two
+cast members with a free-text kind, an optional note and the chapters it began
+and ended in; `ally`, `rival`, `mentor`, `family` and `owes` are only suggestions,
+and symmetric kinds are stored in one direction so a bond cannot be entered
+twice. `faction_standings` records a character's place in a faction card for an
+arc, with the chapter it began in required and an optional end. Both are listed on
+the character sheet with add/edit/delete, audited per field, carried by JSON
+export/import and the story bible, and a trashed card clears its link only on a
+purge. The Characters tab gained a **Relations** view: cast on a ring, faction
+hubs in the middle, edges styled by kind, focus dimming, and a line that opens its
+entry on the sheet. Continuity names a relation pointing at a trashed cast
+member, a standing on a trashed faction card, an arc that ends before it begins,
+and two stints held in one faction at once. A dead-mentor check still needs a way
+to record death. **M**
 
 **13. LitRPG vocabulary.** **Done.** `system`, `skill`, `item`, `quest` and
 `faction` are first-class node types with their own colours, legend entries and

@@ -1,8 +1,8 @@
 use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
     CharacterChapterState, CharacterCurrency, CharacterLevelMilestone, CharacterProgress,
-    CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge, InventoryItem,
-    LevelStatChangeInput, Node, Story, StoryExport,
+    CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
+    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -327,6 +327,126 @@ fn delete_level_milestone(
     user: String,
 ) -> Result<(), String> {
     db.delete_level_milestone(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_relations(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterRelation>, String> {
+    db.list_story_relations(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn add_relation(
+    db: tauri::State<'_, Db>,
+    from_character_id: String,
+    to_character_id: String,
+    kind: String,
+    note: Option<String>,
+    since_chapter_id: Option<String>,
+    until_chapter_id: Option<String>,
+    user: String,
+) -> Result<CharacterRelation, String> {
+    db.add_relation(
+        from_character_id,
+        to_character_id,
+        kind,
+        note,
+        since_chapter_id,
+        until_chapter_id,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn update_relation(
+    db: tauri::State<'_, Db>,
+    id: String,
+    kind: String,
+    note: Option<String>,
+    since_chapter_id: Option<String>,
+    until_chapter_id: Option<String>,
+    user: String,
+) -> Result<CharacterRelation, String> {
+    db.update_relation(id, kind, note, since_chapter_id, until_chapter_id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_relation(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_relation(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_faction_standings(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<FactionStanding>, String> {
+    db.list_story_faction_standings(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn add_faction_standing(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    faction_node_id: Option<String>,
+    standing: String,
+    note: Option<String>,
+    since_chapter_id: String,
+    until_chapter_id: Option<String>,
+    user: String,
+) -> Result<FactionStanding, String> {
+    db.add_faction_standing(
+        character_id,
+        faction_node_id,
+        standing,
+        note,
+        since_chapter_id,
+        until_chapter_id,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn update_faction_standing(
+    db: tauri::State<'_, Db>,
+    id: String,
+    faction_node_id: Option<String>,
+    standing: String,
+    note: Option<String>,
+    since_chapter_id: String,
+    until_chapter_id: Option<String>,
+    user: String,
+) -> Result<FactionStanding, String> {
+    db.update_faction_standing(
+        id,
+        faction_node_id,
+        standing,
+        note,
+        since_chapter_id,
+        until_chapter_id,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_faction_standing(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
+    db.delete_faction_standing(&id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -1062,6 +1182,14 @@ pub fn run() {
             add_level_milestone,
             update_level_milestone,
             delete_level_milestone,
+            get_story_relations,
+            add_relation,
+            update_relation,
+            delete_relation,
+            get_story_faction_standings,
+            add_faction_standing,
+            update_faction_standing,
+            delete_faction_standing,
             get_character_progress,
             get_story_character_progress,
             add_character_progress,

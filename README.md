@@ -361,6 +361,27 @@ clicking the character switches to Characters, selects that person, scrolls to t
 relevant milestone or skill event and opens that entry for editing. The badges on the graph use ordinary buttons
 with `nodrag` and `nopan`, so opening one never pans the board or moves a card.
 
+**Relations and factions** live on the character's sheet (schema v20). A relation
+joins two cast members with a free-text kind — **ally**, **rival**, **mentor**,
+**family** and **owes** are suggestions, not limits — an optional note, and the
+chapters it began and ended in. Symmetric kinds are stored in one direction, so an
+alliance cannot be recorded twice from opposite sides, and the other end is fixed
+once the relation exists rather than being silently rewritten. A **faction
+standing** names the faction card, the place held there in the author's words, and
+the chapter it began in, with an optional end. Every field change is audited, both
+ledgers travel in the JSON export and the story bible, and a standing survives its
+faction card being trashed — only a purge clears the link.
+
+**The Relations view** is the second mode of the Characters tab: cast members on a
+ring, faction hubs in the middle, and every bond drawn with its kind's colour and
+line shape (ally solid green, rival dashed red, mentor amber with an arrow, family
+dotted violet, owes dashed grey). Clicking a name focuses that person and dims
+everyone else; clicking a line opens that relation or standing in its sheet
+editor. Continuity names a relation that points at a cast member in the trash, a
+standing whose faction card is in the trash, an arc that ends before it begins, and
+two standings held in one faction at the same time; each warning opens the exact
+row it names.
+
 **Help before clicking** — controls that are not self-explanatory carry a hover
 title saying what the click will do: save or discard, move to the trash or delete
 for good, relink or keep the label. These are the platform's native tooltips, so
@@ -533,7 +554,7 @@ Behaviour worth knowing:
 
 ## Schema
 
-SQLite, versioned with `PRAGMA user_version` (currently `18`). Migrations run at
+SQLite, versioned with `PRAGMA user_version` (currently `20`). Migrations run at
 startup in `db::migrate`; adding a new one means incrementing `SCHEMA_VERSION` and
 adding a block for the next version. Version 2 added `character_attributes`, so a
 database written by an earlier build gains the table on first launch and keeps
@@ -569,7 +590,12 @@ and point of view, and the table holds only the additional people added with
 `stat_points`; an existing milestone has no snapshots until one is recorded,
 which is different from a recorded value of zero. Version 18 added
 `character_progress`; an older story starts with no income rows, and one row per
-character/chapter can be added afterwards.
+character/chapter can be added afterwards. Version 19 moved a level-up's stat
+snapshot into `character_level_stat_changes`, so one level can carry several
+stats, and copied each old snapshot over as a value-after row without inventing a
+gain. Version 20 added `character_relations` and `faction_standings`; an older
+story starts with neither, so its cast simply has no recorded bonds or faction
+memberships until one is added.
 
 | Table | Contents |
 | --- | --- |
@@ -584,6 +610,8 @@ character/chapter can be added afterwards.
 | `chapter_cast` | One row per additional cast member in a chapter, unique on the chapter/character pair and cascading when either is purged |
 | `character_inventory` | Belongs to a character; `name` (unique per character), nullable `rarity` and `effect`, integer `quantity`, optional `chapter_id`, `lost_chapter_id` and `node_id` links (cleared when that node is purged) |
 | `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
+| `character_relations` | Two cast members in one story; free-text `kind`, optional `note` and `since_chapter_id`/`until_chapter_id` links (cleared when the chapter is purged); unique on the ordered pair and kind |
+| `faction_standings` | One character's place in a faction card; free-text `standing`, optional `note` and `until_chapter_id`, required `since_chapter_id` when created; the faction link is cleared when its card is purged |
 | `nodes` | Graph node: `node_type`, `label`, `content`, position (`pos_x`/`pos_y`), optional `character_id` link to the cast, a chapter's `chapter_seq`, `chapter_arc`, `chapter_words`, `chapter_target`, `chapter_pov` (cast id), `chapter_day` and free-text `chapter_time`, a note's `parent_node_id` (its chapter), `created_by`, `deleted_at` |
 | `edges` | Directed connection: `source_id` → `target_id`, optional `label`/`relation_type`, `deleted_at` |
 | `audit_log` | Change history, described above |
@@ -603,8 +631,9 @@ connection deleted on its own keeps its earlier timestamp and stays in the trash
 
 `characters`, `character_stats`, `character_attributes`, `character_skills`,
 `character_level_milestones`, `character_progress`, `character_skill_events`,
-`character_inventory`, `character_currency`, `chapter_cast`, `nodes` and `edges`
-all cascade from their parent, with `PRAGMA foreign_keys = ON`. `audit_log`
+`character_inventory`, `character_currency`, `chapter_cast`, `character_relations`,
+`faction_standings`, `nodes` and `edges` all cascade from their parent, with
+`PRAGMA foreign_keys = ON`. `audit_log`
 deliberately has no foreign key, so history survives the deletion of what it
 describes. It is indexed on `(story_id, changed_at)` and
 `(entity_type, entity_id)`.

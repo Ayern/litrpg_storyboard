@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 19;
+const SCHEMA_VERSION: i32 = 20;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -1521,6 +1521,644 @@ impl Db {
         let rows = stmt.query_map(params![story_id], character_skill_row)?;
 
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    // ===== CAST RELATIONS AND FACTION STANDINGS =====
+    //
+    // A relation is between two cast members, not two cards: a character may
+    // have no card at all. Symmetric kinds are stored in a fixed id order so the
+    // same bond cannot be recorded twice. A faction standing is one character's
+    // place in a faction card for an arc, and stays readable if the card is
+    // trashed or purged.
+
+    /// Every relation in a story, including ones whose cast member is now in the
+    /// trash, so continuity can name the problem instead of silently dropping it.
+    pub fn list_story_relations(&self, story_id: &str) -> DbResult<Vec<CharacterRelation>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT id, story_id, from_character_id, to_character_id, kind, note,
+                    since_chapter_id, until_chapter_id, created_by, created_at, updated_at
+             FROM character_relations
+             WHERE story_id = ?1
+             ORDER BY created_at, id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], character_relation_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Every faction standing in a story, trashed cards included for the same
+    /// reason relations include trashed cast.
+    pub fn list_story_faction_standings(&self, story_id: &str) -> DbResult<Vec<FactionStanding>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT id, story_id, character_id, faction_node_id, standing, note,
+                    since_chapter_id, until_chapter_id, created_by, created_at, updated_at
+             FROM faction_standings
+             WHERE story_id = ?1
+             ORDER BY since_chapter_id, created_at, id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], faction_standing_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_relation(
+        &self,
+        from_character_id: String,
+        to_character_id: String,
+        kind: String,
+        note: Option<String>,
+        since_chapter_id: Option<String>,
+        until_chapter_id: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterRelation> {
+        let kind = clean_relation_kind(kind)?;
+        let note = clean_optional(note);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &from_character_id)?;
+        ensure_live_cast_in_story(&tx, &story_id, &to_character_id)?;
+
+        if from_character_id == to_character_id {
+            return Err(DbError::Invalid(
+                "a character cannot be related to themselves".to_string(),
+            ));
+        }
+
+        let (from, to) = relation_ends(&from_character_id, &to_character_id, &kind);
+
+        validate_node_reference(
+            &tx,
+            &story_id,
+            since_chapter_id.as_deref(),
+            "chapter",
+            "chapter",
+        )?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            until_chapter_id.as_deref(),
+            "chapter",
+            "chapter",
+        )?;
+
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM character_relations
+                  WHERE from_character_id = ?1 AND to_character_id = ?2 AND lower(kind) = lower(?3)",
+                params![&from, &to, &kind],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if taken.is_some() {
+            return Err(DbError::Invalid(format!(
+                "a {kind} relation is already recorded between these two"
+            )));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_relations
+             (id, story_id, from_character_id, to_character_id, kind, note,
+              since_chapter_id, until_chapter_id, created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                &id,
+                &story_id,
+                &from,
+                &to,
+                &kind,
+                &note,
+                &since_chapter_id,
+                &until_chapter_id,
+                &user,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_relation",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("kind"),
+                old_value: None,
+                new_value: Some(kind.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterRelation {
+            id,
+            story_id,
+            from_character_id: from,
+            to_character_id: to,
+            kind,
+            note,
+            since_chapter_id,
+            until_chapter_id,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_relation(
+        &self,
+        id: String,
+        kind: String,
+        note: Option<String>,
+        since_chapter_id: Option<String>,
+        until_chapter_id: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterRelation> {
+        let kind = clean_relation_kind(kind)?;
+        let note = clean_optional(note);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, from_character_id, to_character_id, kind, note,
+                        since_chapter_id, until_chapter_id, created_by, created_at
+                 FROM character_relations WHERE id = ?1",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("relation"))?;
+
+        let (
+            story_id,
+            from_character_id,
+            to_character_id,
+            old_kind,
+            old_note,
+            old_since,
+            old_until,
+            created_by,
+            created_at,
+        ) = existing;
+
+        // A link sent back unchanged is not checked again: its chapter may have
+        // been trashed since, and that should not stop an unrelated edit.
+        if since_chapter_id != old_since {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                since_chapter_id.as_deref(),
+                "chapter",
+                "chapter",
+            )?;
+        }
+        if until_chapter_id != old_until {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                until_chapter_id.as_deref(),
+                "chapter",
+                "chapter",
+            )?;
+        }
+
+        let (from, to) = relation_ends(&from_character_id, &to_character_id, &kind);
+
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM character_relations
+                  WHERE from_character_id = ?1 AND to_character_id = ?2
+                    AND lower(kind) = lower(?3) AND id <> ?4",
+                params![&from, &to, &kind, &id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if taken.is_some() {
+            return Err(DbError::Invalid(format!(
+                "a {kind} relation is already recorded between these two"
+            )));
+        }
+
+        let old_since_label = reference_label(&tx, old_since.as_deref())?;
+        let old_until_label = reference_label(&tx, old_until.as_deref())?;
+        let new_since_label = reference_label(&tx, since_chapter_id.as_deref())?;
+        let new_until_label = reference_label(&tx, until_chapter_id.as_deref())?;
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if old_kind != kind {
+            changes.push(("kind", Some(old_kind), Some(kind.clone())));
+        }
+        if old_note != note {
+            changes.push(("note", old_note, note.clone()));
+        }
+        if old_since != since_chapter_id {
+            changes.push(("since", old_since_label, new_since_label));
+        }
+        if old_until != until_chapter_id {
+            changes.push(("until", old_until_label, new_until_label));
+        }
+
+        tx.execute(
+            "UPDATE character_relations
+                SET from_character_id = ?1, to_character_id = ?2, kind = ?3, note = ?4,
+                    since_chapter_id = ?5, until_chapter_id = ?6, updated_at = ?7
+              WHERE id = ?8",
+            params![
+                &from,
+                &to,
+                &kind,
+                &note,
+                &since_chapter_id,
+                &until_chapter_id,
+                &timestamp,
+                &id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "character_relation",
+                    entity_id: &id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(CharacterRelation {
+            id,
+            story_id,
+            from_character_id: from,
+            to_character_id: to,
+            kind,
+            note,
+            since_chapter_id,
+            until_chapter_id,
+            created_by,
+            created_at,
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn delete_relation(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, kind FROM character_relations WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, kind)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM character_relations WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_relation",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(kind),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_faction_standing(
+        &self,
+        character_id: String,
+        faction_node_id: Option<String>,
+        standing: String,
+        note: Option<String>,
+        since_chapter_id: String,
+        until_chapter_id: Option<String>,
+        user: String,
+    ) -> DbResult<FactionStanding> {
+        let standing = clean_standing(standing)?;
+        let note = clean_optional(note);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = live_character_story(&tx, &character_id)?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            faction_node_id.as_deref(),
+            "faction",
+            "faction card",
+        )?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            Some(&since_chapter_id),
+            "chapter",
+            "chapter",
+        )?;
+        validate_node_reference(
+            &tx,
+            &story_id,
+            until_chapter_id.as_deref(),
+            "chapter",
+            "chapter",
+        )?;
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO faction_standings
+             (id, story_id, character_id, faction_node_id, standing, note,
+              since_chapter_id, until_chapter_id, created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                &id,
+                &story_id,
+                &character_id,
+                &faction_node_id,
+                &standing,
+                &note,
+                &since_chapter_id,
+                &until_chapter_id,
+                &user,
+                &timestamp,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "faction_standing",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("standing"),
+                old_value: None,
+                new_value: Some(standing.clone()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(FactionStanding {
+            id,
+            story_id,
+            character_id,
+            faction_node_id,
+            standing,
+            note,
+            since_chapter_id: Some(since_chapter_id),
+            until_chapter_id,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_faction_standing(
+        &self,
+        id: String,
+        faction_node_id: Option<String>,
+        standing: String,
+        note: Option<String>,
+        since_chapter_id: String,
+        until_chapter_id: Option<String>,
+        user: String,
+    ) -> DbResult<FactionStanding> {
+        let standing = clean_standing(standing)?;
+        let note = clean_optional(note);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, character_id, faction_node_id, standing, note,
+                        since_chapter_id, until_chapter_id, created_by, created_at
+                 FROM faction_standings WHERE id = ?1",
+                params![&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("faction standing"))?;
+
+        let (
+            story_id,
+            character_id,
+            old_faction,
+            old_standing,
+            old_note,
+            old_since,
+            old_until,
+            created_by,
+            created_at,
+        ) = existing;
+
+        if faction_node_id != old_faction {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                faction_node_id.as_deref(),
+                "faction",
+                "faction card",
+            )?;
+        }
+        if since_chapter_id != old_since.clone().unwrap_or_default() {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                Some(&since_chapter_id),
+                "chapter",
+                "chapter",
+            )?;
+        }
+        if until_chapter_id != old_until {
+            validate_node_reference(
+                &tx,
+                &story_id,
+                until_chapter_id.as_deref(),
+                "chapter",
+                "chapter",
+            )?;
+        }
+
+        let old_faction_label = reference_label(&tx, old_faction.as_deref())?;
+        let old_since_label = reference_label(&tx, old_since.as_deref())?;
+        let old_until_label = reference_label(&tx, old_until.as_deref())?;
+        let new_faction_label = reference_label(&tx, faction_node_id.as_deref())?;
+        let new_since_label = reference_label(&tx, Some(&since_chapter_id))?;
+        let new_until_label = reference_label(&tx, until_chapter_id.as_deref())?;
+
+        let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
+
+        if old_faction != faction_node_id {
+            changes.push(("faction", old_faction_label, new_faction_label));
+        }
+        if old_standing != standing {
+            changes.push(("standing", Some(old_standing), Some(standing.clone())));
+        }
+        if old_note != note {
+            changes.push(("note", old_note, note.clone()));
+        }
+        if old_since.as_deref() != Some(since_chapter_id.as_str()) {
+            changes.push(("since", old_since_label, new_since_label));
+        }
+        if old_until != until_chapter_id {
+            changes.push(("until", old_until_label, new_until_label));
+        }
+
+        tx.execute(
+            "UPDATE faction_standings
+                SET faction_node_id = ?1, standing = ?2, note = ?3,
+                    since_chapter_id = ?4, until_chapter_id = ?5, updated_at = ?6
+              WHERE id = ?7",
+            params![
+                &faction_node_id,
+                &standing,
+                &note,
+                &since_chapter_id,
+                &until_chapter_id,
+                &timestamp,
+                &id
+            ],
+        )?;
+
+        for (field, old_value, new_value) in changes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "faction_standing",
+                    entity_id: &id,
+                    action: "update",
+                    field_changed: Some(field),
+                    old_value,
+                    new_value,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(FactionStanding {
+            id,
+            story_id,
+            character_id,
+            faction_node_id,
+            standing,
+            note,
+            since_chapter_id: Some(since_chapter_id),
+            until_chapter_id,
+            created_by,
+            created_at,
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn delete_faction_standing(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT story_id, standing FROM faction_standings WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, standing)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM faction_standings WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "faction_standing",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(standing),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
     }
 
     // ===== LEVEL MILESTONES =====
@@ -5021,6 +5659,77 @@ impl Db {
             }
         }
 
+        let mut character_relations = {
+            let mut stmt = guard.prepare(
+                "SELECT r.id, r.story_id, r.from_character_id, r.to_character_id, r.kind, r.note,
+                        r.since_chapter_id, r.until_chapter_id, r.created_by, r.created_at, r.updated_at
+                 FROM character_relations r
+                 JOIN characters c ON c.id = r.from_character_id
+                 JOIN characters d ON d.id = r.to_character_id
+                 WHERE r.story_id = ?1 AND c.deleted_at IS NULL AND d.deleted_at IS NULL
+                 ORDER BY r.created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], character_relation_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        for relation in &mut character_relations {
+            if relation
+                .since_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                relation.since_chapter_id = None;
+            }
+            if relation
+                .until_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                relation.until_chapter_id = None;
+            }
+        }
+
+        // A standing without the chapter it began in cannot be placed, so a row
+        // whose start chapter is in the trash stays out of the file.
+        let mut faction_standings = {
+            let mut stmt = guard.prepare(
+                "SELECT s.id, s.story_id, s.character_id, s.faction_node_id, s.standing, s.note,
+                        s.since_chapter_id, s.until_chapter_id, s.created_by, s.created_at,
+                        s.updated_at
+                 FROM faction_standings s
+                 JOIN characters c ON c.id = s.character_id
+                 WHERE s.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY s.created_at",
+            )?;
+            let rows = stmt.query_map(params![story_id], faction_standing_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        for standing in &mut faction_standings {
+            if standing
+                .faction_node_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                standing.faction_node_id = None;
+            }
+            if standing
+                .until_chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                standing.until_chapter_id = None;
+            }
+        }
+
+        faction_standings.retain(|standing| {
+            standing
+                .since_chapter_id
+                .as_deref()
+                .is_some_and(|id| live_node_ids.contains(id))
+        });
+
         let edges = {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, source_id, target_id, label, relation_type, created_by, created_at
@@ -5056,6 +5765,8 @@ impl Db {
             chapter_cast,
             character_inventory,
             character_currency,
+            character_relations,
+            faction_standings,
             nodes,
             edges,
             audit_trail,
@@ -5076,6 +5787,8 @@ impl Db {
         let skills = self.list_story_skills(story_id)?;
         let inventory = self.list_story_inventory(story_id)?;
         let currencies = self.list_story_currency(story_id)?;
+        let relations = self.list_story_relations(story_id)?;
+        let faction_standings = self.list_story_faction_standings(story_id)?;
         // The notes are nodes of their own, kept off the board, so they are read
         // separately and filed under the chapter that holds them.
         let chapter_notes = self.list_chapter_notes(story_id)?;
@@ -5361,12 +6074,37 @@ impl Db {
                     .iter()
                     .filter(|currency| currency.character_id == character.id)
                     .collect();
+                // A relation is printed under both people it joins, each naming
+                // the other; one whose other end is in the trash is left out of
+                // the bible because there is no live name to print.
+                let own_relations: Vec<(&CharacterRelation, &str)> = relations
+                    .iter()
+                    .filter_map(|relation| {
+                        if relation.from_character_id == character.id {
+                            pov_names
+                                .get(relation.to_character_id.as_str())
+                                .map(|name| (relation, *name))
+                        } else if relation.to_character_id == character.id {
+                            pov_names
+                                .get(relation.from_character_id.as_str())
+                                .map(|name| (relation, *name))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let own_standings: Vec<&FactionStanding> = faction_standings
+                    .iter()
+                    .filter(|standing| standing.character_id == character.id)
+                    .collect();
 
                 if !own_stats.is_empty()
                     || !attributes.is_empty()
                     || !own_skills.is_empty()
                     || !own_items.is_empty()
                     || !own_currency.is_empty()
+                    || !own_relations.is_empty()
+                    || !own_standings.is_empty()
                 {
                     lines.push(String::new());
 
@@ -5405,6 +6143,72 @@ impl Db {
                             .and_then(|id| node_names.get(id))
                         {
                             line.push_str(&format!(" (learned in \"{chapter}\")"));
+                        }
+
+                        lines.push(line);
+                    }
+
+                    for (relation, other) in own_relations {
+                        let mut line = if relation_is_symmetric(&relation.kind) {
+                            format!("- **{}** with {other}", relation.kind)
+                        } else {
+                            format!("- **{}** → {other}", relation.kind)
+                        };
+
+                        if let Some(since) = relation
+                            .since_chapter_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id))
+                        {
+                            line.push_str(&format!(" (since \"{since}\")"));
+                        }
+
+                        if let Some(note) = relation
+                            .note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|note| !note.is_empty())
+                        {
+                            line.push_str(&format!(" — {note}"));
+                        }
+
+                        lines.push(line);
+                    }
+
+                    // A standing names the faction, the place held there, and the
+                    // chapter it began in, in the author's own words.
+                    for standing in own_standings {
+                        let faction = standing
+                            .faction_node_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id))
+                            .map(|label| label.to_string())
+                            .unwrap_or_else(|| "a faction no longer on the board".to_string());
+                        let mut line = format!("- **{faction}** — {}", standing.standing);
+
+                        if let Some(since) = standing
+                            .since_chapter_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id))
+                        {
+                            line.push_str(&format!(" (since \"{since}\")"));
+                        }
+
+                        if let Some(until) = standing
+                            .until_chapter_id
+                            .as_deref()
+                            .and_then(|id| node_names.get(id))
+                        {
+                            line.push_str(&format!(" (until \"{until}\")"));
+                        }
+
+                        if let Some(note) = standing
+                            .note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|note| !note.is_empty())
+                        {
+                            line.push_str(&format!(" — {note}"));
                         }
 
                         lines.push(line);
@@ -7084,6 +7888,16 @@ impl Db {
             .iter()
             .map(|currency| (currency.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let relations: HashMap<String, String> = export
+            .character_relations
+            .iter()
+            .map(|relation| (relation.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let standings: HashMap<String, String> = export
+            .faction_standings
+            .iter()
+            .map(|standing| (standing.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let nodes: HashMap<String, String> = export
             .nodes
             .iter()
@@ -7298,6 +8112,98 @@ impl Db {
             }
         }
 
+        let mut relation_pairs: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+
+        for relation in &export.character_relations {
+            for id in [&relation.from_character_id, &relation.to_character_id] {
+                if !characters.contains_key(id) {
+                    return Err(DbError::Invalid(
+                        "a relation names a character the file does not contain".to_string(),
+                    ));
+                }
+            }
+
+            if relation.from_character_id == relation.to_character_id {
+                return Err(DbError::Invalid(
+                    "a relation cannot join a character to themselves".to_string(),
+                ));
+            }
+
+            if relation.kind.trim().is_empty() {
+                return Err(DbError::Invalid("a relation needs a kind".to_string()));
+            }
+
+            for reference in [&relation.since_chapter_id, &relation.until_chapter_id] {
+                if reference.as_ref().is_some_and(|id| !nodes.contains_key(id)) {
+                    return Err(DbError::Invalid(
+                        "a relation points at a chapter the file does not contain".to_string(),
+                    ));
+                }
+            }
+
+            let pair = (
+                relation.from_character_id.clone(),
+                relation.to_character_id.clone(),
+                relation.kind.to_lowercase(),
+            );
+
+            if !relation_pairs.insert(pair) {
+                return Err(DbError::Invalid(
+                    "the same relation is recorded twice in the file".to_string(),
+                ));
+            }
+        }
+
+        for standing in &export.faction_standings {
+            if !characters.contains_key(&standing.character_id) {
+                return Err(DbError::Invalid(
+                    "a faction standing belongs to a character the file does not contain"
+                        .to_string(),
+                ));
+            }
+
+            if standing.standing.trim().is_empty() {
+                return Err(DbError::Invalid(
+                    "a faction standing needs a word for it".to_string(),
+                ));
+            }
+
+            let Some(since) = standing.since_chapter_id.as_ref() else {
+                return Err(DbError::Invalid(
+                    "a faction standing needs the chapter it began in".to_string(),
+                ));
+            };
+
+            if !nodes.contains_key(since)
+                || standing
+                    .until_chapter_id
+                    .as_ref()
+                    .is_some_and(|id| !nodes.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "a faction standing points at a chapter the file does not contain".to_string(),
+                ));
+            }
+
+            if let Some(faction) = standing.faction_node_id.as_ref() {
+                match export.nodes.iter().find(|node| &node.id == faction) {
+                    Some(node) if node.node_type == "faction" => {}
+                    Some(_) => {
+                        return Err(DbError::Invalid(
+                            "a faction standing points at a card that is not a faction".to_string(),
+                        ))
+                    }
+                    None => {
+                        return Err(DbError::Invalid(
+                            "a faction standing points at a card the file does not contain"
+                                .to_string(),
+                        ))
+                    }
+                }
+            }
+        }
+
         for currency in &export.character_currency {
             if !characters.contains_key(&currency.character_id) {
                 return Err(DbError::Invalid(format!(
@@ -7474,6 +8380,67 @@ impl Db {
                     &characters[&member.character_id],
                     &member.created_at,
                     &member.updated_at
+                ],
+            )?;
+        }
+
+        // Relations and standings come after both the cast and the chapters they
+        // name, because each link is a foreign key into the copy.
+        for relation in &export.character_relations {
+            tx.execute(
+                "INSERT INTO character_relations
+                 (id, story_id, from_character_id, to_character_id, kind, note,
+                  since_chapter_id, until_chapter_id, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &relations[&relation.id],
+                    &story_id,
+                    &characters[&relation.from_character_id],
+                    &characters[&relation.to_character_id],
+                    relation.kind.trim(),
+                    &relation.note,
+                    relation
+                        .since_chapter_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    relation
+                        .until_chapter_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    &relation.created_by,
+                    &relation.created_at,
+                    &relation.updated_at
+                ],
+            )?;
+        }
+
+        for standing in &export.faction_standings {
+            tx.execute(
+                "INSERT INTO faction_standings
+                 (id, story_id, character_id, faction_node_id, standing, note,
+                  since_chapter_id, until_chapter_id, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &standings[&standing.id],
+                    &story_id,
+                    &characters[&standing.character_id],
+                    standing
+                        .faction_node_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    standing.standing.trim(),
+                    &standing.note,
+                    standing
+                        .since_chapter_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    standing
+                        .until_chapter_id
+                        .as_ref()
+                        .and_then(|id| nodes.get(id)),
+                    &standing.created_by,
+                    &standing.created_at,
+                    &standing.updated_at
                 ],
             )?;
         }
@@ -7792,6 +8759,49 @@ pub struct CharacterSkill {
     pub effect: Option<String>,
     pub chapter_id: Option<String>,
     pub node_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One cast-to-cast relation within a story. `kind` is free text so the author's
+/// own word survives; the suggested five are only suggestions. Symmetric kinds
+/// (ally, rival, family) are stored with the two ids in a fixed order, so the
+/// same bond cannot be recorded twice in opposite directions.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct CharacterRelation {
+    pub id: String,
+    pub story_id: String,
+    pub from_character_id: String,
+    pub to_character_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub since_chapter_id: Option<String>,
+    #[serde(default)]
+    pub until_chapter_id: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One character's standing in a faction card, from a chapter until an optional
+/// later one. The faction link can be cleared by a purge without deleting the
+/// recorded standing.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct FactionStanding {
+    pub id: String,
+    pub story_id: String,
+    pub character_id: String,
+    #[serde(default)]
+    pub faction_node_id: Option<String>,
+    pub standing: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub since_chapter_id: Option<String>,
+    #[serde(default)]
+    pub until_chapter_id: Option<String>,
+    pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -8280,6 +9290,11 @@ pub struct StoryExport {
     pub character_inventory: Vec<InventoryItem>,
     #[serde(default)]
     pub character_currency: Vec<CharacterCurrency>,
+    /// Absent from exports written before schema v20, so they default to empty.
+    #[serde(default)]
+    pub character_relations: Vec<CharacterRelation>,
+    #[serde(default)]
+    pub faction_standings: Vec<FactionStanding>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub audit_trail: Vec<AuditEntry>,
@@ -8886,6 +9901,40 @@ fn character_skill_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkill> 
     })
 }
 
+/// Every relation read selects its columns in this order.
+fn character_relation_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterRelation> {
+    Ok(CharacterRelation {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        from_character_id: row.get(2)?,
+        to_character_id: row.get(3)?,
+        kind: row.get(4)?,
+        note: row.get(5)?,
+        since_chapter_id: row.get(6)?,
+        until_chapter_id: row.get(7)?,
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+/// Every faction standing read selects its columns in this order.
+fn faction_standing_row(row: &rusqlite::Row<'_>) -> SqliteResult<FactionStanding> {
+    Ok(FactionStanding {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        character_id: row.get(2)?,
+        faction_node_id: row.get(3)?,
+        standing: row.get(4)?,
+        note: row.get(5)?,
+        since_chapter_id: row.get(6)?,
+        until_chapter_id: row.get(7)?,
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
 /// Every level milestone read selects its columns in this order. Stat changes
 /// are loaded separately and attached by the caller.
 fn level_milestone_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterLevelMilestone> {
@@ -8997,6 +10046,73 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     value
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
+}
+
+/// A relation kind is free text, but it cannot be blank.
+fn clean_relation_kind(kind: String) -> DbResult<String> {
+    let kind = kind.trim().to_string();
+
+    if kind.is_empty() {
+        return Err(DbError::Invalid("a relation needs a kind".to_string()));
+    }
+
+    Ok(kind)
+}
+
+/// Bonds that mean the same thing said from either side. The comparison ignores
+/// case so the author's own capitalisation is kept without making a duplicate.
+fn relation_is_symmetric(kind: &str) -> bool {
+    matches!(kind.to_lowercase().as_str(), "ally" | "rival" | "family")
+}
+
+/// The order a relation's two ends are stored in. A symmetric bond reads the
+/// same either way, so the ids are sorted and the unique index catches a copy
+/// entered from the other side.
+fn relation_ends(from: &str, to: &str, kind: &str) -> (String, String) {
+    if relation_is_symmetric(kind) && to < from {
+        (to.to_string(), from.to_string())
+    } else {
+        (from.to_string(), to.to_string())
+    }
+}
+
+/// A faction standing needs a word for the place the character holds.
+fn clean_standing(standing: String) -> DbResult<String> {
+    let standing = standing.trim().to_string();
+
+    if standing.is_empty() {
+        return Err(DbError::Invalid(
+            "a faction standing needs a word for it".to_string(),
+        ));
+    }
+
+    Ok(standing)
+}
+
+/// A second cast member named by a record must be live and in the same story.
+fn ensure_live_cast_in_story(
+    conn: &Connection,
+    story_id: &str,
+    character_id: &str,
+) -> DbResult<()> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM characters c
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.id = ?1 AND c.story_id = ?2
+               AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+            params![character_id, story_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if found.is_some() {
+        return Ok(());
+    }
+
+    Err(DbError::Invalid(
+        "both sides of a relation must be live cast of the same story".to_string(),
+    ))
 }
 
 /// The story a live cast member belongs to, refusing one that is gone or in the
@@ -9652,6 +10768,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_019)?;
     }
 
+    if version < 20 {
+        conn.execute_batch(MIGRATION_020)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -9965,6 +11085,67 @@ const MIGRATION_018: &str = "
 
     CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
         ON character_progress (chapter_id);
+";
+
+/// Schema v20: cast-to-cast relations and faction standings.
+///
+/// Relations connect two cast members in one story, with a free-text kind so the
+/// author's own words survive. Symmetric kinds are stored with their ids in a
+/// fixed order, and the unique index makes a second "ally" in either direction
+/// impossible. A standing places one character in a faction card for an arc; the
+/// faction link is nullable so purging the card clears it rather than deleting
+/// the history.
+const MIGRATION_020: &str = "
+    CREATE TABLE IF NOT EXISTS character_relations (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        from_character_id TEXT NOT NULL,
+        to_character_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        note TEXT,
+        since_chapter_id TEXT,
+        until_chapter_id TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (from_character_id <> to_character_id),
+        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,
+        FOREIGN KEY(from_character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(to_character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(since_chapter_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        FOREIGN KEY(until_chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_character_relations_pair
+        ON character_relations (from_character_id, to_character_id, kind);
+
+    CREATE INDEX IF NOT EXISTS idx_character_relations_story
+        ON character_relations (story_id);
+
+    CREATE TABLE IF NOT EXISTS faction_standings (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        faction_node_id TEXT,
+        standing TEXT NOT NULL,
+        note TEXT,
+        since_chapter_id TEXT,
+        until_chapter_id TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(faction_node_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        FOREIGN KEY(since_chapter_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        FOREIGN KEY(until_chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_faction_standings_story
+        ON faction_standings (story_id);
+
+    CREATE INDEX IF NOT EXISTS idx_faction_standings_character
+        ON faction_standings (character_id);
 ";
 
 /// Schema v19: a level-up can award several stat increases, and a skill event
@@ -17044,6 +18225,358 @@ mod tests {
             )
             .unwrap();
         (db, story, character, chapter, card)
+    }
+
+    // Two cast members, two chapters and a faction card: the shape relations and
+    // standings tests start from.
+    fn relations_story() -> (Db, Story, Character, Character, Node, Node, Node) {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+        let first = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let faction = db
+            .create_node(
+                story.id.clone(),
+                "faction".into(),
+                "The Ashen Guild".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        (db, story, rook, mira, first, second, faction)
+    }
+
+    #[test]
+    fn relations_join_two_cast_members_once_in_either_direction() {
+        let (db, story, rook, mira, first, _, _) = relations_story();
+
+        let relation = db
+            .add_relation(
+                rook.id.clone(),
+                mira.id.clone(),
+                "  Ally  ".into(),
+                Some("  Saved her in the pass  ".into()),
+                Some(first.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(relation.kind, "Ally", "the kind keeps the author's word");
+        assert_eq!(relation.note.as_deref(), Some("Saved her in the pass"));
+        assert_eq!(
+            relation.since_chapter_id.as_deref(),
+            Some(first.id.as_str())
+        );
+
+        // Ally is symmetric, so the same bond entered from the other side is a
+        // duplicate rather than a second row; the stored ids are in a fixed order.
+        let reversed = db.add_relation(
+            mira.id.clone(),
+            rook.id.clone(),
+            "ally".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        );
+        assert!(matches!(reversed, Err(DbError::Invalid(_))));
+
+        // An asymmetric kind reads one way, so the other direction is a
+        // different statement and is allowed.
+        let mentor = db
+            .add_relation(
+                mira.id.clone(),
+                rook.id.clone(),
+                "mentor".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_ne!(mentor.from_character_id, mentor.to_character_id);
+
+        let self_link = db.add_relation(
+            rook.id.clone(),
+            rook.id.clone(),
+            "ally".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        );
+        assert!(matches!(self_link, Err(DbError::Invalid(_))));
+
+        let other = db
+            .create_story("Elsewhere".into(), None, "Ada".into())
+            .unwrap();
+        let stranger = db
+            .create_character(other.id, "Tess".into(), None, "Ada".into())
+            .unwrap();
+        let cross_story = db.add_relation(
+            rook.id.clone(),
+            stranger.id.clone(),
+            "ally".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        );
+        assert!(matches!(cross_story, Err(DbError::Invalid(_))));
+
+        assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn editing_and_deleting_a_relation_is_audited() {
+        let (db, story, rook, mira, first, second, _) = relations_story();
+
+        let relation = db
+            .add_relation(
+                rook.id.clone(),
+                mira.id.clone(),
+                "ally".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let updated = db
+            .update_relation(
+                relation.id.clone(),
+                "rival".into(),
+                Some("The pass changed that".into()),
+                Some(first.id.clone()),
+                Some(second.id.clone()),
+                "Grace".into(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.kind, "rival");
+        assert_eq!(updated.since_chapter_id.as_deref(), Some(first.id.as_str()));
+        assert_eq!(
+            updated.until_chapter_id.as_deref(),
+            Some(second.id.as_str())
+        );
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("character_relation"), None, 50)
+            .unwrap();
+        let fields: Vec<&str> = history
+            .iter()
+            .filter_map(|entry| entry.field_changed.as_deref())
+            .collect();
+        assert!(fields.contains(&"kind"));
+        assert!(fields.contains(&"note"));
+        assert!(fields.contains(&"since"));
+        assert!(fields.contains(&"until"));
+        assert_eq!(history[0].changed_by, "Grace");
+
+        db.delete_relation(&relation.id, "Grace".into()).unwrap();
+        assert!(db.list_story_relations(&story.id).unwrap().is_empty());
+        assert!(db
+            .get_audit_log(Some(&story.id), Some("character_relation"), None, 50)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.action == "delete"));
+    }
+
+    #[test]
+    fn a_faction_standing_needs_a_faction_card_and_the_chapter_it_began_in() {
+        let (db, story, rook, _mira, first, second, faction) = relations_story();
+
+        let standing = db
+            .add_faction_standing(
+                rook.id.clone(),
+                Some(faction.id.clone()),
+                "  Captain  ".into(),
+                Some("  Sworn at the gate  ".into()),
+                first.id.clone(),
+                Some(second.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(standing.standing, "Captain");
+        assert_eq!(
+            standing.faction_node_id.as_deref(),
+            Some(faction.id.as_str())
+        );
+        assert_eq!(standing.note.as_deref(), Some("Sworn at the gate"));
+
+        // An item card is not a faction, and a standing without an arc cannot be
+        // placed, so both are refused before anything is written.
+        let item_card = db
+            .create_node(
+                story.id.clone(),
+                "item".into(),
+                "Iron Sword".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let wrong_card = db.add_faction_standing(
+            rook.id.clone(),
+            Some(item_card.id),
+            "member".into(),
+            None,
+            first.id.clone(),
+            None,
+            "Ada".into(),
+        );
+        assert!(matches!(wrong_card, Err(DbError::Invalid(_))));
+
+        let no_chapter = db.add_faction_standing(
+            rook.id.clone(),
+            Some(faction.id.clone()),
+            "member".into(),
+            None,
+            "not-a-chapter".into(),
+            None,
+            "Ada".into(),
+        );
+        assert!(matches!(no_chapter, Err(DbError::Invalid(_))));
+
+        let updated = db
+            .update_faction_standing(
+                standing.id.clone(),
+                Some(faction.id.clone()),
+                "Exiled".into(),
+                None,
+                first.id.clone(),
+                None,
+                "Grace".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.standing, "Exiled");
+        assert_eq!(updated.until_chapter_id, None);
+
+        let fields: Vec<String> = db
+            .get_audit_log(Some(&story.id), Some("faction_standing"), None, 50)
+            .unwrap()
+            .into_iter()
+            .filter_map(|entry| entry.field_changed)
+            .collect();
+        assert!(fields.iter().any(|field| field == "standing"));
+        assert!(fields.iter().any(|field| field == "until"));
+
+        db.delete_faction_standing(&standing.id, "Grace".into())
+            .unwrap();
+        assert!(db
+            .list_story_faction_standings(&story.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn relations_and_standings_travel_with_the_story() {
+        let (db, story, rook, mira, first, second, faction) = relations_story();
+
+        db.add_relation(
+            rook.id.clone(),
+            mira.id.clone(),
+            "rival".into(),
+            Some("For the ledger".into()),
+            Some(first.id.clone()),
+            Some(second.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_faction_standing(
+            mira.id.clone(),
+            Some(faction.id.clone()),
+            "Warden".into(),
+            None,
+            first.id.clone(),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let export = db.export_story(&story.id).unwrap();
+        assert_eq!(export.character_relations.len(), 1);
+        assert_eq!(export.faction_standings.len(), 1);
+
+        let markdown = db.story_bible(&story.id).unwrap().markdown;
+        assert!(markdown.contains("**rival** with Mira"));
+        assert!(markdown.contains("**The Ashen Guild** — Warden"));
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+
+        let relations = target.list_story_relations(&restored.id).unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].kind, "rival");
+        assert_eq!(relations[0].note.as_deref(), Some("For the ledger"));
+
+        let characters = target.list_characters(&restored.id).unwrap();
+        assert!(characters
+            .iter()
+            .any(|character| character.id == relations[0].from_character_id));
+        assert!(characters
+            .iter()
+            .any(|character| character.id == relations[0].to_character_id));
+
+        let standings = target.list_story_faction_standings(&restored.id).unwrap();
+        assert_eq!(standings.len(), 1);
+        assert_eq!(standings[0].standing, "Warden");
+
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let faction = nodes
+            .iter()
+            .find(|node| node.id == standings[0].faction_node_id.clone().unwrap())
+            .expect("the faction card came with the copy");
+        assert_eq!(faction.label, "The Ashen Guild");
+    }
+
+    #[test]
+    fn an_older_export_without_relations_imports_as_an_empty_ledger() {
+        let (db, story, _, _, _, _, _) = relations_story();
+        let export = db.export_story(&story.id).unwrap();
+        let mut older = serde_json::to_value(&export).unwrap();
+        older.as_object_mut().unwrap().remove("character_relations");
+        older.as_object_mut().unwrap().remove("faction_standings");
+        let older: StoryExport = serde_json::from_value(older).unwrap();
+
+        let restored = Db::open_in_memory()
+            .unwrap()
+            .import_story(older, "Grace".into())
+            .unwrap();
+
+        assert!(db.list_story_relations(&restored.id).unwrap().is_empty());
     }
 
     #[test]
