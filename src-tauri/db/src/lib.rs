@@ -105,6 +105,121 @@ pub struct Db {
     path: Option<PathBuf>,
 }
 
+/// Copies a skill card's shared facts onto every character skill linked to it.
+///
+/// Only the named field is touched, so a card rename does not rewrite a holder's
+/// description and a content edit does not rewrite their name. Rank, chapter and
+/// the card link stay the holder's own. The unique name is per character, so a
+/// rename that would collide on one sheet refuses the whole transaction rather
+/// than leaving some holders renamed.
+#[allow(clippy::too_many_arguments)]
+fn sync_skill_card_holders(
+    tx: &rusqlite::Transaction<'_>,
+    story_id: &str,
+    node_id: &str,
+    label: &str,
+    content: Option<&str>,
+    sync_name: bool,
+    sync_effect: bool,
+    user: &str,
+    timestamp: &str,
+) -> DbResult<()> {
+    let holders = {
+        let mut stmt = tx.prepare(
+            "SELECT id, character_id, name, effect
+               FROM character_skills
+              WHERE node_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![node_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+
+        rows.collect::<SqliteResult<Vec<_>>>()?
+    };
+
+    for (skill_id, character_id, old_name, old_effect) in holders {
+        let new_name = if sync_name {
+            label.to_string()
+        } else {
+            old_name.clone()
+        };
+        let new_effect = if sync_effect {
+            content.map(str::to_string)
+        } else {
+            old_effect.clone()
+        };
+
+        if new_name == old_name && new_effect == old_effect {
+            continue;
+        }
+
+        if new_name != old_name {
+            let conflict = tx
+                .query_row(
+                    "SELECT c.name
+                       FROM character_skills s
+                       JOIN characters c ON c.id = s.character_id
+                      WHERE s.character_id = ?1 AND s.name = ?2 AND s.id <> ?3",
+                    params![&character_id, &new_name, &skill_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+
+            if let Some(character_name) = conflict {
+                return Err(DbError::Invalid(format!(
+                    "{character_name} already has a skill named {new_name}"
+                )));
+            }
+        }
+
+        tx.execute(
+            "UPDATE character_skills
+                SET name = ?1, effect = ?2, updated_at = ?3
+              WHERE id = ?4",
+            params![&new_name, &new_effect, timestamp, &skill_id],
+        )?;
+
+        if new_name != old_name {
+            log_audit(
+                tx,
+                AuditRecord {
+                    story_id: Some(story_id),
+                    entity_type: "character_skill",
+                    entity_id: &skill_id,
+                    action: "update",
+                    field_changed: Some("name"),
+                    old_value: Some(old_name),
+                    new_value: Some(new_name),
+                    changed_by: user,
+                },
+            )?;
+        }
+
+        if new_effect != old_effect {
+            log_audit(
+                tx,
+                AuditRecord {
+                    story_id: Some(story_id),
+                    entity_type: "character_skill",
+                    entity_id: &skill_id,
+                    action: "update",
+                    field_changed: Some("effect"),
+                    old_value: old_effect,
+                    new_value: new_effect,
+                    changed_by: user,
+                },
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 impl Db {
     pub fn open(path: &Path) -> DbResult<Self> {
         let conn = Connection::open(path)?;
@@ -5684,6 +5799,23 @@ impl Db {
             )?;
         }
 
+        // A skill card is the shared name and description for every holder. The
+        // same helper also runs when a revert puts a card's old label or notes
+        // back, so the sheets never keep a value the card no longer has.
+        if existing.node_type == "skill" && (label_changed || content_changed) {
+            sync_skill_card_holders(
+                &tx,
+                &existing.story_id,
+                id,
+                &label,
+                content.as_deref(),
+                label_changed,
+                content_changed,
+                &user,
+                &timestamp,
+            )?;
+        }
+
         tx.commit()?;
 
         Ok(Node {
@@ -9060,6 +9192,41 @@ impl Db {
                     ),
                     params![x, y, &timestamp, entity_id],
                 )?;
+            }
+        }
+
+        // Reverting a skill card's label or notes is still a card change: the
+        // linked sheets follow it through the same helper a normal save uses.
+        if entry.entity_type == "node" && (field == "label" || field == "content") {
+            let node = tx
+                .query_row(
+                    "SELECT story_id, node_type, label, content FROM nodes WHERE id = ?1",
+                    params![entity_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+
+            if let Some((story_id, node_type, label, content)) = node {
+                if node_type == "skill" {
+                    sync_skill_card_holders(
+                        &tx,
+                        &story_id,
+                        entity_id,
+                        &label,
+                        content.as_deref(),
+                        field == "label",
+                        field == "content",
+                        &user,
+                        &timestamp,
+                    )?;
+                }
             }
         }
 
@@ -15010,6 +15177,166 @@ mod tests {
     }
 
     #[test]
+    fn editing_a_skill_card_updates_every_holder_name_and_effect() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "skill".into(),
+                "Frost Touch".into(),
+                Some("A cold touch.".into()),
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+        let rook_skill = db
+            .add_skill(
+                rook.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 1".into()),
+                Some("A cold touch.".into()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        let mira_skill = db
+            .add_skill(
+                mira.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 2".into()),
+                Some("Mira's own wording.".into()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_node(
+            &card.id,
+            "Chill Touch".into(),
+            Some("A deeper cold.".into()),
+            "Grace".into(),
+        )
+        .unwrap();
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        let rook_after = skills
+            .iter()
+            .find(|skill| skill.id == rook_skill.id)
+            .unwrap();
+        let mira_after = skills
+            .iter()
+            .find(|skill| skill.id == mira_skill.id)
+            .unwrap();
+
+        for (skill, rank) in [(rook_after, "Rank 1"), (mira_after, "Rank 2")] {
+            assert_eq!(skill.name, "Chill Touch");
+            assert_eq!(skill.effect.as_deref(), Some("A deeper cold."));
+            assert_eq!(skill.rank.as_deref(), Some(rank));
+            assert_eq!(skill.node_id.as_deref(), Some(card.id.as_str()));
+        }
+
+        let updates = db
+            .get_audit_log(Some(&story.id), Some("character_skill"), None, 100)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.action == "update")
+            .collect::<Vec<_>>();
+        assert_eq!(updates.len(), 4, "a name and an effect for each holder");
+        assert!(updates.iter().any(|entry| {
+            entry.entity_id == rook_skill.id
+                && entry.field_changed.as_deref() == Some("name")
+                && entry.old_value.as_deref() == Some("Frost Touch")
+                && entry.new_value.as_deref() == Some("Chill Touch")
+        }));
+        assert!(updates.iter().any(|entry| {
+            entry.entity_id == mira_skill.id
+                && entry.field_changed.as_deref() == Some("effect")
+                && entry.old_value.as_deref() == Some("Mira's own wording.")
+                && entry.new_value.as_deref() == Some("A deeper cold.")
+        }));
+    }
+
+    #[test]
+    fn a_skill_card_rename_that_collides_leaves_the_card_and_holders_alone() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "skill".into(),
+                "Frost Touch".into(),
+                Some("A cold touch.".into()),
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_skill(
+            rook.id.clone(),
+            "Frost Touch".into(),
+            None,
+            Some("A cold touch.".into()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_skill(
+            rook.id.clone(),
+            "Ice Lance".into(),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let refused = db.update_node(
+            &card.id,
+            "Ice Lance".into(),
+            Some("A colder touch.".into()),
+            "Grace".into(),
+        );
+
+        assert!(refused.is_err());
+        assert!(refused
+            .unwrap_err()
+            .to_string()
+            .contains("already has a skill named Ice Lance"));
+
+        let stored_card = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == card.id)
+            .unwrap();
+        assert_eq!(stored_card.label, "Frost Touch");
+        assert_eq!(stored_card.content.as_deref(), Some("A cold touch."));
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        let linked = skills
+            .iter()
+            .find(|skill| skill.node_id.as_deref() == Some(card.id.as_str()))
+            .unwrap();
+        assert_eq!(linked.name, "Frost Touch");
+        assert_eq!(linked.effect.as_deref(), Some("A cold touch."));
+    }
+
+    #[test]
     fn deleting_a_node_hides_its_edges_and_records_both() {
         let db = Db::open_in_memory().unwrap();
 
@@ -17323,6 +17650,61 @@ mod tests {
         assert_eq!(revert.new_value.as_deref(), Some("Rook"));
         assert_eq!(revert.changed_by, "Grace");
         assert_eq!(revert.story_id.as_deref(), Some(story.id.as_str()));
+    }
+
+    #[test]
+    fn reverting_a_skill_card_rename_also_renames_its_holders() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db.create_story("Ash".into(), None, "Ada".into()).unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "skill".into(),
+                "Frost Touch".into(),
+                Some("A cold touch.".into()),
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        db.add_skill(
+            rook.id.clone(),
+            "Frost Touch".into(),
+            Some("Rank 1".into()),
+            Some("A cold touch.".into()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.update_node(
+            &card.id,
+            "Chill Touch".into(),
+            Some("A deeper cold.".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        let rename = latest_entry(&db, "node", &card.id, "label");
+
+        assert!(db.revert_change(&rename.id, "Grace".into()).unwrap());
+
+        let stored = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == card.id)
+            .unwrap();
+        assert_eq!(stored.label, "Frost Touch");
+        assert_eq!(stored.content.as_deref(), Some("A deeper cold."));
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(skills[0].name, "Frost Touch");
+        assert_eq!(skills[0].effect.as_deref(), Some("A deeper cold."));
+        assert_eq!(skills[0].rank.as_deref(), Some("Rank 1"));
     }
 
     #[test]

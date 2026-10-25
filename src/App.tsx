@@ -8111,6 +8111,31 @@ function App() {
     setStorySkills(ordered);
   };
 
+  // The database keeps a skill card's linked rows in step when its label or
+  // notes change. Mirror that here so the board and the open sheet do not keep
+  // showing the old name until the story is reopened. Only the fields that
+  // changed are replaced; a holder's rank and chapter stay as they were.
+  const applySkillCardSync = (
+    nodeId: string,
+    label: string,
+    content: string | null,
+    changed: { name: boolean; effect: boolean }
+  ) => {
+    const update = (list: CharacterSkill[]) =>
+      list.map(skill =>
+        skill.node_id !== nodeId
+          ? skill
+          : {
+              ...skill,
+              ...(changed.name ? { name: label } : {}),
+              ...(changed.effect ? { effect: content } : {}),
+            }
+      );
+
+    setStorySkills(update);
+    setCharacterSkills(update);
+  };
+
   const startSkillEdit = (skill: CharacterSkill) => {
     setCharacterError(null);
     setAddingSkillEventFor(null);
@@ -9985,6 +10010,22 @@ function App() {
         )
       );
 
+      // The card's linked skill rows follow the name and notes that were just
+      // saved. Only the changed fields are mirrored, because rank and chapter
+      // belong to each holder.
+      const cardNameChanged =
+        currentNode?.data.nodeType === 'skill' && currentNode.data.label !== label;
+      const cardEffectChanged =
+        currentNode?.data.nodeType === 'skill' &&
+        (currentNode.data.content ?? null) !== content;
+
+      if (cardNameChanged || cardEffectChanged) {
+        applySkillCardSync(updated.id, label, content, {
+          name: cardNameChanged,
+          effect: cardEffectChanged,
+        });
+      }
+
       // The values before the save, kept so undo can put them back through the
       // same command; the history records the walk in both directions.
       const before = currentNode
@@ -9994,9 +10035,29 @@ function App() {
       if (before) {
         recordStep({
           label: `Edit “${label}”`,
-          undo: () => invoke('update_graph_node', { id: selectedNodeId, ...before, user: actor }),
-          redo: () =>
-            invoke('update_graph_node', { id: selectedNodeId, label, content, user: actor }),
+          undo: async () => {
+            await invoke('update_graph_node', { id: selectedNodeId, ...before, user: actor });
+            if (cardNameChanged || cardEffectChanged) {
+              applySkillCardSync(updated.id, before.label, before.content, {
+                name: cardNameChanged,
+                effect: cardEffectChanged,
+              });
+            }
+          },
+          redo: async () => {
+            await invoke('update_graph_node', {
+              id: selectedNodeId,
+              label,
+              content,
+              user: actor,
+            });
+            if (cardNameChanged || cardEffectChanged) {
+              applySkillCardSync(updated.id, label, content, {
+                name: cardNameChanged,
+                effect: cardEffectChanged,
+              });
+            }
+          },
         });
       }
 
@@ -10199,22 +10260,43 @@ function App() {
         )
       );
 
+      if (node.data.nodeType === 'skill') {
+        applySkillCardSync(node.id, updated.label, updated.content ?? null, {
+          name: true,
+          effect: false,
+        });
+      }
+
       recordStep({
         label: `Rename “${node.data.label}”`,
-        undo: () =>
-          invoke('update_graph_node', {
+        undo: async () => {
+          await invoke('update_graph_node', {
             id: node.id,
             label: node.data.label,
             content: node.data.content ?? null,
             user: actor,
-          }),
-        redo: () =>
-          invoke('update_graph_node', {
+          });
+          if (node.data.nodeType === 'skill') {
+            applySkillCardSync(node.id, node.data.label, node.data.content ?? null, {
+              name: true,
+              effect: false,
+            });
+          }
+        },
+        redo: async () => {
+          await invoke('update_graph_node', {
             id: node.id,
             label: updated.label,
             content: updated.content ?? null,
             user: actor,
-          }),
+          });
+          if (node.data.nodeType === 'skill') {
+            applySkillCardSync(node.id, updated.label, updated.content ?? null, {
+              name: true,
+              effect: false,
+            });
+          }
+        },
       });
 
       if (selectedNodeId === node.id) {
@@ -12574,7 +12656,20 @@ function App() {
                           ) : (
                             <ul className="node-drawer-holder-list">
                               {skillCardHolders.map(holder => (
-                                <li className="node-drawer-holder" key={holder.skill.id}>
+                                <li
+                                  className="node-drawer-holder"
+                                  key={holder.skill.id}
+                                  title={[
+                                    holder.characterName,
+                                    holder.skill.rank,
+                                    holder.chapterLabel
+                                      ? `learned in ${holder.chapterLabel}`
+                                      : null,
+                                    holder.skill.effect,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                >
                                   <span className="node-drawer-holder-name">
                                     {holder.characterName}
                                   </span>

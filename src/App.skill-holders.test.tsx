@@ -107,9 +107,21 @@ const chapter = {
   chapter_seq: 1,
 };
 
-const skillRow = (overrides: Record<string, unknown> = {}) => ({
-  id: 'skill-mira',
-  character_id: 'char-2',
+interface SkillRow {
+  id: string;
+  character_id: string;
+  name: string;
+  rank: string | null;
+  effect: string | null;
+  chapter_id: string | null;
+  node_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const skillRow = (overrides: Partial<SkillRow> = {}): SkillRow => ({
+  id: 'skill-rook',
+  character_id: 'char-1',
   name: 'Frost Touch',
   rank: 'Rank 1',
   effect: 'A touch that leaves frost on the skin.',
@@ -126,11 +138,15 @@ interface Call {
 }
 
 let calls: Call[] = [];
+let cardLabel = card.label;
 let cardDescription: string | null = card.content;
+let skills: SkillRow[] = [skillRow()];
 
 beforeEach(() => {
   calls = [];
+  cardLabel = card.label;
   cardDescription = card.content;
+  skills = [skillRow()];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -140,26 +156,44 @@ beforeEach(() => {
       case 'get_all_stories':
         return [story];
       case 'get_graph_nodes':
-        return [{ ...card, content: cardDescription }, chapter];
+        return [{ ...card, label: cardLabel, content: cardDescription }, chapter];
       case 'get_graph_edges':
         return [];
       case 'get_characters':
         return [{ ...rook }, { ...mira }];
       case 'get_story_skills':
-        return [skillRow()];
-      case 'add_skill':
-        return skillRow({
-          id: 'skill-rook',
-          character_id: args.characterId,
-          name: args.name,
-          rank: args.rank ?? null,
-          effect: args.effect ?? null,
-          chapter_id: args.chapterId ?? null,
-          node_id: args.nodeId ?? null,
+        return skills.map(skill => ({ ...skill }));
+      case 'get_character_skills':
+        return skills
+          .filter(skill => skill.character_id === args.characterId)
+          .map(skill => ({ ...skill }));
+      case 'add_skill': {
+        const saved = skillRow({
+          id: `skill-${skills.length + 1}`,
+          character_id: args.characterId as string,
+          name: args.name as string,
+          rank: (args.rank as string | null) ?? null,
+          effect: (args.effect as string | null) ?? null,
+          chapter_id: (args.chapterId as string | null) ?? null,
+          node_id: (args.nodeId as string | null) ?? null,
         });
+        skills = [...skills, saved];
+        return { ...saved };
+      }
+      case 'update_graph_node': {
+        cardLabel = args.label as string;
+        cardDescription = (args.content as string | null) ?? null;
+        // The real database keeps the linked skill rows in step; mirror that so
+        // a later sheet read sees the same facts as the open board.
+        skills = skills.map(skill =>
+          skill.node_id === card.id
+            ? { ...skill, name: cardLabel, effect: cardDescription }
+            : skill
+        );
+        return { ...card, label: cardLabel, content: cardDescription };
+      }
       case 'get_character_stats':
       case 'get_character_attributes':
-      case 'get_character_skills':
       case 'get_character_inventory':
       case 'get_character_currency':
       case 'get_character_level_milestones':
@@ -204,20 +238,20 @@ describe('adding a skill holder from its card', () => {
   it('copies the card name and notes and keeps the holder rank and chapter', async () => {
     const { user, panel } = await openCard();
 
-    // Mira already has the skill through the card, so only Rook is offered.
+    // Rook already has the skill through the card, so only Mira is offered.
     expect(
-      within(panel).getByText('Mira', { selector: '.node-drawer-holder-name' })
+      within(panel).getByText('Rook', { selector: '.node-drawer-holder-name' })
     ).toBeInTheDocument();
     const chooser = within(panel).getByLabelText('Character');
-    expect(within(chooser).queryByRole('option', { name: 'Mira' })).not.toBeInTheDocument();
+    expect(within(chooser).queryByRole('option', { name: 'Rook' })).not.toBeInTheDocument();
 
-    await user.selectOptions(chooser, 'char-1');
+    await user.selectOptions(chooser, 'char-2');
     await user.type(within(panel).getByLabelText('Rank'), 'Rank 2');
     await user.selectOptions(within(panel).getByLabelText('Learned in'), 'n1');
     await user.click(within(panel).getByRole('button', { name: 'Add holder' }));
 
     expect(lastCall('add_skill')).toMatchObject({
-      characterId: 'char-1',
+      characterId: 'char-2',
       name: 'Frost Touch',
       effect: 'A touch that leaves frost on the skin.',
       rank: 'Rank 2',
@@ -227,7 +261,7 @@ describe('adding a skill holder from its card', () => {
     });
 
     expect(
-      await within(panel).findByText('Rook', { selector: '.node-drawer-holder-name' })
+      await within(panel).findByText('Mira', { selector: '.node-drawer-holder-name' })
     ).toBeInTheDocument();
     expect(within(panel).getByText('Rank 2')).toBeInTheDocument();
     expect(chooser).toHaveValue('');
@@ -239,11 +273,11 @@ describe('adding a skill holder from its card', () => {
     cardDescription = null;
     const { user, panel } = await openCard();
 
-    await user.selectOptions(within(panel).getByLabelText('Character'), 'char-1');
+    await user.selectOptions(within(panel).getByLabelText('Character'), 'char-2');
     await user.click(within(panel).getByRole('button', { name: 'Add holder' }));
 
     expect(lastCall('add_skill')).toMatchObject({
-      characterId: 'char-1',
+      characterId: 'char-2',
       name: 'Frost Touch',
       effect: null,
       rank: null,
@@ -257,11 +291,68 @@ describe('adding a skill holder from its card', () => {
     const { user, panel } = await openCard();
 
     await user.type(within(panel).getByLabelText('Notes'), ' Still writing.');
-    await user.selectOptions(within(panel).getByLabelText('Character'), 'char-1');
+    await user.selectOptions(within(panel).getByLabelText('Character'), 'char-2');
 
     expect(within(panel).getByRole('button', { name: 'Add holder' })).toBeDisabled();
     expect(
       within(panel).getByText(/Save the card's label and notes before adding a holder\./)
     ).toBeInTheDocument();
+  });
+
+  it('puts holder names back when the card edit is undone', async () => {
+    const { user, panel } = await openCard();
+
+    await user.clear(within(panel).getByLabelText('Label'));
+    await user.type(within(panel).getByLabelText('Label'), 'Chill Touch');
+    await user.click(within(panel).getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'skill: Chill Touch' })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'skill: Frost Touch' })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    expect(
+      await screen.findByText('Frost Touch', { selector: '.skill-name' })
+    ).toBeInTheDocument();
+  });
+
+  it('keeps existing holders in step when the card is saved', async () => {
+    const { user, panel } = await openCard();
+
+    await user.clear(within(panel).getByLabelText('Label'));
+    await user.type(within(panel).getByLabelText('Label'), 'Chill Touch');
+    await user.clear(within(panel).getByLabelText('Notes'));
+    await user.type(within(panel).getByLabelText('Notes'), 'A deeper cold.');
+    await user.click(within(panel).getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('update_graph_node')).toMatchObject({
+      id: 'n-skill',
+      label: 'Chill Touch',
+      content: 'A deeper cold.',
+      user: 'You',
+    });
+
+    // The open board and the holder line follow the save without reopening.
+    const holder = within(panel)
+      .getByText('Rook', { selector: '.node-drawer-holder-name' })
+      .closest('li');
+    expect(holder).toHaveAttribute('title', expect.stringContaining('A deeper cold.'));
+    expect(
+      await screen.findByRole('button', { name: 'skill: Chill Touch' })
+    ).toBeInTheDocument();
+
+    // And the holder's sheet shows the new name and effect.
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    expect(await screen.findByRole('heading', { name: 'Skills' })).toBeInTheDocument();
+    expect(screen.getByText('Chill Touch', { selector: '.skill-name' })).toBeInTheDocument();
+    expect(screen.getByText('A deeper cold.', { selector: '.skill-effect' })).toBeInTheDocument();
   });
 });

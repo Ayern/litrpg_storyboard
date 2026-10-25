@@ -231,6 +231,12 @@ notes become the new character skill's name and effect, while rank and chapter
 are entered for that holder; the character picker leaves out anyone who already
 holds the card, and unsaved card edits pause the form. **S**
 
+**4d. Card edits follow to holders.** **Done.** Saving a skill card's label or
+notes updates every linked character skill's name and effect in the same
+transaction, leaving each holder's rank and chapter alone. A rename that would
+collide with another skill on a holder's sheet is refused as a whole, and the
+open board and sheet follow the save without reopening the story. **S–M**
+
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a
 confirmation. The chosen file is copied to a staging file, opened and migrated

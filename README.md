@@ -318,7 +318,11 @@ says so when nobody has it yet. Selecting the card opens its holders in the
 inspector, with an **Add holder** form: the card's saved name and notes become
 the new row's name and effect, while rank and chapter are filled in for that
 holder. The character picker leaves out anyone who already holds the card, and a
-card with unsaved label or note edits asks for a save before it will add one. Skills travel in the JSON export, the story
+card with unsaved label or note edits asks for a save before it will add one.
+Saving the card's label or notes updates every linked skill row to the same name
+and effect, while each holder's rank and chapter stay as they are; if the new
+name would collide with another skill on a holder's sheet, the save is refused
+and both the card and its holders are left unchanged. Skills travel in the JSON export, the story
 bible and an import with their chapter and card remapped like every other
 reference, and they appear in the Audit tab under **Skills**. A skill's name, rank
 and effect are revertible from the history; its chapter and card links are
