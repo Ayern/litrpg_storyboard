@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -344,7 +344,10 @@ describe('the skill tree view', () => {
     await openSkillTrees();
 
     expect(screen.getByRole('heading', { name: 'Skill trees' })).toBeInTheDocument();
-    expect(screen.getByText('Tier 1')).toBeInTheDocument();
+    // Tiers and links are drawn from the story's skills and evolutions, which
+    // load after the view opens, so wait for the first tier rather than assume
+    // the tree is already there.
+    expect(await screen.findByText('Tier 1')).toBeInTheDocument();
     expect(screen.getByText('Tier 2')).toBeInTheDocument();
     expect(screen.getByText('Tier 3')).toBeInTheDocument();
     expect(screen.getByTestId('node-skill-ember')).toBeInTheDocument();
@@ -352,7 +355,10 @@ describe('the skill tree view', () => {
     expect(screen.getByTestId('node-skill-inferno')).toBeInTheDocument();
 
     // The two evolution kinds are told apart by colour, and the legend says so.
-    expect(screen.getByTestId('edge-e1')).toHaveAttribute('data-stroke', '#5b8def');
+    expect(await screen.findByTestId('edge-e1')).toHaveAttribute(
+      'data-stroke',
+      '#5b8def'
+    );
     expect(screen.getByTestId('edge-e2')).toHaveAttribute('data-stroke', '#e0af68');
     const legend = screen.getByRole('group', { name: 'Evolution styles' });
     expect(within(legend).getByText('Upgrade')).toBeInTheDocument();
@@ -367,7 +373,7 @@ describe('the skill tree view', () => {
 
     const user = await openSkillTrees();
 
-    await user.click(screen.getByTestId('node-skill-flame'));
+    await user.click(await screen.findByTestId('node-skill-flame'));
     await user.selectOptions(screen.getByLabelText('Linked skill'), 'skill-ember');
     await user.selectOptions(screen.getByLabelText('Evolution kind'), 'fusion');
     await user.selectOptions(screen.getByLabelText('Evolution chapter'), 'n2');
@@ -400,7 +406,7 @@ describe('the skill tree view', () => {
 
     const user = await openSkillTrees();
 
-    await user.click(screen.getByTestId('node-skill-ember'));
+    await user.click(await screen.findByTestId('node-skill-ember'));
     await user.click(screen.getByRole('button', { name: 'Add outcome' }));
     await user.selectOptions(screen.getByLabelText('Linked skill'), 'skill-flame');
     await user.click(screen.getByRole('button', { name: 'Add link' }));
@@ -427,7 +433,7 @@ describe('the skill tree view', () => {
 
     const user = await openSkillTrees();
 
-    await user.click(screen.getByTestId('edge-e1'));
+    await user.click(await screen.findByTestId('edge-e1'));
 
     const details = screen.getByRole('complementary', { name: 'Skill tree details' });
     expect(details).toHaveTextContent('Ember → Flame');
@@ -493,7 +499,9 @@ describe('skill links on the character sheet', () => {
 
     await openCharacters();
 
-    expect(screen.getByText(/Requires Ember · Rank 1/)).toBeInTheDocument();
+    // The sheet's skills and the story's links load after the title does, so
+    // wait for the row the author actually reads.
+    expect(await screen.findByText(/Requires Ember · Rank 1/)).toBeInTheDocument();
     expect(screen.getByText(/→ Flame/)).toBeInTheDocument();
   });
 });
@@ -509,8 +517,10 @@ describe('skill evolution continuity', () => {
     const user = await openCharacters();
     await user.click(screen.getByRole('button', { name: 'Chapters' }));
 
-    expect(continuityText()).toContain(
-      'appears in “Chapter One” before its parent skill “Ember” is learned in “Chapter Two”'
+    await waitFor(() =>
+      expect(continuityText()).toContain(
+        'appears in “Chapter One” before its parent skill “Ember” is learned in “Chapter Two”'
+      )
     );
   });
 
@@ -540,8 +550,10 @@ describe('skill evolution continuity', () => {
     const user = await openCharacters();
     await user.click(screen.getByRole('button', { name: 'Chapters' }));
 
-    expect(continuityText()).toContain(
-      'is unlocked in “Chapter One” but “Ember” only reaches Rank 2 in “Chapter Two”'
+    await waitFor(() =>
+      expect(continuityText()).toContain(
+        'is unlocked in “Chapter One” but “Ember” only reaches Rank 2 in “Chapter Two”'
+      )
     );
   });
 
@@ -554,6 +566,8 @@ describe('skill evolution continuity', () => {
     const user = await openCharacters();
     await user.click(screen.getByRole('button', { name: 'Chapters' }));
 
-    expect(continuityText()).toContain('branch link has a child skill in the trash');
+    await waitFor(() =>
+      expect(continuityText()).toContain('branch link has a child skill in the trash')
+    );
   });
 });

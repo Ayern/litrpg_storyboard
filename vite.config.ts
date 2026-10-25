@@ -36,5 +36,10 @@ export default defineConfig(() => ({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // These tests drive the whole app: a render, a tab switch and several
+    // typed edits each. The 5s default is comfortable on a developer's machine
+    // but the inventory undo/redo tests crossed it on the CI runner, so the
+    // budget is set where a genuinely hung test still fails quickly.
+    testTimeout: 20_000,
   },
 }));
