@@ -4,7 +4,7 @@ use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 22;
+const SCHEMA_VERSION: i32 = 23;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -3985,6 +3985,351 @@ impl Db {
         Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
     }
 
+    // ===== SKILL EVOLUTIONS =====
+    //
+    // A skill row says what an ability is now; a skill event says when it
+    // changed. An evolution is the other kind of history: which earlier skill it
+    // grew out of, or which skills fused into it. The links form a graph, so the
+    // database refuses a skill evolving into itself and any link that would close
+    // a loop, and a character's tree is the closure around their own skills.
+
+    pub fn add_skill_evolution(
+        &self,
+        parent_skill_id: String,
+        child_skill_id: String,
+        evolution_type: String,
+        chapter_id: Option<String>,
+        required_rank: Option<String>,
+        notes: Option<String>,
+        user: String,
+    ) -> DbResult<SkillEvolution> {
+        let evolution_type = clean_evolution_type(&evolution_type)?;
+        let required_rank = clean_optional(required_rank);
+        let notes = clean_optional(notes);
+        let timestamp = now();
+
+        if parent_skill_id == child_skill_id {
+            return Err(DbError::Invalid(
+                "a skill cannot evolve into itself".to_string(),
+            ));
+        }
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let parent = live_skill_ref(&tx, &parent_skill_id, "parent")?;
+        let child = live_skill_ref(&tx, &child_skill_id, "child")?;
+        let story_id = parent.0.clone();
+
+        if story_id != child.0 {
+            return Err(DbError::Invalid(
+                "both skills in an evolution must belong to the same story".to_string(),
+            ));
+        }
+
+        let chapter_label =
+            validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+
+        let duplicate: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM skill_evolutions
+                  WHERE parent_skill_id = ?1 AND child_skill_id = ?2
+                    AND evolution_type = ?3",
+                params![&parent_skill_id, &child_skill_id, &evolution_type],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if duplicate.is_some() {
+            return Err(DbError::Invalid(format!(
+                "“{}” → “{}” is already recorded as a {evolution_type} link",
+                parent.1, child.1
+            )));
+        }
+
+        if evolution_would_cycle(&tx, &parent_skill_id, &child_skill_id)? {
+            return Err(DbError::Invalid(format!(
+                "“{}” already leads to “{}”, so this link would close a loop",
+                child.1, parent.1
+            )));
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO skill_evolutions
+             (id, story_id, parent_skill_id, child_skill_id, evolution_type,
+              chapter_id, required_rank, notes, created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            params![
+                &id,
+                &story_id,
+                &parent_skill_id,
+                &child_skill_id,
+                &evolution_type,
+                &chapter_id,
+                &required_rank,
+                &notes,
+                &user,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "skill_evolution",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("evolution"),
+                old_value: None,
+                new_value: Some(format!("{} → {} ({evolution_type})", parent.1, child.1)),
+                changed_by: &user,
+            },
+        )?;
+
+        if let Some(label) = &chapter_label {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "skill_evolution",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("chapter"),
+                    old_value: None,
+                    new_value: Some(label.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if let Some(rank) = &required_rank {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "skill_evolution",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("required rank"),
+                    old_value: None,
+                    new_value: Some(rank.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        if let Some(note) = &notes {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "skill_evolution",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some("notes"),
+                    old_value: None,
+                    new_value: Some(note.clone()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(SkillEvolution {
+            id,
+            story_id,
+            parent_skill_id,
+            child_skill_id,
+            evolution_type,
+            chapter_id,
+            required_rank,
+            notes,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn delete_skill_evolution(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT e.story_id, e.evolution_type, p.name, c.name
+                 FROM skill_evolutions e
+                 JOIN character_skills p ON p.id = e.parent_skill_id
+                 JOIN character_skills c ON c.id = e.child_skill_id
+                 WHERE e.id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((story_id, evolution_type, parent_name, child_name)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM skill_evolutions WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "skill_evolution",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(format!("{parent_name} → {child_name} ({evolution_type})")),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    /// Every evolution link recorded in a story, including links whose skill is
+    /// now in the trash, so continuity can name the problem rather than drop it.
+    pub fn list_story_skill_evolutions(&self, story_id: &str) -> DbResult<Vec<SkillEvolution>> {
+        let guard = self.conn()?;
+        skill_evolutions_in(&guard, story_id)
+    }
+
+    /// One character's tree: every link connected to one of their skills, in
+    /// either direction, followed outwards until the tree is closed.
+    pub fn list_character_skill_evolutions(
+        &self,
+        character_id: &str,
+    ) -> DbResult<Vec<SkillEvolution>> {
+        let guard = self.conn()?;
+        let story_id = live_character_story(&guard, character_id)?;
+        let all = skill_evolutions_in(&guard, &story_id)?;
+
+        let mut skill_ids: HashSet<String> = {
+            let mut stmt =
+                guard.prepare("SELECT id FROM character_skills WHERE character_id = ?1")?;
+            let rows = stmt.query_map(params![character_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<HashSet<_>>>()?
+        };
+
+        // Walk outwards from the character's own skills until no new skill is
+        // reached; a link belongs to the tree when either end is reached.
+        let mut chosen: Vec<SkillEvolution> = Vec::new();
+        let mut visited_edges: HashSet<String> = HashSet::new();
+
+        loop {
+            let mut grew = false;
+
+            for evolution in &all {
+                if visited_edges.contains(&evolution.id) {
+                    continue;
+                }
+
+                let touches = skill_ids.contains(&evolution.parent_skill_id)
+                    || skill_ids.contains(&evolution.child_skill_id);
+
+                if !touches {
+                    continue;
+                }
+
+                visited_edges.insert(evolution.id.clone());
+                chosen.push(evolution.clone());
+                grew |= skill_ids.insert(evolution.parent_skill_id.clone());
+                grew |= skill_ids.insert(evolution.child_skill_id.clone());
+            }
+
+            if !grew {
+                break;
+            }
+        }
+
+        chosen.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        Ok(chosen)
+    }
+
+    /// The whole story's skill graph, as the tree view reads it: live skills and
+    /// the links between them.
+    pub fn skill_tree_for_story(&self, story_id: &str) -> DbResult<SkillTree> {
+        let skills = self.list_story_skills(story_id)?;
+        let evolutions = self.list_story_skill_evolutions(story_id)?;
+        let live: HashSet<String> = skills.iter().map(|skill| skill.id.clone()).collect();
+        let evolutions = evolutions
+            .into_iter()
+            .filter(|evolution| {
+                live.contains(&evolution.parent_skill_id)
+                    && live.contains(&evolution.child_skill_id)
+            })
+            .collect();
+
+        Ok(SkillTree { skills, evolutions })
+    }
+
+    /// One character's closed skill tree, ready to draw without another pass.
+    pub fn skill_tree_for_character(&self, character_id: &str) -> DbResult<SkillTree> {
+        let evolutions = self.list_character_skill_evolutions(character_id)?;
+        let mut ids: HashSet<String> = {
+            let guard = self.conn()?;
+            let mut stmt =
+                guard.prepare("SELECT id FROM character_skills WHERE character_id = ?1")?;
+            let rows = stmt.query_map(params![character_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqliteResult<HashSet<_>>>()?
+        };
+
+        for evolution in &evolutions {
+            ids.insert(evolution.parent_skill_id.clone());
+            ids.insert(evolution.child_skill_id.clone());
+        }
+
+        let skills = {
+            let guard = self.conn()?;
+            let story_id = live_character_story(&guard, character_id)?;
+            let mut stmt = guard.prepare(
+                "SELECT s.id, s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
+                        s.created_at, s.updated_at
+                 FROM character_skills s
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+                 ORDER BY s.name COLLATE NOCASE",
+            )?;
+            let rows = stmt.query_map(params![&story_id], character_skill_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+                .into_iter()
+                .filter(|skill| ids.contains(&skill.id))
+                .collect::<Vec<_>>()
+        };
+
+        let live: HashSet<String> = skills.iter().map(|skill| skill.id.clone()).collect();
+        let evolutions = evolutions
+            .into_iter()
+            .filter(|evolution| {
+                live.contains(&evolution.parent_skill_id)
+                    && live.contains(&evolution.child_skill_id)
+            })
+            .collect();
+
+        Ok(SkillTree { skills, evolutions })
+    }
+
     // ===== CHAPTER SNAPSHOT =====
     //
     // The progress ledger is a history, not a set of totals. This answers the
@@ -6237,6 +6582,19 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let mut skill_evolutions = {
+            let mut stmt = guard.prepare(
+                "SELECT e.id, e.story_id, e.parent_skill_id, e.child_skill_id,
+                        e.evolution_type, e.chapter_id, e.required_rank, e.notes,
+                        e.created_by, e.created_at, e.updated_at
+                 FROM skill_evolutions e
+                 WHERE e.story_id = ?1
+                 ORDER BY e.created_at, e.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], skill_evolution_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let mut character_progress = {
             let mut stmt = guard.prepare(
                 "SELECT p.id, p.character_id, p.chapter_id, p.xp_earned,
@@ -6359,6 +6717,29 @@ impl Db {
                 .is_some_and(|id| !live_node_ids.contains(id))
             {
                 event.chapter_id = None;
+            }
+        }
+
+        // An evolution needs both of its skills in the file, or the import would
+        // point at a row that is not there. A link that touches a trashed skill
+        // stays out of the export, and its chapter is cleared like the others.
+        let exported_skill_ids: std::collections::HashSet<&str> = character_skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+
+        skill_evolutions.retain(|evolution| {
+            exported_skill_ids.contains(evolution.parent_skill_id.as_str())
+                && exported_skill_ids.contains(evolution.child_skill_id.as_str())
+        });
+
+        for evolution in &mut skill_evolutions {
+            if evolution
+                .chapter_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                evolution.chapter_id = None;
             }
         }
 
@@ -6575,6 +6956,7 @@ impl Db {
             character_skills,
             character_level_milestones,
             character_skill_events,
+            skill_evolutions,
             character_progress,
             chapter_cast,
             character_inventory,
@@ -8747,6 +9129,11 @@ impl Db {
             .iter()
             .map(|event| (event.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let evolution_ids: HashMap<String, String> = export
+            .skill_evolutions
+            .iter()
+            .map(|evolution| (evolution.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let character_progress: HashMap<String, String> = export
             .character_progress
             .iter()
@@ -8939,6 +9326,51 @@ impl Db {
                         ));
                     }
                 }
+            }
+        }
+
+        let evolution_links: Vec<(String, String)> = export
+            .skill_evolutions
+            .iter()
+            .map(|evolution| {
+                (
+                    evolution.parent_skill_id.clone(),
+                    evolution.child_skill_id.clone(),
+                )
+            })
+            .collect();
+
+        if evolution_links_have_cycle(&evolution_links) {
+            return Err(DbError::Invalid(
+                "the file's skill evolutions loop back on themselves".to_string(),
+            ));
+        }
+
+        for evolution in &export.skill_evolutions {
+            if evolution.parent_skill_id == evolution.child_skill_id {
+                return Err(DbError::Invalid(
+                    "a skill cannot evolve into itself".to_string(),
+                ));
+            }
+
+            if !skills.contains_key(&evolution.parent_skill_id)
+                || !skills.contains_key(&evolution.child_skill_id)
+            {
+                return Err(DbError::Invalid(
+                    "a skill evolution points at a skill the file does not contain".to_string(),
+                ));
+            }
+
+            clean_evolution_type(&evolution.evolution_type)?;
+
+            if evolution
+                .chapter_id
+                .as_ref()
+                .is_some_and(|id| !nodes.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "a skill evolution points at a chapter the file does not contain".to_string(),
+                ));
             }
         }
 
@@ -9535,6 +9967,32 @@ impl Db {
             )?;
         }
 
+        // Evolutions come after the skills at both ends, because both ids are
+        // foreign keys into the copy.
+        for evolution in &export.skill_evolutions {
+            let evolution_type = clean_evolution_type(&evolution.evolution_type)?;
+
+            tx.execute(
+                "INSERT INTO skill_evolutions
+                 (id, story_id, parent_skill_id, child_skill_id, evolution_type,
+                  chapter_id, required_rank, notes, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &evolution_ids[&evolution.id],
+                    &story_id,
+                    &skills[&evolution.parent_skill_id],
+                    &skills[&evolution.child_skill_id],
+                    &evolution_type,
+                    evolution.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    &evolution.required_rank,
+                    &evolution.notes,
+                    &evolution.created_by,
+                    &evolution.created_at,
+                    &evolution.updated_at
+                ],
+            )?;
+        }
+
         for milestone in &export.character_level_milestones {
             let xp = clean_level_xp(milestone.xp)?;
             let stat_changes = imported_level_stat_changes(milestone)?;
@@ -9680,6 +10138,7 @@ impl Db {
                 "character_skill" => skills.get(&entry.entity_id).cloned(),
                 "character_level_milestone" => level_milestones.get(&entry.entity_id).cloned(),
                 "character_skill_event" => skill_events.get(&entry.entity_id).cloned(),
+                "skill_evolution" => evolution_ids.get(&entry.entity_id).cloned(),
                 "character_progress" => character_progress.get(&entry.entity_id).cloned(),
                 "chapter_cast" => chapter_cast.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
@@ -10057,6 +10516,38 @@ pub struct CharacterSkillEvent {
     pub updated_at: String,
 }
 
+/// One link in a character's skill tree: the parent skill a later skill grew
+/// out of, mutating from or fused with. The type says how the child came about;
+/// the chapter places the change in the reading order, and the required rank is
+/// the parent's rank the author says it needed. Both skills live in the same
+/// story, and a link is deleted with either of them.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct SkillEvolution {
+    pub id: String,
+    pub story_id: String,
+    pub parent_skill_id: String,
+    pub child_skill_id: String,
+    pub evolution_type: String,
+    #[serde(default)]
+    pub chapter_id: Option<String>,
+    #[serde(default)]
+    pub required_rank: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A whole skill tree as the database sees it: the skills, plus the evolution
+/// links between them. Either list can be empty, and the links are the ones the
+/// caller asked to close over — a story's whole graph, or one character's tree.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct SkillTree {
+    pub skills: Vec<CharacterSkill>,
+    pub evolutions: Vec<SkillEvolution>,
+}
+
 /// One item a cast member carries. The rarity and effect are the author's own
 /// words, the quantity is how many they hold, and the chapter is where it was
 /// found. `lost_chapter_id` records where it left their hands. Every link is
@@ -10396,6 +10887,9 @@ pub struct StoryExport {
     pub character_level_milestones: Vec<CharacterLevelMilestone>,
     #[serde(default)]
     pub character_skill_events: Vec<CharacterSkillEvent>,
+    /// Absent from exports written before schema v23, so they default to empty.
+    #[serde(default)]
+    pub skill_evolutions: Vec<SkillEvolution>,
     /// Absent from exports written before schema v18, so they default to empty.
     #[serde(default)]
     pub character_progress: Vec<CharacterProgress>,
@@ -11256,6 +11750,23 @@ fn skill_event_row(row: &rusqlite::Row<'_>) -> SqliteResult<CharacterSkillEvent>
     })
 }
 
+/// Every evolution read selects its columns in this order.
+fn skill_evolution_row(row: &rusqlite::Row<'_>) -> SqliteResult<SkillEvolution> {
+    Ok(SkillEvolution {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        parent_skill_id: row.get(2)?,
+        child_skill_id: row.get(3)?,
+        evolution_type: row.get(4)?,
+        chapter_id: row.get(5)?,
+        required_rank: row.get(6)?,
+        notes: row.get(7)?,
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
 /// Every inventory read selects its columns in this order.
 fn inventory_item_row(row: &rusqlite::Row<'_>) -> SqliteResult<InventoryItem> {
     Ok(InventoryItem {
@@ -11302,6 +11813,125 @@ fn clean_skill_event_kind(value: &str) -> DbResult<String> {
     Err(DbError::Invalid(
         "a skill event must be an upgrade, a sacrifice or a use".to_string(),
     ))
+}
+
+/// The four ways a skill can follow another. Deliberately a small vocabulary:
+/// anything else is a typo, not a new kind of progression.
+fn clean_evolution_type(value: &str) -> DbResult<String> {
+    let kind = value.trim().to_lowercase();
+
+    if matches!(kind.as_str(), "upgrade" | "fusion" | "mutation" | "branch") {
+        return Ok(kind);
+    }
+
+    Err(DbError::Invalid(
+        "an evolution must be an upgrade, fusion, mutation or branch".to_string(),
+    ))
+}
+
+/// The story and name of a skill on a live sheet, refusing a row that is gone or
+/// whose owner is in the trash.
+fn live_skill_ref(conn: &Connection, skill_id: &str, role: &str) -> DbResult<(String, String)> {
+    conn.query_row(
+        "SELECT c.story_id, s.name
+         FROM character_skills s
+         JOIN characters c ON c.id = s.character_id
+         JOIN stories st ON st.id = c.story_id
+         WHERE s.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+        params![skill_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )
+    .optional()?
+    .ok_or_else(|| DbError::Invalid(format!("the {role} skill is not on a live character sheet")))
+}
+
+/// Whether adding parent → child would close a loop: true when the parent is
+/// already reachable from the child. The walk follows the graph as recorded, so
+/// A → B → C refuses C → A as well as B → A.
+fn evolution_would_cycle(
+    conn: &Connection,
+    parent_skill_id: &str,
+    child_skill_id: &str,
+) -> DbResult<bool> {
+    let found: Option<i64> = conn
+        .query_row(
+            "WITH RECURSIVE reachable(id) AS (
+                 SELECT child_skill_id FROM skill_evolutions WHERE parent_skill_id = ?1
+                 UNION
+                 SELECT e.child_skill_id
+                 FROM skill_evolutions e
+                 JOIN reachable r ON e.parent_skill_id = r.id
+             )
+             SELECT 1 FROM reachable WHERE id = ?2 LIMIT 1",
+            params![child_skill_id, parent_skill_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(found.is_some())
+}
+
+/// Every row in a story, in the order it was recorded. Skills in the trash are
+/// included on purpose: continuity reads this and names them.
+fn skill_evolutions_in(conn: &Connection, story_id: &str) -> DbResult<Vec<SkillEvolution>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.story_id, e.parent_skill_id, e.child_skill_id, e.evolution_type,
+                e.chapter_id, e.required_rank, e.notes, e.created_by, e.created_at,
+                e.updated_at
+         FROM skill_evolutions e
+         JOIN stories st ON st.id = e.story_id
+         WHERE e.story_id = ?1 AND st.deleted_at IS NULL
+         ORDER BY e.created_at, e.id",
+    )?;
+
+    let rows = stmt.query_map(params![story_id], skill_evolution_row)?;
+
+    Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+}
+
+/// Whether a set of parent → child links contains a loop. Import checks the
+/// whole file before writing, because a file can carry a cycle no single insert
+/// would have caught while the rows were being added one at a time.
+fn evolution_links_have_cycle(links: &[(String, String)]) -> bool {
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for (parent, child) in links {
+        children
+            .entry(parent.as_str())
+            .or_default()
+            .push(child.as_str());
+    }
+
+    fn reaches(
+        current: &str,
+        target: &str,
+        children: &HashMap<&str, Vec<&str>>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        if current == target {
+            return true;
+        }
+
+        if !seen.insert(current.to_string()) {
+            return false;
+        }
+
+        children
+            .get(current)
+            .is_some_and(|next| next.iter().any(|id| reaches(id, target, children, seen)))
+    }
+
+    for (parent, child) in links {
+        if parent == child {
+            return true;
+        }
+
+        if reaches(child, parent, &children, &mut HashSet::new()) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// An optional text field with its edges trimmed; blank means absent, so a skill
@@ -12139,6 +12769,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_022)?;
     }
 
+    if version < 23 {
+        conn.execute_batch(MIGRATION_023)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -12452,6 +13086,44 @@ const MIGRATION_018: &str = "
 
     CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
         ON character_progress (chapter_id);
+";
+
+/// Schema v23: one skill grows from, mutates into or fuses with another.
+///
+/// Both ends are `character_skills` rows of the same story and are deleted with
+/// them; the chapter is a link that is cleared when its card is purged. The
+/// type is one of upgrade, fusion, mutation or branch, and the required rank is
+/// the author's words. A skill cannot evolve into itself, and the application
+/// refuses a link that would close a loop.
+const MIGRATION_023: &str = "
+    CREATE TABLE IF NOT EXISTS skill_evolutions (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        parent_skill_id TEXT NOT NULL,
+        child_skill_id TEXT NOT NULL,
+        evolution_type TEXT NOT NULL,
+        chapter_id TEXT,
+        required_rank TEXT,
+        notes TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(parent_skill_id, child_skill_id, evolution_type),
+        CHECK(parent_skill_id <> child_skill_id),
+        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,
+        FOREIGN KEY(parent_skill_id) REFERENCES character_skills(id) ON DELETE CASCADE,
+        FOREIGN KEY(child_skill_id) REFERENCES character_skills(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_skill_evolutions_story
+        ON skill_evolutions (story_id);
+
+    CREATE INDEX IF NOT EXISTS idx_skill_evolutions_parent
+        ON skill_evolutions (parent_skill_id);
+
+    CREATE INDEX IF NOT EXISTS idx_skill_evolutions_child
+        ON skill_evolutions (child_skill_id);
 ";
 
 /// Schema v22: remembers which reward payouts already reached the chapter
@@ -14051,6 +14723,44 @@ mod tests {
             .unwrap();
         assert_eq!(other.total, 0);
         assert!(other.entries.is_empty());
+    }
+
+    #[test]
+    fn a_version_22_database_gains_the_evolution_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate a file written before skill evolutions existed.
+        conn.execute_batch("DROP TABLE skill_evolutions; PRAGMA user_version = 22;")
+            .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 23);
+
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                  WHERE type = 'table' AND name = 'skill_evolutions'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 1, "the migration created the table");
+
+        let skill_links: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('skill_evolutions')
+                  WHERE \"table\" = 'character_skills' AND on_delete = 'CASCADE'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(skill_links, 2, "both ends cascade with their skill");
     }
 
     #[test]
@@ -17903,6 +18613,413 @@ mod tests {
             .get_audit_log(Some(&restored.id), Some("character_skill"), None, 100)
             .unwrap();
         assert!(history.iter().any(|entry| entry.entity_id == skills[0].id));
+    }
+
+    // A story with three skills and two chapters, the smallest shape that can
+    // show a chain and a fusion.
+    fn evolution_story() -> (
+        Db,
+        Story,
+        Character,
+        Node,
+        Node,
+        CharacterSkill,
+        CharacterSkill,
+        CharacterSkill,
+    ) {
+        let (db, story, character, first, _card) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                320.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let ember = db
+            .add_skill(
+                character.id.clone(),
+                "Ember".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(first.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let flame = db
+            .add_skill(
+                character.id.clone(),
+                "Flame".into(),
+                Some("Rank 2".into()),
+                None,
+                Some(second.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let inferno = db
+            .add_skill(
+                character.id.clone(),
+                "Inferno".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        (db, story, character, first, second, ember, flame, inferno)
+    }
+
+    #[test]
+    fn an_evolution_records_its_kind_chapter_and_rank() {
+        let (db, story, character, _, chapter, ember, flame, _) = evolution_story();
+
+        let link = db
+            .add_skill_evolution(
+                ember.id.clone(),
+                flame.id.clone(),
+                " Upgrade ".into(),
+                Some(chapter.id.clone()),
+                Some(" Rank 1 ".into()),
+                Some("  burned hotter  ".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(link.evolution_type, "upgrade", "the kind is normalised");
+        assert_eq!(link.chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_eq!(link.required_rank.as_deref(), Some("Rank 1"));
+        assert_eq!(link.notes.as_deref(), Some("burned hotter"));
+        assert_eq!(link.story_id, story.id);
+
+        let links = db.list_story_skill_evolutions(&story.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, link.id);
+
+        // The whole story's tree and one character's tree both see it.
+        let story_tree = db.skill_tree_for_story(&story.id).unwrap();
+        assert_eq!(story_tree.skills.len(), 3);
+        assert_eq!(story_tree.evolutions.len(), 1);
+
+        let character_tree = db.skill_tree_for_character(&character.id).unwrap();
+        assert_eq!(character_tree.skills.len(), 3);
+        assert_eq!(character_tree.evolutions.len(), 1);
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("skill_evolution"), Some(&link.id), 20)
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.action == "create"
+            && entry.field_changed.as_deref() == Some("evolution")
+            && entry.new_value.as_deref().unwrap_or("").contains("Ember")));
+        assert!(history
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("chapter")));
+
+        db.delete_skill_evolution(&link.id, "Ada".into()).unwrap();
+        assert!(db
+            .list_story_skill_evolutions(&story.id)
+            .unwrap()
+            .is_empty());
+
+        let history = db
+            .get_audit_log(Some(&story.id), Some("skill_evolution"), Some(&link.id), 20)
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.action == "delete"));
+    }
+
+    #[test]
+    fn a_characters_tree_follows_a_fusion_into_another_sheet() {
+        let (db, story, rook, _, chapter, ember, flame, _) = evolution_story();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+        let mist = db
+            .add_skill(
+                mira.id.clone(),
+                "Mist".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.add_skill_evolution(
+            ember.id.clone(),
+            flame.id.clone(),
+            "upgrade".into(),
+            Some(chapter.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_skill_evolution(
+            flame.id.clone(),
+            mist.id.clone(),
+            "fusion".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // Rook's tree reaches through the fusion onto Mira's sheet, and back
+        // again from Mira's side of the same link.
+        let rook_tree = db.skill_tree_for_character(&rook.id).unwrap();
+        assert_eq!(rook_tree.skills.len(), 4);
+        assert_eq!(rook_tree.evolutions.len(), 2);
+        assert!(rook_tree.skills.iter().any(|skill| skill.id == mist.id));
+
+        let mira_tree = db.skill_tree_for_character(&mira.id).unwrap();
+        assert_eq!(mira_tree.skills.len(), 3, "Mira's tree stops at the fusion");
+        assert_eq!(mira_tree.evolutions.len(), 2);
+        assert!(mira_tree.skills.iter().any(|skill| skill.id == flame.id));
+
+        // A character with no skills and no links gets an empty tree rather than
+        // every skill in the story.
+        let stranger = db
+            .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
+            .unwrap();
+        let stranger_tree = db.skill_tree_for_character(&stranger.id).unwrap();
+        assert!(stranger_tree.skills.is_empty());
+        assert!(stranger_tree.evolutions.is_empty());
+    }
+
+    #[test]
+    fn a_skill_cannot_evolve_into_itself_or_close_a_loop() {
+        let (db, _, _, _, _, ember, flame, inferno) = evolution_story();
+
+        let error = db
+            .add_skill_evolution(
+                ember.id.clone(),
+                ember.id.clone(),
+                "mutation".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("itself"), "{error}");
+
+        let error = db
+            .add_skill_evolution(
+                ember.id.clone(),
+                flame.id.clone(),
+                "sideways".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("upgrade, fusion"), "{error}");
+
+        db.add_skill_evolution(
+            ember.id.clone(),
+            flame.id.clone(),
+            "upgrade".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_skill_evolution(
+            flame.id.clone(),
+            inferno.id.clone(),
+            "fusion".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // The direct loop and the long way round are both refused.
+        for (parent, child) in [
+            (flame.id.clone(), ember.id.clone()),
+            (inferno.id.clone(), ember.id.clone()),
+        ] {
+            let error = db
+                .add_skill_evolution(
+                    parent,
+                    child,
+                    "branch".into(),
+                    None,
+                    None,
+                    None,
+                    "Ada".into(),
+                )
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("close a loop"), "{error}");
+        }
+    }
+
+    #[test]
+    fn evolution_links_go_with_their_skills_and_lose_a_purged_chapter() {
+        let (db, story, _, _, second, ember, flame, inferno) = evolution_story();
+
+        let link = db
+            .add_skill_evolution(
+                ember.id.clone(),
+                flame.id.clone(),
+                "upgrade".into(),
+                Some(second.id.clone()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&second.id, "Ada".into()).unwrap();
+        db.purge_node(&second.id, "Ada".into()).unwrap();
+
+        let links = db.list_story_skill_evolutions(&story.id).unwrap();
+        assert_eq!(links.len(), 1, "the link survives its chapter");
+        assert_eq!(links[0].chapter_id, None, "the purged chapter is cleared");
+        assert_eq!(links[0].id, link.id);
+
+        // Deleting either skill takes the link with it, because both ends are
+        // foreign keys.
+        db.delete_skill(&flame.id, "Ada".into()).unwrap();
+        assert!(db
+            .list_story_skill_evolutions(&story.id)
+            .unwrap()
+            .is_empty());
+
+        let tree = db.skill_tree_for_story(&story.id).unwrap();
+        assert_eq!(tree.skills.len(), 2);
+        assert!(tree.evolutions.is_empty());
+        assert!(tree.skills.iter().any(|skill| skill.id == inferno.id));
+    }
+
+    #[test]
+    fn skill_evolutions_travel_with_the_story_and_remap_both_ends() {
+        let (source, story, _, _, chapter, ember, flame, _) = evolution_story();
+        let link = source
+            .add_skill_evolution(
+                ember.id.clone(),
+                flame.id.clone(),
+                "mutation".into(),
+                Some(chapter.id.clone()),
+                Some("Rank 2".into()),
+                Some("the fire learned to think".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.skill_evolutions.len(), 1);
+        assert_eq!(export.skill_evolutions[0].id, link.id);
+
+        // Older files have no evolution list at all and still import.
+        let mut older = serde_json::to_value(&export).unwrap();
+        older.as_object_mut().unwrap().remove("skill_evolutions");
+        let older: StoryExport = serde_json::from_value(older).unwrap();
+        assert!(older.skill_evolutions.is_empty());
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let links = target.list_story_skill_evolutions(&restored.id).unwrap();
+        let skills = target.list_story_skills(&restored.id).unwrap();
+
+        assert_eq!(links.len(), 1);
+        assert_ne!(links[0].id, link.id, "the copy gets its own link id");
+        assert_ne!(links[0].parent_skill_id, ember.id, "the parent is remapped");
+        assert_ne!(links[0].child_skill_id, flame.id, "the child is remapped");
+        assert_eq!(
+            skills
+                .iter()
+                .find(|skill| skill.id == links[0].parent_skill_id)
+                .map(|skill| skill.name.as_str()),
+            Some("Ember")
+        );
+        assert_eq!(
+            skills
+                .iter()
+                .find(|skill| skill.id == links[0].child_skill_id)
+                .map(|skill| skill.name.as_str()),
+            Some("Flame")
+        );
+        assert_eq!(links[0].evolution_type, "mutation");
+        assert_eq!(links[0].required_rank.as_deref(), Some("Rank 2"));
+        assert_eq!(links[0].notes.as_deref(), Some("the fire learned to think"));
+
+        // The chapter points into the copy, not at the source story.
+        let nodes = target.list_nodes(&restored.id).unwrap();
+        let copied_chapter = nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == links[0].chapter_id.as_deref())
+            .expect("the chapter is remapped");
+        assert_eq!(copied_chapter.label, "Chapter Two");
+
+        let tree = target.skill_tree_for_story(&restored.id).unwrap();
+        assert_eq!(tree.evolutions.len(), 1);
+
+        // The copied history names the copied link.
+        let history = target
+            .get_audit_log(Some(&restored.id), Some("skill_evolution"), None, 20)
+            .unwrap();
+        assert!(history.iter().any(|entry| entry.entity_id == links[0].id));
+    }
+
+    #[test]
+    fn an_imported_file_with_a_skill_loop_is_refused() {
+        let (source, story, _, _, _, ember, flame, inferno) = evolution_story();
+        source
+            .add_skill_evolution(
+                ember.id.clone(),
+                flame.id.clone(),
+                "upgrade".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .add_skill_evolution(
+                flame.id.clone(),
+                inferno.id.clone(),
+                "upgrade".into(),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let mut export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.skill_evolutions.len(), 2);
+
+        // The file claims the last skill also feeds the first: a loop no single
+        // insert would have been allowed to make.
+        let mut closing = export.skill_evolutions[0].clone();
+        closing.id = "closing-link".into();
+        closing.parent_skill_id = inferno.id.clone();
+        closing.child_skill_id = ember.id.clone();
+        export.skill_evolutions.push(closing);
+
+        let target = Db::open_in_memory().unwrap();
+        let error = target
+            .import_story(export, "Grace".into())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("loop"), "{error}");
     }
 
     #[test]

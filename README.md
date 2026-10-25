@@ -312,6 +312,29 @@ skill is no longer held. Skills, milestones, XP income and events travel in the
 JSON export and an import with their skill and chapter links remapped, and older
 files without the new tables still import.
 
+**Skill trees** (schema v23) record which earlier skill a later one grew out of,
+mutated from, branched away from or fused with. A link names a parent skill, a
+child skill and one of four kinds — **upgrade**, **fusion**, **mutation** or
+**branch** — plus the chapter it happened in, the parent rank it required in the
+author's own words, and optional notes. Both ends must be live skills of the same
+story, a skill cannot evolve into itself, and a link that would close a loop
+directly or through a chain is refused. The **Skill trees** view on the Characters
+tab draws the cast's skills in tiers: solid blue arrows for upgrades, golden ones
+for fusions, dashed purple for mutations and dashed teal for branches, with a
+legend, a character filter and a detail panel. Clicking a skill lists its
+prerequisites and outcomes and offers **Add prerequisite** or **Add outcome**;
+clicking a line shows its chapter, required rank and notes with **Delete link**.
+The character filter follows the tree outwards, so a fusion can pull another
+cast member's skill into view. On a sheet, each skill card names what it
+**Requires** and what it **Evolves into**. Deleting a skill deletes its links;
+purging a chapter clears the link's chapter but leaves the evolution. Evolution
+links travel in the JSON export and an import with both skill ends and the
+chapter remapped, and a file carrying a loop is refused rather than half
+imported. The continuity panel flags a child skill that appears before its
+parent was learned, a fusion unlocked before the parent reached the required rank
+(a rank is compared as the same words), and a link whose parent or child is now
+in the trash.
+
 **Inventory and currency** — a cast member's belongings are rows of their own
 rather than attributes called "Item": a name, an optional rarity and effect in
 the author's own words, a quantity, the chapter it was acquired in, and the
@@ -348,6 +371,9 @@ a POV link is not.
 that drops in reading order is flagged unless that milestone is marked as a
 penalty; a skill used before it was learned, a rank used before the upgrade that
 reached it, and a skill used or upgraded after it was sacrificed are flagged too.
+So is a skill tree that contradicts the reading order: a child skill appearing
+before its parent was learned, a fusion placed before the parent reached the rank
+it required, or a link pointing at a skill in the trash.
 XP income is compared with every total-XP milestone as well: the ledger through
 that chapter must add up to the recorded total, and both a shortfall and an excess
 are named with the difference. The same warning carries a **Sync to N XP** button,
@@ -437,8 +463,8 @@ the list closes on `Esc`, its close button, or a click outside it.
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
 first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,
-nodes, skills, inventory, currency, relations, standings, quests, quest rewards or
-connections. "Show older changes" pages further back and says how many are
+nodes, skills, skill evolutions, inventory, currency, relations, standings, quests,
+quest rewards or connections. "Show older changes" pages further back and says how many are
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
@@ -832,6 +858,10 @@ point so it stops drawing the vanished badge.
   disk until Save is pressed.
 - **Shortcuts are fixed, not rebindable.** What the reference lists is the whole
   set of keyboard routes; customising them is not supported.
+- **Skill-tree ranks are compared as words.** A required rank is matched against
+a recorded upgrade rank ignoring case, so “Rank 2” and “rank 2” are the same
+while “Second rank” is not. A link with no chapter or no required rank cannot be
+placed in the reading order, so it is never flagged on timing.
 - **Search is a plain substring match.** Case is ignored, but `rk` does not find
   `Rook`. Results are ranked into two bands — a name or title match first, then
   everything found by its notes, description, relation or cast member — and

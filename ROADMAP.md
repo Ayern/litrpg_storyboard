@@ -335,6 +335,21 @@ name the level-up they came with so an upgrade groups under that one milestone;
 they are listed in reading order under the skill, audited individually, and
 carried by export and import. **M**
 
+**10b. Skill evolution and fusion trees.** **Done.** `skill_evolutions` (schema
+v23) links a parent skill to the later skill it became, by upgrade, fusion,
+mutation or branch, with an optional chapter, required parent rank and notes.
+Both ends must be live skills of the story, self-links are refused, and a direct
+or indirect loop is rejected against the recorded graph. Every link is audited
+when created and deleted; editing means deleting and recording it again. The
+Characters tab's **Skill trees** view lays the skills out in tiers and draws each
+kind of link in its own colour, with a character filter, a legend and a panel that
+adds prerequisites or outcomes and deletes a link. Sheets name each skill's
+requirements and outcomes, the database exposes story and per-character tree
+queries, and export/import remap both ends and the chapter, refusing a file that
+carries a loop. Deleting a skill cascades its links; purging a chapter clears the
+link's chapter. Continuity flags a child that appears before its parent, a fusion
+unlocked before the required rank, and a link into the trash. **L**
+
 **11. Inventory and currency.** **Done.** A cast member's items are rows with a
 name, an optional rarity and effect, a quantity, the chapter acquired in, the
 chapter lost in, and optionally the `item` card they belong to. Currencies are
@@ -399,7 +414,9 @@ names unchanged, and the legend test covers them. **S**
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
 Chapters tab currently flags chapter timing and duplication, a cast member intwo chapters on one day, an item still carried after its recorded loss or lost before
 acquisition, a level drop without a penalty flag, a skill used before acquisition,
-a rank used before its upgrade, and a skill used after sacrifice. The last three
+a rank used before its upgrade, a skill used after sacrifice, a skill that appears
+before its parent in a skill tree, a fusion unlocked before the required parent
+rank, and an evolution link into the trash. The last three
 and the level drop also appear as buttons on the affected chapter card; clicking
 one selects the holder and opens the exact milestone or skill event. The
 Characters tab's chapter-state query uses the same reading order for a snapshot

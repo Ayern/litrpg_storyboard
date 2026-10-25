@@ -123,6 +123,25 @@ interface CharacterSkill {
   updated_at: string;
 }
 
+// One link in a skill tree: the parent skill a later skill grew out of,
+// mutated from or fused with. The chapter places the change in the reading
+// order; the required rank is the parent's rank the author says it needed.
+type EvolutionType = 'upgrade' | 'fusion' | 'mutation' | 'branch';
+
+interface SkillEvolution {
+  id: string;
+  story_id: string;
+  parent_skill_id: string;
+  child_skill_id: string;
+  evolution_type: string;
+  chapter_id: string | null;
+  required_rank: string | null;
+  notes: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // One stat a level-up changed. `amount` is the gained points, and `value_after`
 // is the sheet value once it applied. A row migrated from schema v18 has only
 // the latter, because the old field was a snapshot rather than a gain.
@@ -2317,6 +2336,726 @@ function RelationsMap({
   );
 }
 
+// How each evolution step is drawn. Colour and line shape carry the meaning so
+// the tree reads without the legend; anything unrecognised stays neutral rather
+// than vanishing.
+const EVOLUTION_STYLES: Record<
+  string,
+  { label: string; color: string; dash?: string; width: number }
+> = {
+  upgrade: { label: 'Upgrade', color: '#5b8def', width: 2 },
+  fusion: { label: 'Fusion', color: '#e0af68', width: 2.6 },
+  mutation: { label: 'Mutation', color: '#bb9af7', dash: '6 4', width: 2 },
+  branch: { label: 'Branch', color: '#6dd3c7', dash: '2 5', width: 1.8 },
+};
+
+function evolutionStyle(type: string) {
+  return EVOLUTION_STYLES[type.trim().toLowerCase()] ?? {
+    label: type,
+    color: '#9aa4b2',
+    dash: '4 3',
+    width: 1.6,
+  };
+}
+
+interface SkillTreeNodeData {
+  skillId: string;
+  label: string;
+  rank: string | null;
+  characterName: string;
+  tier: number;
+  prerequisites: number;
+  outcomes: number;
+  onSelect?: (skillId: string) => void;
+}
+
+// One skill in the tree. The tier badge says how far it sits from a root, and
+// the counts say how many links arrive and leave without opening the panel.
+function SkillTreeNode({ data }: NodeProps<SkillTreeNodeData>) {
+  return (
+    <div className={`skill-tree-node tier-${Math.min(data.tier + 1, 5)}`}>
+      <Handle type="target" position={Position.Left} />
+      <button
+        type="button"
+        className="skill-tree-node-body"
+        title={`${data.label}${
+          data.rank ? ` (${data.rank})` : ''
+        } — ${data.characterName}. Click for its evolution links.`}
+        onClick={() => data.onSelect?.(data.skillId)}
+      >
+        <span className="skill-tree-node-topline">
+          <span className="skill-tree-node-tier">Tier {data.tier + 1}</span>
+          {data.rank && <span className="skill-tree-node-rank">{data.rank}</span>}
+        </span>
+        <span className="skill-tree-node-name">{data.label}</span>
+        <span className="skill-tree-node-owner">{data.characterName}</span>
+        <span className="skill-tree-node-counts">
+          {data.prerequisites} in · {data.outcomes} out
+        </span>
+      </button>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+const skillTreeNodeTypes = { default: SkillTreeNode };
+
+interface SkillEvolutionInput {
+  parentSkillId: string;
+  childSkillId: string;
+  evolutionType: string;
+  chapterId: string | null;
+  requiredRank: string | null;
+  notes: string | null;
+}
+
+// The Characters tab's third view: the cast's skills laid out in tiers, with one
+// edge per recorded evolution. A skill can have several parents (a fusion), and
+// the closure means a character's tree can reach a skill on somebody else's
+// sheet when the two were fused. Everything is advisory bookkeeping: the tree
+// never rewrites a skill.
+function SkillTreeView({
+  skills,
+  characters,
+  evolutions,
+  chapters,
+  error,
+  onCreate,
+  onDelete,
+  onOpenSkill,
+}: {
+  skills: CharacterSkill[];
+  characters: Character[];
+  evolutions: SkillEvolution[];
+  chapters: { id: string; label: string }[];
+  error: string | null;
+  onCreate: (input: SkillEvolutionInput) => Promise<boolean>;
+  onDelete: (id: string) => Promise<void>;
+  onOpenSkill: (skill: CharacterSkill) => void;
+}) {
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [selectedEvolutionId, setSelectedEvolutionId] = useState<string | null>(null);
+  const [characterFilter, setCharacterFilter] = useState('all');
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({
+    mode: 'prerequisite' as 'prerequisite' | 'outcome',
+    otherId: '',
+    type: 'upgrade' as EvolutionType,
+    chapterId: '',
+    requiredRank: '',
+    notes: '',
+  });
+
+  const skillById = useMemo(
+    () => new Map(skills.map(skill => [skill.id, skill])),
+    [skills]
+  );
+  const characterNameById = useMemo(
+    () => new Map(characters.map(character => [character.id, character.name])),
+    [characters]
+  );
+  const chapterLabel = (id: string | null) =>
+    id ? chapters.find(chapter => chapter.id === id)?.label ?? 'a chapter in the trash' : null;
+
+  // A character's tree is the closure around their own skills: fusions can pull
+  // in a skill from another sheet, and its outcomes stay visible too.
+  const visibleSkillIds = useMemo(() => {
+    if (characterFilter === 'all') return new Set(skills.map(skill => skill.id));
+
+    const ids = new Set(
+      skills.filter(skill => skill.character_id === characterFilter).map(skill => skill.id)
+    );
+    let grew = true;
+
+    while (grew) {
+      grew = false;
+
+      for (const evolution of evolutions) {
+        if (ids.has(evolution.parent_skill_id) && !ids.has(evolution.child_skill_id)) {
+          ids.add(evolution.child_skill_id);
+          grew = true;
+        } else if (
+          ids.has(evolution.child_skill_id) &&
+          !ids.has(evolution.parent_skill_id)
+        ) {
+          ids.add(evolution.parent_skill_id);
+          grew = true;
+        }
+      }
+    }
+
+    return ids;
+  }, [characterFilter, evolutions, skills]);
+
+  const visibleSkills = useMemo(
+    () => skills.filter(skill => visibleSkillIds.has(skill.id)),
+    [skills, visibleSkillIds]
+  );
+  const visibleEvolutions = useMemo(
+    () =>
+      evolutions.filter(
+        evolution =>
+          visibleSkillIds.has(evolution.parent_skill_id) &&
+          visibleSkillIds.has(evolution.child_skill_id)
+      ),
+    [evolutions, visibleSkillIds]
+  );
+
+  const incoming = useMemo(() => {
+    const map = new Map<string, SkillEvolution[]>();
+    for (const evolution of visibleEvolutions) {
+      map.set(evolution.child_skill_id, [
+        ...(map.get(evolution.child_skill_id) ?? []),
+        evolution,
+      ]);
+    }
+    return map;
+  }, [visibleEvolutions]);
+
+  const outgoing = useMemo(() => {
+    const map = new Map<string, SkillEvolution[]>();
+    for (const evolution of visibleEvolutions) {
+      map.set(evolution.parent_skill_id, [
+        ...(map.get(evolution.parent_skill_id) ?? []),
+        evolution,
+      ]);
+    }
+    return map;
+  }, [visibleEvolutions]);
+
+  // A tier is one step beyond the deepest parent. A loop cannot be saved, but a
+  // file written by something else could carry one; the visiting set stops the
+  // walk rather than hanging the view.
+  const tiers = useMemo(() => {
+    const depth = new Map<string, number>();
+    const visiting = new Set<string>();
+
+    const visit = (id: string): number => {
+      if (depth.has(id)) return depth.get(id) as number;
+      if (visiting.has(id)) return 0;
+
+      visiting.add(id);
+      const parents = incoming.get(id) ?? [];
+      const value =
+        parents.length === 0
+          ? 0
+          : Math.max(...parents.map(parent => visit(parent.parent_skill_id) + 1));
+      visiting.delete(id);
+      depth.set(id, value);
+
+      return value;
+    };
+
+    visibleSkills.forEach(skill => visit(skill.id));
+    return depth;
+  }, [incoming, visibleSkills]);
+
+  const positions = useMemo(() => {
+    const byTier = new Map<number, CharacterSkill[]>();
+
+    for (const skill of visibleSkills) {
+      const tier = tiers.get(skill.id) ?? 0;
+      byTier.set(tier, [...(byTier.get(tier) ?? []), skill]);
+    }
+
+    const map = new Map<string, { x: number; y: number }>();
+
+    for (const [tier, members] of byTier) {
+      const ordered = [...members].sort(
+        (a, b) =>
+          (characterNameById.get(a.character_id) ?? '').localeCompare(
+            characterNameById.get(b.character_id) ?? ''
+          ) || a.name.localeCompare(b.name)
+      );
+      ordered.forEach((skill, index) => {
+        map.set(skill.id, { x: 40 + tier * 260, y: 30 + index * 118 });
+      });
+    }
+
+    return map;
+  }, [characterNameById, tiers, visibleSkills]);
+
+  const flowNodes: Node<SkillTreeNodeData>[] = useMemo(
+    () =>
+      visibleSkills.map(skill => ({
+        id: skill.id,
+        type: 'default',
+        position: positions.get(skill.id) ?? { x: 40, y: 30 },
+        data: {
+          skillId: skill.id,
+          label: skill.name,
+          rank: skill.rank,
+          characterName:
+            characterNameById.get(skill.character_id) ?? 'a cast member in the trash',
+          tier: tiers.get(skill.id) ?? 0,
+          prerequisites: (incoming.get(skill.id) ?? []).length,
+          outcomes: (outgoing.get(skill.id) ?? []).length,
+          onSelect: id => {
+            setSelectedEvolutionId(null);
+            setSelectedSkillId(id);
+          },
+        },
+      })),
+    [characterNameById, incoming, outgoing, positions, tiers, visibleSkills]
+  );
+
+  const flowEdges: Edge[] = useMemo(
+    () =>
+      visibleEvolutions.map(evolution => {
+        const style = evolutionStyle(evolution.evolution_type);
+
+        return {
+          id: evolution.id,
+          source: evolution.parent_skill_id,
+          target: evolution.child_skill_id,
+          type: 'smoothstep',
+          label: style.label,
+          labelStyle: { fill: style.color, fontSize: 10 },
+          labelBgStyle: { fill: '#14161a', fillOpacity: 0.85 },
+          style: {
+            stroke: style.color,
+            strokeWidth: style.width,
+            strokeDasharray: style.dash,
+          },
+          markerEnd: `url(#skill-tree-arrow-${evolution.evolution_type})`,
+        };
+      }),
+    [visibleEvolutions]
+  );
+
+  const selectedSkill = selectedSkillId ? skillById.get(selectedSkillId) ?? null : null;
+  const selectedEvolution = selectedEvolutionId
+    ? evolutions.find(evolution => evolution.id === selectedEvolutionId) ?? null
+    : null;
+
+  const selectSkill = (skillId: string) => {
+    setSelectedEvolutionId(null);
+    setSelectedSkillId(skillId);
+    setDraft(current => ({ ...current, otherId: '' }));
+  };
+
+  const addLink = async () => {
+    if (!selectedSkill || !draft.otherId) return;
+
+    const parentSkillId =
+      draft.mode === 'prerequisite' ? draft.otherId : selectedSkill.id;
+    const childSkillId =
+      draft.mode === 'prerequisite' ? selectedSkill.id : draft.otherId;
+
+    setSaving(true);
+    const saved = await onCreate({
+      parentSkillId,
+      childSkillId,
+      evolutionType: draft.type,
+      chapterId: draft.chapterId || null,
+      requiredRank: draft.requiredRank.trim() || null,
+      notes: draft.notes.trim() || null,
+    });
+    setSaving(false);
+
+    if (saved) {
+      setDraft(current => ({
+        ...current,
+        otherId: '',
+        requiredRank: '',
+        notes: '',
+      }));
+    }
+  };
+
+  const otherChoices = skills.filter(skill => skill.id !== selectedSkill?.id);
+
+  return (
+    <div className="skill-tree-panel">
+      <div className="skill-tree-toolbar">
+        <div>
+          <h3 className="skill-tree-title">Skill trees</h3>
+          <p className="skill-tree-caption">
+            {visibleSkills.length} skill{visibleSkills.length === 1 ? '' : 's'} ·{' '}
+            {visibleEvolutions.length} link{visibleEvolutions.length === 1 ? '' : 's'}.
+            Click a skill or a line to open it.
+          </p>
+        </div>
+        <label className="skill-tree-filter">
+          Character
+          <select
+            aria-label="Skill tree character"
+            value={characterFilter}
+            onChange={event => {
+              setCharacterFilter(event.target.value);
+              setSelectedSkillId(null);
+              setSelectedEvolutionId(null);
+            }}
+          >
+            <option value="all">All cast</option>
+            {characters.map(character => (
+              <option key={character.id} value={character.id}>
+                {character.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {error && (
+        <div className="skill-tree-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="skill-tree-body">
+        <div className="skill-tree-canvas">
+          <svg className="skill-tree-markers" aria-hidden="true">
+            <defs>
+              {Object.entries(EVOLUTION_STYLES).map(([type, style]) => (
+                <marker
+                  key={type}
+                  id={`skill-tree-arrow-${type}`}
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill={style.color} />
+                </marker>
+              ))}
+            </defs>
+          </svg>
+          {visibleSkills.length === 0 ? (
+            <div className="skill-tree-empty">
+              No skills yet — add one on a character's sheet and the tree has
+              something to show.
+            </div>
+          ) : (
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={skillTreeNodeTypes}
+              onNodeClick={(_, node) => selectSkill(node.id)}
+              onEdgeClick={(_, edge) => {
+                setSelectedSkillId(null);
+                setSelectedEvolutionId(edge.id);
+              }}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable
+              fitView
+            >
+              <Controls showInteractive={false} />
+              <Background />
+              <Panel position="top-right">
+                <div className="skill-tree-legend" role="group" aria-label="Evolution styles">
+                  {Object.entries(EVOLUTION_STYLES).map(([type, style]) => (
+                    <span key={type} className="skill-tree-legend-item">
+                      <svg width={26} height={8} aria-hidden="true">
+                        <line
+                          x1={1}
+                          y1={4}
+                          x2={25}
+                          y2={4}
+                          stroke={style.color}
+                          strokeWidth={style.width}
+                          strokeDasharray={style.dash}
+                        />
+                      </svg>
+                      {style.label}
+                    </span>
+                  ))}
+                </div>
+              </Panel>
+            </ReactFlow>
+          )}
+        </div>
+
+        <aside className="skill-tree-details" aria-label="Skill tree details">
+          {selectedEvolution ? (
+            (() => {
+              const style = evolutionStyle(selectedEvolution.evolution_type);
+              const parent = skillById.get(selectedEvolution.parent_skill_id);
+              const child = skillById.get(selectedEvolution.child_skill_id);
+              const chapter = chapterLabel(selectedEvolution.chapter_id);
+
+              return (
+                <>
+                  <div className="skill-tree-details-head">
+                    <h4>Evolution link</h4>
+                    <button
+                      type="button"
+                      className="skill-tree-details-close"
+                      aria-label="Close evolution details"
+                      onClick={() => setSelectedEvolutionId(null)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <p className="skill-tree-edge-title">
+                    {parent?.name ?? 'a skill in the trash'} →{' '}
+                    {child?.name ?? 'a skill in the trash'}
+                  </p>
+                  <dl className="skill-tree-facts">
+                    <div>
+                      <dt>Kind</dt>
+                      <dd style={{ color: style.color }}>{style.label}</dd>
+                    </div>
+                    {selectedEvolution.required_rank && (
+                      <div>
+                        <dt>Parent rank</dt>
+                        <dd>{selectedEvolution.required_rank}</dd>
+                      </div>
+                    )}
+                    {chapter && (
+                      <div>
+                        <dt>Chapter</dt>
+                        <dd>{chapter}</dd>
+                      </div>
+                    )}
+                    {selectedEvolution.notes && (
+                      <div>
+                        <dt>Notes</dt>
+                        <dd>{selectedEvolution.notes}</dd>
+                      </div>
+                    )}
+                  </dl>
+                  <button
+                    type="button"
+                    className="skill-tree-open-sheet"
+                    title={`Open ${child?.name ?? 'the child skill'} to add another link`}
+                    onClick={() => {
+                      if (child) selectSkill(child.id);
+                    }}
+                  >
+                    Add another link for {child?.name ?? 'this skill'}
+                  </button>
+                  <button
+                    type="button"
+                    className="skill-tree-delete"
+                    title="Remove this evolution link; both skills stay"
+                    onClick={() => {
+                      void onDelete(selectedEvolution.id).then(() =>
+                        setSelectedEvolutionId(null)
+                      );
+                    }}
+                  >
+                    Delete link
+                  </button>
+                </>
+              );
+            })()
+          ) : selectedSkill ? (
+            <>
+              <div className="skill-tree-details-head">
+                <h4>{selectedSkill.name}</h4>
+                <button
+                  type="button"
+                  className="skill-tree-details-close"
+                  aria-label="Close skill details"
+                  onClick={() => setSelectedSkillId(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <p className="skill-tree-skill-owner">
+                {characterNameById.get(selectedSkill.character_id) ??
+                  'A cast member in the trash'}
+                {selectedSkill.rank ? ` · ${selectedSkill.rank}` : ''}
+              </p>
+              <button
+                type="button"
+                className="skill-tree-open-sheet"
+                title="Open this skill on its character's sheet"
+                onClick={() => onOpenSkill(selectedSkill)}
+              >
+                Open on sheet
+              </button>
+
+              <div className="skill-tree-links-block">
+                <h5>Prerequisites</h5>
+                {(incoming.get(selectedSkill.id) ?? []).length === 0 ? (
+                  <p className="skill-tree-none">No parent skill recorded.</p>
+                ) : (
+                  <ul>
+                    {(incoming.get(selectedSkill.id) ?? []).map(evolution => {
+                      const parent = skillById.get(evolution.parent_skill_id);
+                      const style = evolutionStyle(evolution.evolution_type);
+
+                      return (
+                        <li key={evolution.id}>
+                          <button
+                            type="button"
+                            className="skill-tree-link"
+                            onClick={() => {
+                              setSelectedEvolutionId(evolution.id);
+                              setSelectedSkillId(null);
+                            }}
+                          >
+                            <span style={{ color: style.color }}>{style.label}</span>{' '}
+                            {parent?.name ?? 'a skill in the trash'}
+                            {evolution.required_rank
+                              ? ` at ${evolution.required_rank}`
+                              : ''}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <div className="skill-tree-links-block">
+                <h5>Evolves into</h5>
+                {(outgoing.get(selectedSkill.id) ?? []).length === 0 ? (
+                  <p className="skill-tree-none">No outcome recorded yet.</p>
+                ) : (
+                  <ul>
+                    {(outgoing.get(selectedSkill.id) ?? []).map(evolution => {
+                      const child = skillById.get(evolution.child_skill_id);
+                      const style = evolutionStyle(evolution.evolution_type);
+
+                      return (
+                        <li key={evolution.id}>
+                          <button
+                            type="button"
+                            className="skill-tree-link"
+                            onClick={() => {
+                              setSelectedEvolutionId(evolution.id);
+                              setSelectedSkillId(null);
+                            }}
+                          >
+                            <span style={{ color: style.color }}>{style.label}</span>{' '}
+                            {child?.name ?? 'a skill in the trash'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <div className="skill-tree-link-form">
+                <h5 id="skill-link-form-title">Add a link</h5>
+                <div className="skill-tree-link-mode" role="group" aria-label="Link direction">
+                  <button
+                    type="button"
+                    className={draft.mode === 'prerequisite' ? 'active' : ''}
+                    aria-pressed={draft.mode === 'prerequisite'}
+                    onClick={() => setDraft(current => ({ ...current, mode: 'prerequisite' }))}
+                  >
+                    Add prerequisite
+                  </button>
+                  <button
+                    type="button"
+                    className={draft.mode === 'outcome' ? 'active' : ''}
+                    aria-pressed={draft.mode === 'outcome'}
+                    onClick={() => setDraft(current => ({ ...current, mode: 'outcome' }))}
+                  >
+                    Add outcome
+                  </button>
+                </div>
+                <select
+                  aria-label="Linked skill"
+                  title={
+                    draft.mode === 'prerequisite'
+                      ? `The earlier skill ${selectedSkill.name} grew out of`
+                      : `The later skill ${selectedSkill.name} becomes`
+                  }
+                  value={draft.otherId}
+                  onChange={event =>
+                    setDraft(current => ({ ...current, otherId: event.target.value }))
+                  }
+                >
+                  <option value="">
+                    {draft.mode === 'prerequisite' ? 'Choose a parent' : 'Choose an outcome'}
+                  </option>
+                  {otherChoices.map(skill => (
+                    <option key={skill.id} value={skill.id}>
+                      {skill.name} —{' '}
+                      {characterNameById.get(skill.character_id) ?? 'cast in the trash'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Evolution kind"
+                  title="How the later skill came to be"
+                  value={draft.type}
+                  onChange={event =>
+                    setDraft(current => ({
+                      ...current,
+                      type: event.target.value as EvolutionType,
+                    }))
+                  }
+                >
+                  {Object.entries(EVOLUTION_STYLES).map(([type, style]) => (
+                    <option key={type} value={type}>
+                      {style.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Evolution chapter"
+                  title="Where in the reading order the change happens"
+                  value={draft.chapterId}
+                  onChange={event =>
+                    setDraft(current => ({ ...current, chapterId: event.target.value }))
+                  }
+                >
+                  <option value="">No chapter</option>
+                  {chapters.map(chapter => (
+                    <option key={chapter.id} value={chapter.id}>
+                      {chapter.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  aria-label="Required parent rank"
+                  title="Optional: the parent rank this step needed"
+                  placeholder="Parent rank (optional)"
+                  value={draft.requiredRank}
+                  onChange={event =>
+                    setDraft(current => ({ ...current, requiredRank: event.target.value }))
+                  }
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') void addLink();
+                  }}
+                />
+                <input
+                  aria-label="Evolution notes"
+                  title="Optional bookkeeping notes"
+                  placeholder="Notes (optional)"
+                  value={draft.notes}
+                  onChange={event =>
+                    setDraft(current => ({ ...current, notes: event.target.value }))
+                  }
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') void addLink();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="skill-tree-add"
+                  disabled={saving || !draft.otherId}
+                  onClick={() => void addLink()}
+                >
+                  {saving ? 'Adding…' : 'Add link'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="skill-tree-details-empty">
+              <h4>Skill tree</h4>
+              <p>
+                Click a skill to see what it grew out of and what it becomes, or
+                click a line for the link's chapter and requirements.
+              </p>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 // A free-text field with its suggestions always in reach. A native datalist
 // filters by what is already typed, so on the default "ally" it shows only that
 // one; this opens the whole list on focus and keeps the typed word possible.
@@ -2401,8 +3140,8 @@ function CharacterViewToggle({
   view,
   onChange,
 }: {
-  view: 'sheet' | 'relations';
-  onChange: (view: 'sheet' | 'relations') => void;
+  view: 'sheet' | 'relations' | 'skills';
+  onChange: (view: 'sheet' | 'relations' | 'skills') => void;
 }) {
   return (
     <div className="character-view-toggle" role="group" aria-label="Characters view">
@@ -2423,6 +3162,15 @@ function CharacterViewToggle({
         onClick={() => onChange('relations')}
       >
         Relations
+      </button>
+      <button
+        type="button"
+        className={view === 'skills' ? 'active' : ''}
+        aria-pressed={view === 'skills'}
+        title="See how the cast's skills evolved and fused, tier by tier"
+        onClick={() => onChange('skills')}
+      >
+        Skill trees
       </button>
     </div>
   );
@@ -2616,7 +3364,13 @@ function App() {
   const [storyRelations, setStoryRelations] = useState<CharacterRelation[]>([]);
   const [storyFactionStandings, setStoryFactionStandings] = useState<FactionStanding[]>([]);
   // The Characters tab opens on the sheets; the map is a mode, not another tab.
-  const [characterView, setCharacterView] = useState<'sheet' | 'relations'>('sheet');
+  const [characterView, setCharacterView] = useState<'sheet' | 'relations' | 'skills'>(
+    'sheet'
+  );
+  // Every evolution link in the story. The tree view draws them and the sheets
+  // name them on each skill, so one read covers both.
+  const [storySkillEvolutions, setStorySkillEvolutions] = useState<SkillEvolution[]>([]);
+  const [skillEvolutionError, setSkillEvolutionError] = useState<string | null>(null);
   // Quests are read with the rest of the story, because chapter cards, the
   // ledger and the continuity checks all read the same copy.
   const [storyQuests, setStoryQuests] = useState<Quest[]>([]);
@@ -2926,6 +3680,7 @@ function App() {
         relations,
         standings,
         quests,
+        evolutions,
       ] =
         await Promise.all([
           invoke<Character[]>('get_characters', { storyId: story.id }),
@@ -2944,6 +3699,9 @@ function App() {
           invoke<CharacterRelation[]>('get_story_relations', { storyId: story.id }),
           invoke<FactionStanding[]>('get_story_faction_standings', { storyId: story.id }),
           invoke<Quest[]>('get_story_quests', { storyId: story.id }),
+          invoke<SkillEvolution[]>('get_story_skill_evolutions', {
+            storyId: story.id,
+          }),
         ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
@@ -2957,6 +3715,8 @@ function App() {
       setStoryRelations(relations ?? []);
       setStoryFactionStandings(standings ?? []);
       setStoryQuests(quests ?? []);
+      setStorySkillEvolutions(evolutions ?? []);
+      setSkillEvolutionError(null);
       // A quest form and the quest it was opened for do not carry over.
       setQuestDraft(null);
       setRewardDraft(null);
@@ -4868,6 +5628,180 @@ function App() {
       }
     });
 
+    // A skill tree is read against the same chapter order. A link whose parent
+    // or child is in the trash cannot be followed; a child that appears before
+    // its parent was learned is a contradiction; and a fusion placed before the
+    // parent reached the rank it required is another.
+    const firstEventBySkill = new Map<string, CharacterSkillEvent>();
+
+    for (const event of storySkillEvents) {
+      if (!event.chapter_id || seqOf(event.chapter_id) == null) continue;
+      const current = firstEventBySkill.get(event.skill_id);
+
+      if (
+        !current ||
+        (seqOf(event.chapter_id) as number) <
+          (seqOf(current.chapter_id) as number)
+      ) {
+        firstEventBySkill.set(event.skill_id, event);
+      }
+    }
+
+    for (const evolution of storySkillEvolutions) {
+      const parent = skillById.get(evolution.parent_skill_id);
+      const child = skillById.get(evolution.child_skill_id);
+
+      if (!parent || !child) {
+        const present = parent ?? child;
+        if (!present) continue;
+
+        const ownerId = present.character_id;
+        const owner = castNames.get(ownerId) ?? 'A cast member';
+        const target: ProgressionTarget = { kind: 'skill', skillId: present.id };
+        const missing = parent ? 'child' : 'parent';
+        const parts: ContinuityPart[] = [
+          characterLink(ownerId, owner, target),
+          `'s ${evolution.evolution_type} link has a ${missing} skill in the trash.`,
+        ];
+
+        flags.push({
+          id: `skill-evolution-trashed-${evolution.id}`,
+          kind: 'skill-evolution-trashed',
+          chapterId: evolution.chapter_id,
+          characterId: ownerId,
+          characterName: owner,
+          summary: `${owner}'s skill evolution points at the trash`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+        continue;
+      }
+
+      const owner = castNames.get(child.character_id) ?? 'A cast member';
+      const target: ProgressionTarget = { kind: 'skill', skillId: child.id };
+      const parentAcquired = seqOf(parent.chapter_id);
+      const parentChapter = parent.chapter_id
+        ? chapterById.get(parent.chapter_id)
+        : undefined;
+      const childSeen = [
+        seqOf(child.chapter_id),
+        firstEventBySkill.has(child.id)
+          ? seqOf((firstEventBySkill.get(child.id) as CharacterSkillEvent).chapter_id)
+          : null,
+      ].filter((value): value is number => value != null);
+      const childFirst = childSeen.length > 0 ? Math.min(...childSeen) : null;
+      const childChapterId =
+        firstEventBySkill.get(child.id)?.chapter_id ?? child.chapter_id;
+      const childChapter = childChapterId ? chapterById.get(childChapterId) : undefined;
+
+      const childBeforeParent =
+        parentAcquired != null &&
+        Boolean(parentChapter) &&
+        childFirst != null &&
+        childFirst < parentAcquired &&
+        Boolean(childChapter);
+
+      if (childBeforeParent && childChapter && parentChapter) {
+        const parts: ContinuityPart[] = [
+          characterLink(child.character_id, owner, target),
+          `'s “${child.name}” appears in `,
+          chapterLink(childChapter.id, childChapter.data.label, true),
+          ` before its parent skill “${parent.name}” is learned in `,
+          chapterLink(parentChapter.id, parentChapter.data.label, true),
+          '.',
+        ];
+
+        flags.push({
+          id: `skill-evolution-${evolution.id}-before-parent`,
+          kind: 'skill-evolution-before-parent',
+          chapterId: childChapter.id,
+          characterId: child.character_id,
+          characterName: owner,
+          summary: `${owner}'s “${child.name}” appears before “${parent.name}”`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+      }
+
+      const evolutionSeq = seqOf(evolution.chapter_id);
+
+      // The child's own chapter already said this above; only the link's own
+      // chapter needs a second warning when the two disagree with the parent.
+      if (
+        !childBeforeParent &&
+        evolutionSeq != null &&
+        parentAcquired != null &&
+        evolutionSeq < parentAcquired &&
+        parentChapter
+      ) {
+        const evolutionChapter = chapterById.get(evolution.chapter_id as string);
+
+        if (evolutionChapter) {
+          const parts: ContinuityPart[] = [
+            characterLink(child.character_id, owner, target),
+            `'s “${child.name}” evolves from “${parent.name}” in `,
+            chapterLink(evolutionChapter.id, evolutionChapter.data.label, true),
+            ` before that parent is learned in `,
+            chapterLink(parentChapter.id, parentChapter.data.label, true),
+            '.',
+          ];
+
+          flags.push({
+            id: `skill-evolution-${evolution.id}-chapter-before-parent`,
+            kind: 'skill-evolution-before-parent',
+            chapterId: evolutionChapter.id,
+            characterId: child.character_id,
+            characterName: owner,
+            summary: `${owner}'s “${child.name}” evolves before “${parent.name}” exists`,
+            detail: continuityText(parts),
+            parts,
+            target,
+          });
+        }
+      }
+
+      const requiredRank = evolution.required_rank?.trim();
+
+      if (evolutionSeq != null && requiredRank) {
+        const upgrade = storySkillEvents.find(
+          event =>
+            event.skill_id === parent.id &&
+            event.kind === 'upgraded' &&
+            event.rank?.trim().toLowerCase() === requiredRank.toLowerCase() &&
+            (seqOf(event.chapter_id) ?? Number.MAX_SAFE_INTEGER) > evolutionSeq
+        );
+        const evolutionChapter = chapterById.get(evolution.chapter_id as string);
+        const upgradeChapter = upgrade?.chapter_id
+          ? chapterById.get(upgrade.chapter_id)
+          : undefined;
+
+        if (upgradeChapter && evolutionChapter) {
+          const parts: ContinuityPart[] = [
+            characterLink(child.character_id, owner, target),
+            `'s “${child.name}” is unlocked in `,
+            chapterLink(evolutionChapter.id, evolutionChapter.data.label, true),
+            ` but “${parent.name}” only reaches ${requiredRank} in `,
+            chapterLink(upgradeChapter.id, upgradeChapter.data.label, true),
+            '.',
+          ];
+
+          flags.push({
+            id: `skill-evolution-${evolution.id}-rank-late`,
+            kind: 'skill-evolution-rank-late',
+            chapterId: evolutionChapter.id,
+            characterId: child.character_id,
+            characterName: owner,
+            summary: `${owner}'s “${child.name}” unlocked before ${requiredRank}`,
+            detail: continuityText(parts),
+            parts,
+            target,
+          });
+        }
+      }
+    }
+
     return flags;
   }, [
     chapterNodes,
@@ -4876,6 +5810,7 @@ function App() {
     storyCharacterProgress,
     storySkillEvents,
     storySkills,
+    storySkillEvolutions,
     storyRelations,
     storyFactionStandings,
     nodes,
@@ -6942,9 +7877,16 @@ function App() {
       await invoke('delete_skill', { id: skill.id, user: actor });
       setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
       setStorySkills(prev => prev.filter(other => other.id !== skill.id));
-      // The database cascades the events with the skill; keep the board copy in
-      // step so continuity cannot read a skill that is no longer there.
+      // The database cascades the events and evolution links with the skill;
+      // keep the board copy in step so continuity cannot read a skill that is
+      // no longer there.
       setStorySkillEvents(prev => prev.filter(event => event.skill_id !== skill.id));
+      setStorySkillEvolutions(prev =>
+        prev.filter(
+          evolution =>
+            evolution.parent_skill_id !== skill.id && evolution.child_skill_id !== skill.id
+        )
+      );
       if (editingSkillEventId && storySkillEvents.some(event => event.id === editingSkillEventId && event.skill_id === skill.id)) {
         cancelSkillEventEdit();
       }
@@ -6952,6 +7894,43 @@ function App() {
     } catch (e) {
       console.error('Failed to delete skill:', e);
       setCharacterError(`Could not delete skill: ${String(e)}`);
+    }
+  };
+
+  // An evolution link is its own row, so a failed save leaves both skills as
+  // they were and says why in the tree view rather than in the sheet's error.
+  const addSkillEvolutionLink = async (input: SkillEvolutionInput) => {
+    setSkillEvolutionError(null);
+
+    try {
+      const saved: SkillEvolution = await invoke('add_skill_evolution', {
+        parentSkillId: input.parentSkillId,
+        childSkillId: input.childSkillId,
+        evolutionType: input.evolutionType,
+        chapterId: input.chapterId,
+        requiredRank: input.requiredRank,
+        notes: input.notes,
+        user: actor,
+      });
+
+      setStorySkillEvolutions(prev => [...prev, saved]);
+      return true;
+    } catch (e) {
+      console.error('Failed to add a skill evolution:', e);
+      setSkillEvolutionError(`Could not add the link: ${String(e)}`);
+      return false;
+    }
+  };
+
+  const removeSkillEvolutionLink = async (id: string) => {
+    setSkillEvolutionError(null);
+
+    try {
+      await invoke('delete_skill_evolution', { id, user: actor });
+      setStorySkillEvolutions(prev => prev.filter(evolution => evolution.id !== id));
+    } catch (e) {
+      console.error('Failed to delete a skill evolution:', e);
+      setSkillEvolutionError(`Could not delete the link: ${String(e)}`);
     }
   };
 
@@ -10055,6 +11034,39 @@ function App() {
     return grouped;
   }, [storySkillEvents, chapterSeqById]);
 
+  // The two sides of every evolution, grouped once so a sheet's skill cards can
+  // name what came before and what comes next without searching the list twice.
+  const skillEvolutionByChild = useMemo(() => {
+    const grouped = new Map<string, SkillEvolution[]>();
+
+    for (const evolution of storySkillEvolutions) {
+      grouped.set(evolution.child_skill_id, [
+        ...(grouped.get(evolution.child_skill_id) ?? []),
+        evolution,
+      ]);
+    }
+
+    return grouped;
+  }, [storySkillEvolutions]);
+
+  const skillEvolutionByParent = useMemo(() => {
+    const grouped = new Map<string, SkillEvolution[]>();
+
+    for (const evolution of storySkillEvolutions) {
+      grouped.set(evolution.parent_skill_id, [
+        ...(grouped.get(evolution.parent_skill_id) ?? []),
+        evolution,
+      ]);
+    }
+
+    return grouped;
+  }, [storySkillEvolutions]);
+
+  const skillNameById = useMemo(
+    () => new Map(storySkills.map(skill => [skill.id, skill.name])),
+    [storySkills]
+  );
+
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
 
   // What the drawer's fields hold against what the node still says. A restored
@@ -11996,6 +13008,34 @@ function App() {
           </div>
         )}
 
+        {selectedTab === 'characters' && characterView === 'skills' && (
+          <div className="tab-content">
+            <CharacterViewToggle view="skills" onChange={setCharacterView} />
+            {!currentStory ? (
+              <div className="empty-state">Load a story to see how its skills evolved</div>
+            ) : (
+              <SkillTreeView
+                skills={storySkills}
+                characters={characters}
+                evolutions={storySkillEvolutions}
+                chapters={chapterChoices.map(node => ({
+                  id: node.id,
+                  label: node.data.label,
+                }))}
+                error={skillEvolutionError}
+                onCreate={addSkillEvolutionLink}
+                onDelete={removeSkillEvolutionLink}
+                onOpenSkill={skill =>
+                  openCharacterSheet(skill.character_id, {
+                    kind: 'skill',
+                    skillId: skill.id,
+                  })
+                }
+              />
+            )}
+          </div>
+        )}
+
         {selectedTab === 'characters' && characterView === 'sheet' && (
           <div className="tab-content">
             <CharacterViewToggle view="sheet" onChange={setCharacterView} />
@@ -12969,6 +14009,8 @@ function App() {
                               choice => choice.id === skill.node_id
                             );
                             const events = skillEventsBySkill.get(skill.id) ?? [];
+                            const prerequisites = skillEvolutionByChild.get(skill.id) ?? [];
+                            const outcomes = skillEvolutionByParent.get(skill.id) ?? [];
                             const skillFocused =
                               focusedProgression?.kind === 'skill' &&
                               focusedProgression.id === skill.id;
@@ -13189,6 +14231,49 @@ function App() {
                                         <span className="skill-card-link">
                                           Card: {card.data.label}
                                         </span>
+                                      )}
+                                      {(prerequisites.length > 0 || outcomes.length > 0) && (
+                                        <div className="skill-evolution-links">
+                                          {prerequisites.map(evolution => (
+                                            <span
+                                              key={`requires-${evolution.id}`}
+                                              className="skill-evolution-link requires"
+                                              title={`This skill's ${
+                                                evolution.evolution_type
+                                              } link to ${
+                                                skillNameById.get(
+                                                  evolution.parent_skill_id
+                                                ) ?? 'a skill in the trash'
+                                              }`}
+                                            >
+                                              Requires{' '}
+                                              {skillNameById.get(
+                                                evolution.parent_skill_id
+                                              ) ?? 'a skill in the trash'}
+                                              {evolution.required_rank
+                                                ? ` · ${evolution.required_rank}`
+                                                : ''}
+                                            </span>
+                                          ))}
+                                          {outcomes.map(evolution => (
+                                            <span
+                                              key={`outcome-${evolution.id}`}
+                                              className="skill-evolution-link outcome"
+                                              title={`${
+                                                skillNameById.get(
+                                                  evolution.child_skill_id
+                                                ) ?? 'A skill in the trash'
+                                              } follows this skill by ${
+                                                evolution.evolution_type
+                                              }`}
+                                            >
+                                              →{' '}
+                                              {skillNameById.get(
+                                                evolution.child_skill_id
+                                              ) ?? 'a skill in the trash'}
+                                            </span>
+                                          ))}
+                                        </div>
                                       )}
                                     </div>
                                     <button

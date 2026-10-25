@@ -2,8 +2,8 @@ use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
     CharacterChapterState, CharacterCurrency, CharacterLevelMilestone, CharacterProgress,
     CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
-    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Quest, QuestReward, Story,
-    StoryExport,
+    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution,
+    SkillTree, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -725,6 +725,73 @@ fn delete_skill_event(db: tauri::State<'_, Db>, id: String, user: String) -> Res
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn add_skill_evolution(
+    db: tauri::State<'_, Db>,
+    parent_skill_id: String,
+    child_skill_id: String,
+    evolution_type: String,
+    chapter_id: Option<String>,
+    required_rank: Option<String>,
+    notes: Option<String>,
+    user: String,
+) -> Result<SkillEvolution, String> {
+    db.add_skill_evolution(
+        parent_skill_id,
+        child_skill_id,
+        evolution_type,
+        chapter_id,
+        required_rank,
+        notes,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_skill_evolution(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
+    db.delete_skill_evolution(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_skill_evolutions(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<SkillEvolution>, String> {
+    db.list_story_skill_evolutions(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_skill_evolutions(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<Vec<SkillEvolution>, String> {
+    db.list_character_skill_evolutions(&character_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_skill_tree(db: tauri::State<'_, Db>, story_id: String) -> Result<SkillTree, String> {
+    db.skill_tree_for_story(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_character_skill_tree(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+) -> Result<SkillTree, String> {
+    db.skill_tree_for_character(&character_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn add_inventory_item(
     db: tauri::State<'_, Db>,
     character_id: String,
@@ -1337,6 +1404,12 @@ pub fn run() {
             add_skill_event,
             update_skill_event,
             delete_skill_event,
+            add_skill_evolution,
+            delete_skill_evolution,
+            get_story_skill_evolutions,
+            get_character_skill_evolutions,
+            get_story_skill_tree,
+            get_character_skill_tree,
             add_inventory_item,
             update_inventory_item,
             delete_inventory_item,
