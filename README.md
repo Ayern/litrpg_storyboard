@@ -487,6 +487,25 @@ reads the same table, so the help cannot describe a shortcut that no longer
 works. `?` is ignored while a field has focus (there it is a question mark), and
 the list closes on `Esc`, its close button, or a click outside it.
 
+**Help badges.** The places where a rule is easy to miss carry a small `?` beside
+them: the canvas toolbar's connections (drag-to-spawn and relation linking), the
+connection editor's relation type, the bond form's kinds, the sheet's skills
+(one identity, every holder), the continuity panel and the loop a skill tree
+refuses. A badge opens on hover, on keyboard focus and on a tap, is announced to
+a screen reader through `aria-describedby`, and closes on `Esc`, on blur, or when
+the pointer leaves. The bubble is placed in the window rather than inside the
+panel it belongs to and is clamped to the margins, so a badge near an edge still
+shows the whole sentence instead of a clipped one.
+
+**Guide and the first-run card.** The header's *Guide* explains the three rules
+the app keeps: the canvas is a database (a line writes a relation, a cast entry,
+an audit entry), a skill card has one identity (its edits reach every holder),
+and history goes back whole actions (one save is one undo step across sheet and
+canvas). A first run offers the same three as a *Start here* card above the tab
+content, with *Open the guide* and *Got it*. Dismissing it writes
+`litrpg.guide.dismissed` to local storage, so it does not come back on the next
+launch; the Guide button stays, and the welcome card never blocks the board.
+
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
 first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,

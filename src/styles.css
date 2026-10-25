@@ -5779,6 +5779,12 @@ body {
   gap: 10px;
 }
 
+.canvas-create-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .canvas-create-head h3 {
   margin: 0;
   font-size: 15px;
@@ -5892,4 +5898,196 @@ body {
 .canvas-create-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* The "?" beside a dense control. The trigger is a real button so it can be
+   reached by Tab; the bubble is fixed and clamped by HelpTip, which is what
+   keeps it inside the window instead of clipped by the panel it belongs to. */
+.help-tip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.help-tip-trigger {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: #2a2a2d;
+  border: 1px solid #4a4a4f;
+  border-radius: 50%;
+  color: #a9c7c4;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.help-tip-trigger:hover {
+  border-color: #6f9f9a;
+  color: #e6fffb;
+}
+
+.help-tip-trigger:focus-visible {
+  outline: none;
+  border-color: #8fcfc8;
+  color: #e6fffb;
+  box-shadow: 0 0 0 2px rgba(143, 207, 200, 0.3);
+}
+
+.help-tip-bubble {
+  position: fixed;
+  z-index: 60;
+  width: 280px;
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px;
+  background: #1b1c1f;
+  border: 1px solid #4a4d55;
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #cfd3d8;
+}
+
+/* The line under the connection editor's fields that says what the badge
+   explains, in the same quiet voice as the other field hints. */
+.node-editor-help {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #8a8a8a;
+}
+
+/* A section heading with room for a help badge beside it. */
+.character-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.character-section-head .character-section-heading {
+  margin-bottom: 0;
+}
+
+/* The welcome card sits above the tab content on a first run and goes away for
+   good once it is dismissed. */
+.welcome-card {
+  margin: 12px 12px 0;
+  padding: 12px 14px;
+  background: #20262a;
+  border: 1px solid #355063;
+  border-radius: 6px;
+}
+
+.welcome-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.welcome-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b9dce8;
+}
+
+.welcome-close {
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: #8a8a8a;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.welcome-close:hover {
+  color: #eee;
+}
+
+.welcome-list {
+  margin: 8px 0 10px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #c2c7cc;
+}
+
+.welcome-list strong {
+  color: #e4edf4;
+  font-weight: 500;
+}
+
+.welcome-actions,
+.guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.welcome-actions button,
+.guide-actions button {
+  padding: 4px 11px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #ccc;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.welcome-actions button:hover,
+.guide-actions button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.welcome-actions button:first-child,
+.guide-actions button:first-child {
+  background: #23304a;
+  border-color: #3f5f8f;
+  color: #dbe6ff;
+}
+
+/* The guide is the same dialog shell as the shortcut list, with its three
+   rules written out. */
+.guide-concepts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guide-concepts h3 {
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8fc7c2;
+}
+
+.guide-concepts p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c8c8c8;
+}
+
+.guide-actions {
+  margin-top: 16px;
 }

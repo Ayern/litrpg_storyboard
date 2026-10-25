@@ -1,4 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  useId,
+} from 'react';
 import ReactFlow, {
   Controls,
   Background,
@@ -570,6 +578,34 @@ const relationTypes = ['unlocks', 'requires', 'rewards'] as const;
 // The bond kinds a sheet suggests. Like a connection's verbs these are only
 // suggestions: the field keeps whatever word the author types.
 const relationKindSuggestions = ['ally', 'rival', 'mentor', 'family', 'enemy', 'owes'] as const;
+
+// Whether the first-run card has been put away. It is one flag for the whole
+// app: a reader who understood the canvas once does not need it again per
+// story. The guide stays reachable from the header either way.
+const GUIDE_DISMISSED_KEY = 'litrpg.guide.dismissed';
+
+// The three rules the welcome card lists and the guide explains, written once so
+// the short card and the long dialog cannot drift apart.
+const guideConcepts = [
+  {
+    title: 'The canvas is a database',
+    short: 'A line you draw is a record: a relation, a cast entry, an audit entry.',
+    body:
+      'A connection is not decoration. Draw one between two characters and a relation is written onto both sheets; draw one to a chapter and that character joins its cast. Every one of those writes is recorded in the history with your name on it.',
+  },
+  {
+    title: 'A skill card has one identity',
+    short: 'Editing a card changes every character who holds that skill.',
+    body:
+      'A skill’s name, rank and effect belong to the skill itself, not to the card or to one holder. A card and every sheet that holds it show the same values, so a correction made in one place reaches the others at once — as a single undo step.',
+  },
+  {
+    title: 'History goes back whole actions',
+    short: 'Undo and the Audit Log reverse a change made on the sheet or the canvas.',
+    body:
+      'One save is one step, even when it touches a card and a sheet together. Ctrl+Z walks back through those steps and Redo walks forward again; the Audit Log keeps the longer record of who changed what, with a Revert on each field.',
+  },
+] as const;
 
 function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
@@ -2828,6 +2864,12 @@ function SkillTreeView({
       {error && (
         <div className="skill-tree-error" role="alert">
           {error}
+          <HelpTip label="links that would close a loop">
+            Links point one way, from a skill to what it becomes. A link that would
+            lead back to where it started is refused, because a loop would make the
+            tiers and the chapter order meaningless. Point the link at a later skill
+            instead.
+          </HelpTip>
         </div>
       )}
 
@@ -3304,6 +3346,136 @@ function CharacterViewToggle({
   );
 }
 
+// The width a bubble asks for before it is measured; a first render has no
+// layout yet, so the clamp needs a size to work with.
+const HELP_BUBBLE_WIDTH = 280;
+
+// Where a help bubble sits: under its button when there is room, above it when
+// there is not, and never past the edge of the window. Kept apart from the
+// component so the clamping can be checked without a browser laying anything
+// out.
+export function placeTooltip(
+  trigger: { top: number; bottom: number; left: number; width: number },
+  bubble: { width: number; height: number },
+  viewport: { width: number; height: number }
+): { top: number; left: number; placement: 'top' | 'bottom' } {
+  const margin = 8;
+  const gap = 6;
+
+  const width = Math.min(bubble.width, Math.max(viewport.width - margin * 2, 0));
+  const left = Math.round(
+    Math.min(
+      Math.max(trigger.left + trigger.width / 2 - width / 2, margin),
+      Math.max(viewport.width - width - margin, margin)
+    )
+  );
+
+  const fitsBelow = trigger.bottom + gap + bubble.height <= viewport.height - margin;
+  const fitsAbove = trigger.top - gap - bubble.height >= margin;
+  const placement: 'top' | 'bottom' = fitsBelow || !fitsAbove ? 'bottom' : 'top';
+  const wanted = placement === 'bottom' ? trigger.bottom + gap : trigger.top - gap - bubble.height;
+  const top = Math.round(
+    Math.min(
+      Math.max(wanted, margin),
+      Math.max(viewport.height - bubble.height - margin, margin)
+    )
+  );
+
+  return { top, left, placement };
+}
+
+// The small "?" that explains a dense control. The bubble opens on hover, on
+// keyboard focus and on click, is announced through aria-describedby, and closes
+// on Escape without moving focus. Its own position is fixed and clamped to the
+// window, so it cannot be cut off by the panel it belongs to.
+function HelpTip({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<{
+    top: number;
+    left: number;
+    side: 'top' | 'bottom';
+  } | null>(null);
+  const bubbleId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const bubbleRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+
+    const measure = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+
+      const bubble = bubbleRef.current?.getBoundingClientRect();
+      const placed = placeTooltip(
+        { top: trigger.top, bottom: trigger.bottom, left: trigger.left, width: trigger.width },
+        { width: bubble?.width || HELP_BUBBLE_WIDTH, height: bubble?.height || 0 },
+        { width: window.innerWidth, height: window.innerHeight }
+      );
+
+      setPlacement({ top: placed.top, left: placed.left, side: placed.placement });
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [open]);
+
+  return (
+    <span
+      className="help-tip"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="help-tip-trigger"
+        aria-label={`About ${label}`}
+        aria-describedby={open ? bubbleId : undefined}
+        // A click opens it too, which is what a touch screen taps; leaving the
+        // button, blurring it or pressing Escape puts it away.
+        onClick={() => setOpen(true)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={event => {
+          if (event.key !== 'Escape' || !open) return;
+          // Escape belongs to the bubble, not to the panel behind it.
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+        }}
+      >
+        ?
+      </button>
+      {open && (
+        <span
+          ref={bubbleRef}
+          id={bubbleId}
+          role="tooltip"
+          className="help-tip-bubble"
+          data-side={placement?.side ?? 'bottom'}
+          style={
+            placement
+              ? { top: placement.top, left: placement.left }
+              : { top: 0, left: 0, visibility: 'hidden' }
+          }
+        >
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [currentStory, setCurrentStory] = useState<Story | null>(null);
@@ -3736,6 +3908,19 @@ function App() {
   // name. It is not tied to a tab, because most of the routes are not either.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
+  // The guide covers the three rules the canvas keeps. It is reachable from the
+  // header at any time; the welcome card is what points at it on a first run.
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(GUIDE_DISMISSED_KEY) === '1';
+    } catch {
+      // Without storage the card would greet the reader on every launch, so it
+      // stays out of the way instead and the Guide button carries the rules.
+      return true;
+    }
+  });
+
   // The search palette, opened with Ctrl+F on the Graph and Chapters tabs.
   // A pan asked for while the board was not on screen, applied when it mounts.
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
@@ -4029,6 +4214,19 @@ function App() {
   const undoLast = useCallback(() => moveInHistory('undo'), [moveInHistory]);
   const redoLast = useCallback(() => moveInHistory('redo'), [moveInHistory]);
 
+  // Putting the card away is a decision about this machine, not about the
+  // story, so it is remembered rather than shown again on the next launch.
+  const dismissWelcome = useCallback(() => {
+    setWelcomeDismissed(true);
+
+    try {
+      localStorage.setItem(GUIDE_DISMISSED_KEY, '1');
+    } catch {
+      // The card stays hidden for this session; a failed write changes nothing
+      // else, so it is not worth an error banner.
+    }
+  }, []);
+
   // Load first story by default if none selected
   useEffect(() => {
     if (!currentStory && stories.length > 0) {
@@ -4045,6 +4243,7 @@ function App() {
         (selectedTab !== 'graph' && selectedTab !== 'chapters') ||
         !currentStory ||
         shortcutsOpen ||
+        guideOpen ||
         backupsOpen ||
         quitPrompt ||
         canvasCreate ||
@@ -4078,6 +4277,7 @@ function App() {
     currentStory,
     searchOpen,
     shortcutsOpen,
+    guideOpen,
     backupsOpen,
     quitPrompt,
     canvasCreate,
@@ -4093,8 +4293,9 @@ function App() {
   // in — there it is a question mark like any other.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      // The quit question owns the keyboard while it is up.
-      if (quitPrompt) return;
+      // The quit question owns the keyboard while it is up, and the guide owns it
+      // while that is up: ? there would open a second overlay behind it.
+      if (quitPrompt || guideOpen) return;
 
       if (event.key === 'Escape' && shortcutsOpen) {
         event.preventDefault();
@@ -4118,7 +4319,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [shortcutsOpen, quitPrompt]);
+  }, [shortcutsOpen, quitPrompt, guideOpen]);
 
   // Ctrl+Z and Ctrl+Shift+Z walk the recorded actions. Inside a field they are
   // left alone, because there they belong to the text being typed.
@@ -4131,7 +4332,7 @@ function App() {
         target?.isContentEditable ||
         ['input', 'textarea', 'select'].includes(target?.tagName?.toLowerCase() ?? '');
 
-      if (typing || shortcutsOpen || backupsOpen || quitPrompt) return;
+      if (typing || shortcutsOpen || guideOpen || backupsOpen || quitPrompt) return;
 
       const key = event.key.toLowerCase();
 
@@ -4150,7 +4351,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undoLast, redoLast, shortcutsOpen, backupsOpen, quitPrompt]);
+  }, [undoLast, redoLast, shortcutsOpen, guideOpen, backupsOpen, quitPrompt]);
 
   // The backups dialog is modal: Escape closes it, but not while a restore is
   // already running.
@@ -4169,6 +4370,23 @@ function App() {
 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [backupsOpen, restoringFile]);
+
+  // Escape closes the guide, the same way it closes the shortcut list it sits
+  // beside in the header.
+  useEffect(() => {
+    if (!guideOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+
+      event.preventDefault();
+      setGuideOpen(false);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [guideOpen]);
 
   // The board's undo closures read the latest row rather than the one captured
   // when the action happened, so a later field edit is not swept away by Undo.
@@ -13082,6 +13300,13 @@ function App() {
             )}
             <button
               className="backups-button"
+              title="What the canvas, the skill cards and the history record"
+              onClick={() => setGuideOpen(true)}
+            >
+              Guide
+            </button>
+            <button
+              className="backups-button"
               title="Restore an earlier copy of the whole database"
               onClick={() => void openBackups()}
             >
@@ -13115,6 +13340,48 @@ function App() {
             )}
           </div>
         </div>
+
+        {currentStory && !welcomeDismissed && (
+          <section className="welcome-card" aria-labelledby="welcome-heading">
+            <div className="welcome-head">
+              <h2 id="welcome-heading">Start here</h2>
+              <button
+                type="button"
+                className="welcome-close"
+                aria-label="Dismiss the welcome card"
+                title="Hide this card; the Guide button keeps the rules in reach"
+                onClick={dismissWelcome}
+              >
+                ×
+              </button>
+            </div>
+
+            <ul className="welcome-list">
+              {guideConcepts.map(concept => (
+                <li key={concept.title}>
+                  <strong>{concept.title}.</strong> {concept.short}
+                </li>
+              ))}
+            </ul>
+
+            <div className="welcome-actions">
+              <button
+                type="button"
+                title="Read the three rules in full, with the keyboard routes one click away"
+                onClick={() => setGuideOpen(true)}
+              >
+                Open the guide
+              </button>
+              <button
+                type="button"
+                title="Put this card away for good"
+                onClick={dismissWelcome}
+              >
+                Got it
+              </button>
+            </div>
+          </section>
+        )}
 
         {actionError && (
           <div className="error-strip">
@@ -13261,6 +13528,14 @@ function App() {
                     {showChapterNotes ? 'Hide notes' : 'Show notes'}
                   </button>
                   <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
+                  <HelpTip label="drawing connections">
+                    Drag from a card’s dot onto another card to draw a connection.
+                    Let go over empty canvas and a new card is created there, already
+                    filled in from the card you dragged from: a skill takes that
+                    character as its owner, a quest takes them as its giver. Character
+                    to character opens the bond form; character to chapter puts them in
+                    that chapter’s cast.
+                  </HelpTip>
                 </div>
                 <div className="graph-body">
                   <aside className="cast-rail" aria-label="Cast">
@@ -13420,6 +13695,20 @@ function App() {
                               <option key={type} value={type} />
                             ))}
                           </datalist>
+                          <div className="node-editor-help">
+                            <HelpTip label="connection relation types">
+                              The relation type is the verb the line carries: unlocks,
+                              requires, rewards, or a word of your own. When this
+                              connection draws a bond between two characters, changing
+                              the type here changes the bond on both sheets. A line
+                              that draws a bond always keeps a type, so clearing it is
+                              refused rather than quietly unlinking the relation.
+                            </HelpTip>
+                            <span>
+                              The type is the line’s verb; a hand-written label is
+                              kept.
+                            </span>
+                          </div>
                           {edgeEditError && (
                             <div className="node-editor-error">{edgeEditError}</div>
                           )}
@@ -14556,6 +14845,13 @@ function App() {
                           <span className="chapter-continuity-note">
                             {continuityLines.length} to check · advisory
                           </span>
+                          <HelpTip label="continuity warnings">
+                            These compare the ledger with the story and point at what
+                            cannot both be true: a skill learned before its parent, an
+                            item lost before it was found, a level that goes down
+                            without a penalty. They are advisory, and a sync writes the
+                            ledger’s number onto the milestone as one undoable change.
+                          </HelpTip>
                         </div>
                         <ul>
                           {continuityLines.map(({ parts, flag }, index) => (
@@ -15633,7 +15929,16 @@ function App() {
                           the author's words, and the chapter is where it was
                           learned. A skill card can name its holders too. */}
                       <div className="skill-section">
-                        <h4 className="character-section-heading">Skills</h4>
+                        <div className="character-section-head">
+                          <h4 className="character-section-heading">Skills</h4>
+                          <HelpTip label="skill cards and the sheets that hold them">
+                            A skill’s name, rank and effect belong to the skill itself,
+                            not to one holder. A card and every sheet that holds it
+                            show the same values, so editing the card reaches all of
+                            them at once — as one undo step — and the sheet’s links say
+                            what it grew out of and what it becomes.
+                          </HelpTip>
+                        </div>
 
                         <div className="skill-list">
                           {characterSkills.length === 0 && (
@@ -17920,6 +18225,64 @@ function App() {
         </div>
       )}
 
+      {guideOpen && (
+        <div
+          className="shortcuts-backdrop"
+          role="presentation"
+          onClick={() => setGuideOpen(false)}
+        >
+          <div
+            className="shortcuts guide"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Guide"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="shortcuts-head">
+              <h2>Guide</h2>
+              <button
+                className="shortcuts-close"
+                aria-label="Close guide"
+                title="Close this guide (Esc)"
+                onClick={() => setGuideOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="shortcuts-intro">
+              Three rules the canvas, the skill cards and the history keep. If you
+              put the welcome card away, this is where it lives.
+            </p>
+
+            <ol className="guide-concepts">
+              {guideConcepts.map(concept => (
+                <li key={concept.title}>
+                  <h3>{concept.title}</h3>
+                  <p>{concept.body}</p>
+                </li>
+              ))}
+            </ol>
+
+            <div className="guide-actions">
+              <button
+                type="button"
+                title={`Show every keyboard route (${shortcutKeys.help})`}
+                onClick={() => {
+                  setGuideOpen(false);
+                  setShortcutsOpen(true);
+                }}
+              >
+                Keyboard shortcuts
+              </button>
+              <button type="button" title="Close this guide" onClick={() => setGuideOpen(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {backupsOpen && (
         <div
           className="shortcuts-backdrop"
@@ -18036,7 +18399,15 @@ function App() {
             }}
           >
             <div className="canvas-create-head">
-              <h3>Connect characters</h3>
+              <div className="canvas-create-title">
+                <h3>Connect characters</h3>
+                <HelpTip label="bond kinds">
+                  A bond names how two people stand with each other: ally, rival,
+                  mentor, family or enemy are the suggested ones, and any word you
+                  type works too. It is written onto both sheets with the chapter it
+                  began in, and the line on the canvas keeps the same word.
+                </HelpTip>
+              </div>
               <button
                 type="button"
                 className="canvas-create-close"
