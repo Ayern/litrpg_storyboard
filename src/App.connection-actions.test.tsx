@@ -34,6 +34,7 @@ vi.mock('reactflow', async () => {
       onConnect,
       onConnectStart,
       onConnectEnd,
+      onEdgeClick,
       onEdgesDelete,
     } = props;
 
@@ -91,9 +92,18 @@ vi.mock('reactflow', async () => {
       ),
       edges.map((edge: any) =>
         React.createElement(
-          'button',
-          { key: edge.id, onClick: () => onEdgesDelete?.([edge]) },
-          `remove ${edge.id}`
+          React.Fragment,
+          { key: edge.id },
+          React.createElement(
+            'button',
+            { onClick: () => onEdgesDelete?.([edge]) },
+            `remove ${edge.id}`
+          ),
+          React.createElement(
+            'button',
+            { onClick: () => onEdgeClick?.({}, edge) },
+            `edit ${edge.id}`
+          )
         )
       ),
       children as React.ReactNode
@@ -300,6 +310,30 @@ beforeEach(() => {
         relations.push(relation);
         return relation;
       }
+      case 'update_relation': {
+        const existing = relations.find(row => row.id === args.id);
+        if (!existing) return null;
+        const updated: RelationRow = {
+          ...existing,
+          kind: args.kind,
+          note: args.note ?? null,
+          since_chapter_id: args.sinceChapterId ?? null,
+          until_chapter_id: args.untilChapterId ?? null,
+        };
+        relations = relations.map(row => (row.id === updated.id ? updated : row));
+        return { ...updated };
+      }
+      case 'update_graph_edge': {
+        const existing = edges.find(row => row.id === args.id);
+        if (!existing) return null;
+        const updated: EdgeRow = {
+          ...existing,
+          label: args.label ?? null,
+          relation_type: args.relationType ?? null,
+        };
+        edges = edges.map(row => (row.id === updated.id ? updated : row));
+        return { ...updated, updated_at: timestamp() };
+      }
       case 'delete_relation':
         relations = relations.filter(row => row.id !== args.id);
         return null;
@@ -483,6 +517,202 @@ describe('connection actions', () => {
       expect(lastCall('delete_relation')).toEqual({ id: 'relation-1', user: 'You' })
     );
     expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+  });
+
+  it('removes the matching connection when a relation is deleted on the sheet, as one undo step', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect characters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect characters' });
+    await user.click(within(dialog).getByRole('button', { name: 'Connect characters' }));
+    await waitFor(() => expect(lastCall('add_relation')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    await user.click(screen.getByTitle('Delete this ally relation'));
+
+    await waitFor(() =>
+      expect(lastCall('delete_relation')).toEqual({ id: 'relation-1', user: 'You' })
+    );
+    expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+    expect(screen.queryByTitle('Delete this ally relation')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    expect(screen.queryByRole('button', { name: 'remove e1' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_relation')).toMatchObject({
+        fromCharacterId: 'char-1',
+        toCharacterId: 'char-2',
+        kind: 'ally',
+      })
+    );
+    expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+  });
+
+  it('moves a relation verb onto the connection that drew it, with one undo step', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect characters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect characters' });
+    await user.click(within(dialog).getByRole('button', { name: 'Connect characters' }));
+    await waitFor(() => expect(lastCall('add_relation')).toBeTruthy());
+    expect(edges[0]).toMatchObject({ id: 'e1', label: 'ally', relation_type: 'ally' });
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(screen.getByTitle("Show Rook's sheet"));
+    await user.click(screen.getByTitle('Change this ally relation'));
+    await user.clear(screen.getByLabelText('Relation kind'));
+    await user.type(screen.getByLabelText('Relation kind'), 'mentor');
+    await user.click(screen.getByRole('button', { name: 'Save relation' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_relation')).toMatchObject({
+        id: 'relation-1',
+        kind: 'mentor',
+      })
+    );
+    expect(lastCall('update_graph_edge')).toEqual({
+      id: 'e1',
+      label: 'mentor',
+      relationType: 'mentor',
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'mentor', relation_type: 'mentor' });
+
+    // Undo lives on the canvas toolbar, beside the node controls.
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_relation')).toMatchObject({
+        id: 'relation-1',
+        kind: 'ally',
+      })
+    );
+    expect(lastCall('update_graph_edge')).toEqual({
+      id: 'e1',
+      label: 'ally',
+      relationType: 'ally',
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'ally', relation_type: 'ally' });
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_relation')).toMatchObject({
+        id: 'relation-1',
+        kind: 'mentor',
+      })
+    );
+    expect(lastCall('update_graph_edge')).toEqual({
+      id: 'e1',
+      label: 'mentor',
+      relationType: 'mentor',
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'mentor', relation_type: 'mentor' });
+  });
+
+  it('moves a connection verb onto the relation on the sheet, with one undo step', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect characters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect characters' });
+    await user.click(within(dialog).getByRole('button', { name: 'Connect characters' }));
+    await waitFor(() => expect(lastCall('add_relation')).toBeTruthy());
+
+    await user.click(screen.getByRole('button', { name: 'edit e1' }));
+    const relationType = screen.getByPlaceholderText('Relation type (optional)');
+    expect(relationType).toHaveValue('ally');
+    await user.clear(relationType);
+    await user.type(relationType, 'mentor');
+    await user.click(screen.getByTitle("Save this connection's fields"));
+
+    await waitFor(() =>
+      expect(lastCall('update_graph_edge')).toEqual({
+        id: 'e1',
+        label: 'mentor',
+        relationType: 'mentor',
+        user: 'You',
+      })
+    );
+    expect(lastCall('update_relation')).toMatchObject({
+      id: 'relation-1',
+      kind: 'mentor',
+      note: null,
+      sinceChapterId: null,
+      untilChapterId: null,
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'mentor', relation_type: 'mentor' });
+    expect(relations[0]).toMatchObject({ kind: 'mentor' });
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    expect(screen.getByTitle('Change this mentor relation')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_relation')).toMatchObject({
+        id: 'relation-1',
+        kind: 'ally',
+      })
+    );
+    expect(lastCall('update_graph_edge')).toEqual({
+      id: 'e1',
+      label: 'ally',
+      relationType: 'ally',
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'ally', relation_type: 'ally' });
+    expect(relations[0]).toMatchObject({ kind: 'ally' });
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() =>
+      expect(lastCall('update_relation')).toMatchObject({
+        id: 'relation-1',
+        kind: 'mentor',
+      })
+    );
+    expect(lastCall('update_graph_edge')).toEqual({
+      id: 'e1',
+      label: 'mentor',
+      relationType: 'mentor',
+      user: 'You',
+    });
+    expect(edges[0]).toMatchObject({ label: 'mentor', relation_type: 'mentor' });
+    expect(relations[0]).toMatchObject({ kind: 'mentor' });
+  });
+
+  it('refuses to leave a relation drawing without a verb', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect characters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect characters' });
+    await user.click(within(dialog).getByRole('button', { name: 'Connect characters' }));
+    await waitFor(() => expect(lastCall('add_relation')).toBeTruthy());
+
+    await user.click(screen.getByRole('button', { name: 'edit e1' }));
+    await user.clear(screen.getByPlaceholderText('Relation type (optional)'));
+    await user.click(screen.getByTitle("Save this connection's fields"));
+
+    expect(
+      await screen.findByText(
+        /This connection draws the ally relation between Rook and Wren/
+      )
+    ).toBeInTheDocument();
+    expect(lastCall('update_graph_edge')).toBeUndefined();
+    expect(relations[0]).toMatchObject({ kind: 'ally' });
+    expect(edges[0]).toMatchObject({ label: 'ally', relation_type: 'ally' });
   });
 
   it('pre-fills a skill owner and a quest giver from a character card', async () => {

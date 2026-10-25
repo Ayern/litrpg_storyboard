@@ -210,9 +210,11 @@ under the query narrows the list to one kind, and the count follows the filter.
 label and relation type (`leads_to`, `foreshadows`). The field suggests the
 LitRPG verbs `unlocks`, `requires` and `rewards`, but stays free text for a
 story's own words. Both fields are optional, and each change is recorded per
-field like a node edit. The canvas shows the label when
-there is one and falls back to the relation type. Only one editor is open at a
-time: selecting a node closes the connection editor and vice versa.
+field like a node edit. A connection that draws a character relation is the
+exception: clearing its relation type would leave the bond without its drawing,
+so the editor refuses and asks for another verb instead. The canvas shows the
+label when there is one and falls back to the relation type. Only one editor is
+open at a time: selecting a node closes the connection editor and vice versa.
 
 **Characters** — a cast list per story, each with a name, an optional description,
 progression, numeric stats and free-text attributes. Stats and attributes are

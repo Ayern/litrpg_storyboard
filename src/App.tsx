@@ -755,6 +755,73 @@ function noteFirstLine(text: string): string {
   return text.split('\n')[0].trim();
 }
 
+// The edge that drew a relation: both ends are its two character cards and the
+// edge's verb names the bond. An edge that lost its verb still belongs to the
+// only relation between the pair, but never to one of several.
+function matchingRelationEdge(
+  edges: Edge<EdgeData>[],
+  nodes: Node<NodeData>[],
+  relations: CharacterRelation[],
+  relation: Pick<CharacterRelation, 'from_character_id' | 'to_character_id' | 'kind'>
+): Edge<EdgeData> | undefined {
+  const characterIdForNode = (nodeId: string) => {
+    const node = nodes.find(candidate => candidate.id === nodeId);
+    return node?.data.nodeType === 'character' ? node.data.characterId ?? null : null;
+  };
+  const pairEdges = edges.filter(edge => {
+    const fromId = characterIdForNode(edge.source);
+    const toId = characterIdForNode(edge.target);
+
+    return (
+      (fromId === relation.from_character_id && toId === relation.to_character_id) ||
+      (fromId === relation.to_character_id && toId === relation.from_character_id)
+    );
+  });
+  const pairRelations = relations.filter(
+    other =>
+      (other.from_character_id === relation.from_character_id &&
+        other.to_character_id === relation.to_character_id) ||
+      (other.from_character_id === relation.to_character_id &&
+        other.to_character_id === relation.from_character_id)
+  );
+
+  return (
+    pairEdges.find(
+      edge => (edge.data?.relationType ?? edge.label ?? '') === relation.kind
+    ) ?? (pairEdges.length === 1 && pairRelations.length === 1 ? pairEdges[0] : undefined)
+  );
+}
+
+// The relation a character-to-character connection drew. Read the edge's verb
+// before it is edited, since the change may be about to replace the very word
+// that picks the bond out of a crowded pair.
+function relationForEdge(
+  edge: Edge<EdgeData>,
+  nodes: Node<NodeData>[],
+  relations: CharacterRelation[]
+): CharacterRelation | undefined {
+  const characterIdForNode = (nodeId: string) => {
+    const node = nodes.find(candidate => candidate.id === nodeId);
+    return node?.data.nodeType === 'character' ? node.data.characterId ?? null : null;
+  };
+  const fromId = characterIdForNode(edge.source);
+  const toId = characterIdForNode(edge.target);
+
+  if (!fromId || !toId) return undefined;
+
+  const pair = relations.filter(
+    relation =>
+      (relation.from_character_id === fromId && relation.to_character_id === toId) ||
+      (relation.from_character_id === toId && relation.to_character_id === fromId)
+  );
+
+  return (
+    pair.find(
+      relation => relation.kind === (edge.data?.relationType ?? edge.label ?? '')
+    ) ?? (pair.length === 1 ? pair[0] : undefined)
+  );
+}
+
 // What sits on the right of a result: whose character a card belongs to, both
 // ends of a connection, or the story it lives in when that is not the open one.
 function searchResultTag(result: SearchResult, openStoryId: string | undefined): string | null {
@@ -9240,18 +9307,107 @@ function App() {
 
     setCharacterError(null);
 
-    try {
+    const note = relationNoteDraft.trim() || null;
+    const sinceChapterId = relationChapterDraft || null;
+    const untilChapterId = relationUntilChapterDraft || null;
+
+    // The connection that drew this bond carries its verb on the line and in
+    // its data. The sheet and that line move together, so deleting either one
+    // later still names the same bond. A label the author rewrote by hand is
+    // theirs to keep; only the relation type has to follow the sheet.
+    const matchingEdge = matchingRelationEdge(edges, nodes, storyRelations, relation);
+    const oldEdgeLabel = matchingEdge?.data?.label ?? null;
+    const oldEdgeRelation = matchingEdge?.data?.relationType ?? null;
+    const nextEdgeLabel =
+      matchingEdge && oldEdgeLabel && oldEdgeLabel !== relation.kind
+        ? oldEdgeLabel
+        : kind;
+    const edgeNeedsWrite = Boolean(
+      matchingEdge &&
+        ((oldEdgeLabel ?? '') !== nextEdgeLabel ||
+          (oldEdgeRelation ?? '') !== kind)
+    );
+
+    const writeRelation = async (next: {
+      kind: string;
+      note: string | null;
+      sinceChapterId: string | null;
+      untilChapterId: string | null;
+    }) => {
       const saved: CharacterRelation = await invoke('update_relation', {
         id: relation.id,
-        kind,
-        note: relationNoteDraft.trim() || null,
-        sinceChapterId: relationChapterDraft || null,
-        untilChapterId: relationUntilChapterDraft || null,
+        ...next,
         user: actor,
       });
 
       applyRelation(saved);
+    };
+
+    const writeEdge = async (label: string | null, relationType: string | null) => {
+      if (!matchingEdge) return;
+
+      const updated: any = await invoke('update_graph_edge', {
+        id: matchingEdge.id,
+        label,
+        relationType,
+        user: actor,
+      });
+
+      setEdges(previous =>
+        previous.map(edge =>
+          edge.id === matchingEdge.id
+            ? {
+                ...edge,
+                label: updated.label || updated.relation_type || '',
+                data: {
+                  createdBy: edge.data?.createdBy ?? actor,
+                  label: updated.label ?? undefined,
+                  relationType: updated.relation_type ?? undefined,
+                },
+              }
+            : edge
+        )
+      );
+
+      // An inspector left open on this connection follows the saved verb,
+      // unless it holds typing the author has not saved.
+      if (selectedEdgeIdRef.current === matchingEdge.id && !edgeIsDirtyRef.current) {
+        setEdgeLabelDraft(updated.label ?? '');
+        setEdgeRelationDraft(updated.relation_type ?? '');
+      }
+    };
+
+    try {
+      await writeRelation({ kind, note, sinceChapterId, untilChapterId });
+      if (edgeNeedsWrite) await writeEdge(nextEdgeLabel, kind);
       setEditingRelationId(null);
+
+      const fromName =
+        characters.find(character => character.id === relation.from_character_id)?.name ??
+        'a cast member';
+      const toName =
+        characters.find(character => character.id === relation.to_character_id)?.name ??
+        'a cast member';
+
+      recordStep({
+        label:
+          relation.kind === kind
+            ? `Edit the ${kind} relation between ${fromName} and ${toName}`
+            : `Change the ${relation.kind} relation between ${fromName} and ${toName} to ${kind}`,
+        undo: async () => {
+          await writeRelation({
+            kind: relation.kind,
+            note: relation.note,
+            sinceChapterId: relation.since_chapter_id,
+            untilChapterId: relation.until_chapter_id,
+          });
+          if (edgeNeedsWrite) await writeEdge(oldEdgeLabel, oldEdgeRelation);
+        },
+        redo: async () => {
+          await writeRelation({ kind, note, sinceChapterId, untilChapterId });
+          if (edgeNeedsWrite) await writeEdge(nextEdgeLabel, kind);
+        },
+      });
     } catch (e) {
       console.error('Failed to save a relation:', e);
       setCharacterError(`Could not save the relation: ${String(e)}`);
@@ -9261,12 +9417,73 @@ function App() {
   const removeRelation = async (relation: CharacterRelation) => {
     setCharacterError(null);
 
+    // The canvas connection that drew this relation. A bond can be recorded on
+    // the sheet without ever being drawn, so the edge is optional; when it is
+    // there, both halves leave together.
+    const matchingEdge = matchingRelationEdge(edges, nodes, storyRelations, relation);
+    const fromName =
+      characters.find(character => character.id === relation.from_character_id)?.name ??
+      'a cast member';
+    const toName =
+      characters.find(character => character.id === relation.to_character_id)?.name ??
+      'a cast member';
+
     try {
       await invoke('delete_relation', { id: relation.id, user: actor });
       setStoryRelations(previous =>
         previous.filter(other => other.id !== relation.id)
       );
+
+      if (matchingEdge) {
+        await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+        setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
+        if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
+      }
+
       if (editingRelationId === relation.id) setEditingRelationId(null);
+
+      let currentRelationId = relation.id;
+
+      recordStep({
+        label: `Delete the ${relation.kind} relation between ${fromName} and ${toName}`,
+        undo: async () => {
+          const again: CharacterRelation = await invoke('add_relation', {
+            fromCharacterId: relation.from_character_id,
+            toCharacterId: relation.to_character_id,
+            kind: relation.kind,
+            note: relation.note,
+            sinceChapterId: relation.since_chapter_id,
+            untilChapterId: relation.until_chapter_id,
+            user: actor,
+          });
+          currentRelationId = again.id;
+          applyRelation(again);
+
+          if (matchingEdge) {
+            await invoke('restore_deleted', {
+              id: matchingEdge.id,
+              kind: 'edge',
+              user: actor,
+            });
+            setEdges(previous =>
+              previous.some(edge => edge.id === matchingEdge.id)
+                ? previous
+                : addEdge(matchingEdge, previous)
+            );
+          }
+        },
+        redo: async () => {
+          await invoke('delete_relation', { id: currentRelationId, user: actor });
+          setStoryRelations(previous =>
+            previous.filter(other => other.id !== currentRelationId)
+          );
+
+          if (matchingEdge) {
+            await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+            setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
+          }
+        },
+      });
     } catch (e) {
       console.error('Failed to delete a relation:', e);
       setCharacterError(`Could not delete the relation: ${String(e)}`);
@@ -10793,20 +11010,62 @@ function App() {
     const relationType = edgeRelationDraft.trim() || null;
     const currentEdge = edges.find(edge => edge.id === selectedEdgeId);
 
+    // A character-to-character line can be the drawing of a relation. Match it
+    // before the edge changes, while its old verb still names the bond.
+    const linkedRelation = currentEdge
+      ? relationForEdge(currentEdge, nodes, storyRelations)
+      : undefined;
+    const relationKindChanged = Boolean(
+      linkedRelation && relationType && linkedRelation.kind !== relationType
+    );
+    // A label that still repeats the old verb follows the new one. A label the
+    // author wrote by hand is theirs to keep.
+    const nextLabel =
+      linkedRelation && relationType && label === linkedRelation.kind
+        ? relationType
+        : label;
+
+    // A relation must keep a kind. Clearing every verb on the line that draws
+    // one would leave the bond without its connection, so ask for another verb
+    // instead of silently detaching or deleting the relation.
+    const losingRelationVerb = Boolean(
+      linkedRelation &&
+        !relationType &&
+        (!nextLabel || currentEdge?.data?.relationType)
+    );
+
+    if (losingRelationVerb && linkedRelation && currentEdge) {
+      const endpointName = (nodeId: string) =>
+        nodes.find(node => node.id === nodeId)?.data.label ?? '?';
+
+      setEdgeEditError(
+        `This connection draws the ${linkedRelation.kind} relation between ` +
+          `${endpointName(currentEdge.source)} and ${endpointName(currentEdge.target)}. ` +
+          'Choose another relation type, or delete the connection to remove the bond.'
+      );
+      return;
+    }
+
     // Saving without changing anything is not an edit, so it writes nothing.
     if (
       currentEdge &&
-      (currentEdge.data?.label ?? null) === label &&
+      (currentEdge.data?.label ?? null) === nextLabel &&
       (currentEdge.data?.relationType ?? null) === relationType
     ) {
       return;
     }
 
-    try {
+    const beforeLabel = currentEdge?.data?.label ?? null;
+    const beforeRelation = currentEdge?.data?.relationType ?? null;
+
+    const writeEdge = async (
+      nextLabelValue: string | null,
+      nextRelationType: string | null
+    ) => {
       const updated: any = await invoke('update_graph_edge', {
         id: selectedEdgeId,
-        label,
-        relationType,
+        label: nextLabelValue,
+        relationType: nextRelationType,
         user: actor,
       });
 
@@ -10826,26 +11085,47 @@ function App() {
         )
       );
 
-      if (currentEdge) {
-        const beforeLabel = currentEdge.data?.label ?? null;
-        const beforeRelation = currentEdge.data?.relationType ?? null;
+      if (selectedEdgeIdRef.current === updated.id && !edgeIsDirtyRef.current) {
+        setEdgeLabelDraft(updated.label ?? '');
+        setEdgeRelationDraft(updated.relation_type ?? '');
+      }
+    };
 
+    const writeRelationKind = async (kind: string) => {
+      if (!linkedRelation) return;
+
+      const saved: CharacterRelation = await invoke('update_relation', {
+        id: linkedRelation.id,
+        kind,
+        note: linkedRelation.note,
+        sinceChapterId: linkedRelation.since_chapter_id,
+        untilChapterId: linkedRelation.until_chapter_id,
+        user: actor,
+      });
+
+      applyRelation(saved);
+    };
+
+    try {
+      await writeEdge(nextLabel, relationType);
+      if (relationKindChanged && relationType) await writeRelationKind(relationType);
+
+      setEdgeLabelDraft(nextLabel ?? '');
+      setEdgeRelationDraft(relationType ?? '');
+
+      if (currentEdge) {
         recordStep({
           label: 'Edit a connection',
-          undo: () =>
-            invoke('update_graph_edge', {
-              id: selectedEdgeId,
-              label: beforeLabel,
-              relationType: beforeRelation,
-              user: actor,
-            }),
-          redo: () =>
-            invoke('update_graph_edge', {
-              id: selectedEdgeId,
-              label,
-              relationType,
-              user: actor,
-            }),
+          undo: async () => {
+            await writeEdge(beforeLabel, beforeRelation);
+            if (relationKindChanged && linkedRelation) {
+              await writeRelationKind(linkedRelation.kind);
+            }
+          },
+          redo: async () => {
+            await writeEdge(nextLabel, relationType);
+            if (relationKindChanged && relationType) await writeRelationKind(relationType);
+          },
         });
       }
     } catch (e) {
