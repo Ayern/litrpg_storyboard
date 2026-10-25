@@ -569,7 +569,7 @@ const relationTypes = ['unlocks', 'requires', 'rewards'] as const;
 
 // The bond kinds a sheet suggests. Like a connection's verbs these are only
 // suggestions: the field keeps whatever word the author types.
-const relationKindSuggestions = ['ally', 'rival', 'mentor', 'family', 'owes'] as const;
+const relationKindSuggestions = ['ally', 'rival', 'mentor', 'family', 'enemy', 'owes'] as const;
 
 function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
@@ -596,6 +596,44 @@ interface CanvasCreateDraft {
   giverId: string;
   factionId: string;
   notes: string;
+  // Where the card was dropped when a connection drag opened this form, so the
+  // new card lands where the author let go instead of somewhere random.
+  position?: { x: number; y: number };
+}
+
+// A connection between two character cards that is waiting on its kind. The
+// canvas edge is not written until this form is submitted, so cancelling leaves
+// nothing behind.
+interface CharacterConnectionDraft {
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourceCharacterId: string;
+  targetCharacterId: string;
+  sourceName: string;
+  targetName: string;
+  kind: string;
+  note: string;
+  chapterId: string;
+}
+
+// A connection whose removal also removes a domain row: the cast of a chapter,
+// or a relation between two characters. Cancelling puts the edge back untouched.
+interface PendingEdgeRemoval {
+  edge: Edge<EdgeData>;
+  kind: 'cast' | 'relation';
+  title: string;
+  detail: string;
+  stepLabel: string;
+  castId?: string;
+  characterId?: string;
+  chapterId?: string;
+  relationId?: string;
+  relationFromId?: string;
+  relationToId?: string;
+  relationKind?: string;
+  relationNote?: string | null;
+  relationSinceChapterId?: string | null;
+  relationUntilChapterId?: string | null;
 }
 
 // How many numbers a card has room for before it starts counting.
@@ -3232,6 +3270,24 @@ function App() {
   const [canvasCreateError, setCanvasCreateError] = useState<string | null>(null);
   const [savingCanvasCreate, setSavingCanvasCreate] = useState(false);
 
+  // A character-to-character connection asks for its relation before anything
+  // is written. The drag that opened it is remembered so dropping on empty
+  // canvas can open the matching card form instead.
+  const [characterConnection, setCharacterConnection] = useState<CharacterConnectionDraft | null>(
+    null
+  );
+  const [characterConnectionError, setCharacterConnectionError] = useState<string | null>(null);
+  const [savingCharacterConnection, setSavingCharacterConnection] = useState(false);
+  const connectionStartNodeRef = useRef<string | null>(null);
+  const connectionStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const connectionMadeRef = useRef(false);
+
+  // Edges that carry a cast or relation removal wait for the author's answer.
+  const [pendingEdgeRemoval, setPendingEdgeRemoval] = useState<PendingEdgeRemoval[] | null>(
+    null
+  );
+  const [removingDomainEdges, setRemovingDomainEdges] = useState(false);
+
   // Escape closes the creation form as long as a write is not in flight.
   useEffect(() => {
     if (!canvasCreate) return;
@@ -3246,6 +3302,36 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canvasCreate, savingCanvasCreate]);
+
+  // Escape closes the relation form too, unless the relation is being written.
+  useEffect(() => {
+    if (!characterConnection) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || savingCharacterConnection) return;
+      event.preventDefault();
+      setCharacterConnection(null);
+      setCharacterConnectionError(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [characterConnection, savingCharacterConnection]);
+
+  // Escape keeps the edge and its relation or cast row, the same as Keep.
+  useEffect(() => {
+    if (!pendingEdgeRemoval) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || removingDomainEdges) return;
+      event.preventDefault();
+      setPendingEdgeRemoval(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingEdgeRemoval, removingDomainEdges]);
+
   // Chapter notes are context rather than cards, so the canvas stays the drawing
   // it was until the author asks for the reminders to hang under their chapters.
   const [showChapterNotes, setShowChapterNotes] = useState(false);
@@ -3894,7 +3980,9 @@ function App() {
         shortcutsOpen ||
         backupsOpen ||
         quitPrompt ||
-        canvasCreate
+        canvasCreate ||
+        characterConnection ||
+        pendingEdgeRemoval
       ) {
         return;
       }
@@ -3926,6 +4014,8 @@ function App() {
     backupsOpen,
     quitPrompt,
     canvasCreate,
+    characterConnection,
+    pendingEdgeRemoval,
   ]);
 
   useEffect(() => {
@@ -4803,7 +4893,10 @@ function App() {
   // Add is one button for every card type. A character, quest or skill card is
   // a view of a real record, so those open their own form instead of creating a
   // label-only card; the narrative types keep the quick path.
-  const openCanvasCreate = () => {
+  const openCanvasCreate = (spawn?: {
+    position: { x: number; y: number };
+    sourceNodeId: string;
+  }) => {
     if (!currentStory) return;
 
     if (!isCanvasCreateKind(newNodeType)) {
@@ -4820,6 +4913,15 @@ function App() {
           a.data.label.localeCompare(b.data.label)
       );
 
+    // A connection dragged into empty canvas carries the card it came from into
+    // the form: a character becomes the skill's owner or the quest's giver, and
+    // a chapter becomes the chapter the skill was learned in or the quest was
+    // accepted in.
+    const source = spawn ? nodes.find(node => node.id === spawn.sourceNodeId) : null;
+    const sourceCharacterId =
+      source?.data.nodeType === 'character' ? source.data.characterId ?? null : null;
+    const sourceChapterId = source?.data.nodeType === 'chapter' ? source.id : null;
+
     setCanvasCreateError(null);
     setCanvasCreate({
       kind: newNodeType,
@@ -4827,14 +4929,20 @@ function App() {
       description: '',
       ownerId:
         newNodeType === 'skill'
-          ? selectedCharacterId ?? characters[0]?.id ?? ''
+          ? sourceCharacterId ?? selectedCharacterId ?? characters[0]?.id ?? ''
           : '',
       rank: '',
-      chapterId: newNodeType === 'quest' ? chapters[0]?.id ?? '' : '',
+      chapterId:
+        newNodeType === 'quest'
+          ? sourceChapterId ?? chapters[0]?.id ?? ''
+          : newNodeType === 'skill'
+            ? sourceChapterId ?? ''
+            : '',
       completedChapterId: '',
-      giverId: '',
+      giverId: newNodeType === 'quest' ? sourceCharacterId ?? '' : '',
       factionId: '',
       notes: '',
+      position: spawn?.position,
     });
   };
 
@@ -4868,7 +4976,10 @@ function App() {
     setCanvasCreateError(null);
 
     const description = draft.description.trim() || null;
-    const position = { x: 120 + Math.random() * 360, y: 120 + Math.random() * 240 };
+    const position = draft.position ?? {
+      x: 120 + Math.random() * 360,
+      y: 120 + Math.random() * 240,
+    };
 
     try {
       if (draft.kind === 'character') {
@@ -7650,9 +7761,160 @@ function App() {
     }
   };
 
+  // A connection means something different depending on what it joins. Two
+  // character cards ask for a relation, a character and a chapter add that
+  // character to the chapter's cast, and anything else stays a plain edge.
   const onConnect = useCallback(
     async (params: Connection) => {
       if (!currentStory || !params.source || !params.target) return;
+
+      connectionMadeRef.current = true;
+      setActionError(null);
+
+      const sourceNode = nodes.find(node => node.id === params.source);
+      const targetNode = nodes.find(node => node.id === params.target);
+
+      const sourceCharacterId =
+        sourceNode?.data.nodeType === 'character' ? sourceNode.data.characterId ?? null : null;
+      const targetCharacterId =
+        targetNode?.data.nodeType === 'character' ? targetNode.data.characterId ?? null : null;
+
+      if (sourceNode && targetNode && sourceCharacterId && targetCharacterId) {
+        // Nothing is written until the kind is chosen; the dialog owns the edge.
+        setCharacterConnectionError(null);
+        setCharacterConnection({
+          sourceNodeId: sourceNode.id,
+          targetNodeId: targetNode.id,
+          sourceCharacterId,
+          targetCharacterId,
+          sourceName: sourceNode.data.label,
+          targetName: targetNode.data.label,
+          kind: relationKindSuggestions[0],
+          note: '',
+          chapterId: '',
+        });
+        return;
+      }
+
+      // Either direction means the same thing: the character is in the chapter.
+      const characterNode =
+        sourceNode?.data.nodeType === 'character'
+          ? sourceNode
+          : targetNode?.data.nodeType === 'character'
+            ? targetNode
+            : null;
+      const chapterNode =
+        sourceNode?.data.nodeType === 'chapter'
+          ? sourceNode
+          : targetNode?.data.nodeType === 'chapter'
+            ? targetNode
+            : null;
+
+      if (characterNode && chapterNode) {
+        const characterId = characterNode.data.characterId;
+
+        if (!characterId) {
+          setActionError('Link this character card to a cast member before adding them to a chapter.');
+          return;
+        }
+
+        const chapterId = chapterNode.id;
+        const hadCast = storyChapterCast.some(
+          member => member.chapter_id === chapterId && member.character_id === characterId
+        );
+
+        try {
+          const member: ChapterCastMember = await invoke('add_chapter_cast_member', {
+            chapterId,
+            characterId,
+            user: actor,
+          });
+
+          if (!hadCast) {
+            setStoryChapterCast(previous =>
+              previous.some(row => row.id === member.id) ? previous : [...previous, member]
+            );
+          }
+
+          let newDbEdge: any;
+
+          try {
+            newDbEdge = await invoke('create_graph_edge', {
+              storyId: currentStory.id,
+              sourceId: params.source,
+              targetId: params.target,
+              label: 'cast',
+              relationType: 'cast',
+              createdBy: actor,
+            });
+          } catch (e) {
+            // The edge is what the author drew; without it the cast change would
+            // be an invisible edit they did not ask for.
+            if (!hadCast) {
+              await invoke('remove_chapter_cast_member', {
+                id: member.id,
+                user: actor,
+              }).catch(() => {});
+              setStoryChapterCast(previous => previous.filter(row => row.id !== member.id));
+            }
+            throw e;
+          }
+
+          const newEdge: Edge<EdgeData> = {
+            id: newDbEdge.id,
+            source: params.source,
+            target: params.target,
+            label: 'cast',
+            data: { createdBy: actor, label: 'cast', relationType: 'cast' },
+          };
+
+          setSelectedEdgeId(null);
+          setEdges(eds => addEdge(newEdge, eds));
+
+          let currentCastId = member.id;
+
+          recordStep({
+            label: `Add ${characterNode.data.label} to ${chapterNode.data.label}'s cast`,
+            undo: async () => {
+              await invoke('delete_edge', { id: newDbEdge.id, user: actor });
+              if (!hadCast) {
+                await invoke('remove_chapter_cast_member', {
+                  id: currentCastId,
+                  user: actor,
+                });
+                setStoryChapterCast(previous =>
+                  previous.filter(row => row.id !== currentCastId)
+                );
+              }
+            },
+            redo: async () => {
+              await invoke('restore_deleted', {
+                id: newDbEdge.id,
+                kind: 'edge',
+                user: actor,
+              });
+              if (!hadCast) {
+                const again: ChapterCastMember = await invoke('add_chapter_cast_member', {
+                  chapterId,
+                  characterId,
+                  user: actor,
+                });
+                currentCastId = again.id;
+                setStoryChapterCast(previous =>
+                  previous.some(row => row.id === again.id)
+                    ? previous
+                    : [...previous, again]
+                );
+              }
+            },
+          });
+        } catch (e) {
+          console.error('Failed to connect a character to a chapter:', e);
+          setActionError(`Could not connect the card to the chapter: ${String(e)}`);
+        }
+
+        return;
+      }
 
       try {
         const newDbEdge: any = await invoke('create_graph_edge', {
@@ -7688,7 +7950,82 @@ function App() {
         console.error('Failed to create edge:', e);
       }
     },
-    [currentStory, actor, setEdges, recordStep]
+    [currentStory, actor, nodes, storyChapterCast, setEdges, recordStep]
+  );
+
+  // A connection drag remembers where it started. Ending on a card makes an
+  // edge; ending on empty canvas opens the selected card's form, already filled
+  // in from the card the drag came from.
+  const onConnectStart = useCallback((event: any, params: any) => {
+    connectionStartNodeRef.current = params?.nodeId ?? null;
+    connectionMadeRef.current = false;
+
+    const touch = event?.changedTouches?.[0] ?? event?.touches?.[0];
+    const x = touch?.clientX ?? event?.clientX;
+    const y = touch?.clientY ?? event?.clientY;
+    connectionStartPointRef.current =
+      typeof x === 'number' && typeof y === 'number' ? { x, y } : null;
+  }, []);
+
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const sourceId = connectionStartNodeRef.current;
+      const startPoint = connectionStartPointRef.current;
+      connectionStartNodeRef.current = null;
+      connectionStartPointRef.current = null;
+
+      // Dropped on a card, the connection was already handled by onConnect.
+      if (!sourceId || connectionMadeRef.current) {
+        connectionMadeRef.current = false;
+        return;
+      }
+
+      connectionMadeRef.current = false;
+
+      if (!isCanvasCreateKind(newNodeType)) return;
+
+      const touch = 'changedTouches' in event ? event.changedTouches[0] : null;
+      const point =
+        touch != null
+          ? { x: touch.clientX, y: touch.clientY }
+          : { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY };
+
+      // A click on a handle is not a drag, and should not open a form.
+      if (
+        startPoint &&
+        Math.hypot(point.x - startPoint.x, point.y - startPoint.y) < 4
+      ) {
+        return;
+      }
+
+      // A drop on a card is not empty canvas, even when the edge was refused.
+      try {
+        const under = document.elementFromPoint?.(point.x, point.y) as HTMLElement | null;
+        if (under?.closest?.('.react-flow__node')) return;
+      } catch {
+        // No hit testing in this environment; the drag still opened the form.
+      }
+
+      const sourceNode = nodes.find(node => node.id === sourceId);
+      if (!sourceNode) return;
+
+      const sourceCharacterId =
+        sourceNode.data.nodeType === 'character'
+          ? sourceNode.data.characterId ?? null
+          : null;
+      const sourceChapterId =
+        sourceNode.data.nodeType === 'chapter' ? sourceNode.id : null;
+
+      // Only a character or a chapter has something to hand to a new card.
+      if (!sourceCharacterId && !sourceChapterId) return;
+
+      const position = flowRef.current
+        ? flowRef.current.screenToFlowPosition(point)
+        : point;
+
+      openCanvasCreate({ position, sourceNodeId: sourceNode.id });
+    },
+    [newNodeType, nodes, openCanvasCreate]
   );
 
   // Where a drag began, so ending it can record both ends of the move.
@@ -7806,28 +8143,126 @@ function App() {
       );
       removedNodeIdsRef.current = new Set();
 
+      const plain: Edge<EdgeData>[] = [];
+      const domain: PendingEdgeRemoval[] = [];
+
+      for (const edge of ownDeletes) {
+        const source = nodes.find(node => node.id === edge.source);
+        const target = nodes.find(node => node.id === edge.target);
+
+        const characterNode =
+          source?.data.nodeType === 'character'
+            ? source
+            : target?.data.nodeType === 'character'
+              ? target
+              : null;
+        const chapterNode =
+          source?.data.nodeType === 'chapter'
+            ? source
+            : target?.data.nodeType === 'chapter'
+              ? target
+              : null;
+
+        // A character-to-chapter edge is a cast change when that character is
+        // actually in the chapter's explicit cast.
+        if (characterNode && chapterNode) {
+          const characterId = characterNode.data.characterId;
+          const cast = characterId
+            ? storyChapterCast.find(
+                member =>
+                  member.chapter_id === chapterNode.id &&
+                  member.character_id === characterId
+              )
+            : undefined;
+
+          if (cast && characterId) {
+            domain.push({
+              edge,
+              kind: 'cast',
+              title: `Remove ${characterNode.data.label} from the cast?`,
+              detail: `${characterNode.data.label} will leave ${chapterNode.data.label}'s cast, and this connection will be deleted.`,
+              stepLabel: `Remove ${characterNode.data.label} from ${chapterNode.data.label}'s cast`,
+              castId: cast.id,
+              characterId,
+              chapterId: chapterNode.id,
+            });
+            continue;
+          }
+        }
+
+        // A character-to-character edge whose cast pair already has a relation
+        // is the drawing of that relation, so deleting it deletes the relation.
+        if (
+          source?.data.nodeType === 'character' &&
+          target?.data.nodeType === 'character' &&
+          source.data.characterId &&
+          target.data.characterId
+        ) {
+          const fromId = source.data.characterId;
+          const toId = target.data.characterId;
+          const pair = storyRelations.filter(
+            row =>
+              (row.from_character_id === fromId && row.to_character_id === toId) ||
+              (row.from_character_id === toId && row.to_character_id === fromId)
+          );
+          // The edge's own verb says which bond it drew. One bond between the
+          // pair is unambiguous; several are only matched by that verb.
+          const relation =
+            pair.find(row => row.kind === edge.data?.relationType) ??
+            (pair.length === 1 ? pair[0] : undefined);
+
+          if (relation) {
+            domain.push({
+              edge,
+              kind: 'relation',
+              title: 'Delete this relation?',
+              detail: `The ${relation.kind} relation between ${source.data.label} and ${target.data.label} will be deleted, and this connection will go with it.`,
+              stepLabel: `Delete the ${relation.kind} relation between ${source.data.label} and ${target.data.label}`,
+              relationId: relation.id,
+              relationFromId: relation.from_character_id,
+              relationToId: relation.to_character_id,
+              relationKind: relation.kind,
+              relationNote: relation.note,
+              relationSinceChapterId: relation.since_chapter_id,
+              relationUntilChapterId: relation.until_chapter_id,
+            });
+            continue;
+          }
+        }
+
+        plain.push(edge);
+      }
+
       try {
-        for (const edge of ownDeletes) {
+        for (const edge of plain) {
           await invoke('delete_edge', { id: edge.id, user: actor });
         }
 
-        if (ownDeletes.length > 0) {
+        if (plain.length > 0) {
           recordStep({
             label:
-              ownDeletes.length === 1
+              plain.length === 1
                 ? 'Delete a connection'
-                : `Delete ${ownDeletes.length} connections`,
+                : `Delete ${plain.length} connections`,
             undo: async () => {
-              for (const edge of ownDeletes) {
+              for (const edge of plain) {
                 await invoke('restore_deleted', { id: edge.id, kind: 'edge', user: actor });
               }
             },
             redo: async () => {
-              for (const edge of ownDeletes) {
+              for (const edge of plain) {
                 await invoke('delete_edge', { id: edge.id, user: actor });
               }
             },
           });
+        }
+
+        if (domain.length > 0) {
+          // React Flow has already taken the edges off the canvas. Read them back
+          // from the database while the question is open, so cancelling truly
+          // leaves the board as it was.
+          await reloadStory(currentStory.id);
+          setPendingEdgeRemoval(domain);
         }
       } catch (e) {
         console.error('Failed to delete connection:', e);
@@ -7835,8 +8270,128 @@ function App() {
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, loadStory, recordStep]
+    [
+      currentStory,
+      actor,
+      nodes,
+      storyChapterCast,
+      storyRelations,
+      loadStory,
+      reloadStory,
+      recordStep,
+    ]
   );
+
+  // Confirms the domain half of an edge deletion. The relation or cast row and
+  // the edge are removed together and recorded as one undoable step.
+  const confirmDomainEdgeRemoval = async () => {
+    if (!pendingEdgeRemoval || removingDomainEdges) return;
+
+    const entries = pendingEdgeRemoval;
+    setPendingEdgeRemoval(null);
+    setRemovingDomainEdges(true);
+    setActionError(null);
+
+    try {
+      for (const entry of entries) {
+        if (entry.kind === 'cast') {
+          const castId = entry.castId;
+          const characterId = entry.characterId;
+          const chapterId = entry.chapterId;
+
+          if (!castId || !characterId || !chapterId) continue;
+
+          await invoke('remove_chapter_cast_member', { id: castId, user: actor });
+          setStoryChapterCast(previous => previous.filter(row => row.id !== castId));
+          await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
+
+          let currentCastId = castId;
+
+          recordStep({
+            label: entry.stepLabel,
+            undo: async () => {
+              const again: ChapterCastMember = await invoke('add_chapter_cast_member', {
+                chapterId,
+                characterId,
+                user: actor,
+              });
+              currentCastId = again.id;
+              setStoryChapterCast(previous =>
+                previous.some(row => row.id === again.id) ? previous : [...previous, again]
+              );
+              await invoke('restore_deleted', {
+                id: entry.edge.id,
+                kind: 'edge',
+                user: actor,
+              });
+            },
+            redo: async () => {
+              await invoke('remove_chapter_cast_member', {
+                id: currentCastId,
+                user: actor,
+              });
+              setStoryChapterCast(previous =>
+                previous.filter(row => row.id !== currentCastId)
+              );
+              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+            },
+          });
+        } else {
+          const relationId = entry.relationId;
+
+          if (!relationId) continue;
+
+          await invoke('delete_relation', { id: relationId, user: actor });
+          setStoryRelations(previous => previous.filter(row => row.id !== relationId));
+          await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
+
+          let currentRelationId = relationId;
+
+          recordStep({
+            label: entry.stepLabel,
+            undo: async () => {
+              const again: CharacterRelation = await invoke('add_relation', {
+                fromCharacterId: entry.relationFromId ?? entry.edge.source,
+                toCharacterId: entry.relationToId ?? entry.edge.target,
+                kind: entry.relationKind ?? 'ally',
+                note: entry.relationNote ?? null,
+                sinceChapterId: entry.relationSinceChapterId ?? null,
+                untilChapterId: entry.relationUntilChapterId ?? null,
+                user: actor,
+              });
+              currentRelationId = again.id;
+              setStoryRelations(previous =>
+                [...previous.filter(row => row.id !== again.id), again].sort(
+                  (a, b) =>
+                    a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+                )
+              );
+              await invoke('restore_deleted', {
+                id: entry.edge.id,
+                kind: 'edge',
+                user: actor,
+              });
+            },
+            redo: async () => {
+              await invoke('delete_relation', { id: currentRelationId, user: actor });
+              setStoryRelations(previous =>
+                previous.filter(row => row.id !== currentRelationId)
+              );
+              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to remove the connection:', e);
+      setActionError(`Could not remove the connection: ${String(e)}`);
+      if (currentStory) await reloadStory(currentStory.id);
+    } finally {
+      setRemovingDomainEdges(false);
+    }
+  };
 
   const startRename = (story: Story) => {
     setActionError(null);
@@ -8111,6 +8666,55 @@ function App() {
     setStorySkills(ordered);
   };
 
+  // A sheet edit changes the shared definition, so every holder of that
+  // definition follows and the card takes the same words. The database has
+  // already written all of them; this keeps the open tabs from showing the old
+  // copies until the story is reopened.
+  const applySharedSkillEdit = (saved: CharacterSkill, before: CharacterSkill) => {
+    const sameDefinition = (row: CharacterSkill) =>
+      before.node_id
+        ? row.node_id === before.node_id
+        : row.name.toLowerCase() === before.name.toLowerCase();
+
+    const update = (list: CharacterSkill[]) =>
+      list
+        .map(row => {
+          if (row.id === saved.id) return saved;
+
+          return sameDefinition(row)
+            ? {
+                ...row,
+                name: saved.name,
+                effect: saved.effect,
+                node_id: saved.node_id,
+                updated_at: saved.updated_at,
+              }
+            : row;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+    setStorySkills(update);
+    setCharacterSkills(update);
+
+    if (saved.node_id) {
+      setNodes(list =>
+        list.map(node =>
+          node.id === saved.node_id
+            ? {
+                ...node,
+                data: { ...node.data, label: saved.name, content: saved.effect ?? undefined },
+              }
+            : node
+        )
+      );
+
+      if (selectedNodeIdRef.current === saved.node_id && !nodeIsDirtyRef.current) {
+        setNodeLabelDraft(saved.name);
+        setNodeContentDraft(saved.effect ?? '');
+      }
+    }
+  };
+
   // The database keeps a skill card's linked rows in step when its label or
   // notes change. Mirror that here so the board and the open sheet do not keep
   // showing the old name until the story is reopened. Only the fields that
@@ -8169,7 +8773,7 @@ function App() {
         user: actor,
       });
 
-      applySkill(updated);
+      applySharedSkillEdit(updated, skill);
       setEditingSkillId(null);
     } catch (e) {
       console.error('Failed to save skill:', e);
@@ -8478,6 +9082,106 @@ function App() {
       )
     );
   }, []);
+
+  // The relation form opened by dragging one character card onto another. The
+  // relation and the edge that drew it are written together, and undone as one
+  // step, so the board never shows a bond the ledger does not have.
+  const submitCharacterConnection = async () => {
+    if (!currentStory || !characterConnection || savingCharacterConnection) return;
+
+    const draft = characterConnection;
+    const kind = draft.kind.trim();
+
+    if (!kind) {
+      setCharacterConnectionError('A relation needs a kind.');
+      return;
+    }
+
+    setSavingCharacterConnection(true);
+    setCharacterConnectionError(null);
+
+    let edgeId: string | null = null;
+
+    try {
+      const edge: any = await invoke('create_graph_edge', {
+        storyId: currentStory.id,
+        sourceId: draft.sourceNodeId,
+        targetId: draft.targetNodeId,
+        label: kind,
+        relationType: kind,
+        createdBy: actor,
+      });
+      edgeId = edge.id;
+
+      let saved: CharacterRelation;
+
+      try {
+        saved = await invoke('add_relation', {
+          fromCharacterId: draft.sourceCharacterId,
+          toCharacterId: draft.targetCharacterId,
+          kind,
+          note: draft.note.trim() || null,
+          sinceChapterId: draft.chapterId || null,
+          untilChapterId: null,
+          user: actor,
+        });
+      } catch (e) {
+        // No relation, no connection: the edge was only the drawing of it.
+        await invoke('delete_edge', { id: edge.id, user: actor }).catch(() => {});
+        throw e;
+      }
+
+      const newEdge: Edge<EdgeData> = {
+        id: edge.id,
+        source: draft.sourceNodeId,
+        target: draft.targetNodeId,
+        label: kind,
+        data: { createdBy: actor, label: kind, relationType: kind },
+      };
+
+      setEdges(eds => addEdge(newEdge, eds));
+      applyRelation(saved);
+
+      let currentRelationId = saved.id;
+
+      recordStep({
+        label: `Connect ${draft.sourceName} and ${draft.targetName}`,
+        undo: async () => {
+          await invoke('delete_relation', { id: currentRelationId, user: actor });
+          await invoke('delete_edge', { id: edge.id, user: actor });
+          setStoryRelations(previous =>
+            previous.filter(relation => relation.id !== currentRelationId)
+          );
+        },
+        redo: async () => {
+          await invoke('restore_deleted', { id: edge.id, kind: 'edge', user: actor });
+          const again: CharacterRelation = await invoke('add_relation', {
+            fromCharacterId: draft.sourceCharacterId,
+            toCharacterId: draft.targetCharacterId,
+            kind,
+            note: draft.note.trim() || null,
+            sinceChapterId: draft.chapterId || null,
+            untilChapterId: null,
+            user: actor,
+          });
+          currentRelationId = again.id;
+          applyRelation(again);
+        },
+      });
+
+      setCharacterConnection(null);
+    } catch (e) {
+      console.error('Failed to connect two characters:', e);
+      setCharacterConnectionError(`Could not save the relation: ${String(e)}`);
+      if (edgeId) {
+        // The refused relation left no edge behind; a successful one closes the
+        // form above and never reaches this branch.
+        setEdges(eds => eds.filter(edge => edge.id !== edgeId));
+      }
+    } finally {
+      setSavingCharacterConnection(false);
+    }
+  };
 
   const addRelation = async () => {
     if (!selectedCharacterId) return;
@@ -12230,7 +12934,7 @@ function App() {
                   />
                   <button
                     title="Add a node of the selected type to the canvas"
-                    onClick={openCanvasCreate}
+                    onClick={() => openCanvasCreate()}
                     disabled={
                       !newNodeLabel.trim() && !isCanvasCreateKind(newNodeType)
                     }
@@ -12372,6 +13076,8 @@ function App() {
                     onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    onConnectStart={onConnectStart}
+                    onConnectEnd={onConnectEnd}
                     onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={onNodeDragStop}
                     onNodeClick={selectNode}
@@ -17029,6 +17735,197 @@ function App() {
           </div>
         </div>
       )}
+      {characterConnection && (
+        <div
+          className="canvas-create-overlay"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !savingCharacterConnection) {
+              setCharacterConnection(null);
+              setCharacterConnectionError(null);
+            }
+          }}
+        >
+          <form
+            className="canvas-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Connect characters"
+            onSubmit={event => {
+              event.preventDefault();
+              void submitCharacterConnection();
+            }}
+          >
+            <div className="canvas-create-head">
+              <h3>Connect characters</h3>
+              <button
+                type="button"
+                className="canvas-create-close"
+                aria-label="Close relation form"
+                title="Close without connecting them"
+                disabled={savingCharacterConnection}
+                onClick={() => {
+                  setCharacterConnection(null);
+                  setCharacterConnectionError(null);
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="canvas-create-note">
+              {characterConnection.sourceName} → {characterConnection.targetName}. The relation is
+              recorded on both sheets, and the card keeps the connection.
+            </p>
+
+            <label className="canvas-create-field">
+              Relation kind
+              <input
+                autoFocus
+                list="connection-relation-kinds"
+                value={characterConnection.kind}
+                onChange={event => {
+                  const value = event.target.value;
+                  setCharacterConnection(current =>
+                    current ? { ...current, kind: value } : current
+                  );
+                }}
+              />
+              <datalist id="connection-relation-kinds">
+                {relationKindSuggestions.map(kind => (
+                  <option key={kind} value={kind} />
+                ))}
+              </datalist>
+            </label>
+
+            <label className="canvas-create-field">
+              Since chapter (optional)
+              <select
+                value={characterConnection.chapterId}
+                onChange={event => {
+                  const value = event.target.value;
+                  setCharacterConnection(current =>
+                    current ? { ...current, chapterId: value } : current
+                  );
+                }}
+              >
+                <option value="">From the beginning</option>
+                {nodes
+                  .filter(node => node.data.nodeType === 'chapter')
+                  .sort(
+                    (a, b) =>
+                      (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+                        (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+                      a.data.label.localeCompare(b.data.label)
+                  )
+                  .map(node => (
+                    <option key={node.id} value={node.id}>
+                      {node.data.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label className="canvas-create-field">
+              Note (optional)
+              <textarea
+                rows={2}
+                value={characterConnection.note}
+                onChange={event => {
+                  const value = event.target.value;
+                  setCharacterConnection(current =>
+                    current ? { ...current, note: value } : current
+                  );
+                }}
+              />
+            </label>
+
+            {characterConnectionError && (
+              <div className="canvas-create-error" role="alert">
+                {characterConnectionError}
+              </div>
+            )}
+
+            <div className="canvas-create-actions">
+              <button
+                type="submit"
+                disabled={savingCharacterConnection || !characterConnection.kind.trim()}
+              >
+                {savingCharacterConnection ? 'Connecting…' : 'Connect characters'}
+              </button>
+              <button
+                type="button"
+                disabled={savingCharacterConnection}
+                onClick={() => {
+                  setCharacterConnection(null);
+                  setCharacterConnectionError(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {pendingEdgeRemoval && (
+        <div
+          className="canvas-create-overlay"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !removingDomainEdges) {
+              setPendingEdgeRemoval(null);
+            }
+          }}
+        >
+          <div
+            className="canvas-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Remove connection"
+          >
+            <div className="canvas-create-head">
+              <h3>
+                {pendingEdgeRemoval.length === 1
+                  ? pendingEdgeRemoval[0].title
+                  : 'Remove these connections?'}
+              </h3>
+              <button
+                type="button"
+                className="canvas-create-close"
+                aria-label="Keep the connection"
+                title="Keep the connection and what it records"
+                disabled={removingDomainEdges}
+                onClick={() => setPendingEdgeRemoval(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <ul className="canvas-create-removal-list">
+              {pendingEdgeRemoval.map(entry => (
+                <li key={entry.edge.id}>{entry.detail}</li>
+              ))}
+            </ul>
+
+            <div className="canvas-create-actions">
+              <button
+                type="button"
+                disabled={removingDomainEdges}
+                onClick={() => void confirmDomainEdgeRemoval()}
+              >
+                {removingDomainEdges ? 'Removing…' : 'Remove'}
+              </button>
+              <button
+                type="button"
+                disabled={removingDomainEdges}
+                onClick={() => setPendingEdgeRemoval(null)}
+              >
+                Keep
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {canvasCreate && (
         <div
           className="canvas-create-overlay"

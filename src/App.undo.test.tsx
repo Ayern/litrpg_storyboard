@@ -106,8 +106,8 @@ vi.mock('reactflow', async () => {
         ),
       React.createElement(
         'button',
-        { onClick: () => onConnect?.({ source: 'n1', target: 'n2' }) },
-        'connect the first two'
+        { onClick: () => onConnect?.({ source: 'n1', target: 'n3' }) },
+        'connect two cards'
       ),
       children as React.ReactNode
     );
@@ -232,6 +232,9 @@ beforeEach(() => {
   dbNodes = [
     nodeRow('n1', 'Opening', 'chapter', null, 0, 0),
     nodeRow('n2', 'Rook', 'character', 'char-1', 400, 300),
+    // A chapter and an idea stay a plain connection; characters and chapters
+    // now make domain records instead.
+    nodeRow('n3', 'Hint', 'idea', null, 400, 600),
   ];
   dbEdges = [
     {
@@ -530,8 +533,8 @@ describe('undo and redo', () => {
       expect(screen.queryByRole('button', { name: 'Epilogue' })).not.toBeInTheDocument()
     );
 
-    await user.click(screen.getByRole('button', { name: 'connect the first two' }));
-    expect(screen.getAllByRole('button', { name: 'edge n1 to n2' })).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'connect two cards' }));
+    expect(screen.getAllByRole('button', { name: 'edge n1 to n3' })).toHaveLength(1);
 
     await user.click(undoButton());
     await waitFor(() =>

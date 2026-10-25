@@ -5805,6 +5805,17 @@ body {
   color: #9aa4b2;
 }
 
+.canvas-create-removal-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #c9c9c9;
+}
+
 .canvas-create-field {
   display: flex;
   flex-direction: column;

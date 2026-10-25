@@ -192,6 +192,43 @@ beforeEach(() => {
         );
         return { ...card, label: cardLabel, content: cardDescription };
       }
+      case 'update_skill': {
+        const before = skills.find(skill => skill.id === args.id);
+        if (!before) return null;
+
+        // The real database changes the shared definition: every holder follows,
+        // and the card takes the same words. Rank and chapter stay per holder.
+        const sameDefinition = (row: SkillRow) =>
+          before.node_id
+            ? row.node_id === before.node_id
+            : row.name.toLowerCase() === before.name.toLowerCase();
+        const updated = {
+          ...before,
+          name: args.name as string,
+          rank: (args.rank as string | null) ?? null,
+          effect: (args.effect as string | null) ?? null,
+          chapter_id: (args.chapterId as string | null) ?? null,
+          node_id: (args.nodeId as string | null) ?? null,
+        };
+
+        skills = skills.map(row =>
+          sameDefinition(row)
+            ? {
+                ...row,
+                name: updated.name,
+                effect: updated.effect,
+                node_id: updated.node_id,
+              }
+            : row
+        );
+
+        if (updated.node_id) {
+          cardLabel = updated.name;
+          cardDescription = updated.effect;
+        }
+
+        return { ...updated };
+      }
       case 'get_character_stats':
       case 'get_character_attributes':
       case 'get_character_inventory':
@@ -321,6 +358,57 @@ describe('adding a skill holder from its card', () => {
     expect(
       await screen.findByText('Frost Touch', { selector: '.skill-name' })
     ).toBeInTheDocument();
+  });
+
+  it('keeps the card and every holder in step when a sheet edits the shared skill', async () => {
+    skills = [
+      skillRow(),
+      skillRow({ id: 'skill-mira', character_id: 'char-2', rank: 'Rank 4' }),
+    ];
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findAllByText('Ledger');
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+
+    const row = screen
+      .getByText('Frost Touch', { selector: '.skill-name' })
+      .closest('.skill-row') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Edit' }));
+
+    const name = screen.getByLabelText('Skill name');
+    await user.clear(name);
+    await user.type(name, 'Chill Touch');
+    const effect = screen.getByLabelText('Skill effect');
+    await user.clear(effect);
+    await user.type(effect, 'A deeper cold.');
+    await user.click(screen.getByTitle('Save this Frost Touch'));
+
+    expect(lastCall('update_skill')).toMatchObject({
+      id: 'skill-rook',
+      name: 'Chill Touch',
+      effect: 'A deeper cold.',
+      nodeId: 'n-skill',
+      user: 'You',
+    });
+
+    // The card on the board follows the sheet edit without reopening the story.
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(await screen.findByRole('button', { name: 'skill: Chill Touch' }));
+
+    const panel = screen.getByRole('complementary', { name: 'Node inspector' });
+    const rookHolder = within(panel)
+      .getByText('Rook', { selector: '.node-drawer-holder-name' })
+      .closest('li') as HTMLElement;
+    const miraHolder = within(panel)
+      .getByText('Mira', { selector: '.node-drawer-holder-name' })
+      .closest('li') as HTMLElement;
+
+    expect(rookHolder).toHaveAttribute('title', expect.stringContaining('A deeper cold.'));
+    expect(miraHolder).toHaveAttribute('title', expect.stringContaining('A deeper cold.'));
+    expect(miraHolder).toHaveTextContent('Rank 4');
   });
 
   it('keeps existing holders in step when the card is saved', async () => {

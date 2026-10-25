@@ -394,7 +394,7 @@ describe('relations on the character sheet', () => {
     });
 
     expect(within(list).getAllByRole('option').map(option => option.textContent)).toEqual(
-      ['ally', 'rival', 'mentor', 'family', 'owes']
+      ['ally', 'rival', 'mentor', 'family', 'enemy', 'owes']
     );
 
     await user.click(within(list).getByRole('option', { name: 'mentor' }));

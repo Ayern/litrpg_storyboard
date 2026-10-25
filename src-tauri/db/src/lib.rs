@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 23;
+const SCHEMA_VERSION: i32 = 24;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -124,37 +124,117 @@ fn sync_skill_card_holders(
     user: &str,
     timestamp: &str,
 ) -> DbResult<()> {
+    let existing = tx
+        .query_row(
+            "SELECT id FROM skill_definitions WHERE story_id = ?1 AND node_id = ?2",
+            params![story_id, node_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    let definition_id = match existing {
+        Some(id) => id,
+        None => {
+            let id = Uuid::new_v4().to_string();
+
+            tx.execute(
+                "INSERT INTO skill_definitions
+                 (id, story_id, name, description, node_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![&id, story_id, label, content, node_id, timestamp],
+            )?;
+
+            // A card made before the definition existed still names its holders;
+            // link those rows once, so the shared words reach them too.
+            tx.execute(
+                "UPDATE character_skills SET skill_id = ?1
+                  WHERE node_id = ?2 AND skill_id IS NULL",
+                params![&id, node_id],
+            )?;
+
+            id
+        }
+    };
+
+    tx.execute(
+        "UPDATE skill_definitions
+            SET name = ?1, description = ?2, updated_at = ?3
+          WHERE id = ?4",
+        params![label, content, timestamp, &definition_id],
+    )?;
+
+    sync_skill_definition_holders(
+        tx,
+        story_id,
+        &definition_id,
+        label,
+        content,
+        Some(node_id),
+        sync_name,
+        sync_effect,
+        false,
+        user,
+        timestamp,
+    )
+}
+
+/// Applies a definition's changed words to every holder row.
+///
+/// The mirrors on `character_skills` are what the sheets, history and card
+/// badges read, so they follow the shared definition. Rank and chapter are never
+/// touched here, and a name that would collide on one holder's sheet refuses the
+/// whole transaction.
+#[allow(clippy::too_many_arguments)]
+fn sync_skill_definition_holders(
+    tx: &rusqlite::Transaction<'_>,
+    story_id: &str,
+    definition_id: &str,
+    name: &str,
+    effect: Option<&str>,
+    node_id: Option<&str>,
+    sync_name: bool,
+    sync_effect: bool,
+    sync_node: bool,
+    user: &str,
+    timestamp: &str,
+) -> DbResult<()> {
     let holders = {
         let mut stmt = tx.prepare(
-            "SELECT id, character_id, name, effect
+            "SELECT id, character_id, name, effect, node_id
                FROM character_skills
-              WHERE node_id = ?1",
+              WHERE skill_id = ?1",
         )?;
-        let rows = stmt.query_map(params![node_id], |row| {
+        let rows = stmt.query_map(params![definition_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
 
         rows.collect::<SqliteResult<Vec<_>>>()?
     };
 
-    for (skill_id, character_id, old_name, old_effect) in holders {
+    for (skill_id, character_id, old_name, old_effect, old_node) in holders {
         let new_name = if sync_name {
-            label.to_string()
+            name.to_string()
         } else {
             old_name.clone()
         };
         let new_effect = if sync_effect {
-            content.map(str::to_string)
+            effect.map(str::to_string)
         } else {
             old_effect.clone()
         };
+        let new_node = if sync_node {
+            node_id.map(str::to_string)
+        } else {
+            old_node.clone()
+        };
 
-        if new_name == old_name && new_effect == old_effect {
+        if new_name == old_name && new_effect == old_effect && new_node == old_node {
             continue;
         }
 
@@ -179,9 +259,9 @@ fn sync_skill_card_holders(
 
         tx.execute(
             "UPDATE character_skills
-                SET name = ?1, effect = ?2, updated_at = ?3
-              WHERE id = ?4",
-            params![&new_name, &new_effect, timestamp, &skill_id],
+                SET name = ?1, effect = ?2, node_id = ?3, updated_at = ?4
+              WHERE id = ?5",
+            params![&new_name, &new_effect, &new_node, timestamp, &skill_id],
         )?;
 
         if new_name != old_name {
@@ -211,6 +291,25 @@ fn sync_skill_card_holders(
                     field_changed: Some("effect"),
                     old_value: old_effect,
                     new_value: new_effect,
+                    changed_by: user,
+                },
+            )?;
+        }
+
+        if new_node != old_node {
+            let old_label = reference_label(tx, old_node.as_deref())?;
+            let new_label = reference_label(tx, new_node.as_deref())?;
+
+            log_audit(
+                tx,
+                AuditRecord {
+                    story_id: Some(story_id),
+                    entity_type: "character_skill",
+                    entity_id: &skill_id,
+                    action: "update",
+                    field_changed: Some("card"),
+                    old_value: old_label,
+                    new_value: new_label,
                     changed_by: user,
                 },
             )?;
@@ -1331,6 +1430,9 @@ impl Db {
         validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
         validate_node_reference(&tx, &story_id, node_id.as_deref(), "skill", "skill card")?;
 
+        let (skill_id, name, effect, node_id) =
+            skill_definition_for(&tx, &story_id, &name, effect.as_deref(), node_id.as_deref())?;
+
         let taken: Option<i64> = tx
             .query_row(
                 "SELECT 1 FROM character_skills WHERE character_id = ?1 AND name = ?2",
@@ -1349,11 +1451,13 @@ impl Db {
 
         tx.execute(
             "INSERT INTO character_skills
-             (id, character_id, name, rank, effect, chapter_id, node_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (id, character_id, skill_id, name, rank, effect, chapter_id, node_id,
+              created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 &id,
                 &character_id,
+                &skill_id,
                 &name,
                 &rank,
                 &effect,
@@ -1419,7 +1523,7 @@ impl Db {
         let existing = tx
             .query_row(
                 "SELECT s.character_id, s.name, s.rank, s.effect, s.chapter_id, s.node_id,
-                        s.created_at, s.updated_at, c.story_id
+                        s.created_at, s.updated_at, c.story_id, s.skill_id
                  FROM character_skills s
                  JOIN characters c ON c.id = s.character_id
                  JOIN stories st ON st.id = c.story_id
@@ -1436,6 +1540,7 @@ impl Db {
                         row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
                         row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                     ))
                 },
             )
@@ -1452,6 +1557,7 @@ impl Db {
             created_at,
             old_updated_at,
             story_id,
+            existing_skill_id,
         ) = existing;
 
         // A link sent back unchanged is not checked again: its chapter or card
@@ -1464,7 +1570,11 @@ impl Db {
             validate_node_reference(&tx, &story_id, node_id.as_deref(), "skill", "skill card")?;
         }
 
-        if name != old_name {
+        let name_changed = name != old_name;
+        let effect_changed = effect != old_effect;
+        let node_changed = node_id != old_node;
+
+        if name_changed {
             let taken: Option<i64> = tx
                 .query_row(
                     "SELECT 1 FROM character_skills
@@ -1481,28 +1591,124 @@ impl Db {
             }
         }
 
-        // References read as their labels in the history, not as opaque ids.
+        // A sheet edit is an edit to the shared skill, not to this one copy. The
+        // definition takes the new words, the card follows them, and every other
+        // holder is brought along by the same transaction. Rank and chapter stay
+        // on the edited row.
+        let mut definition_changed = false;
+
+        if name_changed || effect_changed || node_changed || existing_skill_id.is_none() {
+            let skill_id = match existing_skill_id {
+                Some(skill_id) => skill_id,
+                None => {
+                    let (skill_id, _, _, _) = skill_definition_for(
+                        &tx,
+                        &story_id,
+                        &old_name,
+                        old_effect.as_deref(),
+                        old_node.as_deref(),
+                    )?;
+                    tx.execute(
+                        "UPDATE character_skills SET skill_id = ?1 WHERE id = ?2",
+                        params![&skill_id, &id],
+                    )?;
+                    skill_id
+                }
+            };
+
+            if name_changed || effect_changed || node_changed {
+                definition_changed = true;
+
+                tx.execute(
+                    "UPDATE skill_definitions
+                        SET name = ?1, description = ?2, node_id = ?3, updated_at = ?4
+                      WHERE id = ?5",
+                    params![&name, &effect, &node_id, &timestamp, &skill_id],
+                )?;
+
+                // The card is the definition's public face. A sheet edit updates
+                // it too, so the board and the sheet never tell different stories.
+                if let Some(card) = &node_id {
+                    let card_row = tx
+                        .query_row(
+                            "SELECT label, content FROM nodes WHERE id = ?1",
+                            params![card],
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                        )
+                        .optional()?;
+
+                    if let Some((old_label, old_content)) = card_row {
+                        if old_label != name || old_content != effect {
+                            tx.execute(
+                                "UPDATE nodes
+                                    SET label = ?1, content = ?2, updated_at = ?3
+                                  WHERE id = ?4",
+                                params![&name, &effect, &timestamp, card],
+                            )?;
+
+                            if old_label != name {
+                                log_audit(
+                                    &tx,
+                                    AuditRecord {
+                                        story_id: Some(&story_id),
+                                        entity_type: "node",
+                                        entity_id: card,
+                                        action: "update",
+                                        field_changed: Some("label"),
+                                        old_value: Some(old_label),
+                                        new_value: Some(name.clone()),
+                                        changed_by: &user,
+                                    },
+                                )?;
+                            }
+
+                            if old_content != effect {
+                                log_audit(
+                                    &tx,
+                                    AuditRecord {
+                                        story_id: Some(&story_id),
+                                        entity_type: "node",
+                                        entity_id: card,
+                                        action: "update",
+                                        field_changed: Some("content"),
+                                        old_value: old_content,
+                                        new_value: effect.clone(),
+                                        changed_by: &user,
+                                    },
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                sync_skill_definition_holders(
+                    &tx,
+                    &story_id,
+                    &skill_id,
+                    &name,
+                    effect.as_deref(),
+                    node_id.as_deref(),
+                    name_changed,
+                    effect_changed,
+                    node_changed,
+                    &user,
+                    &timestamp,
+                )?;
+            }
+        }
+
+        // Only rank and chapter belong to this row; the shared words were
+        // recorded above, once, for every holder.
         let old_chapter_label = reference_label(&tx, old_chapter.as_deref())?;
-        let old_node_label = reference_label(&tx, old_node.as_deref())?;
         let new_chapter_label = reference_label(&tx, chapter_id.as_deref())?;
-        let new_node_label = reference_label(&tx, node_id.as_deref())?;
 
         let mut changes: Vec<(&str, Option<String>, Option<String>)> = Vec::new();
 
-        if name != old_name {
-            changes.push(("name", Some(old_name.clone()), Some(name.clone())));
-        }
         if rank != old_rank {
             changes.push(("rank", old_rank.clone(), rank.clone()));
         }
-        if effect != old_effect {
-            changes.push(("effect", old_effect.clone(), effect.clone()));
-        }
         if chapter_id != old_chapter {
             changes.push(("chapter", old_chapter_label, new_chapter_label));
-        }
-        if node_id != old_node {
-            changes.push(("card", old_node_label, new_node_label));
         }
 
         let updated = CharacterSkill {
@@ -1517,8 +1723,10 @@ impl Db {
             updated_at: timestamp.clone(),
         };
 
-        // Saving the same values writes nothing and bumps no timestamp.
-        if changes.is_empty() {
+        // Saving the same values writes nothing and bumps no timestamp. A
+        // definition change is a real write even when this row's rank, chapter
+        // and mirrors already hold the new words.
+        if changes.is_empty() && !definition_changed {
             return Ok(CharacterSkill {
                 updated_at: old_updated_at,
                 ..updated
@@ -6685,6 +6893,27 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let skill_definitions = {
+            let mut stmt = guard.prepare(
+                "SELECT id, story_id, name, description, node_id, created_at, updated_at
+                   FROM skill_definitions
+                  WHERE story_id = ?1
+                  ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(SkillDefinition {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    node_id: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let mut character_level_milestones = {
             let mut stmt = guard.prepare(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
@@ -7086,6 +7315,7 @@ impl Db {
             character_stats,
             character_attributes,
             character_skills,
+            skill_definitions,
             character_level_milestones,
             character_skill_events,
             skill_evolutions,
@@ -9195,6 +9425,62 @@ impl Db {
             }
         }
 
+        // Reverting one holder's words puts the shared definition and every other
+        // holder back too, and follows through to the card when one is attached.
+        // The revert entry above remains the history of the action itself.
+        if entry.entity_type == "character_skill" && (field == "name" || field == "effect") {
+            let holder = tx
+                .query_row(
+                    "SELECT skill_id, node_id FROM character_skills WHERE id = ?1",
+                    params![entity_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )
+                .optional()?;
+
+            if let Some((Some(skill_id), node_id)) = holder {
+                let restored = restore.clone();
+
+                if field == "name" {
+                    if let Some(value) = restored.as_deref() {
+                        tx.execute(
+                            "UPDATE skill_definitions SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                            params![value, &timestamp, &skill_id],
+                        )?;
+                        tx.execute(
+                            "UPDATE character_skills SET name = ?1, updated_at = ?2 WHERE skill_id = ?3",
+                            params![value, &timestamp, &skill_id],
+                        )?;
+                        if let Some(card) = node_id.as_deref() {
+                            tx.execute(
+                                "UPDATE nodes SET label = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![value, &timestamp, card],
+                            )?;
+                        }
+                    }
+                } else {
+                    tx.execute(
+                        "UPDATE skill_definitions SET description = ?1, updated_at = ?2 WHERE id = ?3",
+                        params![&restored, &timestamp, &skill_id],
+                    )?;
+                    tx.execute(
+                        "UPDATE character_skills SET effect = ?1, updated_at = ?2 WHERE skill_id = ?3",
+                        params![&restored, &timestamp, &skill_id],
+                    )?;
+                    if let Some(card) = node_id.as_deref() {
+                        tx.execute(
+                            "UPDATE nodes SET content = ?1, updated_at = ?2 WHERE id = ?3",
+                            params![&restored, &timestamp, card],
+                        )?;
+                    }
+                }
+            }
+        }
+
         // Reverting a skill card's label or notes is still a card change: the
         // linked sheets follow it through the same helper a normal save uses.
         if entry.entity_type == "node" && (field == "label" || field == "content") {
@@ -9285,6 +9571,11 @@ impl Db {
             .character_skills
             .iter()
             .map(|skill| (skill.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let definitions: HashMap<String, String> = export
+            .skill_definitions
+            .iter()
+            .map(|definition| (definition.id.clone(), Uuid::new_v4().to_string()))
             .collect();
         let level_milestones: HashMap<String, String> = export
             .character_level_milestones
@@ -9392,6 +9683,23 @@ impl Db {
                     )));
                 }
             }
+        }
+
+        for definition in &export.skill_definitions {
+            if definition.story_id != export.story.id {
+                return Err(DbError::Invalid(
+                    "a skill definition belongs to another story".to_string(),
+                ));
+            }
+
+            if definition.name.trim().is_empty() {
+                return Err(DbError::Invalid(
+                    "a skill definition needs a name".to_string(),
+                ));
+            }
+
+            // A definition whose card was trashed before the export is kept by
+            // its words; the missing card link is simply dropped on import.
         }
 
         for milestone in &export.character_level_milestones {
@@ -9969,6 +10277,25 @@ impl Db {
             )?;
         }
 
+        // Definitions come after the cards they can point at, and before the
+        // skills that are matched back to them below.
+        for definition in &export.skill_definitions {
+            tx.execute(
+                "INSERT INTO skill_definitions
+                 (id, story_id, name, description, node_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &definitions[&definition.id],
+                    &story_id,
+                    definition.name.trim(),
+                    &definition.description,
+                    definition.node_id.as_ref().and_then(|id| nodes.get(id)),
+                    &definition.created_at,
+                    &definition.updated_at
+                ],
+            )?;
+        }
+
         for member in &export.chapter_cast {
             tx.execute(
                 "INSERT INTO chapter_cast
@@ -10133,6 +10460,12 @@ impl Db {
                 ],
             )?;
         }
+
+        // The imported rows do not carry a definition id, so link them the same
+        // way a migration does: by their card when they have one, otherwise by
+        // their name within the story. Definitions carried by the file are found
+        // rather than duplicated.
+        backfill_skill_definitions(&tx)?;
 
         // Evolutions come after the skills at both ends, because both ids are
         // foreign keys into the copy.
@@ -10452,6 +10785,21 @@ pub struct CharacterSkill {
     pub rank: Option<String>,
     pub effect: Option<String>,
     pub chapter_id: Option<String>,
+    pub node_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// The story-level words every holder of a skill shares. The card is the public
+/// face when there is one; without a card the name is the identity. Character
+/// rows keep mirrors of `name` and `description` so the sheets, history, badges
+/// and exports can read one row without a join.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+pub struct SkillDefinition {
+    pub id: String,
+    pub story_id: String,
+    pub name: String,
+    pub description: Option<String>,
     pub node_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -11049,6 +11397,10 @@ pub struct StoryExport {
     /// Absent from exports written before schema v12, so it defaults to empty.
     #[serde(default)]
     pub character_skills: Vec<CharacterSkill>,
+    /// Absent from exports written before schema v24, so it defaults to empty.
+    /// The importer rebuilds missing definitions from the skill rows.
+    #[serde(default)]
+    pub skill_definitions: Vec<SkillDefinition>,
     /// Absent from exports written before schema v15, so they default to empty.
     #[serde(default)]
     pub character_level_milestones: Vec<CharacterLevelMilestone>,
@@ -12109,6 +12461,87 @@ fn clean_optional(value: Option<String>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+/// The story-level definition a skill row should point at.
+///
+/// A card is the strongest identity: every holder of the same card shares its
+/// words. Without a card, the name is the identity within the story. The first
+/// time a skill is written the definition is created; later writes reuse it and
+/// keep the canonical words rather than letting one sheet's copy drift.
+fn skill_definition_for(
+    tx: &rusqlite::Transaction<'_>,
+    story_id: &str,
+    name: &str,
+    effect: Option<&str>,
+    node_id: Option<&str>,
+) -> DbResult<(String, String, Option<String>, Option<String>)> {
+    let existing = if let Some(card) = node_id {
+        tx.query_row(
+            "SELECT id, name, description, node_id FROM skill_definitions
+              WHERE story_id = ?1 AND node_id = ?2",
+            params![story_id, card],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+    } else {
+        tx.query_row(
+            "SELECT id, name, description, node_id FROM skill_definitions
+              WHERE story_id = ?1 AND lower(name) = lower(?2)
+              ORDER BY (node_id IS NULL) DESC, created_at, id LIMIT 1",
+            params![story_id, name],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+    };
+
+    if let Some((id, canonical_name, mut description, canonical_node)) = existing {
+        // A definition that had no description yet can take the first one the
+        // author writes, but an established description is never overwritten by
+        // a later holder's wording.
+        if description.is_none() && effect.is_some() {
+            tx.execute(
+                "UPDATE skill_definitions
+                    SET description = ?1, updated_at = ?2
+                  WHERE id = ?3",
+                params![effect, now(), &id],
+            )?;
+            description = effect.map(str::to_string);
+        }
+
+        return Ok((id, canonical_name, description, canonical_node));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let timestamp = now();
+
+    tx.execute(
+        "INSERT INTO skill_definitions
+         (id, story_id, name, description, node_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![&id, story_id, name, effect, node_id, &timestamp],
+    )?;
+
+    Ok((
+        id,
+        name.to_string(),
+        effect.map(str::to_string),
+        node_id.map(str::to_string),
+    ))
+}
+
 /// A relation kind is free text, but it cannot be blank.
 fn clean_relation_kind(kind: String) -> DbResult<String> {
     let kind = kind.trim().to_string();
@@ -12940,7 +13373,146 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         conn.execute_batch(MIGRATION_023)?;
     }
 
+    if version < 24 {
+        conn.execute_batch(MIGRATION_024)?;
+
+        if !column_exists(conn, "character_skills", "skill_id")? {
+            conn.execute(
+                "ALTER TABLE character_skills ADD COLUMN skill_id TEXT
+                    REFERENCES skill_definitions(id) ON DELETE CASCADE",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_character_skills_definition
+                ON character_skills (skill_id)",
+            [],
+        )?;
+
+        backfill_skill_definitions(conn)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+
+    Ok(())
+}
+
+/// Gives every skill row that predates schema v24 a shared definition.
+///
+/// Rows with a card group by that card; rows without one group by their name
+/// within the story. The first row in a group provides the words, and every row
+/// in the group is updated to them, so the migration itself removes drift that
+/// the old per-sheet copies allowed.
+fn backfill_skill_definitions(conn: &Connection) -> SqliteResult<()> {
+    let rows = {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, c.story_id, s.name, s.effect, s.node_id
+               FROM character_skills s
+               JOIN characters c ON c.id = s.character_id
+              WHERE s.skill_id IS NULL
+              ORDER BY s.created_at, s.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+
+        rows.collect::<SqliteResult<Vec<_>>>()?
+    };
+
+    // Keyed by card when there is one, otherwise by folded name within the story.
+    let mut known: HashMap<String, (String, String, Option<String>, Option<String>)> =
+        HashMap::new();
+
+    for (row_id, story_id, name, effect, node_id) in rows {
+        let name = if name.trim().is_empty() {
+            "Unnamed skill".to_string()
+        } else {
+            name
+        };
+        let key = match &node_id {
+            Some(card) => format!("card:{card}"),
+            None => format!("name:{}:{}", story_id, name.trim().to_lowercase()),
+        };
+
+        let definition = match known.get(&key) {
+            Some(definition) => definition.clone(),
+            None => {
+                let existing = if let Some(card) = &node_id {
+                    conn.query_row(
+                        "SELECT id, name, description, node_id FROM skill_definitions
+                          WHERE story_id = ?1 AND node_id = ?2",
+                        params![&story_id, card],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, Option<String>>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+                } else {
+                    conn.query_row(
+                        "SELECT id, name, description, node_id FROM skill_definitions
+                          WHERE story_id = ?1 AND node_id IS NULL
+                            AND lower(name) = lower(?2)
+                          ORDER BY created_at, id LIMIT 1",
+                        params![&story_id, &name],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, Option<String>>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+                };
+
+                let definition = match existing {
+                    Some(definition) => definition,
+                    None => {
+                        let id = Uuid::new_v4().to_string();
+                        let timestamp = now();
+
+                        conn.execute(
+                            "INSERT INTO skill_definitions
+                             (id, story_id, name, description, node_id, created_at, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                            params![&id, &story_id, &name, &effect, &node_id, &timestamp],
+                        )?;
+
+                        (id, name.clone(), effect.clone(), node_id.clone())
+                    }
+                };
+
+                known.insert(key, definition.clone());
+                definition
+            }
+        };
+
+        conn.execute(
+            "UPDATE character_skills
+                SET skill_id = ?1, name = ?2, effect = ?3, node_id = ?4
+              WHERE id = ?5",
+            params![
+                &definition.0,
+                &definition.1,
+                &definition.2,
+                &definition.3,
+                &row_id
+            ],
+        )?;
+    }
 
     Ok(())
 }
@@ -13254,6 +13826,16 @@ const MIGRATION_018: &str = "
     CREATE INDEX IF NOT EXISTS idx_character_progress_chapter
         ON character_progress (chapter_id);
 ";
+
+/// Schema v24: a skill's shared identity lives in the story, not on each sheet.
+///
+/// A definition owns the name and description and can point at the `skill` card
+/// that represents it. A character's row keeps the rank and chapter that are
+/// theirs; its name and effect are kept in step with the definition so cards,
+/// sheets, history and exports all read the same words. Existing rows are
+/// grouped by their card, or by name when they have none, and linked during the
+/// migration.
+const MIGRATION_024: &str = "\n    CREATE TABLE IF NOT EXISTS skill_definitions (\n        id TEXT PRIMARY KEY,\n        story_id TEXT NOT NULL,\n        name TEXT NOT NULL,\n        description TEXT,\n        node_id TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,\n        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE SET NULL\n    );\n\n    CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_definitions_card\n        ON skill_definitions (node_id)\n        WHERE node_id IS NOT NULL;\n\n    CREATE INDEX IF NOT EXISTS idx_skill_definitions_story\n        ON skill_definitions (story_id);\n";
 
 /// Schema v23: one skill grows from, mutates into or fuses with another.
 ///
@@ -14907,7 +15489,7 @@ mod tests {
         let version: i32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 23);
+        assert_eq!(version, 24);
 
         let tables: i64 = conn
             .query_row(
@@ -15261,7 +15843,7 @@ mod tests {
         assert!(updates.iter().any(|entry| {
             entry.entity_id == mira_skill.id
                 && entry.field_changed.as_deref() == Some("effect")
-                && entry.old_value.as_deref() == Some("Mira's own wording.")
+                && entry.old_value.as_deref() == Some("A cold touch.")
                 && entry.new_value.as_deref() == Some("A deeper cold.")
         }));
     }
@@ -15334,6 +15916,132 @@ mod tests {
             .unwrap();
         assert_eq!(linked.name, "Frost Touch");
         assert_eq!(linked.effect.as_deref(), Some("A cold touch."));
+    }
+
+    #[test]
+    fn a_sheet_edit_updates_the_card_and_every_other_holder() {
+        let (db, story, rook, chapter, card) = skill_story();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+
+        let rook_skill = db
+            .add_skill(
+                rook.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 1".into()),
+                Some("A cold touch.".into()),
+                Some(chapter.id.clone()),
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        let mira_skill = db
+            .add_skill(
+                mira.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 4".into()),
+                Some("Mira's own wording.".into()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        // Editing one sheet is an edit to the shared skill: the card and the
+        // other holder follow, while each holder keeps its own rank and chapter.
+        db.update_skill(
+            rook_skill.id.clone(),
+            "Chill Touch".into(),
+            Some("Rank 2".into()),
+            Some("A deeper cold.".into()),
+            Some(chapter.id.clone()),
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        let rook_after = skills
+            .iter()
+            .find(|skill| skill.id == rook_skill.id)
+            .unwrap();
+        let mira_after = skills
+            .iter()
+            .find(|skill| skill.id == mira_skill.id)
+            .unwrap();
+
+        for skill in [rook_after, mira_after] {
+            assert_eq!(skill.name, "Chill Touch");
+            assert_eq!(skill.effect.as_deref(), Some("A deeper cold."));
+            assert_eq!(skill.node_id.as_deref(), Some(card.id.as_str()));
+        }
+        assert_eq!(rook_after.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(mira_after.rank.as_deref(), Some("Rank 4"));
+        assert_eq!(mira_after.chapter_id, None);
+
+        let stored_card = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == card.id)
+            .unwrap();
+        assert_eq!(stored_card.label, "Chill Touch");
+        assert_eq!(stored_card.content.as_deref(), Some("A deeper cold."));
+    }
+
+    #[test]
+    fn a_sheet_edit_without_a_card_still_reaches_the_other_holders() {
+        let (db, story, rook, _, _) = skill_story();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+
+        let rook_skill = db
+            .add_skill(
+                rook.id.clone(),
+                "Tracking".into(),
+                None,
+                Some("Reads tracks.".into()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let mira_skill = db
+            .add_skill(
+                mira.id.clone(),
+                "tracking".into(),
+                None,
+                Some("Different words.".into()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        // The name is the identity when there is no card, and the first wording
+        // is the canonical one rather than whichever sheet was edited last.
+        assert_eq!(mira_skill.name, "Tracking");
+        assert_eq!(mira_skill.effect.as_deref(), Some("Reads tracks."));
+
+        db.update_skill(
+            mira_skill.id.clone(),
+            "Trailcraft".into(),
+            None,
+            Some("Follows a trail.".into()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        for skill in &skills {
+            assert_eq!(skill.name, "Trailcraft");
+            assert_eq!(skill.effect.as_deref(), Some("Follows a trail."));
+        }
+        assert!(skills.iter().any(|skill| skill.id == rook_skill.id));
     }
 
     #[test]
@@ -17708,6 +18416,78 @@ mod tests {
     }
 
     #[test]
+    fn reverting_a_shared_skill_edit_restores_the_card_and_every_holder() {
+        let (db, story, rook, _, card) = skill_story();
+        let mira = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+
+        let rook_skill = db
+            .add_skill(
+                rook.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 1".into()),
+                Some("A cold touch.".into()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+        let mira_skill = db
+            .add_skill(
+                mira.id.clone(),
+                "Frost Touch".into(),
+                Some("Rank 4".into()),
+                Some("Mira's own wording.".into()),
+                None,
+                Some(card.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.update_skill(
+            rook_skill.id.clone(),
+            "Chill Touch".into(),
+            Some("Rank 1".into()),
+            Some("A deeper cold.".into()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let name_entry = latest_entry(&db, "character_skill", &rook_skill.id, "name");
+        let effect_entry = latest_entry(&db, "character_skill", &rook_skill.id, "effect");
+
+        assert!(db.revert_change(&name_entry.id, "Grace".into()).unwrap());
+        assert!(db.revert_change(&effect_entry.id, "Grace".into()).unwrap());
+
+        let stored = db
+            .list_nodes(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|node| node.id == card.id)
+            .unwrap();
+        assert_eq!(stored.label, "Frost Touch");
+        assert_eq!(stored.content.as_deref(), Some("A cold touch."));
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        for skill in &skills {
+            assert_eq!(skill.name, "Frost Touch");
+            assert_eq!(skill.effect.as_deref(), Some("A cold touch."));
+        }
+        assert_eq!(
+            skills
+                .iter()
+                .find(|skill| skill.id == mira_skill.id)
+                .unwrap()
+                .rank
+                .as_deref(),
+            Some("Rank 4")
+        );
+    }
+
+    #[test]
     fn reverting_a_skill_rank_puts_it_back() {
         let (db, story, character, chapter, _) = skill_story();
         let second = db
@@ -18960,6 +19740,7 @@ mod tests {
 
         let export = source.export_story(&story.id).unwrap();
         assert_eq!(export.character_skills.len(), 1);
+        assert_eq!(export.skill_definitions.len(), 1);
 
         let target = Db::open_in_memory().unwrap();
         let restored = target.import_story(export, "Grace".into()).unwrap();
@@ -18995,6 +19776,30 @@ mod tests {
             .get_audit_log(Some(&restored.id), Some("character_skill"), None, 100)
             .unwrap();
         assert!(history.iter().any(|entry| entry.entity_id == skills[0].id));
+
+        // The shared definition travelled too, and the imported row points at it
+        // instead of carrying an unlinked copy.
+        let guard = target.conn().unwrap();
+        let linked: Option<String> = guard
+            .query_row(
+                "SELECT skill_id FROM character_skills WHERE id = ?1",
+                params![&skills[0].id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(linked.is_some(), "the imported skill has a definition");
+
+        let definitions: i64 = guard
+            .query_row(
+                "SELECT count(*) FROM skill_definitions WHERE story_id = ?1",
+                params![&restored.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            definitions, 1,
+            "the carried definition was reused, not copied"
+        );
     }
 
     // A story with three skills and two chapters, the smallest shape that can
