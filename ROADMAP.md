@@ -216,6 +216,21 @@ change rather than a correction of an old entry. Not covered, and stated in the
 README: character and story edits, stats and attributes, import, and the Trash
 tab. **L**
 
+**4b. Canvas creation forms.** **Done.** **Add Node** keeps the quick label-only
+path for narrative cards, while character, quest and skill open a full form and
+create the record behind the card in the same step: a cast member and a linked
+character card, a quest contract and its card, or a sheet skill and the card that
+grants it. The toolbar label prefills the name, the accepted chapter defaults to
+the first chapter, and required fields gate submission. The creation is one
+undoable step whose undo and redo also keep the cast rail, quest ledger and skill
+lists in step, and a refused skill removes the card it had just made. **M**
+
+**4c. Add a holder from a skill card.** **Done.** Selecting a skill card in the
+inspector lists its holders and offers **Add holder**. The card's saved name and
+notes become the new character skill's name and effect, while rank and chapter
+are entered for that holder; the character picker leaves out anyone who already
+holds the card, and unsaved card edits pause the form. **S**
+
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a
 confirmation. The chosen file is copied to a staging file, opened and migrated

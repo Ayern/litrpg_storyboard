@@ -153,6 +153,23 @@ still named after the cast member it just left, the drawer offers to rename it t
 the new one; accepting is an ordinary label edit, recorded like any other, and
 declining leaves the author's name alone.
 
+**Creating a card that is also a record** — the type picker and **Add Node** are
+the quick path for narrative cards (chapter, idea, location, event, plot, system,
+item, faction, misc): type a label and the card is made. Choosing **character**,
+**quest** or **skill** opens a full form instead, because those cards stand for
+real rows. A character form takes a name and description and creates the cast
+member plus a linked card. A quest form takes a title, giver, faction, accepted
+and optional ending chapters, description and notes; it creates the contract in
+the ledger — completed when an ending chapter is chosen — and a quest card. A
+skill form takes owner, name, rank, effect and chapter, and creates the skill on
+the owner's sheet plus the skill card that grants it. The label typed in the
+toolbar prefills the name or title, **Create card** stays disabled until the
+required fields are there, and a refused write leaves no half-made card: a card
+whose skill is rejected is removed again. The board history records both halves,
+so Undo removes the card and the record and Redo puts them back; the cast rail and
+the sheets follow without reopening the story. Cancelling, closing, or clicking
+the dimmed backdrop writes nothing.
+
 **Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
 canvas. Drag a card onto the board and it becomes a `character` node already
 linked to that cast member, placed where the pointer was released, with the
@@ -297,7 +314,11 @@ link is cleared instead of pointing at a row that no longer exists
 (trashing it alone leaves the link in place, and an unrelated edit does not
 force the author to re-pick it). A `skill` card on the board names the cast
 members who have it, with each one's rank and the chapter it was learned in, and
-says so when nobody has it yet. Skills travel in the JSON export, the story
+says so when nobody has it yet. Selecting the card opens its holders in the
+inspector, with an **Add holder** form: the card's saved name and notes become
+the new row's name and effect, while rank and chapter are filled in for that
+holder. The character picker leaves out anyone who already holds the card, and a
+card with unsaved label or note edits asks for a save before it will add one. Skills travel in the JSON export, the story
 bible and an import with their chapter and card remapped like every other
 reference, and they appear in the Audit tab under **Skills**. A skill's name, rank
 and effect are revertible from the history; its chapter and card links are

@@ -575,6 +575,29 @@ function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
 }
 
+// The card types whose Add form also creates the record behind the card. The
+// other types are narrative cards and keep the quick label-only creation.
+type CanvasCreateKind = 'character' | 'quest' | 'skill';
+
+function isCanvasCreateKind(value: string): value is CanvasCreateKind {
+  return value === 'character' || value === 'quest' || value === 'skill';
+}
+
+// One open creation form on the canvas. The fields a kind does not use stay
+// empty and are never read for it.
+interface CanvasCreateDraft {
+  kind: CanvasCreateKind;
+  name: string;
+  description: string;
+  ownerId: string;
+  rank: string;
+  chapterId: string;
+  completedChapterId: string;
+  giverId: string;
+  factionId: string;
+  notes: string;
+}
+
 // How many numbers a card has room for before it starts counting.
 const NODE_STAT_BADGES = 2;
 
@@ -3203,6 +3226,26 @@ function App() {
   const [demoResetConfirm, setDemoResetConfirm] = useState(false);
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState<NodeType>('idea');
+  // The full form behind a character, quest or skill card. Empty until Add is
+  // pressed with one of those types selected.
+  const [canvasCreate, setCanvasCreate] = useState<CanvasCreateDraft | null>(null);
+  const [canvasCreateError, setCanvasCreateError] = useState<string | null>(null);
+  const [savingCanvasCreate, setSavingCanvasCreate] = useState(false);
+
+  // Escape closes the creation form as long as a write is not in flight.
+  useEffect(() => {
+    if (!canvasCreate) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || savingCanvasCreate) return;
+      event.preventDefault();
+      setCanvasCreate(null);
+      setCanvasCreateError(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canvasCreate, savingCanvasCreate]);
   // Chapter notes are context rather than cards, so the canvas stays the drawing
   // it was until the author asks for the reminders to hang under their chapters.
   const [showChapterNotes, setShowChapterNotes] = useState(false);
@@ -3301,6 +3344,13 @@ function App() {
   const [inspectorAttrId, setInspectorAttrId] = useState<string | null>(null);
   const [inspectorAttrValue, setInspectorAttrValue] = useState('');
   const [inspectorError, setInspectorError] = useState<string | null>(null);
+  // Adding a holder from a skill card copies the card's name and notes onto that
+  // character's sheet; rank and chapter stay the holder's own facts.
+  const [skillHolderCharacterId, setSkillHolderCharacterId] = useState('');
+  const [skillHolderRank, setSkillHolderRank] = useState('');
+  const [skillHolderChapterId, setSkillHolderChapterId] = useState('');
+  const [skillHolderError, setSkillHolderError] = useState<string | null>(null);
+  const [savingSkillHolder, setSavingSkillHolder] = useState(false);
   // A relink can leave a node named after the person it no longer points at.
   // The label is the author's, so this offers the rename instead of taking it.
   const [renameOffer, setRenameOffer] = useState<{
@@ -3843,7 +3893,8 @@ function App() {
         !currentStory ||
         shortcutsOpen ||
         backupsOpen ||
-        quitPrompt
+        quitPrompt ||
+        canvasCreate
       ) {
         return;
       }
@@ -3867,7 +3918,15 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedTab, currentStory, searchOpen, shortcutsOpen, backupsOpen, quitPrompt]);
+  }, [
+    selectedTab,
+    currentStory,
+    searchOpen,
+    shortcutsOpen,
+    backupsOpen,
+    quitPrompt,
+    canvasCreate,
+  ]);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -4738,6 +4797,257 @@ function App() {
       });
     } catch (e) {
       console.error('Failed to create node:', e);
+    }
+  };
+
+  // Add is one button for every card type. A character, quest or skill card is
+  // a view of a real record, so those open their own form instead of creating a
+  // label-only card; the narrative types keep the quick path.
+  const openCanvasCreate = () => {
+    if (!currentStory) return;
+
+    if (!isCanvasCreateKind(newNodeType)) {
+      void addNewNode();
+      return;
+    }
+
+    const chapters = nodes
+      .filter(node => node.data.nodeType === 'chapter')
+      .sort(
+        (a, b) =>
+          (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+            (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+          a.data.label.localeCompare(b.data.label)
+      );
+
+    setCanvasCreateError(null);
+    setCanvasCreate({
+      kind: newNodeType,
+      name: newNodeLabel.trim(),
+      description: '',
+      ownerId:
+        newNodeType === 'skill'
+          ? selectedCharacterId ?? characters[0]?.id ?? ''
+          : '',
+      rank: '',
+      chapterId: newNodeType === 'quest' ? chapters[0]?.id ?? '' : '',
+      completedChapterId: '',
+      giverId: '',
+      factionId: '',
+      notes: '',
+    });
+  };
+
+  // The form writes the record and its card together, so a card is never a
+  // decoration pointing at nothing. The step records both halves in the board
+  // history; the sheet lists follow the same change.
+  const submitCanvasCreate = async () => {
+    if (!currentStory || !canvasCreate || savingCanvasCreate) return;
+
+    const draft = canvasCreate;
+    const name = draft.name.trim();
+
+    if (!name) {
+      setCanvasCreateError(
+        draft.kind === 'quest' ? 'A quest needs a title.' : 'A record needs a name.'
+      );
+      return;
+    }
+
+    if (draft.kind === 'quest' && !draft.chapterId) {
+      setCanvasCreateError('A quest needs the chapter it was accepted in.');
+      return;
+    }
+
+    if (draft.kind === 'skill' && !draft.ownerId) {
+      setCanvasCreateError('A skill needs a character to hold it.');
+      return;
+    }
+
+    setSavingCanvasCreate(true);
+    setCanvasCreateError(null);
+
+    const description = draft.description.trim() || null;
+    const position = { x: 120 + Math.random() * 360, y: 120 + Math.random() * 240 };
+
+    try {
+      if (draft.kind === 'character') {
+        const created: Character = await invoke('create_new_character', {
+          storyId: currentStory.id,
+          name,
+          description,
+          user: actor,
+        });
+        const node: any = await invoke('create_graph_node', {
+          storyId: currentStory.id,
+          nodeType: 'character',
+          label: name,
+          content: description,
+          posX: position.x,
+          posY: position.y,
+          createdBy: actor,
+          characterId: created.id,
+        });
+
+        setCharacters(previous => [...previous, created]);
+        setNodes(nds => [...nds, toFlowNode(node)]);
+
+        recordStep({
+          label: `Add “${name}”`,
+          undo: async () => {
+            await invoke('delete_node', { id: node.id, user: actor });
+            await invoke('delete_character', { id: created.id, user: actor });
+            setCharacters(previous => previous.filter(row => row.id !== created.id));
+          },
+          redo: async () => {
+            await invoke('restore_deleted', {
+              id: created.id,
+              kind: 'character',
+              user: actor,
+            });
+            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            setCharacters(previous =>
+              previous.some(row => row.id === created.id)
+                ? previous
+                : [...previous, created]
+            );
+          },
+        });
+      } else if (draft.kind === 'quest') {
+        const status = draft.completedChapterId ? 'completed' : 'active';
+        const quest: Quest = await invoke('add_quest', {
+          storyId: currentStory.id,
+          title: name,
+          giverCharacterId: draft.giverId || null,
+          factionNodeId: draft.factionId || null,
+          acceptedChapterId: draft.chapterId,
+          completedChapterId: draft.completedChapterId || null,
+          status,
+          description,
+          notes: draft.notes.trim() || null,
+          user: actor,
+        });
+        const node: any = await invoke('create_graph_node', {
+          storyId: currentStory.id,
+          nodeType: 'quest',
+          label: name,
+          content: description,
+          posX: position.x,
+          posY: position.y,
+          createdBy: actor,
+        });
+
+        setStoryQuests(previous => [...previous, { ...quest, rewards: quest.rewards ?? [] }]);
+        setNodes(nds => [...nds, toFlowNode(node)]);
+
+        // Quests are deleted for good rather than trashed, so a redo records a
+        // fresh quest with the same facts and remembers its new id for the next
+        // undo.
+        let currentQuestId = quest.id;
+
+        recordStep({
+          label: `Add “${name}”`,
+          undo: async () => {
+            await invoke('delete_node', { id: node.id, user: actor });
+            await invoke('delete_quest', { id: currentQuestId, user: actor });
+            setStoryQuests(previous => previous.filter(row => row.id !== currentQuestId));
+          },
+          redo: async () => {
+            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            const again: Quest = await invoke('add_quest', {
+              storyId: currentStory.id,
+              title: name,
+              giverCharacterId: draft.giverId || null,
+              factionNodeId: draft.factionId || null,
+              acceptedChapterId: draft.chapterId,
+              completedChapterId: draft.completedChapterId || null,
+              status,
+              description,
+              notes: draft.notes.trim() || null,
+              user: actor,
+            });
+            currentQuestId = again.id;
+            setStoryQuests(previous => [
+              ...previous,
+              { ...again, rewards: again.rewards ?? [] },
+            ]);
+          },
+        });
+      } else {
+        const node: any = await invoke('create_graph_node', {
+          storyId: currentStory.id,
+          nodeType: 'skill',
+          label: name,
+          content: description,
+          posX: position.x,
+          posY: position.y,
+          createdBy: actor,
+        });
+
+        let skill: CharacterSkill;
+
+        try {
+          skill = await invoke('add_skill', {
+            characterId: draft.ownerId,
+            name,
+            rank: draft.rank.trim() || null,
+            effect: description,
+            chapterId: draft.chapterId || null,
+            nodeId: node.id,
+            user: actor,
+          });
+        } catch (e) {
+          // The skill was refused, so the card made for it must not stay behind.
+          await invoke('delete_node', { id: node.id, user: actor }).catch(() => {});
+          throw e;
+        }
+
+        setStorySkills(previous => [...previous, skill]);
+        setNodes(nds => [...nds, toFlowNode(node)]);
+
+        if (skill.character_id === selectedCharacterId) {
+          setCharacterSkills(previous => [...previous, skill]);
+        }
+
+        let currentSkillId = skill.id;
+
+        recordStep({
+          label: `Add “${name}”`,
+          undo: async () => {
+            await invoke('delete_skill', { id: currentSkillId, user: actor });
+            await invoke('delete_node', { id: node.id, user: actor });
+            setStorySkills(previous => previous.filter(row => row.id !== currentSkillId));
+            setCharacterSkills(previous =>
+              previous.filter(row => row.id !== currentSkillId)
+            );
+          },
+          redo: async () => {
+            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            const again: CharacterSkill = await invoke('add_skill', {
+              characterId: draft.ownerId,
+              name,
+              rank: draft.rank.trim() || null,
+              effect: description,
+              chapterId: draft.chapterId || null,
+              nodeId: node.id,
+              user: actor,
+            });
+            currentSkillId = again.id;
+            setStorySkills(previous => [...previous, again]);
+            if (again.character_id === selectedCharacterId) {
+              setCharacterSkills(previous => [...previous, again]);
+            }
+          },
+        });
+      }
+
+      setCanvasCreate(null);
+      setNewNodeLabel('');
+    } catch (e) {
+      console.error('Failed to create a canvas record:', e);
+      setCanvasCreateError(`Could not create it: ${String(e)}`);
+    } finally {
+      setSavingCanvasCreate(false);
     }
   };
 
@@ -7867,6 +8177,64 @@ function App() {
     } catch (e) {
       console.error('Failed to add skill:', e);
       setCharacterError(`Could not add skill: ${String(e)}`);
+    }
+  };
+
+  // A skill card is a link target, not a template the sheet knows about. Adding
+  // a holder from the card is the deliberate exception: the card's saved name
+  // and notes become the new row's name and effect, because those identify the
+  // skill. Rank and chapter are the holder's own facts, so they are entered
+  // here rather than copied from somebody else's row.
+  const addSkillHolder = async () => {
+    const card = nodes.find(node => node.id === selectedNodeId);
+
+    if (!card || card.data.nodeType !== 'skill') return;
+
+    const characterId = skillHolderCharacterId;
+    const name = card.data.label.trim();
+    const effect = card.data.content?.trim() || null;
+
+    if (!characterId) {
+      setSkillHolderError('Choose the character who learns this skill.');
+      return;
+    }
+
+    if (!name) {
+      setSkillHolderError('The card needs a name before it can be added to a sheet.');
+      return;
+    }
+
+    setSkillHolderError(null);
+    setSavingSkillHolder(true);
+
+    try {
+      const saved: CharacterSkill = await invoke('add_skill', {
+        characterId,
+        name,
+        rank: skillHolderRank.trim() || null,
+        effect,
+        chapterId: skillHolderChapterId || null,
+        nodeId: card.id,
+        user: actor,
+      });
+
+      const ordered = (list: CharacterSkill[]) =>
+        [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        );
+
+      setStorySkills(ordered);
+      if (saved.character_id === selectedCharacterId) {
+        setCharacterSkills(ordered);
+      }
+      setSkillHolderCharacterId('');
+      setSkillHolderRank('');
+      setSkillHolderChapterId('');
+    } catch (e) {
+      console.error('Failed to add a skill holder:', e);
+      setSkillHolderError(`Could not add the holder: ${String(e)}`);
+    } finally {
+      setSavingSkillHolder(false);
     }
   };
 
@@ -11068,6 +11436,46 @@ function App() {
   );
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
+  const skillCardNode =
+    selectedNode?.data.nodeType === 'skill' ? selectedNode : null;
+
+  // The holders already attached to the selected card, and the cast members who
+  // could still learn it. A person is only offered once: the database also
+  // refuses a second skill with the same name, but not showing the option is
+  // clearer than an error after the click.
+  const skillCardHolders = skillCardNode
+    ? storySkills
+        .filter(skill => skill.node_id === skillCardNode.id)
+        .map(skill => {
+          const character = characters.find(entry => entry.id === skill.character_id);
+          const chapter = skill.chapter_id
+            ? nodes.find(node => node.id === skill.chapter_id) ?? null
+            : null;
+
+          return {
+            skill,
+            characterName: character?.name ?? 'Cast member in the trash',
+            chapterLabel: chapter?.data.label ?? null,
+          };
+        })
+        .sort((a, b) => a.characterName.localeCompare(b.characterName))
+    : [];
+
+  const skillHolderCandidates = skillCardNode
+    ? characters.filter(
+        character =>
+          !skillCardHolders.some(holder => holder.skill.character_id === character.id)
+      )
+    : [];
+
+  // A new card starts with an empty holder form, not the previous card's
+  // half-filled one.
+  useEffect(() => {
+    setSkillHolderCharacterId('');
+    setSkillHolderRank('');
+    setSkillHolderChapterId('');
+    setSkillHolderError(null);
+  }, [selectedNodeId]);
 
   // What the drawer's fields hold against what the node still says. A restored
   // draft counts as unsaved, because it has not been written anywhere.
@@ -11736,12 +12144,14 @@ function App() {
                     placeholder="Node label"
                     value={newNodeLabel}
                     onChange={(e) => setNewNodeLabel(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addNewNode()}
+                    onKeyDown={(e) => e.key === 'Enter' && openCanvasCreate()}
                   />
                   <button
                     title="Add a node of the selected type to the canvas"
-                    onClick={addNewNode}
-                    disabled={!newNodeLabel.trim()}
+                    onClick={openCanvasCreate}
+                    disabled={
+                      !newNodeLabel.trim() && !isCanvasCreateKind(newNodeType)
+                    }
                   >
                     Add Node
                   </button>
@@ -12136,6 +12546,156 @@ function App() {
                             </button>
                           </div>
                         </div>
+                      )}
+
+                      {skillCardNode && (
+                        <section
+                          className="node-drawer-skill-holders"
+                          aria-label="Skill holders"
+                        >
+                          <div className="node-drawer-section">
+                            Holders
+                            <span className="node-drawer-note">
+                              {skillCardHolders.length === 0
+                                ? 'nobody yet'
+                                : `${skillCardHolders.length} ${
+                                    skillCardHolders.length === 1
+                                      ? 'character'
+                                      : 'characters'
+                                  }`}
+                            </span>
+                          </div>
+
+                          {skillCardHolders.length === 0 ? (
+                            <p className="node-drawer-hint">
+                              No one has this skill yet. Add a holder to copy the card's
+                              name and notes onto their sheet.
+                            </p>
+                          ) : (
+                            <ul className="node-drawer-holder-list">
+                              {skillCardHolders.map(holder => (
+                                <li className="node-drawer-holder" key={holder.skill.id}>
+                                  <span className="node-drawer-holder-name">
+                                    {holder.characterName}
+                                  </span>
+                                  {holder.skill.rank && (
+                                    <span className="node-drawer-holder-rank">
+                                      {holder.skill.rank}
+                                    </span>
+                                  )}
+                                  <span className="node-drawer-holder-chapter">
+                                    {holder.chapterLabel ?? 'No chapter'}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          <p className="node-drawer-hint">
+                            The name and notes come from this card; rank and chapter
+                            belong to the holder.
+                          </p>
+
+                          {nodeIsDirty && (
+                            <p className="node-drawer-hint">
+                              Save the card's label and notes before adding a holder.
+                            </p>
+                          )}
+
+                          <label
+                            className="node-drawer-label"
+                            htmlFor="skill-holder-character"
+                          >
+                            Character
+                          </label>
+                          <select
+                            id="skill-holder-character"
+                            className="node-drawer-select"
+                            title="The character who learns this skill"
+                            value={skillHolderCharacterId}
+                            onChange={event => {
+                              setSkillHolderCharacterId(event.target.value);
+                              setSkillHolderError(null);
+                            }}
+                          >
+                            <option value="">Choose a character</option>
+                            {skillHolderCandidates.map(character => (
+                              <option key={character.id} value={character.id}>
+                                {character.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          {characters.length === 0 && (
+                            <p className="node-drawer-hint">
+                              Add a character first — a skill needs someone to hold it.
+                            </p>
+                          )}
+
+                          {characters.length > 0 && skillHolderCandidates.length === 0 && (
+                            <p className="node-drawer-hint">
+                              Everyone in the cast already holds this card.
+                            </p>
+                          )}
+
+                          <label
+                            className="node-drawer-label"
+                            htmlFor="skill-holder-rank"
+                          >
+                            Rank
+                          </label>
+                          <input
+                            id="skill-holder-rank"
+                            className="node-drawer-input"
+                            placeholder="Optional"
+                            title="This holder's rank, in the author's own words"
+                            value={skillHolderRank}
+                            onChange={event => setSkillHolderRank(event.target.value)}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter') void addSkillHolder();
+                            }}
+                          />
+
+                          <label
+                            className="node-drawer-label"
+                            htmlFor="skill-holder-chapter"
+                          >
+                            Learned in
+                          </label>
+                          <select
+                            id="skill-holder-chapter"
+                            className="node-drawer-select"
+                            title="The chapter this holder learned the skill in"
+                            value={skillHolderChapterId}
+                            onChange={event => setSkillHolderChapterId(event.target.value)}
+                          >
+                            <option value="">No chapter</option>
+                            {chapterChoices.map(choice => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.data.label}
+                              </option>
+                            ))}
+                          </select>
+
+                          {skillHolderError && (
+                            <div className="node-editor-error">{skillHolderError}</div>
+                          )}
+
+                          <button
+                            type="button"
+                            className="node-drawer-add-holder"
+                            title="Create this skill on the chosen character's sheet, linked to this card"
+                            onClick={() => void addSkillHolder()}
+                            disabled={
+                              savingSkillHolder ||
+                              !skillHolderCharacterId ||
+                              nodeIsDirty ||
+                              !skillCardNode.data.label.trim()
+                            }
+                          >
+                            {savingSkillHolder ? 'Adding…' : 'Add holder'}
+                          </button>
+                        </section>
                       )}
 
                       {selectedNode.data.characterId && (
@@ -16372,6 +16932,382 @@ function App() {
               </ul>
             )}
           </div>
+        </div>
+      )}
+      {canvasCreate && (
+        <div
+          className="canvas-create-overlay"
+          onMouseDown={event => {
+            // A click on the dimmed backdrop closes the form; a click inside the
+            // form itself does not.
+            if (
+              event.target === event.currentTarget &&
+              !savingCanvasCreate
+            ) {
+              setCanvasCreate(null);
+              setCanvasCreateError(null);
+            }
+          }}
+        >
+          <form
+            className="canvas-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              canvasCreate.kind === 'character'
+                ? 'New character'
+                : canvasCreate.kind === 'quest'
+                  ? 'New quest'
+                  : 'New skill'
+            }
+            onSubmit={event => {
+              event.preventDefault();
+              void submitCanvasCreate();
+            }}
+          >
+            <div className="canvas-create-head">
+              <h3>
+                {canvasCreate.kind === 'character'
+                  ? 'New character'
+                  : canvasCreate.kind === 'quest'
+                    ? 'New quest'
+                    : 'New skill'}
+              </h3>
+              <button
+                type="button"
+                className="canvas-create-close"
+                aria-label="Close new card form"
+                title="Close without creating anything"
+                disabled={savingCanvasCreate}
+                onClick={() => {
+                  setCanvasCreate(null);
+                  setCanvasCreateError(null);
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="canvas-create-note">
+              {canvasCreate.kind === 'character'
+                ? 'The cast member and a card on the board are created together.'
+                : canvasCreate.kind === 'quest'
+                  ? 'The contract in the ledger and a quest card are created together.'
+                  : "The card and the skill on its owner's sheet are created together."}
+            </p>
+
+            {canvasCreate.kind === 'character' && (
+              <>
+                <label className="canvas-create-field">
+                  Character name
+                  <input
+                    autoFocus
+                    value={canvasCreate.name}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, name: value } : current
+                      );
+                    }}
+                  />
+                </label>
+                <label className="canvas-create-field">
+                  Character description
+                  <textarea
+                    rows={3}
+                    value={canvasCreate.description}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, description: value } : current
+                      );
+                    }}
+                  />
+                </label>
+              </>
+            )}
+
+            {canvasCreate.kind === 'quest' && (
+              <>
+                <label className="canvas-create-field">
+                  Quest title
+                  <input
+                    autoFocus
+                    value={canvasCreate.name}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, name: value } : current
+                      );
+                    }}
+                  />
+                </label>
+                <div className="canvas-create-row">
+                  <label className="canvas-create-field">
+                    Quest giver
+                    <select
+                      value={canvasCreate.giverId}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, giverId: value } : current
+                        );
+                      }}
+                    >
+                      <option value="">No giver</option>
+                      {characters.map(character => (
+                        <option key={character.id} value={character.id}>
+                          {character.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="canvas-create-field">
+                    Quest faction
+                    <select
+                      value={canvasCreate.factionId}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, factionId: value } : current
+                        );
+                      }}
+                    >
+                      <option value="">No faction</option>
+                      {nodes
+                        .filter(node => node.data.nodeType === 'faction')
+                        .map(node => (
+                          <option key={node.id} value={node.id}>
+                            {node.data.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="canvas-create-row">
+                  <label className="canvas-create-field">
+                    Quest accepted chapter
+                    <select
+                      value={canvasCreate.chapterId}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, chapterId: value } : current
+                        );
+                      }}
+                    >
+                      <option value="">Choose a chapter</option>
+                      {nodes
+                        .filter(node => node.data.nodeType === 'chapter')
+                        .sort(
+                          (a, b) =>
+                            (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+                              (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+                            a.data.label.localeCompare(b.data.label)
+                        )
+                        .map(node => (
+                          <option key={node.id} value={node.id}>
+                            {node.data.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className="canvas-create-field">
+                    Quest ending chapter
+                    <select
+                      value={canvasCreate.completedChapterId}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, completedChapterId: value } : current
+                        );
+                      }}
+                    >
+                      <option value="">Not ended</option>
+                      {nodes
+                        .filter(node => node.data.nodeType === 'chapter')
+                        .sort(
+                          (a, b) =>
+                            (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+                              (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+                            a.data.label.localeCompare(b.data.label)
+                        )
+                        .map(node => (
+                          <option key={node.id} value={node.id}>
+                            {node.data.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="canvas-create-hint">
+                  {canvasCreate.completedChapterId
+                    ? 'The quest will be recorded as completed.'
+                    : 'The quest will be recorded as active.'}
+                </p>
+                <label className="canvas-create-field">
+                  Quest description
+                  <textarea
+                    rows={2}
+                    value={canvasCreate.description}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, description: value } : current
+                      );
+                    }}
+                  />
+                </label>
+                <label className="canvas-create-field">
+                  Quest notes
+                  <textarea
+                    rows={2}
+                    value={canvasCreate.notes}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, notes: value } : current
+                      );
+                    }}
+                  />
+                </label>
+              </>
+            )}
+
+            {canvasCreate.kind === 'skill' && (
+              <>
+                <label className="canvas-create-field">
+                  Skill owner
+                  <select
+                    value={canvasCreate.ownerId}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, ownerId: value } : current
+                      );
+                    }}
+                  >
+                    <option value="">Choose a character</option>
+                    {characters.map(character => (
+                      <option key={character.id} value={character.id}>
+                        {character.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="canvas-create-field">
+                  Skill name
+                  <input
+                    autoFocus
+                    value={canvasCreate.name}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, name: value } : current
+                      );
+                    }}
+                  />
+                </label>
+                <div className="canvas-create-row">
+                  <label className="canvas-create-field">
+                    Skill rank
+                    <input
+                      value={canvasCreate.rank}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, rank: value } : current
+                        );
+                      }}
+                    />
+                  </label>
+                  <label className="canvas-create-field">
+                    Skill chapter
+                    <select
+                      value={canvasCreate.chapterId}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setCanvasCreate(current =>
+                          current ? { ...current, chapterId: value } : current
+                        );
+                      }}
+                    >
+                      <option value="">No chapter</option>
+                      {nodes
+                        .filter(node => node.data.nodeType === 'chapter')
+                        .sort(
+                          (a, b) =>
+                            (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
+                              (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
+                            a.data.label.localeCompare(b.data.label)
+                        )
+                        .map(node => (
+                          <option key={node.id} value={node.id}>
+                            {node.data.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="canvas-create-field">
+                  Skill effect
+                  <textarea
+                    rows={2}
+                    value={canvasCreate.description}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setCanvasCreate(current =>
+                        current ? { ...current, description: value } : current
+                      );
+                    }}
+                  />
+                </label>
+              </>
+            )}
+
+            {canvasCreate.kind === 'quest' &&
+              !nodes.some(node => node.data.nodeType === 'chapter') && (
+                <p className="canvas-create-hint">
+                  Add a chapter on the Chapters tab first — a quest needs one.
+                </p>
+              )}
+
+            {canvasCreate.kind === 'skill' && characters.length === 0 && (
+              <p className="canvas-create-hint">
+                Add a character first — a skill needs someone to hold it.
+              </p>
+            )}
+
+            {canvasCreateError && (
+              <div className="canvas-create-error" role="alert">
+                {canvasCreateError}
+              </div>
+            )}
+
+            <div className="canvas-create-actions">
+              <button
+                type="submit"
+                disabled={
+                  savingCanvasCreate ||
+                  !canvasCreate.name.trim() ||
+                  (canvasCreate.kind === 'quest' && !canvasCreate.chapterId) ||
+                  (canvasCreate.kind === 'skill' && !canvasCreate.ownerId)
+                }
+              >
+                {savingCanvasCreate ? 'Creating…' : 'Create card'}
+              </button>
+              <button
+                type="button"
+                disabled={savingCanvasCreate}
+                onClick={() => {
+                  setCanvasCreate(null);
+                  setCanvasCreateError(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

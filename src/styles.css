@@ -990,6 +990,74 @@ body {
   color: #8a8a8a;
 }
 
+/* A skill card's holders and the form that adds one. The card names the skill;
+   the rows on each sheet keep their own rank and chapter. */
+.node-drawer-skill-holders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+
+.node-drawer-holder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node-drawer-holder {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.node-drawer-holder-name {
+  color: #e8e8e8;
+}
+
+.node-drawer-holder-rank {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #3a3022;
+  color: #e8c47a;
+  font-size: 10px;
+}
+
+.node-drawer-holder-chapter {
+  margin-left: auto;
+  color: #8a8a8a;
+  font-size: 11px;
+  text-align: right;
+}
+
+.node-drawer-add-holder {
+  align-self: flex-start;
+  background: #0e639c;
+  border: none;
+  color: #fff;
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.node-drawer-add-holder:hover:not(:disabled) {
+  background: #1177bb;
+}
+
+.node-drawer-add-holder:disabled {
+  background: #333;
+  color: #777;
+  cursor: not-allowed;
+}
+
 .graph-toolbar {
   display: flex;
   align-items: center;
@@ -5674,4 +5742,143 @@ body {
 .skill-tree-details .skill-tree-delete {
   display: block;
   margin-top: 10px;
+}
+
+/* The full form behind a character, quest or skill card. It sits above the
+   board because creating the record and its card is one step. */
+.canvas-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.6);
+}
+
+.canvas-create-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: min(460px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  border: 1px solid #4a4a4a;
+  border-radius: 8px;
+  background: #252526;
+  color: #ddd;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.canvas-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.canvas-create-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #f0f0f0;
+}
+
+.canvas-create-close {
+  border: 0;
+  background: transparent;
+  color: #888;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.canvas-create-close:hover {
+  color: #ddd;
+}
+
+.canvas-create-note {
+  margin: 0 0 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #9aa4b2;
+}
+
+.canvas-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #9aa4b2;
+}
+
+.canvas-create-field input,
+.canvas-create-field select,
+.canvas-create-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #1e1e1e;
+  color: #ddd;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+}
+
+.canvas-create-field textarea {
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.canvas-create-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.canvas-create-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8a8a8a;
+}
+
+.canvas-create-error {
+  border: 1px solid #7a3b3b;
+  border-radius: 4px;
+  background: #3a2424;
+  color: #f0b8b8;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.canvas-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.canvas-create-actions button {
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #ccc;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.canvas-create-actions button[type='submit'] {
+  border-color: #3f5f8f;
+  background: #23304a;
+  color: #dbe6ff;
+}
+
+.canvas-create-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
