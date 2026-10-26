@@ -831,14 +831,20 @@ page that arrives late, and what it says when a filter matches nothing.
   toggle), `src/domains/<domain>/` for the command module and its types, the
   canvas card, the audit tab with its row and labels, progression chart,
   relations map, skill tree and the sheet's skill section, the Chapters tab with
-  its cast and note panels and the chapter logic behind it, and `src/lib/` for
-  small formatting helpers. Where a tab reads state nothing else uses, its
+  its cast and note panels and the chapter logic behind it, the Quests tab with
+  the ledger behind it, and `src/lib/` for small formatting helpers. Where a tab reads state nothing else uses, its
   domain module keeps it: the audit tab holds its own history window, filter and
   revert notices, and is handed the story, the current user and a way to reload
   the rest of the app; the skill section holds the open row and its draft
   fields, and is handed the rows, the labelled chapter and card choices and the
   writes, each answering whether the row was written so the form closes only on
-  a save that happened; `chapters.ts` works out the reading order, the numbering
+  a save that happened; the quest ledger holds its quest and reward drafts, its
+  status filter and its apply notices, writes the story's quests back through
+  the setter that owns them, and is handed the chapters, the faction cards, the
+  cast, the continuity warnings and the two reloads a payout reaches; the
+  badge map the chapter cards draw and the grouping of those warnings are plain
+  functions in `ledger.ts`, for the same reason as the chapter logic below;
+  `chapters.ts` works out the reading order, the numbering
   issues, the word totals, the timeline order, the notes grouped by chapter and
   the cast badges as plain functions, so the tab and the canvas cards read the
   same answers, and the panel keeps only the row-reorder interaction, because a
