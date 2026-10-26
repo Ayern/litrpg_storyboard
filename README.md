@@ -822,7 +822,12 @@ page that arrives late, and what it says when a filter matches nothing.
 
 - **`src/`** — React 19 + React Flow 11 single-window UI. All commands are called
   through `@tauri-apps/api/core`'s `invoke`; the argument names are camelCase and
-  Tauri maps them to the snake_case parameters of the Rust commands.
+  Tauri maps them to the snake_case parameters of the Rust commands. `App.tsx`
+  owns the story state, the handlers and the tab layout; the pieces that do not
+  need that state live beside it — `src/components/` for shared widgets (help
+  bubble, suggestion field, view toggle), `src/domains/<domain>/` for the canvas
+  card, audit row and labels, progression chart, relations map and skill tree
+  with their types, and `src/lib/` for small formatting helpers.
 - **`src-tauri/db`** — all SQL, models and migrations, in a crate of its own with
   no Tauri dependency, so its tests build without WebKitGTK or GTK. The connection
   is owned by a `Db` value managed as Tauri state. Every public method takes the lock
