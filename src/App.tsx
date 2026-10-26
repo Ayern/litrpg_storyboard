@@ -2642,6 +2642,8 @@ interface SkillTreeNodeData {
   tier: number;
   prerequisites: number;
   outcomes: number;
+  // Set while the open link form would close a loop through this skill.
+  inDraftLoop?: boolean;
   onSelect?: (skillId: string) => void;
 }
 
@@ -2649,14 +2651,23 @@ interface SkillTreeNodeData {
 // the counts say how many links arrive and leave without opening the panel.
 function SkillTreeNode({ data }: NodeProps<SkillTreeNodeData>) {
   return (
-    <div className={`skill-tree-node tier-${Math.min(data.tier + 1, 5)}`}>
+    <div
+      className={`skill-tree-node tier-${Math.min(data.tier + 1, 5)}${
+        data.inDraftLoop ? ' loop-warning' : ''
+      }`}
+      data-loop={data.inDraftLoop ? 'true' : undefined}
+    >
       <Handle type="target" position={Position.Left} />
       <button
         type="button"
         className="skill-tree-node-body"
         title={`${data.label}${
           data.rank ? ` (${data.rank})` : ''
-        } — ${data.characterName}. Click for its evolution links.`}
+        } — ${data.characterName}.${
+          data.inDraftLoop
+            ? ' Part of the chain the chosen link would close into a loop.'
+            : ''
+        } Click for its evolution links.`}
         onClick={() => data.onSelect?.(data.skillId)}
       >
         <span className="skill-tree-node-topline">
@@ -2851,6 +2862,46 @@ function SkillTreeView({
     return map;
   }, [characterNameById, tiers, visibleSkills]);
 
+  const selectedSkill = selectedSkillId ? skillById.get(selectedSkillId) ?? null : null;
+  const selectedEvolution = selectedEvolutionId
+    ? evolutions.find(evolution => evolution.id === selectedEvolutionId) ?? null
+    : null;
+
+  // The loop the open form would close, as the chain of names it would join: a
+  // new parent → child link closes a circle exactly when the child already
+  // reaches the parent. Walking the links here means the author sees what is in
+  // the way while choosing, not after a refusal.
+  const draftLoop = useMemo(() => {
+    if (!selectedSkill || !draft.otherId) return null;
+
+    const parentSkillId =
+      draft.mode === 'prerequisite' ? draft.otherId : selectedSkill.id;
+    const childSkillId =
+      draft.mode === 'prerequisite' ? selectedSkill.id : draft.otherId;
+    const chain = evolutionPath(evolutions, childSkillId, parentSkillId);
+
+    if (!chain) return null;
+
+    const ids = [...chain, childSkillId];
+
+    return { ids, names: ids.map(id => skillById.get(id)?.name ?? 'a skill in the trash') };
+  }, [draft.mode, draft.otherId, evolutions, selectedSkill, skillById]);
+
+  // The same chain as a lookup for the drawing: the skills it runs through and
+  // the links it follows, so the tree can mark them instead of leaving the
+  // warning in the panel alone.
+  const draftLoopIds = useMemo(() => new Set(draftLoop?.ids ?? []), [draftLoop]);
+  const draftLoopLinks = useMemo(() => {
+    const links = new Set<string>();
+    const ids = draftLoop?.ids ?? [];
+
+    for (let index = 0; index < ids.length - 1; index += 1) {
+      links.add(`${ids[index]}→${ids[index + 1]}`);
+    }
+
+    return links;
+  }, [draftLoop]);
+
   const flowNodes: Node<SkillTreeNodeData>[] = useMemo(
     () =>
       visibleSkills.map(skill => ({
@@ -2866,19 +2917,24 @@ function SkillTreeView({
           tier: tiers.get(skill.id) ?? 0,
           prerequisites: (incoming.get(skill.id) ?? []).length,
           outcomes: (outgoing.get(skill.id) ?? []).length,
+          inDraftLoop: draftLoopIds.has(skill.id),
           onSelect: id => {
             setSelectedEvolutionId(null);
             setSelectedSkillId(id);
           },
         },
+        className: draftLoopIds.has(skill.id) ? 'loop-warning' : undefined,
       })),
-    [characterNameById, incoming, outgoing, positions, tiers, visibleSkills]
+    [characterNameById, draftLoopIds, incoming, outgoing, positions, tiers, visibleSkills]
   );
 
   const flowEdges: Edge[] = useMemo(
     () =>
       visibleEvolutions.map(evolution => {
         const style = evolutionStyle(evolution.evolution_type);
+        const inLoop = draftLoopLinks.has(
+          `${evolution.parent_skill_id}→${evolution.child_skill_id}`
+        );
 
         return {
           id: evolution.id,
@@ -2886,49 +2942,27 @@ function SkillTreeView({
           target: evolution.child_skill_id,
           type: 'smoothstep',
           label: style.label,
-          labelStyle: { fill: style.color, fontSize: 10 },
+          labelStyle: { fill: inLoop ? '#e06c75' : style.color, fontSize: 10 },
           labelBgStyle: { fill: '#14161a', fillOpacity: 0.85 },
-          style: {
-            stroke: style.color,
-            strokeWidth: style.width,
-            strokeDasharray: style.dash,
-          },
+          ...(inLoop ? { className: 'loop-warning', animated: true } : {}),
+          style: inLoop
+            ? { stroke: '#e06c75', strokeWidth: 3, strokeDasharray: '4 3' }
+            : {
+                stroke: style.color,
+                strokeWidth: style.width,
+                strokeDasharray: style.dash,
+              },
           markerEnd: `url(#skill-tree-arrow-${evolution.evolution_type})`,
         };
       }),
-    [visibleEvolutions]
+    [draftLoopLinks, visibleEvolutions]
   );
-
-  const selectedSkill = selectedSkillId ? skillById.get(selectedSkillId) ?? null : null;
-  const selectedEvolution = selectedEvolutionId
-    ? evolutions.find(evolution => evolution.id === selectedEvolutionId) ?? null
-    : null;
 
   const selectSkill = (skillId: string) => {
     setSelectedEvolutionId(null);
     setSelectedSkillId(skillId);
     setDraft(current => ({ ...current, otherId: '' }));
   };
-
-  // The loop the open form would close, as the chain of names it would join: a
-  // new parent → child link closes a circle exactly when the child already
-  // reaches the parent. Walking the links here means the author sees what is in
-  // the way while choosing, not after a refusal.
-  const draftLoop = useMemo(() => {
-    if (!selectedSkill || !draft.otherId) return null;
-
-    const parentSkillId =
-      draft.mode === 'prerequisite' ? draft.otherId : selectedSkill.id;
-    const childSkillId =
-      draft.mode === 'prerequisite' ? selectedSkill.id : draft.otherId;
-    const chain = evolutionPath(evolutions, childSkillId, parentSkillId);
-
-    return chain
-      ? [...chain, childSkillId].map(
-          id => skillById.get(id)?.name ?? 'a skill in the trash'
-        )
-      : null;
-  }, [draft.mode, draft.otherId, evolutions, selectedSkill, skillById]);
 
   const addLink = async () => {
     if (!selectedSkill || !draft.otherId || draftLoop) return;
@@ -3336,8 +3370,9 @@ function SkillTreeView({
                 {draftLoop && (
                   <p className="skill-tree-cycle" role="status">
                     <strong>This link would close a loop:</strong>{' '}
-                    {draftLoop.join(' → ')}. Point the link at a later skill
-                    instead, or delete one of the links above.
+                    {draftLoop.names.join(' → ')}. The chain is marked on the tree.
+                    Point the link at a later skill instead, or delete one of the
+                    links above.
                   </p>
                 )}
                 <button
@@ -8911,9 +8946,31 @@ function App() {
 
           if (!castId || !characterId || !chapterId) continue;
 
+          // The cast row and the line that drew it are one fact, so a half that
+          // fails leaves the other where it was: the step stays in the history
+          // and can be run again as a whole instead of wedging on a duplicate or
+          // a missing row.
           await invoke('remove_chapter_cast_member', { id: castId, user: actor });
+
+          try {
+            await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          } catch (e) {
+            const again = await invoke<ChapterCastMember>('add_chapter_cast_member', {
+              chapterId,
+              characterId,
+              user: actor,
+            }).catch(() => null);
+
+            if (again) {
+              setStoryChapterCast(previous => [
+                ...previous.filter(row => row.id !== castId),
+                again,
+              ]);
+            }
+            throw e;
+          }
+
           setStoryChapterCast(previous => previous.filter(row => row.id !== castId));
-          await invoke('delete_edge', { id: entry.edge.id, user: actor });
           setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
 
           let currentCastId = castId;
@@ -8926,25 +8983,59 @@ function App() {
                 characterId,
                 user: actor,
               });
+
+              try {
+                await invoke('restore_deleted', {
+                  id: entry.edge.id,
+                  kind: 'edge',
+                  user: actor,
+                });
+              } catch (e) {
+                // The cast member is back but its line is not, so put the row
+                // away again rather than leave the two halves disagreeing.
+                await invoke('remove_chapter_cast_member', {
+                  id: again.id,
+                  user: actor,
+                }).catch(() => {});
+                throw e;
+              }
+
               currentCastId = again.id;
               setStoryChapterCast(previous =>
                 previous.some(row => row.id === again.id) ? previous : [...previous, again]
               );
-              await invoke('restore_deleted', {
-                id: entry.edge.id,
-                kind: 'edge',
-                user: actor,
-              });
+              setEdges(previous =>
+                previous.some(edge => edge.id === entry.edge.id)
+                  ? previous
+                  : [...previous, entry.edge]
+              );
             },
             redo: async () => {
-              await invoke('remove_chapter_cast_member', {
-                id: currentCastId,
-                user: actor,
-              });
+              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+
+              try {
+                await invoke('remove_chapter_cast_member', {
+                  id: currentCastId,
+                  user: actor,
+                });
+              } catch (e) {
+                await invoke('restore_deleted', {
+                  id: entry.edge.id,
+                  kind: 'edge',
+                  user: actor,
+                }).catch(() => {});
+                setEdges(previous =>
+                  previous.some(edge => edge.id === entry.edge.id)
+                    ? previous
+                    : [...previous, entry.edge]
+                );
+                throw e;
+              }
+
               setStoryChapterCast(previous =>
                 previous.filter(row => row.id !== currentCastId)
               );
-              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+              setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
             },
           });
         } else if (entry.kind === 'relation') {

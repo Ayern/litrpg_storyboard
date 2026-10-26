@@ -474,6 +474,20 @@ describe('the skill tree view', () => {
 
     await user.click(add);
     expect(lastCall('add_skill_evolution')).toBeUndefined();
+
+    // The chain is marked on the tree itself: both skills, and the link between.
+    const marked = Array.from(document.querySelectorAll('[data-loop="true"]'));
+    expect(marked).toHaveLength(2);
+    expect(marked.map(node => node.textContent).join(' ')).toContain('Ember');
+    expect(marked.map(node => node.textContent).join(' ')).toContain('Flame');
+    expect(screen.getByTestId('edge-e1')).toHaveAttribute('data-stroke', '#e06c75');
+
+    // Choosing nothing takes the warning back off the drawing.
+    await user.selectOptions(screen.getByLabelText('Linked skill'), '');
+
+    expect(screen.queryByText(/would close a loop/)).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-loop="true"]')).toHaveLength(0);
+    expect(screen.getByTestId('edge-e1')).toHaveAttribute('data-stroke', '#5b8def');
   });
 
   it('reports a loop the database refuses when the board is stale', async () => {

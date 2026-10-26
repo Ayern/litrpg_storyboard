@@ -273,6 +273,9 @@ let relationSeq = 0;
 let castSeq = 0;
 let skillSeq = 0;
 let skills: SkillRow[] = [];
+// Failures a test can ask for, so the two halves of a step can be made to disagree.
+let failNextEdgeDelete = false;
+let failNextEdgeRestore = false;
 let skillEventSeq = 0;
 let skillEvents: SkillEventRow[] = [];
 let skillEvolutionSeq = 0;
@@ -302,6 +305,8 @@ beforeEach(() => {
   skillSeq = 0;
   skillEventSeq = 0;
   skillEvolutionSeq = 0;
+  failNextEdgeDelete = false;
+  failNextEdgeRestore = false;
 
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -345,6 +350,11 @@ beforeEach(() => {
         return { ...edge, updated_at: timestamp() };
       }
       case 'delete_edge': {
+        if (failNextEdgeDelete) {
+          failNextEdgeDelete = false;
+          throw new Error('the edge could not be deleted');
+        }
+
         const edge = edges.find(row => row.id === args.id);
         if (edge) {
           edges = edges.filter(row => row.id !== edge.id);
@@ -354,6 +364,10 @@ beforeEach(() => {
       }
       case 'restore_deleted': {
         if (args.kind !== 'edge') return null;
+        if (failNextEdgeRestore) {
+          failNextEdgeRestore = false;
+          throw new Error('the edge could not be restored');
+        }
         const edge = deletedEdges.find(row => row.id === args.id);
         if (edge) {
           deletedEdges = deletedEdges.filter(row => row.id !== edge.id);
@@ -643,6 +657,55 @@ describe('connection actions', () => {
       })
     );
     expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+
+    // The line is drawn again without reopening the story, not only in the file.
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+  });
+
+  it('keeps the cast row and its line together when a removal cannot finish', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect character to chapter' }));
+    await waitFor(() => expect(chapterCast).toHaveLength(1));
+
+    failNextEdgeDelete = true;
+    await user.click(screen.getByRole('button', { name: 'remove e1' }));
+    const remove = await screen.findByRole('dialog', { name: 'Remove connection' });
+    await user.click(within(remove).getByRole('button', { name: 'Remove' }));
+
+    // The line could not be deleted, so the row it stood for is written back:
+    // neither half happened.
+    expect(await screen.findByText(/Could not remove the connection/)).toBeInTheDocument();
+    await waitFor(() => expect(chapterCast).toHaveLength(1));
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_chapter_cast_member')
+    ).toHaveLength(2);
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+  });
+
+  it('puts the cast member back when its undo cannot restore the line', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect character to chapter' }));
+    await waitFor(() => expect(chapterCast).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: 'remove e1' }));
+    const remove = await screen.findByRole('dialog', { name: 'Remove connection' });
+    await user.click(within(remove).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(chapterCast).toHaveLength(0));
+
+    failNextEdgeRestore = true;
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    // The line could not come back, so the row the undo wrote is taken away again
+    // and the step waits in the history as a whole.
+    expect(await screen.findByText(/Could not undo/)).toBeInTheDocument();
+    await waitFor(() => expect(chapterCast).toHaveLength(0));
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(chapterCast).toHaveLength(1));
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
   });
 
   it('turns a skill-to-character connection into a holder on the sheet, and undoes both together', async () => {

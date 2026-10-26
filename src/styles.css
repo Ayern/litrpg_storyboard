@@ -5633,6 +5633,18 @@ body {
   padding: 4px 6px;
 }
 
+/* While a link would close a loop, the skills it would run through are marked on
+   the tree itself, so the warning points at the chain and not only at the form. */
+.skill-tree-node.loop-warning {
+  border-color: #e06c75;
+  background: #33242a;
+  box-shadow: 0 0 0 1px rgba(224, 108, 117, 0.55);
+}
+
+.skill-tree-node.loop-warning .skill-tree-node-name {
+  color: #f0b8b8;
+}
+
 /* A link that would close a loop is stopped here, with the chain it would join,
    rather than after the save has been refused. */
 .skill-tree-cycle {

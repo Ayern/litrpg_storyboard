@@ -368,9 +368,11 @@ clicking a line shows its chapter, required rank and notes with **Delete link**.
 The link form says which loop it would close while the other end is being
 chosen — it walks the links forward from the skill that would become the child
 and names the chain, such as *Ember → Flame → Ember*, and **Add link** stays
-disabled until a later skill is picked. A loop the database alone can see, because
-another window recorded a link this board has not read, still comes back as a
-refusal in the same panel.
+disabled until a later skill is picked. The chain is drawn on the tree too: its
+skills take a red edge and background, and the links between them turn red and
+dash-drawn, so the warning points at the picture and not only at the panel. A loop
+the database alone can see, because another window recorded a link this board has
+not read, still comes back as a refusal in the same panel.
 The character filter follows the tree outwards, so a fusion can pull another
 cast member's skill into view. On a sheet, each skill card names what it
 **Requires** and what it **Evolves into**. Deleting a skill deletes its links;
@@ -496,6 +498,10 @@ move, accepting the rename offer, or creating and deleting a node or connection.
 `Ctrl+Shift+Z` or Redo puts it back. Each step runs the ordinary command in the
 opposite direction, so an undo appears in the Audit tab like any other change
 rather than quietly rewriting the database, and a short notice names what moved.
+A step that writes two halves — a cast row with the line that drew it, a relation
+with its line, a skill with its hold — either finishes or leaves neither behind:
+if the second write is refused, the first is put back and the step stays in the
+history, so a retry starts from where it did rather than from half a change.
 The stack holds the last 50 actions of the open story and is emptied when another
 story is opened or something is purged; inside a text field `Ctrl+Z` is left to
 the text being typed.
