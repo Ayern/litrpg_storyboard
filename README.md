@@ -365,6 +365,12 @@ for fusions, dashed purple for mutations and dashed teal for branches, with a
 legend, a character filter and a detail panel. Clicking a skill lists its
 prerequisites and outcomes and offers **Add prerequisite** or **Add outcome**;
 clicking a line shows its chapter, required rank and notes with **Delete link**.
+The link form says which loop it would close while the other end is being
+chosen — it walks the links forward from the skill that would become the child
+and names the chain, such as *Ember → Flame → Ember*, and **Add link** stays
+disabled until a later skill is picked. A loop the database alone can see, because
+another window recorded a link this board has not read, still comes back as a
+refusal in the same panel.
 The character filter follows the tree outwards, so a fusion can pull another
 cast member's skill into view. On a sheet, each skill card names what it
 **Requires** and what it **Evolves into**. Deleting a skill deletes its links;

@@ -2597,6 +2597,43 @@ function evolutionStyle(type: string) {
   };
 }
 
+// The shortest chain of links from one skill to another, as the ids to walk, or
+// null when there is no way through. A new link would close a loop exactly when
+// its child can already be walked back to its parent, so the chain it would join
+// is what the form names before the write is refused.
+function evolutionPath(
+  evolutions: Pick<SkillEvolution, 'parent_skill_id' | 'child_skill_id'>[],
+  fromId: string,
+  toId: string
+): string[] | null {
+  const children = new Map<string, string[]>();
+
+  for (const evolution of evolutions) {
+    children.set(evolution.parent_skill_id, [
+      ...(children.get(evolution.parent_skill_id) ?? []),
+      evolution.child_skill_id,
+    ]);
+  }
+
+  const seen = new Set([fromId]);
+  const queue: string[][] = [[fromId]];
+
+  while (queue.length > 0) {
+    const path = queue.shift() as string[];
+    const last = path[path.length - 1];
+
+    for (const next of children.get(last) ?? []) {
+      if (next === toId) return [...path, next];
+      if (seen.has(next)) continue;
+
+      seen.add(next);
+      queue.push([...path, next]);
+    }
+  }
+
+  return null;
+}
+
 interface SkillTreeNodeData {
   skillId: string;
   label: string;
@@ -2873,8 +2910,28 @@ function SkillTreeView({
     setDraft(current => ({ ...current, otherId: '' }));
   };
 
+  // The loop the open form would close, as the chain of names it would join: a
+  // new parent → child link closes a circle exactly when the child already
+  // reaches the parent. Walking the links here means the author sees what is in
+  // the way while choosing, not after a refusal.
+  const draftLoop = useMemo(() => {
+    if (!selectedSkill || !draft.otherId) return null;
+
+    const parentSkillId =
+      draft.mode === 'prerequisite' ? draft.otherId : selectedSkill.id;
+    const childSkillId =
+      draft.mode === 'prerequisite' ? selectedSkill.id : draft.otherId;
+    const chain = evolutionPath(evolutions, childSkillId, parentSkillId);
+
+    return chain
+      ? [...chain, childSkillId].map(
+          id => skillById.get(id)?.name ?? 'a skill in the trash'
+        )
+      : null;
+  }, [draft.mode, draft.otherId, evolutions, selectedSkill, skillById]);
+
   const addLink = async () => {
-    if (!selectedSkill || !draft.otherId) return;
+    if (!selectedSkill || !draft.otherId || draftLoop) return;
 
     const parentSkillId =
       draft.mode === 'prerequisite' ? draft.otherId : selectedSkill.id;
@@ -3276,10 +3333,22 @@ function SkillTreeView({
                     if (event.key === 'Enter') void addLink();
                   }}
                 />
+                {draftLoop && (
+                  <p className="skill-tree-cycle" role="status">
+                    <strong>This link would close a loop:</strong>{' '}
+                    {draftLoop.join(' → ')}. Point the link at a later skill
+                    instead, or delete one of the links above.
+                  </p>
+                )}
                 <button
                   type="button"
                   className="skill-tree-add"
-                  disabled={saving || !draft.otherId}
+                  disabled={saving || !draft.otherId || Boolean(draftLoop)}
+                  title={
+                    draftLoop
+                      ? 'Links point one way only; this one would lead back to where it started'
+                      : 'Record this link on both skills'
+                  }
                   onClick={() => void addLink()}
                 >
                   {saving ? 'Adding…' : 'Add link'}

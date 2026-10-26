@@ -5633,6 +5633,23 @@ body {
   padding: 4px 6px;
 }
 
+/* A link that would close a loop is stopped here, with the chain it would join,
+   rather than after the save has been refused. */
+.skill-tree-cycle {
+  margin: 0;
+  border: 1px solid #7a5f34;
+  border-radius: 4px;
+  background: #332a1c;
+  color: #e8cf9f;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 6px 8px;
+}
+
+.skill-tree-cycle strong {
+  color: #f0d9ab;
+}
+
 .skill-tree-add {
   border: 1px solid #3f5f8f;
   border-radius: 4px;

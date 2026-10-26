@@ -447,13 +447,43 @@ describe('the skill tree view', () => {
     expect(screen.queryByTestId('edge-e1')).not.toBeInTheDocument();
   });
 
-  it('reports a loop the database refuses', async () => {
+  it('names the loop a new link would close before it is saved', async () => {
     skills = [
       skill('skill-ember', 'char-1', 'Ember', 'n1'),
       skill('skill-flame', 'char-1', 'Flame', 'n2'),
     ];
     evolutions = [evolution('e1', 'skill-ember', 'skill-flame', 'upgrade')];
 
+    const user = await openSkillTrees();
+
+    // Ember becomes Flame already, so Flame → Ember would lead straight back.
+    await user.click(await screen.findByTestId('node-skill-ember'));
+    await user.selectOptions(screen.getByLabelText('Linked skill'), 'skill-flame');
+
+    const details = screen.getByRole('complementary', { name: 'Skill tree details' });
+    expect(within(details).getByRole('status')).toHaveTextContent(
+      'This link would close a loop: Ember → Flame → Ember'
+    );
+
+    const add = within(details).getByRole('button', { name: 'Add link' });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAttribute(
+      'title',
+      'Links point one way only; this one would lead back to where it started'
+    );
+
+    await user.click(add);
+    expect(lastCall('add_skill_evolution')).toBeUndefined();
+  });
+
+  it('reports a loop the database refuses when the board is stale', async () => {
+    skills = [
+      skill('skill-ember', 'char-1', 'Ember', 'n1'),
+      skill('skill-flame', 'char-1', 'Flame', 'n2'),
+    ];
+
+    // Another window recorded the link this board has not read yet, so the form
+    // lets the write through and the refusal is the only thing that can say so.
     invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
       if (command === 'add_skill_evolution') {
         throw new Error('“Flame” already leads to “Ember”, so this link would close a loop');
@@ -469,7 +499,8 @@ describe('the skill tree view', () => {
         case 'get_story_skills':
           return skills.map(row => ({ ...row }));
         case 'get_story_skill_evolutions':
-          return evolutions.map(row => ({ ...row }));
+          // This board has not read the link that makes the loop yet.
+          return [];
         default:
           return [];
       }
