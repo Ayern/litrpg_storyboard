@@ -26,6 +26,12 @@ export function milestoneStatChanges(
   return [];
 }
 
+// Level-ups are named by level rather than id wherever one is chosen, so a
+// linked skill event reads the way the author thinks of it.
+export function milestoneLabel(milestone: CharacterLevelMilestone): string {
+  return `Level ${milestone.level}${milestone.is_debuff ? ' (penalty)' : ''}`;
+}
+
 export function signedNumber(value: number): string {
   return value > 0 ? `+${value}` : String(value);
 }

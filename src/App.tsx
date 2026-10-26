@@ -58,12 +58,18 @@ import type {
   CharacterChapterState,
 } from './domains/narrative/types';
 import { ProgressionChart } from './domains/progression/ProgressionChart';
-import { milestoneStatChanges, statChangeText } from './domains/progression/helpers';
+import {
+  milestoneLabel,
+  milestoneStatChanges,
+  statChangeText,
+} from './domains/progression/helpers';
 import type { ProgressionChartSeries, ProgressionMetric } from './domains/progression/types';
 import type { Quest, QuestReward, QuestWarning } from './domains/quests/types';
 import { RelationsMap } from './domains/relations/RelationsMap';
+import { SkillsSection } from './domains/skills/SkillsSection';
+import type { SkillDraft, SkillEventDraft } from './domains/skills/SkillsSection';
 import { SkillTreeView } from './domains/skills/SkillTreeView';
-import type { CharacterSkillEvent, SkillEventKind, SkillEvolutionInput } from './domains/skills/types';
+import type { CharacterSkillEvent, SkillEvolutionInput } from './domains/skills/types';
 import type {
   ChapterContinuityFlag,
   ContinuityPart,
@@ -830,12 +836,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Level-ups are named by level rather than id wherever one is chosen, so a
-// linked skill event reads the way the author thinks of it.
-function milestoneLabel(milestone: CharacterLevelMilestone): string {
-  return `Level ${milestone.level}${milestone.is_debuff ? ' (penalty)' : ''}`;
-}
-
 function statChangesFromMilestone(milestone: CharacterLevelMilestone): LevelStatChangeDraft[] {
   return milestoneStatChanges(milestone).map(change => ({
     statName: change.stat_name,
@@ -1204,24 +1204,6 @@ function App() {
   const [currencyNameDraft, setCurrencyNameDraft] = useState('');
   const [currencyAmountDraft, setCurrencyAmountDraft] = useState('0');
 
-  // The skill form, one row open at a time like stats and attributes.
-  const [newSkillName, setNewSkillName] = useState('');
-  const [newSkillRank, setNewSkillRank] = useState('');
-  const [newSkillEffect, setNewSkillEffect] = useState('');
-  const [newSkillChapterId, setNewSkillChapterId] = useState('');
-  const [newSkillNodeId, setNewSkillNodeId] = useState('');
-  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
-  const [skillNameDraft, setSkillNameDraft] = useState('');
-  const [skillRankDraft, setSkillRankDraft] = useState('');
-  const [skillEffectDraft, setSkillEffectDraft] = useState('');
-  const [skillChapterDraft, setSkillChapterDraft] = useState('');
-  const [skillNodeDraft, setSkillNodeDraft] = useState('');
-  const [addingSkillEventFor, setAddingSkillEventFor] = useState<string | null>(null);
-  const [editingSkillEventId, setEditingSkillEventId] = useState<string | null>(null);
-  const [skillEventKindDraft, setSkillEventKindDraft] = useState<SkillEventKind>('upgraded');
-  const [skillEventChapterDraft, setSkillEventChapterDraft] = useState('');
-  const [skillEventRankDraft, setSkillEventRankDraft] = useState('');
-  const [skillEventMilestoneDraft, setSkillEventMilestoneDraft] = useState('');
   // The level milestone form, one row open at a time. XP is optional, and a
   // level-up can award as many stat changes as the story needs.
   const [editingLevelMilestoneId, setEditingLevelMilestoneId] = useState<string | null>(null);
@@ -3817,9 +3799,6 @@ function App() {
         const relation = storyRelations.find(entry => entry.id === target.relationId);
 
         setEditingLevelMilestoneId(null);
-        setEditingSkillId(null);
-        setEditingSkillEventId(null);
-        setAddingSkillEventFor(null);
         setEditingStandingId(null);
 
         if (relation) {
@@ -3835,9 +3814,6 @@ function App() {
         );
 
         setEditingLevelMilestoneId(null);
-        setEditingSkillId(null);
-        setEditingSkillEventId(null);
-        setAddingSkillEventFor(null);
         setEditingRelationId(null);
 
         if (standing) {
@@ -3852,9 +3828,6 @@ function App() {
         const milestone = storyLevelMilestones.find(entry => entry.id === target.milestoneId);
 
         if (milestone) {
-          setAddingSkillEventFor(null);
-          setEditingSkillEventId(null);
-          setEditingSkillId(null);
           setEditingLevelMilestoneId(milestone.id);
           setLevelMilestoneLevelDraft(String(milestone.level));
           setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
@@ -3866,30 +3839,11 @@ function App() {
         const event = storySkillEvents.find(entry => entry.id === target.eventId);
         focusId = target.eventId;
 
-        if (event) {
-          setEditingLevelMilestoneId(null);
-          setEditingSkillId(null);
-          setAddingSkillEventFor(null);
-          setEditingSkillEventId(event.id);
-          setSkillEventKindDraft(event.kind);
-          setSkillEventChapterDraft(event.chapter_id ?? '');
-          setSkillEventRankDraft(event.rank ?? '');
-          setSkillEventMilestoneDraft(event.milestone_id ?? '');
-        }
+        if (event) setEditingLevelMilestoneId(null);
       } else {
         const skill = storySkills.find(entry => entry.id === target.skillId);
 
-        if (skill) {
-          setEditingLevelMilestoneId(null);
-          setAddingSkillEventFor(null);
-          setEditingSkillEventId(null);
-          setEditingSkillId(skill.id);
-          setSkillNameDraft(skill.name);
-          setSkillRankDraft(skill.rank ?? '');
-          setSkillEffectDraft(skill.effect ?? '');
-          setSkillChapterDraft(skill.chapter_id ?? '');
-          setSkillNodeDraft(skill.node_id ?? '');
-        }
+        if (skill) setEditingLevelMilestoneId(null);
       }
 
       setFocusedProgression({ kind: target.kind, id: focusId });
@@ -6517,72 +6471,58 @@ function App() {
     setCharacterSkills(update);
   };
 
-  const startSkillEdit = (skill: CharacterSkill) => {
-    setCharacterError(null);
-    setAddingSkillEventFor(null);
-    setEditingSkillEventId(null);
-    setEditingSkillId(skill.id);
-    setSkillNameDraft(skill.name);
-    setSkillRankDraft(skill.rank ?? '');
-    setSkillEffectDraft(skill.effect ?? '');
-    setSkillChapterDraft(skill.chapter_id ?? '');
-    setSkillNodeDraft(skill.node_id ?? '');
-  };
-
-  const saveSkill = async (skill: CharacterSkill) => {
-    const name = skillNameDraft.trim();
-
-    if (!name) {
-      setCharacterError('A skill needs a name — delete it to remove it.');
-      return;
-    }
-
+  // The sheet's skill form is the skills domain's own module; these writes stay
+  // here, where the card on the canvas and the audit log are. Each answers
+  // whether the row was written, so the form closes only on a save that
+  // happened.
+  const saveSkill = async (
+    skill: CharacterSkill,
+    input: SkillDraft
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
       const updated: CharacterSkill = await skillsApi.updateSkill(
         skill.id,
-        name,
-        skillRankDraft.trim() || null,
-        skillEffectDraft.trim() || null,
-        skillChapterDraft || null,
-        skillNodeDraft || null,
+        input.name,
+        input.rank,
+        input.effect,
+        input.chapterId,
+        input.nodeId,
         actor
       );
 
       applySharedSkillEdit(updated, skill);
-      setEditingSkillId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save skill:', e);
       setCharacterError(`Could not save skill: ${String(e)}`);
+      return false;
     }
   };
 
-  const addSkill = async () => {
-    if (!selectedCharacterId || !newSkillName.trim()) return;
+  const addSkill = async (input: SkillDraft): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
     setCharacterError(null);
 
     try {
       const saved: CharacterSkill = await skillsApi.addSkill(
         selectedCharacterId,
-        newSkillName.trim(),
-        newSkillRank.trim() || null,
-        newSkillEffect.trim() || null,
-        newSkillChapterId || null,
-        newSkillNodeId || null,
+        input.name,
+        input.rank,
+        input.effect,
+        input.chapterId,
+        input.nodeId,
         actor
       );
 
       applySkill(saved);
-      setNewSkillName('');
-      setNewSkillRank('');
-      setNewSkillEffect('');
-      setNewSkillChapterId('');
-      setNewSkillNodeId('');
+      return true;
     } catch (e) {
       console.error('Failed to add skill:', e);
       setCharacterError(`Could not add skill: ${String(e)}`);
+      return false;
     }
   };
 
@@ -6644,7 +6584,7 @@ function App() {
     }
   };
 
-  const removeSkill = async (skill: CharacterSkill) => {
+  const removeSkill = async (skill: CharacterSkill): Promise<boolean> => {
     setCharacterError(null);
 
     // The canvas line that put this skill on the sheet. A skill typed in by hand
@@ -6680,11 +6620,6 @@ function App() {
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
         if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
       }
-
-      if (editingSkillEventId && storySkillEvents.some(event => event.id === editingSkillEventId && event.skill_id === skill.id)) {
-        cancelSkillEventEdit();
-      }
-      setEditingSkillId(null);
 
       // The row is deleted for good, so a redo writes it again and remembers the
       // id it was given; the edge is in the trash and can simply be restored.
@@ -6797,9 +6732,12 @@ function App() {
           }
         },
       });
+
+      return true;
     } catch (e) {
       console.error('Failed to delete skill:', e);
       setCharacterError(`Could not delete skill: ${String(e)}`);
+      return false;
     }
   };
 
@@ -6848,66 +6786,54 @@ function App() {
     );
   }, []);
 
-  const startAddSkillEvent = (skillId: string) => {
-    setCharacterError(null);
-    setEditingSkillId(null);
-    setAddingSkillEventFor(skillId);
-    setEditingSkillEventId(null);
-    setSkillEventKindDraft('upgraded');
-    setSkillEventChapterDraft('');
-    setSkillEventRankDraft('');
-    setSkillEventMilestoneDraft('');
-  };
-
-  const startSkillEventEdit = (event: CharacterSkillEvent) => {
-    setCharacterError(null);
-    setEditingSkillId(null);
-    setAddingSkillEventFor(null);
-    setEditingSkillEventId(event.id);
-    setSkillEventKindDraft(event.kind);
-    setSkillEventChapterDraft(event.chapter_id ?? '');
-    setSkillEventRankDraft(event.rank ?? '');
-    setSkillEventMilestoneDraft(event.milestone_id ?? '');
-  };
-
-  const cancelSkillEventEdit = () => {
-    setAddingSkillEventFor(null);
-    setEditingSkillEventId(null);
-    setCharacterError(null);
-  };
-
-  const saveSkillEvent = async (skillId: string, eventId: string | null) => {
+  const saveSkillEvent = async (
+    skillId: string,
+    eventId: string | null,
+    input: SkillEventDraft
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
-      const kind = skillEventKindDraft;
-      const chapterId = skillEventChapterDraft || null;
-      const rank = kind === 'sacrificed' ? null : skillEventRankDraft.trim() || null;
-      const milestoneId = skillEventMilestoneDraft || null;
       // Editing writes the row that is open; adding writes a new one, which is
       // why the two commands take different ids for the same fields.
       const saved: CharacterSkillEvent = eventId
-        ? await skillsApi.updateSkillEvent(eventId, kind, chapterId, rank, milestoneId, actor)
-        : await skillsApi.addSkillEvent(skillId, kind, chapterId, rank, milestoneId, actor);
+        ? await skillsApi.updateSkillEvent(
+            eventId,
+            input.kind,
+            input.chapterId,
+            input.rank,
+            input.milestoneId,
+            actor
+          )
+        : await skillsApi.addSkillEvent(
+            skillId,
+            input.kind,
+            input.chapterId,
+            input.rank,
+            input.milestoneId,
+            actor
+          );
 
       applySkillEvent(saved);
-      cancelSkillEventEdit();
+      return true;
     } catch (e) {
       console.error('Failed to save a skill event:', e);
       setCharacterError(`Could not save the skill event: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeSkillEvent = async (event: CharacterSkillEvent) => {
+  const removeSkillEvent = async (event: CharacterSkillEvent): Promise<boolean> => {
     setCharacterError(null);
 
     try {
       await skillsApi.deleteSkillEvent(event.id, actor);
       setStorySkillEvents(previous => previous.filter(other => other.id !== event.id));
-      if (editingSkillEventId === event.id) cancelSkillEventEdit();
+      return true;
     } catch (e) {
       console.error('Failed to delete a skill event:', e);
       setCharacterError(`Could not delete the skill event: ${String(e)}`);
+      return false;
     }
   };
 
@@ -9693,11 +9619,20 @@ function App() {
     [nodes]
   );
 
-  const skillCardChoices = useMemo(
+  // The skills domain names the chapters and the skill cards a skill can point
+  // at, so the sheet hands it labelled choices rather than canvas nodes.
+  const skillChapterOptions = useMemo(
+    () =>
+      chapterChoices.map(choice => ({ id: choice.id, label: choice.data.label })),
+    [chapterChoices]
+  );
+
+  const skillCardOptions = useMemo(
     () =>
       nodes
         .filter(node => node.data.nodeType === 'skill')
-        .sort((a, b) => a.data.label.localeCompare(b.data.label)),
+        .sort((a, b) => a.data.label.localeCompare(b.data.label))
+        .map(node => ({ id: node.id, label: node.data.label })),
     [nodes]
   );
 
@@ -10273,59 +10208,6 @@ function App() {
             a.id.localeCompare(b.id)
         ),
     [storyCharacterProgress, selectedCharacterId, chapterSeqById]
-  );
-
-  const skillEventsBySkill = useMemo(() => {
-    const grouped = new Map<string, CharacterSkillEvent[]>();
-
-    for (const event of storySkillEvents) {
-      grouped.set(event.skill_id, [...(grouped.get(event.skill_id) ?? []), event]);
-    }
-
-    for (const events of grouped.values()) {
-      events.sort(
-        (a, b) =>
-          (chapterSeqById.get(a.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) -
-            (chapterSeqById.get(b.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) ||
-          a.created_at.localeCompare(b.created_at) ||
-          a.id.localeCompare(b.id)
-      );
-    }
-
-    return grouped;
-  }, [storySkillEvents, chapterSeqById]);
-
-  // The two sides of every evolution, grouped once so a sheet's skill cards can
-  // name what came before and what comes next without searching the list twice.
-  const skillEvolutionByChild = useMemo(() => {
-    const grouped = new Map<string, SkillEvolution[]>();
-
-    for (const evolution of storySkillEvolutions) {
-      grouped.set(evolution.child_skill_id, [
-        ...(grouped.get(evolution.child_skill_id) ?? []),
-        evolution,
-      ]);
-    }
-
-    return grouped;
-  }, [storySkillEvolutions]);
-
-  const skillEvolutionByParent = useMemo(() => {
-    const grouped = new Map<string, SkillEvolution[]>();
-
-    for (const evolution of storySkillEvolutions) {
-      grouped.set(evolution.parent_skill_id, [
-        ...(grouped.get(evolution.parent_skill_id) ?? []),
-        evolution,
-      ]);
-    }
-
-    return grouped;
-  }, [storySkillEvolutions]);
-
-  const skillNameById = useMemo(
-    () => new Map(storySkills.map(skill => [skill.id, skill.name])),
-    [storySkills]
   );
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
@@ -13537,455 +13419,27 @@ function App() {
                       {/* Skills are rows of their own: a rank and an effect are
                           the author's words, and the chapter is where it was
                           learned. A skill card can name its holders too. */}
-                      <div className="skill-section">
-                        <div className="character-section-head">
-                          <h4 className="character-section-heading">Skills</h4>
-                          <HelpTip label="skill cards and the sheets that hold them">
-                            A skill’s name, rank and effect belong to the skill itself,
-                            not to one holder. A card and every sheet that holds it
-                            show the same values, so editing the card reaches all of
-                            them at once — as one undo step — and the sheet’s links say
-                            what it grew out of and what it becomes.
-                          </HelpTip>
-                        </div>
-
-                        <div className="skill-list">
-                          {characterSkills.length === 0 && (
-                            <div className="empty">
-                              No skills yet — add one below.
-                            </div>
-                          )}
-
-                          {characterSkills.map(skill => {
-                            const chapter = chapterChoices.find(
-                              choice => choice.id === skill.chapter_id
-                            );
-                            const card = skillCardChoices.find(
-                              choice => choice.id === skill.node_id
-                            );
-                            const events = skillEventsBySkill.get(skill.id) ?? [];
-                            const prerequisites = skillEvolutionByChild.get(skill.id) ?? [];
-                            const outcomes = skillEvolutionByParent.get(skill.id) ?? [];
-                            const skillFocused =
-                              focusedProgression?.kind === 'skill' &&
-                              focusedProgression.id === skill.id;
-                            const renderEventForm = (event: CharacterSkillEvent | null) => (
-                              <div className="skill-event-editor">
-                                <select
-                                  aria-label="Skill event kind"
-                                  title="What happened to this skill in that chapter"
-                                  value={skillEventKindDraft}
-                                  onChange={(e) =>
-                                    setSkillEventKindDraft(e.target.value as SkillEventKind)
-                                  }
-                                >
-                                  <option value="upgraded">Upgraded</option>
-                                  <option value="used">Used</option>
-                                  <option value="sacrificed">Sacrificed or lost</option>
-                                </select>
-                                <select
-                                  aria-label="Skill event chapter"
-                                  title="The chapter where this happened"
-                                  value={skillEventChapterDraft}
-                                  onChange={(e) => setSkillEventChapterDraft(e.target.value)}
-                                >
-                                  <option value="">No chapter</option>
-                                  {skillEventChapterDraft &&
-                                    !chapterChoices.some(
-                                      choice => choice.id === skillEventChapterDraft
-                                    ) && (
-                                      <option value={skillEventChapterDraft}>
-                                        Chapter in the trash
-                                      </option>
-                                    )}
-                                  {chapterChoices.map(choice => (
-                                    <option key={choice.id} value={choice.id}>
-                                      {choice.data.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <select
-                                  aria-label="Skill event level-up"
-                                  title="The level-up this change came with, if any"
-                                  value={skillEventMilestoneDraft}
-                                  onChange={(e) => {
-                                    const milestoneId = e.target.value;
-                                    setSkillEventMilestoneDraft(milestoneId);
-                                    // A skill change shares its level-up's chapter,
-                                    // so picking the level-up fills the chapter in.
-                                    const milestone = selectedLevelMilestones.find(
-                                      entry => entry.id === milestoneId
-                                    );
-                                    if (milestone?.chapter_id) {
-                                      setSkillEventChapterDraft(milestone.chapter_id);
-                                    }
-                                  }}
-                                >
-                                  <option value="">No level-up</option>
-                                  {skillEventMilestoneDraft &&
-                                    !selectedLevelMilestones.some(
-                                      milestone => milestone.id === skillEventMilestoneDraft
-                                    ) && (
-                                      <option value={skillEventMilestoneDraft}>
-                                        Level-up not on this sheet
-                                      </option>
-                                    )}
-                                  {selectedLevelMilestones.map(milestone => (
-                                    <option key={milestone.id} value={milestone.id}>
-                                      {milestoneLabel(milestone)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  aria-label="Skill event rank"
-                                  placeholder="Rank (optional)"
-                                  title="The rank reached or used; a sacrifice has none"
-                                  disabled={skillEventKindDraft === 'sacrificed'}
-                                  value={
-                                    skillEventKindDraft === 'sacrificed'
-                                      ? ''
-                                      : skillEventRankDraft
-                                  }
-                                  onChange={(e) => setSkillEventRankDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') saveSkillEvent(skill.id, event?.id ?? null);
-                                    if (e.key === 'Escape') cancelSkillEventEdit();
-                                  }}
-                                />
-                                <div className="skill-event-actions">
-                                  <button
-                                    title={`Save this change to ${skill.name}`}
-                                    onClick={() => saveSkillEvent(skill.id, event?.id ?? null)}
-                                  >
-                                    Save event
-                                  </button>
-                                  <button
-                                    title="Leave this skill event as it was"
-                                    onClick={cancelSkillEventEdit}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            );
-
-                            return (
-                              <div
-                                key={skill.id}
-                                className={`skill-row${skillFocused ? ' progression-row-focused' : ''}`}
-                                data-progression={`skill-${skill.id}`}
-                              >
-                                <div className="skill-row-head">
-                                {editingSkillId === skill.id ? (
-                                  <div className="skill-editor">
-                                    <input
-                                      aria-label="Skill name"
-                                      autoFocus
-                                      value={skillNameDraft}
-                                      onChange={(e) => setSkillNameDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveSkill(skill);
-                                        if (e.key === 'Escape') setEditingSkillId(null);
-                                      }}
-                                    />
-                                    <input
-                                      aria-label="Skill rank"
-                                      placeholder="Rank (optional)"
-                                      value={skillRankDraft}
-                                      onChange={(e) => setSkillRankDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveSkill(skill);
-                                        if (e.key === 'Escape') setEditingSkillId(null);
-                                      }}
-                                    />
-                                    <input
-                                      aria-label="Skill effect"
-                                      placeholder="Effect (optional)"
-                                      value={skillEffectDraft}
-                                      onChange={(e) => setSkillEffectDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveSkill(skill);
-                                        if (e.key === 'Escape') setEditingSkillId(null);
-                                      }}
-                                    />
-                                    <select
-                                      aria-label="Chapter acquired"
-                                      title="The chapter this skill was learned in"
-                                      value={skillChapterDraft}
-                                      onChange={(e) => setSkillChapterDraft(e.target.value)}
-                                    >
-                                      <option value="">No chapter</option>
-                                      {skillChapterDraft &&
-                                        !chapterChoices.some(
-                                          choice => choice.id === skillChapterDraft
-                                        ) && (
-                                          <option value={skillChapterDraft}>
-                                            Chapter in the trash
-                                          </option>
-                                        )}
-                                      {chapterChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      aria-label="Skill card"
-                                      title="The skill card this skill belongs to"
-                                      value={skillNodeDraft}
-                                      onChange={(e) => setSkillNodeDraft(e.target.value)}
-                                    >
-                                      <option value="">No card</option>
-                                      {skillNodeDraft &&
-                                        !skillCardChoices.some(
-                                          choice => choice.id === skillNodeDraft
-                                        ) && (
-                                          <option value={skillNodeDraft}>
-                                            Card in the trash
-                                          </option>
-                                        )}
-                                      {skillCardChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <div className="skill-actions">
-                                      <button
-                                        title={`Save this ${skill.name}`}
-                                        onClick={() => saveSkill(skill)}
-                                      >
-                                        Save
-                                      </button>
-                                      <button
-                                        title="Leave the skill as it was"
-                                        onClick={() => setEditingSkillId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="skill-summary">
-                                      <span className="skill-name">{skill.name}</span>
-                                      {skill.rank && (
-                                        <span className="skill-rank">{skill.rank}</span>
-                                      )}
-                                      {skill.effect && (
-                                        <span className="skill-effect">{skill.effect}</span>
-                                      )}
-                                      <span className="skill-chapter">
-                                        {chapter
-                                          ? `Learned in ${chapter.data.label}`
-                                          : skill.chapter_id
-                                            ? 'Chapter in the trash'
-                                            : 'Chapter not recorded'}
-                                      </span>
-                                      {card && (
-                                        <span className="skill-card-link">
-                                          Card: {card.data.label}
-                                        </span>
-                                      )}
-                                      {(prerequisites.length > 0 || outcomes.length > 0) && (
-                                        <div className="skill-evolution-links">
-                                          {prerequisites.map(evolution => (
-                                            <span
-                                              key={`requires-${evolution.id}`}
-                                              className="skill-evolution-link requires"
-                                              title={`This skill's ${
-                                                evolution.evolution_type
-                                              } link to ${
-                                                skillNameById.get(
-                                                  evolution.parent_skill_id
-                                                ) ?? 'a skill in the trash'
-                                              }`}
-                                            >
-                                              Requires{' '}
-                                              {skillNameById.get(
-                                                evolution.parent_skill_id
-                                              ) ?? 'a skill in the trash'}
-                                              {evolution.required_rank
-                                                ? ` · ${evolution.required_rank}`
-                                                : ''}
-                                            </span>
-                                          ))}
-                                          {outcomes.map(evolution => (
-                                            <span
-                                              key={`outcome-${evolution.id}`}
-                                              className="skill-evolution-link outcome"
-                                              title={`${
-                                                skillNameById.get(
-                                                  evolution.child_skill_id
-                                                ) ?? 'A skill in the trash'
-                                              } follows this skill by ${
-                                                evolution.evolution_type
-                                              }`}
-                                            >
-                                              →{' '}
-                                              {skillNameById.get(
-                                                evolution.child_skill_id
-                                              ) ?? 'a skill in the trash'}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <button
-                                      title={`Change ${skill.name}'s rank, effect or chapter`}
-                                      onClick={() => startSkillEdit(skill)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete ${skill.name}`}
-                                      onClick={() => removeSkill(skill)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                                </div>
-
-                                <div className="skill-events" aria-label={`${skill.name} events`}>
-                                  {events.map(event => {
-                                    const eventChapter = chapterChoices.find(
-                                      choice => choice.id === event.chapter_id
-                                    );
-                                    const focused =
-                                      focusedProgression?.kind === 'skill-event' &&
-                                      focusedProgression.id === event.id;
-                                    const eventMilestone = selectedLevelMilestones.find(
-                                      milestone => milestone.id === event.milestone_id
-                                    );
-                                    const label =
-                                      event.kind === 'upgraded'
-                                        ? event.rank
-                                          ? `Upgraded to ${event.rank}`
-                                          : 'Upgraded'
-                                        : event.kind === 'used'
-                                          ? event.rank
-                                            ? `Used at ${event.rank}`
-                                            : 'Used'
-                                          : 'Sacrificed or lost';
-
-                                    return (
-                                      <div
-                                        key={event.id}
-                                        className={`skill-event-row${focused ? ' progression-row-focused' : ''}`}
-                                        data-progression={`skill-event-${event.id}`}
-                                      >
-                                        {editingSkillEventId === event.id ? (
-                                          renderEventForm(event)
-                                        ) : (
-                                          <>
-                                            <div className="skill-event-summary">
-                                              <span className="skill-event-kind">{label}</span>
-                                              <span className="skill-event-chapter">
-                                                {eventChapter
-                                                  ? eventChapter.data.label
-                                                  : event.chapter_id
-                                                    ? 'Chapter in the trash'
-                                                    : 'No chapter recorded'}
-                                              </span>
-                                              {eventMilestone && (
-                                                <span className="skill-event-level">
-                                                  At {milestoneLabel(eventMilestone)}
-                                                </span>
-                                              )}
-                                            </div>
-                                            <button
-                                              title={`Change this ${skill.name} event`}
-                                              onClick={() => startSkillEventEdit(event)}
-                                            >
-                                              Edit
-                                            </button>
-                                            <button
-                                              title={`Delete this ${skill.name} event`}
-                                              onClick={() => removeSkillEvent(event)}
-                                            >
-                                              Delete
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-
-                                  {addingSkillEventFor === skill.id ? (
-                                    renderEventForm(null)
-                                  ) : editingSkillEventId == null ? (
-                                    <button
-                                      className="skill-event-add"
-                                      title={`Record an upgrade, use or sacrifice of ${skill.name}`}
-                                      onClick={() => startAddSkillEvent(skill.id)}
-                                    >
-                                      Add event
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="skill-creator">
-                          <input
-                            aria-label="New skill name"
-                            placeholder="Skill"
-                            value={newSkillName}
-                            onChange={(e) => setNewSkillName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
-                          />
-                          <input
-                            aria-label="New skill rank"
-                            placeholder="Rank"
-                            value={newSkillRank}
-                            onChange={(e) => setNewSkillRank(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
-                          />
-                          <input
-                            aria-label="New skill effect"
-                            placeholder="Effect"
-                            value={newSkillEffect}
-                            onChange={(e) => setNewSkillEffect(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addSkill()}
-                          />
-                          <select
-                            aria-label="New skill chapter"
-                            title="The chapter this skill was learned in"
-                            value={newSkillChapterId}
-                            onChange={(e) => setNewSkillChapterId(e.target.value)}
-                          >
-                            <option value="">No chapter</option>
-                            {chapterChoices.map(choice => (
-                              <option key={choice.id} value={choice.id}>
-                                {choice.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="New skill card"
-                            title="The skill card this skill belongs to"
-                            value={newSkillNodeId}
-                            onChange={(e) => setNewSkillNodeId(e.target.value)}
-                          >
-                            <option value="">No card</option>
-                            {skillCardChoices.map(choice => (
-                              <option key={choice.id} value={choice.id}>
-                                {choice.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            title="Add this skill to the selected character"
-                            onClick={addSkill}
-                            disabled={!newSkillName.trim()}
-                          >
-                            Add skill
-                          </button>
-                        </div>
-                      </div>
+                      {/* The skill rows, their events and the creator form
+                          live in the skills domain; the writes they ask for
+                          stay here, where the canvas, the card and the audit
+                          log are. */}
+                      <SkillsSection
+                        skills={characterSkills}
+                        storySkills={storySkills}
+                        events={storySkillEvents}
+                        evolutions={storySkillEvolutions}
+                        chapters={skillChapterOptions}
+                        cards={skillCardOptions}
+                        milestones={selectedLevelMilestones}
+                        chapterSeqById={chapterSeqById}
+                        focus={focusedProgression}
+                        onError={setCharacterError}
+                        onCreate={addSkill}
+                        onSave={saveSkill}
+                        onDelete={removeSkill}
+                        onSaveEvent={saveSkillEvent}
+                        onDeleteEvent={removeSkillEvent}
+                      />
 
                       {/* Inventory is a ledger, not a game engine: a name, a
                           rarity, how many, what it does and where it was found. */}
