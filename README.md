@@ -830,14 +830,20 @@ page that arrives late, and what it says when a filter matches nothing.
   `src/components/` for shared widgets (help bubble, suggestion field, view
   toggle), `src/domains/<domain>/` for the command module and its types, the
   canvas card, the audit tab with its row and labels, progression chart,
-  relations map, skill tree and the sheet's skill section, and `src/lib/` for
+  relations map, skill tree and the sheet's skill section, the Chapters tab with
+  its cast and note panels and the chapter logic behind it, and `src/lib/` for
   small formatting helpers. Where a tab reads state nothing else uses, its
   domain module keeps it: the audit tab holds its own history window, filter and
   revert notices, and is handed the story, the current user and a way to reload
   the rest of the app; the skill section holds the open row and its draft
   fields, and is handed the rows, the labelled chapter and card choices and the
   writes, each answering whether the row was written so the form closes only on
-  a save that happened.
+  a save that happened; `chapters.ts` works out the reading order, the numbering
+  issues, the word totals, the timeline order, the notes grouped by chapter and
+  the cast badges as plain functions, so the tab and the canvas cards read the
+  same answers, and the panel keeps only the row-reorder interaction, because a
+  cast edge on the board, a continuity flag and the undo history all write the
+  rest of what it shows.
 - **`src-tauri/db`** — all SQL, models and migrations, in a crate of its own with
   no Tauri dependency, so its tests build without WebKitGTK or GTK. The connection
   is owned by a `Db` value managed as Tauri state. Every public method takes the lock

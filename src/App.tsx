@@ -30,6 +30,19 @@ import * as canvasApi from './domains/canvas/api';
 import * as charactersApi from './domains/characters/api';
 import * as inventoryApi from './domains/inventory/api';
 import * as narrativeApi from './domains/narrative/api';
+import {
+  CHAPTER_DRAG_TYPE,
+  castBadgesByChapter,
+  describeNumberingIssues,
+  formatChapterWords,
+  groupNotesByChapter,
+  liveChapters,
+  numberingIssues,
+  sumChapterWords,
+  timelineOrder,
+  timeOfDay,
+  wordTargetPercent,
+} from './domains/narrative/chapters';
 import * as progressionApi from './domains/progression/api';
 import * as questsApi from './domains/quests/api';
 import * as relationsApi from './domains/relations/api';
@@ -40,6 +53,7 @@ import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { SuggestionInput } from './components/SuggestionInput';
 import { AuditPanel } from './domains/audit/AuditPanel';
+import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import type { CharacterAttribute } from './domains/characters/types';
 import { flowNodeTypes } from './domains/canvas/GraphNode';
 import { nodeTypes, NODE_STAT_BADGES } from './domains/canvas/types';
@@ -564,18 +578,6 @@ function chapterLink(id: string, label: string, quoted = false): ContinuityPart 
   return { id, text: quoted ? `“${label}”` : label };
 }
 
-// What a chapter row says about its words. A target without a count reads as
-// zero of that target rather than hiding the target.
-function formatChapterWords(
-  words: number | null | undefined,
-  target: number | null | undefined
-): string {
-  if (words == null && target == null) return 'No word count';
-  if (target == null) return `${formatCount(words ?? 0)} words`;
-
-  return `${formatCount(words ?? 0)} / ${formatCount(target)} words`;
-}
-
 // The canvas shows one string for a connection, but the two fields stay separate
 // in `data` so the editor can tell a label from a relation type.
 function toFlowEdge(row: any): Edge<EdgeData> {
@@ -686,9 +688,6 @@ const shortcutGroups: {
 // file or a link from being mistaken for a cast member.
 const CAST_DRAG_TYPE = 'application/x-litrpg-character';
 
-// A chapter row's grip carries this, so the list only reacts to its own drags.
-const CHAPTER_DRAG_TYPE = 'application/x-litrpg-chapter';
-
 // One stat list per character, from the story-wide read.
 function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[]> {
   const grouped: Record<string, CharacterStat[]> = {};
@@ -739,96 +738,6 @@ const retentionChoices: { value: string; label: string }[] = [
   { value: '90', label: '90 days' },
   { value: '365', label: '1 year' },
 ];
-
-// The chapter list's one-sentence warning. Positions start at 1, so a story
-// whose middle chapter was deleted can have 1 and 3 while 2 is empty.
-function describeChapterIssues(issues: {
-  duplicates: number[];
-  missing: number[];
-  unnumbered: number;
-}): string {
-  const parts: string[] = [];
-
-  if (issues.duplicates.length > 0) {
-    parts.push(`position ${issues.duplicates.join(', ')} is used more than once`);
-  }
-  if (issues.missing.length > 0) {
-    parts.push(`position ${issues.missing.join(', ')} is empty`);
-  }
-  if (issues.unnumbered > 0) {
-    parts.push(
-      `${issues.unnumbered} chapter${issues.unnumbered === 1 ? '' : 's'} ${
-        issues.unnumbered === 1 ? 'has' : 'have'
-      } no position`
-    );
-  }
-
-  return `The reading order needs attention: ${parts.join('; ')}.`;
-}
-
-// A chapter's time is free text, so comparing two of them means reading the
-// label as a clock first: “18:40”, “6:40 pm”, or one of the day parts writers
-// reach for, optionally qualified (“late evening”, “just before dawn”). A label
-// that reads as neither — “after the fire” — gets no order at all and is left
-// where reading order put it, rather than guessed at.
-const DAY_PARTS: [RegExp, number][] = [
-  [/\bmidnight\b/, 0],
-  [/\bdawn\b|\bsunrise\b|\bfirst light\b/, 6 * 60],
-  [/\bmorning\b/, 9 * 60],
-  [/\bnoon\b|\bmidday\b/, 12 * 60],
-  [/\bafternoon\b/, 14 * 60 + 30],
-  [/\bdusk\b|\bsunset\b|\bevening\b/, 19 * 60],
-  [/\bnight\b|\bnightfall\b|\bafter dark\b/, 21 * 60],
-];
-
-const DAY_PART_NUDGES: [RegExp, number][] = [
-  [/\bearly\b|\bbefore\b/, -60],
-  [/\blate\b|\bafter\b|\bdeep\b/, 60],
-];
-
-/** A label's place in the day, in minutes from midnight, or null when it does
- * not read as a time of day. */
-function timeOfDay(label?: string | null): number | null {
-  if (!label) return null;
-
-  const text = label.trim().toLowerCase();
-
-  const clock = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/);
-  const hourOnly = text.match(/^(\d{1,2})\s*(am|pm)$/);
-
-  if (clock || hourOnly) {
-    const hour = Number((clock ?? hourOnly)?.[1]);
-    const minute = clock ? Number(clock[2]) : 0;
-    const meridiem = (clock?.[3] ?? hourOnly?.[2]) as 'am' | 'pm' | undefined;
-
-    if (hour > (meridiem ? 12 : 23) || minute > 59) return null;
-
-    // 12am is midnight and 12pm is noon; every other hour simply shifts.
-    const wrapped = meridiem ? (hour % 12) + (meridiem === 'pm' ? 12 : 0) : hour;
-
-    return wrapped * 60 + minute;
-  }
-
-  let best: { at: number; minutes: number } | null = null;
-
-  for (const [pattern, minutes] of DAY_PARTS) {
-    const hit = pattern.exec(text);
-
-    if (hit && (best === null || hit.index < best.at)) {
-      best = { at: hit.index, minutes };
-    }
-  }
-
-  if (best === null) return null;
-
-  const nudge = DAY_PART_NUDGES.reduce(
-    (offset, [pattern, minutes]) => (pattern.test(text) ? offset + minutes : offset),
-    0
-  );
-
-  // Clamped to the day so “late night” does not spill into tomorrow.
-  return Math.min(23 * 60 + 59, Math.max(0, best.minutes + nudge));
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -2695,20 +2604,10 @@ function App() {
     }
   };
 
-  // The live chapters, in reading order. One with no position yet sorts last by
-  // name, so it is visible and can be given a place rather than hidden.
-  const chapterNodes = useMemo(() => {
-    const chapters = nodes.filter(node => node.data.nodeType === 'chapter');
-
-    return [...chapters].sort((left, right) => {
-      const leftSeq = left.data.chapterSeq ?? Number.MAX_SAFE_INTEGER;
-      const rightSeq = right.data.chapterSeq ?? Number.MAX_SAFE_INTEGER;
-
-      return leftSeq === rightSeq
-        ? left.data.label.localeCompare(right.data.label)
-        : leftSeq - rightSeq;
-    });
-  }, [nodes]);
+  // The live chapters, in reading order, and everything the Chapters tab and
+  // the chapter cards work out from them. The chapter logic itself lives in the
+  // narrative domain; these memos only say when it is worth running again.
+  const chapterNodes = useMemo(() => liveChapters(nodes), [nodes]);
 
   // A quest shows on both chapters it names: where it was taken and where it
   // ended. The acceptance chapter is required, so every quest has at least one.
@@ -2745,53 +2644,12 @@ function App() {
     return byChapter;
   }, [storyQuests]);
 
-  // Duplicated, missing or absent numbers. Reordering avoids all three, so this
-  // only has something to say after a deletion or after an older import.
-  const chapterIssues = useMemo(() => {
-    const positions = chapterNodes
-      .map(node => node.data.chapterSeq)
-      .filter((sequence): sequence is number => sequence != null);
+  // Duplicated, missing or absent numbers, and the story's word totals.
+  const chapterIssues = useMemo(() => numberingIssues(chapterNodes), [chapterNodes]);
 
-    const duplicates = [...new Set(
-      positions.filter((sequence, index) => positions.indexOf(sequence) !== index)
-    )].sort((left, right) => left - right);
+  const chapterTotals = useMemo(() => sumChapterWords(chapterNodes), [chapterNodes]);
 
-    const missing: number[] = [];
-    const highest = positions.length > 0 ? Math.max(...positions) : 0;
-    for (let position = 1; position <= highest; position += 1) {
-      if (!positions.includes(position)) missing.push(position);
-    }
-
-    const unnumbered = chapterNodes.filter(
-      node => node.data.chapterSeq == null
-    ).length;
-
-    return { duplicates, missing, unnumbered };
-  }, [chapterNodes]);
-
-  // The story total: every count the author has entered, and the sum of the
-  // targets that exist — a chapter without one contributes no target rather than
-  // pretending its words were uncounted for.
-  const chapterTotals = useMemo(() => {
-    const words = chapterNodes.reduce(
-      (sum, node) => sum + (node.data.chapterWords ?? 0),
-      0
-    );
-    const targets = chapterNodes
-      .map(node => node.data.chapterTarget)
-      .filter((target): target is number => target != null);
-
-    return {
-      words,
-      target: targets.length > 0 ? targets.reduce((sum, target) => sum + target, 0) : null,
-      targeted: targets.length,
-    };
-  }, [chapterNodes]);
-
-  const chapterWordsPercent =
-    chapterTotals.target && chapterTotals.target > 0
-      ? Math.min(100, Math.round((chapterTotals.words / chapterTotals.target) * 100))
-      : 0;
+  const chapterWordsPercent = wordTargetPercent(chapterTotals);
 
   // A chapter's POV is stored as a cast id, so the list and the timeline resolve
   // it here instead of every copy of a chapter carrying the name.
@@ -2849,64 +2707,17 @@ function App() {
     storySkillEvents,
   ]);
 
-  const chapterCastByChapter = useMemo(() => {
-    const grouped = new Map<string, ChapterCastBadge[]>();
+  const chapterCastByChapter = useMemo(
+    () => castBadgesByChapter(storyChapterCastStates, castNames),
+    [storyChapterCastStates, castNames]
+  );
 
-    for (const state of storyChapterCastStates) {
-      const name = castNames.get(state.character_id);
-      if (!name) continue;
-
-      const existing = grouped.get(state.chapter_id) ?? [];
-      existing.push({
-        characterId: state.character_id,
-        name,
-        level: state.level,
-        levelIsPenalty: state.level_is_penalty,
-        skills: state.skills,
-      });
-      grouped.set(state.chapter_id, existing);
-    }
-
-    return grouped;
-  }, [storyChapterCastStates, castNames]);
-
-  // Time order, which is not always reading order. A chapter without a day is
-  // left off rather than quietly given one; the note above the list counts them.
-  // The sort is stable, so chapters sharing a day keep their reading order.
-  // The notes grouped by the chapter they belong to, so a row can show its count
-  // without scanning the whole list.
-  const notesByChapter = useMemo(() => {
-    const grouped = new Map<string, ChapterNote[]>();
-
-    for (const note of chapterNotes) {
-      grouped.set(note.chapterId, [...(grouped.get(note.chapterId) ?? []), note]);
-    }
-
-    return grouped;
-  }, [chapterNotes]);
+  // The notes grouped by their chapter, and the chapters placed on the day.
+  const notesByChapter = useMemo(() => groupNotesByChapter(chapterNotes), [chapterNotes]);
 
   const noteCount = (chapterId: string) => notesByChapter.get(chapterId)?.length ?? 0;
 
-  const chapterTimeline = useMemo(() => {
-    return chapterNodes
-      .filter(node => node.data.chapterDay != null)
-      .sort((left, right) => {
-        const day = (left.data.chapterDay ?? 0) - (right.data.chapterDay ?? 0);
-
-        if (day !== 0) return day;
-
-        // Inside a day, only labels that read as a time can be ordered. One that
-        // cannot has no place in the day, so it waits after the ones that can,
-        // keeping its reading order among the others the clock cannot read.
-        const leftTime = timeOfDay(left.data.chapterTime);
-        const rightTime = timeOfDay(right.data.chapterTime);
-
-        if (leftTime == null) return rightTime == null ? 0 : 1;
-        if (rightTime == null) return -1;
-
-        return leftTime - rightTime;
-      });
-  }, [chapterNodes]);
+  const chapterTimeline = useMemo(() => timelineOrder(chapterNodes), [chapterNodes]);
 
   // The lost-item checks are worked out once so the Chapters tab and the chapter
   // cards say the same thing. A flag belongs to the chapter it was lost in; one
@@ -4349,112 +4160,6 @@ function App() {
     } finally {
       setChapterBusy(false);
     }
-  };
-
-  const moveChapter = (id: string, delta: number) => {
-    const order = chapterNodes.map(node => node.id);
-    const from = order.indexOf(id);
-    const to = from + delta;
-
-    if (from < 0 || to < 0 || to >= order.length) return;
-
-    const next = [...order];
-    [next[from], next[to]] = [next[to], next[from]];
-    void saveChapterOrder(next, order);
-  };
-
-  // The grip on a row starts a pointer drag; the row under the pointer shows the
-  // side the chapter would land on. One ordered write follows, the same command
-  // the arrows use, so the whole list stays consistent and the move is undoable.
-  const startChapterDrag = (
-    event: React.DragEvent<HTMLElement>,
-    nodeId: string
-  ) => {
-    if (chapterBusy) {
-      event.preventDefault();
-      return;
-    }
-
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(CHAPTER_DRAG_TYPE, nodeId);
-    setDraggedChapterId(nodeId);
-    setChapterDrop(null);
-  };
-
-  const chapterDropIsAfter = (
-    event: React.DragEvent<HTMLElement>,
-    element: HTMLElement
-  ) => {
-    const rect = element.getBoundingClientRect();
-
-    return event.clientY > rect.top + rect.height / 2;
-  };
-
-  const dragOverChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
-    if (!draggedChapterId || draggedChapterId === nodeId || chapterBusy) return;
-
-    // Only a chapter drag is accepted; a cast card in the air keeps its own drop
-    // targets and must not be treated as a move.
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-
-    const after = chapterDropIsAfter(event, event.currentTarget);
-
-    setChapterDrop(current =>
-      current?.id === nodeId && current.after === after
-        ? current
-        : { id: nodeId, after }
-    );
-  };
-
-  const dragLeaveChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
-    // Moving between the row's own children is not leaving the row.
-    if (event.currentTarget.contains(event.relatedTarget as HTMLElement | null)) return;
-
-    setChapterDrop(current => (current?.id === nodeId ? null : current));
-  };
-
-  const dropChapter = (event: React.DragEvent<HTMLElement>, nodeId: string) => {
-    event.preventDefault();
-
-    const draggedId = draggedChapterId;
-
-    setDraggedChapterId(null);
-    setChapterDrop(null);
-
-    if (!draggedId || chapterBusy || draggedId === nodeId) return;
-
-    const order = chapterNodes.map(node => node.id);
-    const from = order.indexOf(draggedId);
-    const target = order.indexOf(nodeId);
-
-    if (from < 0 || target < 0) return;
-
-    const after = chapterDropIsAfter(event, event.currentTarget);
-    const next = order.filter(id => id !== draggedId);
-    // Removing the dragged row first shifts every position after it down one.
-    let insertAt = target + (after ? 1 : 0);
-    if (from < insertAt) insertAt -= 1;
-    next.splice(insertAt, 0, draggedId);
-
-    // A drop that leaves the list as it was writes nothing.
-    if (next.every((id, index) => id === order[index])) return;
-
-    void saveChapterOrder(next, order);
-  };
-
-  const endChapterDrag = () => {
-    setDraggedChapterId(null);
-    setChapterDrop(null);
-  };
-
-  // The escape hatch for data that arrived numbered badly: number what is shown,
-  // in the order it is shown.
-  const renumberChapters = () => {
-    void saveChapterOrder(
-      chapterNodes.map(node => node.id),
-      null
-    );
   };
 
   const addChapter = async () => {
@@ -10426,6 +10131,14 @@ function App() {
 
   // One palette, placed on two tabs: over the canvas and above the chapter list.
   // Only one tab renders at a time, so there is never a second copy of it.
+  // The tab's own Search button: the palette opens on everything, with the first
+  // result already selected.
+  const openSearch = () => {
+    setSearchOpen(true);
+    setSearchIndex(0);
+    setSearchKind('all');
+  };
+
   const renderSearchPalette = (placement: 'overlay' | 'inline') =>
     searchOpen && (
       <div
@@ -11679,729 +11392,84 @@ function App() {
 
         {selectedTab === 'chapters' && (
           <div className="tab-content">
-            {!currentStory ? (
-              <div className="empty-state">Load a story to put its chapters in order</div>
-            ) : (
-              <div className="chapters-layout">
-                {renderSearchPalette('inline')}
-                <div className="chapters-header">
-                  <div>
-                    <h3 className="chapters-heading">Reading order</h3>
-                    <p className="chapters-hint">
-                      Chapter cards on the Graph tab, numbered from 1. Moving one
-                      renumbers the rest. Drag a row's grip, or use the arrows, to
-                      move it; a new chapter joins the end.
-                    </p>
-                  </div>
-
-                  <div className="chapter-creator">
-                    <input
-                      placeholder="Chapter title"
-                      value={newChapterTitle}
-                      onChange={(e) => setNewChapterTitle(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void addChapter();
-                      }}
-                    />
-                    <button
-                      title="Create a chapter card at the end of the reading order"
-                      onClick={() => void addChapter()}
-                      disabled={!newChapterTitle.trim() || chapterBusy}
-                    >
-                      New chapter
-                    </button>
-                    <button
-                      type="button"
-                      className="chapter-search-button"
-                      title={`Find a card, a cast member, a connection, a note or a story (${shortcutKeys.search})`}
-                      onClick={() => {
-                        setSearchOpen(true);
-                        setSearchIndex(0);
-                        setSearchKind('all');
-                      }}
-                    >
-                      Search
-                    </button>
-                  </div>
-                </div>
-
-                {chapterError && <div className="audit-error">{chapterError}</div>}
-
-                {(chapterIssues.duplicates.length > 0 ||
-                  chapterIssues.missing.length > 0 ||
-                  chapterIssues.unnumbered > 0) && (
-                  <div className="chapter-warning">
-                    <span>{describeChapterIssues(chapterIssues)}</span>
-                    <button
-                      title="Number the chapters one after another in the order shown"
-                      onClick={renumberChapters}
-                      disabled={chapterBusy}
-                    >
-                      Renumber
-                    </button>
-                  </div>
-                )}
-
-                {chapterNodes.length === 0 ? (
-                  <div className="empty">
-                    No chapters yet — add one here, or add a chapter card on the Graph tab.
-                  </div>
-                ) : (
-                  <>
-                    <div className="chapter-totals">
-                      <div className="chapter-totals-head">
-                        <span className="chapter-totals-count">
-                          {formatCount(chapterTotals.words)}{' '}
-                          {chapterTotals.words === 1 ? 'word' : 'words'}
-                          {chapterTotals.target != null &&
-                            ` of ${formatCount(chapterTotals.target)}`}
-                        </span>
-                        <span className="chapter-totals-note">
-                          {chapterNodes.length} chapter
-                          {chapterNodes.length === 1 ? '' : 's'}
-                          {chapterTotals.target != null &&
-                          chapterTotals.targeted < chapterNodes.length
-                            ? ` · ${chapterTotals.targeted} with a target`
-                            : ''}
-                        </span>
-                      </div>
-
-                      {chapterTotals.target != null && (
-                        <div
-                          className="chapter-total-bar"
-                          role="progressbar"
-                          aria-label="Story word count"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={chapterWordsPercent}
-                        >
-                          <div
-                            className="chapter-total-fill"
-                            style={{ width: `${chapterWordsPercent}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    <ol className="chapter-list" aria-label="Chapters">
-                      {chapterNodes.map((node, index) => (
-                        <li
-                          key={node.id}
-                          className={[
-                            'chapter-row',
-                            revealedChapterId === node.id ? 'chapter-row-revealed' : '',
-                            draggedChapterId === node.id ? 'chapter-row-dragging' : '',
-                            chapterDrop?.id === node.id
-                              ? chapterDrop.after
-                                ? 'chapter-row-drop-after'
-                                : 'chapter-row-drop-before'
-                              : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                          data-chapter-id={node.id}
-                          onDragOver={event => dragOverChapter(event, node.id)}
-                          onDragLeave={event => dragLeaveChapter(event, node.id)}
-                          onDrop={event => dropChapter(event, node.id)}
-                        >
-                          <div className="chapter-row-main">
-                            <span
-                              className="chapter-drag"
-                              draggable={!chapterBusy}
-                              aria-hidden="true"
-                              title={`Drag ${node.data.label} to another place; the arrows move it without the pointer`}
-                              onDragStart={event => startChapterDrag(event, node.id)}
-                              onDragEnd={endChapterDrag}
-                            >
-                              ⠿
-                            </span>
-                            <span className="chapter-number">
-                              {node.data.chapterSeq ?? '—'}
-                            </span>
-                            <span className="chapter-label">{node.data.label}</span>
-                            {node.data.chapterArc && (
-                              <span className="chapter-arc" title="Arc">
-                                {node.data.chapterArc}
-                              </span>
-                            )}
-                            {node.data.chapterPov && (
-                              <span className="chapter-pov" title="Point of view">
-                                {castNames.get(node.data.chapterPov) ??
-                                  'cast member in the trash'}
-                              </span>
-                            )}
-                            {node.data.chapterDay != null && (
-                              <span className="chapter-day" title="In-world day">
-                                Day {node.data.chapterDay}
-                              </span>
-                            )}
-                            {node.data.chapterTime && (
-                              <span className="chapter-time" title="Time of day">
-                                {node.data.chapterTime}
-                              </span>
-                            )}
-                            <span className="chapter-words">
-                              {formatChapterWords(
-                                node.data.chapterWords,
-                                node.data.chapterTarget
-                              )}
-                            </span>
-                            <button
-                              aria-label={`Edit ${node.data.label} details`}
-                              title="Set the arc, the day, the time and the word count"
-                              onClick={() => openChapterDetails(node)}
-                              disabled={chapterBusy}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              aria-label={`Notes for ${node.data.label}`}
-                              title="Plain-text notes kept with this chapter"
-                              onClick={() => toggleChapterNotes(node.id)}
-                              disabled={chapterBusy}
-                            >
-                              {noteCount(node.id) > 0
-                                ? `Notes (${noteCount(node.id)})`
-                                : 'Notes'}
-                            </button>
-                            <button
-                              aria-label={`Cast for ${node.data.label}`}
-                              title="Choose everyone present in this chapter"
-                              onClick={() => toggleChapterCastPanel(node.id)}
-                              disabled={chapterBusy}
-                            >
-                              {(() => {
-                                const count = chapterCastByChapter.get(node.id)?.length ?? 0;
-                                return count > 0 ? `Cast (${count})` : 'Cast';
-                              })()}
-                            </button>
-                            <button
-                              aria-label={`Move ${node.data.label} earlier`}
-                              title="Move this chapter one place earlier"
-                              onClick={() => moveChapter(node.id, -1)}
-                              disabled={index === 0 || chapterBusy}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              aria-label={`Move ${node.data.label} later`}
-                              title="Move this chapter one place later"
-                              onClick={() => moveChapter(node.id, 1)}
-                              disabled={index === chapterNodes.length - 1 || chapterBusy}
-                            >
-                              ↓
-                            </button>
-                          </div>
-
-                          {editingChapterId === node.id && (
-                            <div className="chapter-details-form">
-                              <label>
-                                Arc
-                                <input
-                                  ref={chapterArcInputRef}
-                                  autoFocus
-                                  placeholder="No arc"
-                                  value={chapterArcDraft}
-                                  onChange={(e) => setChapterArcDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') requestChapterClose();
-                                  }}
-                                />
-                              </label>
-                              <label>
-                                Words
-                                <input
-                                  type="number"
-                                  min={0}
-                                  placeholder="0"
-                                  value={chapterWordsDraft}
-                                  onChange={(e) => setChapterWordsDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') requestChapterClose();
-                                  }}
-                                />
-                              </label>
-                              <label>
-                                Target
-                                <input
-                                  type="number"
-                                  min={1}
-                                  placeholder="None"
-                                  value={chapterTargetDraft}
-                                  onChange={(e) => setChapterTargetDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') requestChapterClose();
-                                  }}
-                                />
-                              </label>
-                              <label>
-                                POV
-                                <select
-                                  title="Whose point of view the chapter is told from"
-                                  value={chapterPovDraft}
-                                  onChange={(e) => setChapterPovDraft(e.target.value)}
-                                >
-                                  <option value="">No POV</option>
-                                  {/* A POV whose cast member is in the trash is
-                                      kept and shown, not silently dropped. */}
-                                  {chapterPovDraft && !castNames.has(chapterPovDraft) && (
-                                    <option value={chapterPovDraft}>
-                                      Cast member in the trash
-                                    </option>
-                                  )}
-                                  {characters.map(character => (
-                                    <option key={character.id} value={character.id}>
-                                      {character.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Day
-                                <input
-                                  type="number"
-                                  min={0}
-                                  placeholder="Not placed"
-                                  value={chapterDayDraft}
-                                  onChange={(e) => setChapterDayDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') requestChapterClose();
-                                  }}
-                                />
-                              </label>
-                              <label>
-                                Time
-                                <input
-                                  placeholder="Dusk"
-                                  title="When inside the day, in your own words: Dusk, 18:40, after the fire"
-                                  value={chapterTimeDraft}
-                                  onChange={(e) => setChapterTimeDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') void saveChapterDetails();
-                                    if (e.key === 'Escape') requestChapterClose();
-                                  }}
-                                />
-                              </label>
-                              <div className="chapter-details-actions">
-                                <button
-                                  title="Save the arc, the day, the time and the word counts"
-                                  onClick={() => void saveChapterDetails()}
-                                  disabled={chapterBusy}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  title="Leave this chapter as it was"
-                                  onClick={requestChapterClose}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {editingChapterId === node.id && chapterFormPrompt && (
-                            <div
-                              className="chapter-details-prompt"
-                              role="alertdialog"
-                              aria-label="Unsaved chapter changes"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Escape') {
-                                  e.stopPropagation();
-                                  dismissChapterPrompt();
-                                }
-                              }}
-                            >
-                              <p>
-                                {chapterFormPrompt.kind === 'open'
-                                  ? `Open “${
-                                      chapterNodes.find(
-                                        candidate => candidate.id === chapterFormPrompt.id
-                                      )?.data.label ?? 'another chapter'
-                                    }” and drop these changes?`
-                                  : chapterFormPrompt.kind === 'close'
-                                    ? 'Close this chapter and drop these changes?'
-                                    : chapterFormPrompt.message}
-                              </p>
-                              <div className="chapter-details-prompt-actions">
-                                {chapterFormPrompt.kind === 'open' ? (
-                                  <button
-                                    title="Open the other chapter and lose these edits"
-                                    onClick={discardChapterEdit}
-                                  >
-                                    Discard and open
-                                  </button>
-                                ) : chapterFormPrompt.kind === 'close' ? (
-                                  <button
-                                    title="Close the form and lose these edits"
-                                    onClick={closeChapterForm}
-                                  >
-                                    Discard changes
-                                  </button>
-                                ) : (
-                                  <button
-                                    title="Leave this chapter and lose these edits"
-                                    onClick={leaveChapterForm}
-                                  >
-                                    Discard and continue
-                                  </button>
-                                )}
-                                <button
-                                  ref={chapterKeepEditingRef}
-                                  title="Stay on this chapter with the edits as they are"
-                                  onClick={dismissChapterPrompt}
-                                >
-                                  Keep editing
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {openChapterCastId === node.id && (
-                            <div
-                              className="chapter-cast-panel"
-                              role="group"
-                              aria-label={`Cast present in ${node.data.label}`}
-                            >
-                              <div className="chapter-cast-panel-head">
-                                <strong>Present in this chapter</strong>
-                                <span>
-                                  The card’s linked cast member and POV are always
-                                  present; tick everyone else in the scene.
-                                </span>
-                              </div>
-
-                              {characters.length === 0 ? (
-                                <p className="chapter-cast-empty">
-                                  Add a cast member on the Characters tab first.
-                                </p>
-                              ) : (
-                                <ul className="chapter-cast-options">
-                                  {characters.map(character => {
-                                    const explicit = chapterCastIsExplicit(
-                                      node.id,
-                                      character.id
-                                    );
-                                    const isPov = node.data.chapterPov === character.id;
-                                    const isLinked = node.data.characterId === character.id;
-
-                                    return (
-                                      <li key={character.id}>
-                                        <label className="chapter-cast-option">
-                                          <input
-                                            type="checkbox"
-                                            aria-label={`${character.name} present in ${node.data.label}`}
-                                            checked={explicit}
-                                            disabled={
-                                              chapterBusy || chapterCastBusyId !== null
-                                            }
-                                            onChange={event =>
-                                              void setChapterCastPresence(
-                                                node.id,
-                                                character.id,
-                                                event.target.checked
-                                              )
-                                            }
-                                          />
-                                          <span className="chapter-cast-option-name">
-                                            {character.name}
-                                          </span>
-                                          {isPov && (
-                                            <span className="chapter-cast-tag">POV</span>
-                                          )}
-                                          {isLinked && (
-                                            <span className="chapter-cast-tag">Linked</span>
-                                          )}
-                                        </label>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              )}
-
-                              {chapterCastError && (
-                                <p className="chapter-cast-error" role="alert">
-                                  {chapterCastError}
-                                </p>
-                              )}
-                            </div>
-                          )}
-
-                          {openNotesChapterId === node.id && (
-                            <div
-                              className="chapter-notes"
-                              onKeyDown={(e) => {
-                                // Escape is how the question is dismissed, wherever
-                                // the focus was left when it appeared.
-                                if (e.key === 'Escape' && notePrompt) {
-                                  e.stopPropagation();
-                                  dismissNotePrompt();
-                                }
-                              }}
-                            >
-                              {notePrompt && (
-                                <div
-                                  className="chapter-details-prompt"
-                                  role="alertdialog"
-                                  aria-label="Unsaved note changes"
-                                >
-                                  <p>{notePrompt.message}</p>
-                                  <div className="chapter-details-prompt-actions">
-                                    <button
-                                      title="Drop this note and continue"
-                                      onClick={discardNoteDraft}
-                                    >
-                                      Discard and continue
-                                    </button>
-                                    <button
-                                      ref={noteKeepEditingRef}
-                                      title="Stay with the note as it is"
-                                      onClick={dismissNotePrompt}
-                                    >
-                                      Keep editing
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-
-                              {(notesByChapter.get(node.id) ?? []).map(note =>
-                                editingNoteId === note.id ? (
-                                  <div
-                                    key={note.id}
-                                    className={`chapter-note${
-                                      note.id === matchedNoteId ? ' matched' : ''
-                                    }`}
-                                  >
-                                    <textarea
-                                      ref={noteEditorRef}
-                                      className="chapter-note-editor"
-                                      aria-label={`Edit note in ${node.data.label}`}
-                                      autoFocus
-                                      value={noteEditDraft}
-                                      onChange={(e) => setNoteEditDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Escape') requestNoteEditCancel();
-                                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                                          void saveNoteEdit();
-                                        }
-                                      }}
-                                    />
-                                    <div className="chapter-note-actions">
-                                      <button
-                                        title="Save this note (Ctrl+Enter)"
-                                        onClick={() => void saveNoteEdit()}
-                                        disabled={noteBusy}
-                                      >
-                                        Save
-                                      </button>
-                                      <button
-                                        title="Leave the note as it was"
-                                        onClick={requestNoteEditCancel}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div
-                                    key={note.id}
-                                    className={`chapter-note${
-                                      note.id === matchedNoteId ? ' matched' : ''
-                                    }`}
-                                  >
-                                    <div className="chapter-note-text">{note.text}</div>
-                                    <div className="chapter-note-actions">
-                                      <button
-                                        aria-label={`Edit the note ${note.text.split('\n')[0]}`}
-                                        title="Edit this note"
-                                        onClick={() => startNoteEdit(note)}
-                                        disabled={noteBusy}
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        aria-label={`Delete the note ${note.text.split('\n')[0]}`}
-                                        title="Move this note to the trash"
-                                        onClick={() => void deleteNote(note)}
-                                        disabled={noteBusy}
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                )
-                              )}
-
-                              {noteCount(node.id) === 0 && (
-                                <div className="chapter-notes-empty">
-                                  No notes yet — a note is plain text, kept with the
-                                  chapter.
-                                </div>
-                              )}
-
-                              {editingNoteId === null && (
-                                <div className="chapter-note-add">
-                                  <textarea
-                                    ref={noteAddRef}
-                                    aria-label={`New note for ${node.data.label}`}
-                                    placeholder="A note for this chapter"
-                                    title="Ctrl+Enter adds the note"
-                                    value={noteDraft}
-                                    onChange={(e) => setNoteDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                                        void addNote(node.id);
-                                      }
-                                    }}
-                                  />
-                                  <button
-                                    title="Add this note to the chapter"
-                                    onClick={() => void addNote(node.id)}
-                                    disabled={noteBusy || !noteDraft.trim()}
-                                  >
-                                    Add note
-                                  </button>
-                                </div>
-                              )}
-
-                              {noteError && (
-                                <div className="chapter-note-error">{noteError}</div>
-                              )}
-                            </div>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
-
-                    <section
-                      className="chapter-timeline"
-                      aria-labelledby="chapter-timeline-heading"
-                    >
-                      <div className="chapter-timeline-head">
-                        <h3 id="chapter-timeline-heading">Timeline</h3>
-                        <span className="chapter-timeline-note">
-                          {chapterTimeline.length} placed
-                          {chapterTimeline.length < chapterNodes.length &&
-                            ` · ${chapterNodes.length - chapterTimeline.length} without a day`}
-                        </span>
-                      </div>
-
-                      {chapterTimeline.length === 0 ? (
-                        <p className="chapters-hint">
-                          Give a chapter an in-world day to place it on the timeline.
-                        </p>
-                      ) : (
-                        <ol className="chapter-timeline-list" aria-label="Chapter timeline">
-                          {chapterTimeline.map(node => (
-                            <li key={node.id} className="chapter-timeline-row">
-                              <span className="chapter-timeline-day">
-                                Day {node.data.chapterDay}
-                              </span>
-                              {node.data.chapterTime && (
-                                <span className="chapter-timeline-time">
-                                  {node.data.chapterTime}
-                                </span>
-                              )}
-                              {node.data.chapterSeq != null && (
-                                <span className="chapter-timeline-seq">
-                                  #{node.data.chapterSeq}
-                                </span>
-                              )}
-                              <span className="chapter-timeline-label">
-                                {node.data.label}
-                              </span>
-                              {node.data.chapterPov && (
-                                <span className="chapter-timeline-pov">
-                                  {castNames.get(node.data.chapterPov) ??
-                                    'cast member in the trash'}
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </section>
-
-                    {continuityLines.length > 0 && (
-                      <section
-                        className="chapter-continuity"
-                        aria-labelledby="chapter-continuity-heading"
-                      >
-                        <div className="chapter-continuity-head">
-                          <h3 id="chapter-continuity-heading">Continuity</h3>
-                          <span className="chapter-continuity-note">
-                            {continuityLines.length} to check · advisory
-                          </span>
-                          <HelpTip label="continuity warnings">
-                            These compare the ledger with the story and point at what
-                            cannot both be true: a skill learned before its parent, an
-                            item lost before it was found, a level that goes down
-                            without a penalty. They are advisory, and a sync writes the
-                            ledger’s number onto the milestone as one undoable change.
-                          </HelpTip>
-                        </div>
-                        <ul>
-                          {continuityLines.map(({ parts, flag }, index) => (
-                            <li
-                              key={`${index}-${parts
-                                .map(part => (typeof part === 'string' ? part : part.text))
-                                .join('')}`}
-                            >
-                              {parts.map((part, partIndex) =>
-                                typeof part === 'string' ? (
-                                  <React.Fragment key={partIndex}>{part}</React.Fragment>
-                                ) : (
-                                  <button
-                                    key={partIndex}
-                                    type="button"
-                                    className="chapter-continuity-link"
-                                    title={
-                                      part.kind === 'character'
-                                        ? "Open this entry on the character's sheet"
-                                        : "Open this chapter's details"
-                                    }
-                                    onClick={() =>
-                                      part.kind === 'character'
-                                        ? openCharacterSheet(part.id, part.target)
-                                        : revealChapter(part.id)
-                                    }
-                                  >
-                                    {part.text}
-                                  </button>
-                                )
-                              )}
-                              {flag?.kind === 'xp-income-mismatch' &&
-                                flag.ledgerXp != null &&
-                                flag.target.kind === 'level' && (
-                                  <div className="chapter-continuity-fix">
-                                    <button
-                                      type="button"
-                                      className="chapter-continuity-sync"
-                                      title="Record the chapter ledger's total on this milestone"
-                                      disabled={
-                                        syncingXpMilestoneId === flag.target.milestoneId
-                                      }
-                                      onClick={() => void syncMilestoneXp(flag)}
-                                    >
-                                      {syncingXpMilestoneId === flag.target.milestoneId
-                                        ? 'Syncing…'
-                                        : `Sync to ${formatCount(flag.ledgerXp)} XP`}
-                                    </button>
-                                  </div>
-                                )}
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
+            <ChaptersPanel
+              story={currentStory}
+              renderSearchPalette={renderSearchPalette}
+              searchShortcut={shortcutKeys.search}
+              openSearch={openSearch}
+              chapterNodes={chapterNodes}
+              chapterIssues={chapterIssues}
+              chapterTotals={chapterTotals}
+              chapterWordsPercent={chapterWordsPercent}
+              chapterTimeline={chapterTimeline}
+              chapterError={chapterError}
+              chapterBusy={chapterBusy}
+              newChapterTitle={newChapterTitle}
+              setNewChapterTitle={setNewChapterTitle}
+              addChapter={addChapter}
+              saveChapterOrder={saveChapterOrder}
+              revealedChapterId={revealedChapterId}
+              characters={characters}
+              castNames={castNames}
+              chapterCastByChapter={chapterCastByChapter}
+              chapterCastIsExplicit={chapterCastIsExplicit}
+              setChapterCastPresence={setChapterCastPresence}
+              chapterCastBusyId={chapterCastBusyId}
+              chapterCastError={chapterCastError}
+              openChapterCastId={openChapterCastId}
+              toggleChapterCastPanel={toggleChapterCastPanel}
+              editingChapterId={editingChapterId}
+              openChapterDetails={openChapterDetails}
+              chapterArcInputRef={chapterArcInputRef}
+              chapterArcDraft={chapterArcDraft}
+              setChapterArcDraft={setChapterArcDraft}
+              chapterWordsDraft={chapterWordsDraft}
+              setChapterWordsDraft={setChapterWordsDraft}
+              chapterTargetDraft={chapterTargetDraft}
+              setChapterTargetDraft={setChapterTargetDraft}
+              chapterPovDraft={chapterPovDraft}
+              setChapterPovDraft={setChapterPovDraft}
+              chapterDayDraft={chapterDayDraft}
+              setChapterDayDraft={setChapterDayDraft}
+              chapterTimeDraft={chapterTimeDraft}
+              setChapterTimeDraft={setChapterTimeDraft}
+              saveChapterDetails={saveChapterDetails}
+              requestChapterClose={requestChapterClose}
+              chapterFormPrompt={chapterFormPrompt}
+              dismissChapterPrompt={dismissChapterPrompt}
+              discardChapterEdit={discardChapterEdit}
+              closeChapterForm={closeChapterForm}
+              leaveChapterForm={leaveChapterForm}
+              chapterKeepEditingRef={chapterKeepEditingRef}
+              notesByChapter={notesByChapter}
+              noteCount={noteCount}
+              openNotesChapterId={openNotesChapterId}
+              toggleChapterNotes={toggleChapterNotes}
+              notePrompt={notePrompt}
+              dismissNotePrompt={dismissNotePrompt}
+              discardNoteDraft={discardNoteDraft}
+              noteKeepEditingRef={noteKeepEditingRef}
+              noteEditorRef={noteEditorRef}
+              noteAddRef={noteAddRef}
+              editingNoteId={editingNoteId}
+              matchedNoteId={matchedNoteId}
+              noteEditDraft={noteEditDraft}
+              setNoteEditDraft={setNoteEditDraft}
+              noteDraft={noteDraft}
+              setNoteDraft={setNoteDraft}
+              noteBusy={noteBusy}
+              noteError={noteError}
+              startNoteEdit={startNoteEdit}
+              requestNoteEditCancel={requestNoteEditCancel}
+              saveNoteEdit={saveNoteEdit}
+              deleteNote={deleteNote}
+              addNote={addNote}
+              continuityLines={continuityLines}
+              openCharacterSheet={openCharacterSheet}
+              revealChapter={revealChapter}
+              syncingXpMilestoneId={syncingXpMilestoneId}
+              syncMilestoneXp={syncMilestoneXp}
+            />
           </div>
         )}
 
