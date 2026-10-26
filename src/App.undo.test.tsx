@@ -506,6 +506,8 @@ describe('undo and redo', () => {
     );
     expect(await screen.findByRole('button', { name: 'Rook' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'edge n1 to n2' })).toBeInTheDocument();
+    // The line came back with it, so the notice has nothing else to explain.
+    expect(screen.getByText('Undid: Delete “Rook”')).toBeInTheDocument();
   });
 
   it('restores a chapter without drawing its connections again', async () => {
@@ -529,6 +531,14 @@ describe('undo and redo', () => {
     expect(
       screen.queryByRole('button', { name: 'edge n1 to n2' })
     ).not.toBeInTheDocument();
+
+    // So the notice says where the line went, rather than leaving the author to
+    // wonder why the board came back one connection short.
+    expect(
+      screen.getByText(
+        'Undid: Delete “Opening” — 1 connection went to the Trash with it. Restore it there to draw it again.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('writes a refused undo into the history, not just the notice', async () => {

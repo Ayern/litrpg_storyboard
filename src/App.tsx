@@ -1340,6 +1340,10 @@ interface UndoStep {
   label: string;
   undo: () => Promise<unknown>;
   redo: () => Promise<unknown>;
+  // Said after a successful undo only. A step whose work left something else
+  // behind — a chapter's connections, which are restored separately — names it
+  // here, so the notice says where the rest went.
+  undoNote?: string;
 }
 
 // A database node row as React Flow wants it. One mapping, used by the story
@@ -4420,7 +4424,11 @@ function App() {
         undo: undoStackRef.current.length,
         redo: redoStackRef.current.length,
       });
-      setHistoryNotice(`${direction === 'undo' ? 'Undid' : 'Redid'}: ${step.label}`);
+      // The note belongs to the undo: a redo takes the same things away again.
+      const note = direction === 'undo' ? step.undoNote : null;
+      setHistoryNotice(
+        `${direction === 'undo' ? 'Undid' : 'Redid'}: ${step.label}${note ? ` — ${note}` : ''}`
+      );
 
       const storyId = lastStoryIdRef.current;
       if (!storyId) return;
@@ -8774,6 +8782,16 @@ function App() {
       setSelectedNodeId(current => (current && removedIds.has(current) ? null : current));
       // Connections attached to those nodes go with them, so close that editor.
       setSelectedEdgeId(null);
+      // A chapter comes back without its connections, so the undo says how many
+      // of them went to the trash with it. Counted while the board still has
+      // them, and only for chapter ends: those are the ones the restore leaves.
+      const chapterIds = new Set(
+        deleted.filter(node => node.data.nodeType === 'chapter').map(node => node.id)
+      );
+      const strandedConnections = edges.filter(
+        edge => chapterIds.has(edge.source) || chapterIds.has(edge.target)
+      ).length;
+
       setEdges(eds =>
         eds.filter(edge => !removedIds.has(edge.source) && !removedIds.has(edge.target))
       );
@@ -8798,6 +8816,14 @@ function App() {
               await invoke('delete_node', { id: node.id, user: actor });
             }
           },
+          undoNote:
+            strandedConnections > 0
+              ? `${strandedConnections} connection${
+                  strandedConnections === 1 ? '' : 's'
+                } went to the Trash with it. Restore ${
+                  strandedConnections === 1 ? 'it' : 'them'
+                } there to draw ${strandedConnections === 1 ? 'it' : 'them'} again.`
+              : undefined,
         });
       } catch (e) {
         console.error('Failed to delete node:', e);
@@ -8805,7 +8831,7 @@ function App() {
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, loadStory, setEdges, recordStep]
+    [currentStory, actor, edges, loadStory, setEdges, recordStep]
   );
 
   const removeEdges = useCallback(

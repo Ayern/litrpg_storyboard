@@ -505,7 +505,9 @@ history, so a retry starts from where it did rather than from half a change.
 A refusal does not only live in the notice that fades: the attempt, the reason
 and the half that was put back are written into the story's history as `undo
 refused`, `redo refused` or `rolled back`, so the Audit tab still says what was
-tried and why it stopped after the banner has gone.
+tried and why it stopped after the banner has gone. Undoing the deletion of a
+chapter also names how many connections went to the trash with it, because those
+come back one at a time from the Trash rather than with the chapter.
 The stack holds the last 50 actions of the open story and is emptied when another
 story is opened or something is purged; inside a text field `Ctrl+Z` is left to
 the text being typed.
