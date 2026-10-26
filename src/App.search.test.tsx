@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -261,6 +261,11 @@ async function openCanvas() {
 
   await screen.findAllByText('Ledger');
   await screen.findByText('Opening');
+
+  // Ctrl+F is answered by a listener attached in an effect, which lands a tick
+  // after the DOM the waits above see. Settle it, so a loaded CI runner cannot
+  // fire the key into the previous render's listener and lose the palette.
+  await act(async () => {});
 
   return { container };
 }
