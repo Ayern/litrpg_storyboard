@@ -329,9 +329,11 @@ describe('creating canvas cards from their real forms', () => {
 
     const dialog = screen.getByRole('dialog', { name: 'New skill' });
     expect(within(dialog).getByLabelText('Skill name')).toHaveValue('Fireball');
-    expect(within(dialog).getByLabelText('Skill owner')).toHaveValue('char-1');
+    // Nobody is chosen for the author: an unheld card is a valid place to start.
+    expect(within(dialog).getByLabelText('Skill owner')).toHaveValue('');
     expect(within(dialog).getByRole('button', { name: 'Create card' })).toBeEnabled();
 
+    await user.selectOptions(within(dialog).getByLabelText('Skill owner'), 'char-1');
     await user.selectOptions(within(dialog).getByLabelText('Skill chapter'), 'n2');
     await user.type(within(dialog).getByLabelText('Skill rank'), 'Rank 2');
     await user.type(within(dialog).getByLabelText('Skill effect'), '3d6 fire');
@@ -352,6 +354,39 @@ describe('creating canvas cards from their real forms', () => {
       user: 'You',
     });
     expect(canvasCard('node-1')).toHaveTextContent('Fireball');
+  });
+
+  it('places a skill card nobody holds yet, and undoes only the card', async () => {
+    const user = await openCanvas();
+
+    await startCreate(user, 'skill', 'Frost Touch');
+
+    const dialog = screen.getByRole('dialog', { name: 'New skill' });
+    // An owner is a convenience, not a requirement: the card can be placed now.
+    expect(within(dialog).getByLabelText('Skill owner')).toHaveValue('');
+    expect(within(dialog).getByRole('button', { name: 'Create card' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Create card' }));
+
+    expect(lastCall('create_graph_node')).toMatchObject({
+      nodeType: 'skill',
+      label: 'Frost Touch',
+    });
+    expect(lastCall('add_skill')).toBeUndefined();
+    expect(screen.queryByRole('dialog', { name: 'New skill' })).not.toBeInTheDocument();
+    expect(canvasCard('node-1')).toHaveTextContent('Frost Touch');
+    expect(canvasCard('node-1')).toHaveTextContent('No one has this skill yet');
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(lastCall('delete_node')).toMatchObject({ id: 'node-1' });
+    expect(lastCall('delete_skill')).toBeUndefined();
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'restore_deleted').map(call => call[1])
+    ).toEqual([expect.objectContaining({ id: 'node-1', kind: 'node' })]);
+    expect(lastCall('add_skill')).toBeUndefined();
   });
 
   it('still creates narrative cards with the quick label path', async () => {

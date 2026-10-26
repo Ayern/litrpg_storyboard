@@ -90,6 +90,16 @@ vi.mock('reactflow', async () => {
         { onClick: () => spawn('n3') },
         'spawn from chapter'
       ),
+      React.createElement(
+        'button',
+        { onClick: () => onConnect?.({ source: 'n4', target: 'n1' }) },
+        'connect skill to character'
+      ),
+      React.createElement(
+        'button',
+        { onClick: () => onConnect?.({ source: 'n1', target: 'n4' }) },
+        'connect character to skill'
+      ),
       edges.map((edge: any) =>
         React.createElement(
           React.Fragment,
@@ -162,6 +172,7 @@ interface NodeRow {
   label: string;
   character_id: string | null;
   chapter_seq: number | null;
+  content?: string | null;
 }
 
 function nodeRow(
@@ -169,9 +180,29 @@ function nodeRow(
   nodeType: string,
   label: string,
   characterId: string | null,
-  chapterSeq: number | null = null
+  chapterSeq: number | null = null,
+  content: string | null = null
 ): NodeRow {
-  return { id, node_type: nodeType, label, character_id: characterId, chapter_seq: chapterSeq };
+  return {
+    id,
+    node_type: nodeType,
+    label,
+    character_id: characterId,
+    chapter_seq: chapterSeq,
+    content,
+  };
+}
+
+interface SkillRow {
+  id: string;
+  character_id: string;
+  name: string;
+  rank: string | null;
+  effect: string | null;
+  chapter_id: string | null;
+  node_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface EdgeRow {
@@ -215,6 +246,8 @@ let relations: RelationRow[] = [];
 let edgeSeq = 0;
 let relationSeq = 0;
 let castSeq = 0;
+let skillSeq = 0;
+let skills: SkillRow[] = [];
 
 function timestamp() {
   return '2026-10-22T12:00:00Z';
@@ -225,14 +258,17 @@ beforeEach(() => {
     nodeRow('n1', 'character', 'Rook', 'char-1'),
     nodeRow('n2', 'character', 'Wren', 'char-2'),
     nodeRow('n3', 'chapter', 'Opening', null, 1),
+    nodeRow('n4', 'skill', 'Frost Touch', null, null, 'Leaves frost on the skin.'),
   ];
   edges = [];
   deletedEdges = [];
   chapterCast = [];
   relations = [];
+  skills = [];
   edgeSeq = 0;
   relationSeq = 0;
   castSeq = 0;
+  skillSeq = 0;
 
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -245,7 +281,7 @@ beforeEach(() => {
         return nodes.map(row => ({
           ...row,
           story_id: story.id,
-          content: null,
+          content: row.content ?? null,
           pos_x: 0,
           pos_y: 0,
           created_by: 'Ada',
@@ -357,6 +393,31 @@ beforeEach(() => {
       case 'remove_chapter_cast_member':
         chapterCast = chapterCast.filter(row => row.id !== args.id);
         return null;
+      case 'get_story_skills':
+        return skills.map(row => ({ ...row }));
+      case 'get_character_skills':
+        return skills
+          .filter(row => row.character_id === args.characterId)
+          .map(row => ({ ...row }));
+      case 'add_skill': {
+        skillSeq += 1;
+        const row: SkillRow = {
+          id: `skill-${skillSeq}`,
+          character_id: args.characterId,
+          name: args.name,
+          rank: args.rank ?? null,
+          effect: args.effect ?? null,
+          chapter_id: args.chapterId ?? null,
+          node_id: args.nodeId ?? null,
+          created_at: timestamp(),
+          updated_at: timestamp(),
+        };
+        skills.push(row);
+        return { ...row };
+      }
+      case 'delete_skill':
+        skills = skills.filter(row => row.id !== args.id);
+        return null;
       default:
         return [];
     }
@@ -375,6 +436,14 @@ async function openCanvas() {
   await screen.findByTitle('The kind of node the Add button creates');
 
   return user;
+}
+
+// The skills the open sheet is listing, read from the rows themselves so a name
+// that also appears on a card or in the tree cannot stand in for it.
+function sheetSkillNames(): string[] {
+  return Array.from(document.querySelectorAll('.skill-row .skill-name')).map(
+    node => node.textContent ?? ''
+  );
 }
 
 describe('connection actions', () => {
@@ -497,6 +566,198 @@ describe('connection actions', () => {
       })
     );
     expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+  });
+
+  it('turns a skill-to-character connection into a holder on the sheet, and undoes both together', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect skill to character' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_skill')).toEqual({
+        characterId: 'char-1',
+        name: 'Frost Touch',
+        rank: null,
+        effect: 'Leaves frost on the skin.',
+        chapterId: null,
+        nodeId: 'n4',
+        user: 'You',
+      })
+    );
+    expect(lastCall('create_graph_edge')).toMatchObject({
+      sourceId: 'n4',
+      targetId: 'n1',
+      label: 'skill',
+      relationType: 'skill',
+    });
+    expect(skills).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+
+    // The write reaches the sheet that is open on the other tab, not just the
+    // database, so the holder is there before the story is reopened.
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    expect(sheetSkillNames()).toContain('Frost Touch');
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_skill')).toEqual({ id: 'skill-1', user: 'You' })
+    );
+    expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+    expect(skills).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_skill')).toMatchObject({
+        characterId: 'char-1',
+        nodeId: 'n4',
+      })
+    );
+    expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+    expect(skills).toHaveLength(1);
+  });
+
+  it('asks before a skill connection takes the skill off the sheet, and undoes both together', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect skill to character' }));
+    await waitFor(() => expect(lastCall('add_skill')).toBeTruthy());
+
+    await user.click(screen.getByRole('button', { name: 'remove e1' }));
+    const keep = await screen.findByRole('dialog', { name: 'Remove connection' });
+    expect(keep).toHaveTextContent('Rook will lose Frost Touch');
+    await user.click(within(keep).getByRole('button', { name: 'Keep' }));
+
+    expect(lastCall('delete_skill')).toBeUndefined();
+    expect(skills).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'remove e1' }));
+    const remove = await screen.findByRole('dialog', { name: 'Remove connection' });
+    await user.click(within(remove).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_skill')).toEqual({ id: 'skill-1', user: 'You' })
+    );
+    expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+    expect(skills).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: 'remove e1' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_skill')).toEqual({
+        characterId: 'char-1',
+        name: 'Frost Touch',
+        rank: null,
+        effect: 'Leaves frost on the skin.',
+        chapterId: null,
+        nodeId: 'n4',
+        user: 'You',
+      })
+    );
+    expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+    expect(skills).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+  });
+
+  it('adopts a line drawn before a skill hold was written', async () => {
+    // A board from before this rule: the line is there, the sheet has no row.
+    edges = [
+      {
+        id: 'e9',
+        story_id: story.id,
+        source_id: 'n4',
+        target_id: 'n1',
+        label: null,
+        relation_type: null,
+        created_by: 'Ada',
+        created_at: timestamp(),
+      },
+    ];
+
+    const user = await openCanvas();
+
+    const edgeWrites = invokeMock.mock.calls.filter(
+      call => call[0] === 'create_graph_edge'
+    ).length;
+
+    await user.click(screen.getByRole('button', { name: 'connect skill to character' }));
+
+    await waitFor(() => expect(skills).toHaveLength(1));
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'create_graph_edge').length
+    ).toBe(edgeWrites);
+    expect(screen.getAllByRole('button', { name: 'remove e9' })).toHaveLength(1);
+
+    // The adopted line is the hold's drawing from then on, so deleting it asks.
+    await user.click(screen.getByRole('button', { name: 'remove e9' }));
+    const remove = await screen.findByRole('dialog', { name: 'Remove connection' });
+    expect(remove).toHaveTextContent('Rook will lose Frost Touch');
+  });
+
+  it('removes the line when the skill is deleted from the sheet, as one undo step', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect skill to character' }));
+    await waitFor(() => expect(skills).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    await user.click(screen.getByTitle('Delete Frost Touch'));
+
+    await waitFor(() =>
+      expect(lastCall('delete_skill')).toEqual({ id: 'skill-1', user: 'You' })
+    );
+    expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+    expect(skills).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    expect(screen.queryByRole('button', { name: 'remove e1' })).not.toBeInTheDocument();
+
+    // One step puts the skill and the line back together.
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_skill')).toMatchObject({
+        characterId: 'char-1',
+        name: 'Frost Touch',
+        nodeId: 'n4',
+      })
+    );
+    expect(lastCall('restore_deleted')).toEqual({ id: 'e1', kind: 'edge', user: 'You' });
+    expect(skills).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: 'remove e1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() => expect(skills).toHaveLength(0));
+    expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
+    expect(screen.queryByRole('button', { name: 'remove e1' })).not.toBeInTheDocument();
+  });
+
+  it('leaves a sheet alone when the character already holds the skill', async () => {
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'connect skill to character' }));
+    await waitFor(() => expect(lastCall('add_skill')).toBeTruthy());
+
+    const edgeWrites = invokeMock.mock.calls.filter(
+      call => call[0] === 'create_graph_edge'
+    ).length;
+
+    // The same pair drawn the other way round is the same hold, not a second one.
+    await user.click(screen.getByRole('button', { name: 'connect character to skill' }));
+
+    expect(await screen.findByText('Rook already has Frost Touch.')).toBeInTheDocument();
+    expect(skills).toHaveLength(1);
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'create_graph_edge').length
+    ).toBe(edgeWrites);
   });
 
   it('asks before deleting a relation by deleting the edge that drew it', async () => {

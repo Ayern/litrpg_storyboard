@@ -162,7 +162,10 @@ member plus a linked card. A quest form takes a title, giver, faction, accepted
 and optional ending chapters, description and notes; it creates the contract in
 the ledger — completed when an ending chapter is chosen — and a quest card. A
 skill form takes owner, name, rank, effect and chapter, and creates the skill on
-the owner's sheet plus the skill card that grants it. The label typed in the
+the owner's sheet plus the skill card that grants it; with **No holder yet**
+chosen it places the card alone, because a skill can be put on the board before
+anybody holds it. The owner starts unset unless the form was opened by dragging a
+connection off a character card, so nobody is attached by accident. The label typed in the
 toolbar prefills the name or title, **Create card** stays disabled until the
 required fields are there, and a refused write leaves no half-made card: a card
 whose skill is rejected is removed again. The board history records both halves,
@@ -324,7 +327,17 @@ card with unsaved label or note edits asks for a save before it will add one.
 Saving the card's label or notes updates every linked skill row to the same name
 and effect, while each holder's rank and chapter stay as they are; if the new
 name would collide with another skill on a holder's sheet, the save is refused
-and both the card and its holders are left unchanged. Skills travel in the JSON export, the story
+and both the card and its holders are left unchanged. Drawing a connection from
+the card to a character card is the same write without the form: that character
+becomes a holder of the same card, the line says `skill`, and Undo takes the line
+and the sheet row back in one step. A second line between the same card and the
+same character is refused with the reason rather than making a duplicate, and
+deleting the line asks first, then takes the skill off that sheet and removes the
+connection together as one undoable step. Deleting the skill from the sheet is
+the same pair of writes the other way round: the line that drew it goes with the
+row, and one Undo puts both back. A card can also be placed with no holder at
+all — **No holder yet** in the owner field — and characters join it later by
+connecting their cards or from the card's **Add holder** form. Skills travel in the JSON export, the story
 bible and an import with their chapter and card remapped like every other
 reference, and they appear in the Audit tab under **Skills**. A skill's name, rank
 and effect are revertible from the history; its chapter and card links are
@@ -859,6 +872,10 @@ page that arrives late, and what it says when a filter matches nothing.
   an entry *Changed since* rather than offering a button that would be refused. Creations and
   purges cannot be reverted at all: the first is undone by deleting it, and the
   second has no row left to write to.
+- **Undoing a skill's deletion brings back the skill, not its change history.**
+  A skill's events and evolution links cascade with the row, so undoing the
+  deletion writes the skill — and the canvas line that drew it — again under a
+  new id, while those rows stay gone.
 - **Retention only runs at launch and when it is changed.** A window of 30 days
   means an item deleted 40 days ago goes the next time the app starts, not the
   moment it turns 40 days old — a long-running session keeps everything until it

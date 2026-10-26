@@ -591,7 +591,7 @@ const guideConcepts = [
     title: 'The canvas is a database',
     short: 'A line you draw is a record: a relation, a cast entry, an audit entry.',
     body:
-      'A connection is not decoration. Draw one between two characters and a relation is written onto both sheets; draw one to a chapter and that character joins its cast. Every one of those writes is recorded in the history with your name on it.',
+      'A connection is not decoration. Draw one between two characters and a relation is written onto both sheets; draw one to a chapter and that character joins its cast; draw one from a skill card to a character and that character becomes one of its holders. Every one of those writes is recorded in the history with your name on it.',
   },
   {
     title: 'A skill card has one identity',
@@ -652,11 +652,12 @@ interface CharacterConnectionDraft {
   chapterId: string;
 }
 
-// A connection whose removal also removes a domain row: the cast of a chapter,
-// or a relation between two characters. Cancelling puts the edge back untouched.
+// A connection whose removal also removes a domain row: the cast of a chapter, a
+// relation between two characters, or a character's hold on a skill card.
+// Cancelling puts the edge back untouched.
 interface PendingEdgeRemoval {
   edge: Edge<EdgeData>;
-  kind: 'cast' | 'relation';
+  kind: 'cast' | 'relation' | 'skill';
   title: string;
   detail: string;
   stepLabel: string;
@@ -670,6 +671,13 @@ interface PendingEdgeRemoval {
   relationNote?: string | null;
   relationSinceChapterId?: string | null;
   relationUntilChapterId?: string | null;
+  skillId?: string;
+  skillCharacterId?: string;
+  skillName?: string;
+  skillRank?: string | null;
+  skillEffect?: string | null;
+  skillChapterId?: string | null;
+  skillNodeId?: string | null;
 }
 
 // How many numbers a card has room for before it starts counting.
@@ -856,6 +864,73 @@ function relationForEdge(
       relation => relation.kind === (edge.data?.relationType ?? edge.label ?? '')
     ) ?? (pair.length === 1 ? pair[0] : undefined)
   );
+}
+
+// A connection between a skill card and a character card. The card is the shared
+// identity; the character is whoever the line puts on it. Either end may be the
+// card, because a line has no front, and a character card that was never linked
+// to a cast member cannot stand for anybody.
+function skillCardEnds(
+  edge: Edge<EdgeData>,
+  nodes: Node<NodeData>[]
+): { card: Node<NodeData>; characterId: string } | null {
+  const source = nodes.find(node => node.id === edge.source);
+  const target = nodes.find(node => node.id === edge.target);
+
+  if (!source || !target) return null;
+
+  const card =
+    source.data.nodeType === 'skill'
+      ? source
+      : target.data.nodeType === 'skill'
+        ? target
+        : null;
+
+  if (!card) return null;
+
+  const other = card === source ? target : source;
+  const characterId =
+    other.data.nodeType === 'character' ? other.data.characterId ?? null : null;
+
+  return characterId ? { card, characterId } : null;
+}
+
+// The sheet row a skill-card connection stands for: that character's skill which
+// points at this very card. A skill the character typed in by hand without a
+// card is not this line, so it is left alone.
+function skillForEdge(
+  edge: Edge<EdgeData>,
+  nodes: Node<NodeData>[],
+  skills: CharacterSkill[]
+): CharacterSkill | undefined {
+  const ends = skillCardEnds(edge, nodes);
+
+  if (!ends) return undefined;
+
+  return skills.find(
+    row => row.node_id === ends.card.id && row.character_id === ends.characterId
+  );
+}
+
+// The line that put a holder on the board: the card the skill names, joined to a
+// card linked to the holder. A skill typed onto the sheet without a card has no
+// line to find, and the sheet edit stands on its own.
+function matchingSkillEdge(
+  edges: Edge<EdgeData>[],
+  nodes: Node<NodeData>[],
+  skill: Pick<CharacterSkill, 'character_id' | 'node_id'>
+): Edge<EdgeData> | undefined {
+  if (!skill.node_id) return undefined;
+
+  return edges.find(edge => {
+    const ends = skillCardEnds(edge, nodes);
+
+    return (
+      ends !== null &&
+      ends.card.id === skill.node_id &&
+      ends.characterId === skill.character_id
+    );
+  });
 }
 
 // What sits on the right of a result: whose character a card belongs to, both
@@ -5212,10 +5287,10 @@ function App() {
       kind: newNodeType,
       name: newNodeLabel.trim(),
       description: '',
-      ownerId:
-        newNodeType === 'skill'
-          ? sourceCharacterId ?? selectedCharacterId ?? characters[0]?.id ?? ''
-          : '',
+      // Only a drag from a character card picks an owner. Otherwise the field
+      // starts empty: placing a card nobody holds yet is a real answer, and the
+      // author should be the one who says who has it.
+      ownerId: newNodeType === 'skill' ? sourceCharacterId ?? '' : '',
       rank: '',
       chapterId:
         newNodeType === 'quest'
@@ -5249,11 +5324,6 @@ function App() {
 
     if (draft.kind === 'quest' && !draft.chapterId) {
       setCanvasCreateError('A quest needs the chapter it was accepted in.');
-      return;
-    }
-
-    if (draft.kind === 'skill' && !draft.ownerId) {
-      setCanvasCreateError('A skill needs a character to hold it.');
       return;
     }
 
@@ -5380,11 +5450,13 @@ function App() {
           createdBy: actor,
         });
 
-        let skill: CharacterSkill;
-
-        try {
-          skill = await invoke('add_skill', {
-            characterId: draft.ownerId,
+        // An owner is optional: a skill can be placed on the board before anybody
+        // holds it. A character joins later by connecting their card to it, or
+        // with the card's Add holder form, and that is when the first sheet row
+        // and the shared definition are written.
+        const learn = (characterId: string) =>
+          invoke<CharacterSkill>('add_skill', {
+            characterId,
             name,
             rank: draft.rank.trim() || null,
             effect: description,
@@ -5392,47 +5464,41 @@ function App() {
             nodeId: node.id,
             user: actor,
           });
-        } catch (e) {
-          // The skill was refused, so the card made for it must not stay behind.
-          await invoke('delete_node', { id: node.id, user: actor }).catch(() => {});
-          throw e;
+
+        let skill: CharacterSkill | null = null;
+
+        if (draft.ownerId) {
+          try {
+            skill = await learn(draft.ownerId);
+          } catch (e) {
+            // The skill was refused, so the card made for it must not stay behind.
+            await invoke('delete_node', { id: node.id, user: actor }).catch(() => {});
+            throw e;
+          }
         }
 
-        setStorySkills(previous => [...previous, skill]);
         setNodes(nds => [...nds, toFlowNode(node)]);
+        if (skill) showSkillOnLists(skill);
 
-        if (skill.character_id === selectedCharacterId) {
-          setCharacterSkills(previous => [...previous, skill]);
-        }
-
-        let currentSkillId = skill.id;
+        let currentSkillId = skill?.id ?? null;
 
         recordStep({
           label: `Add “${name}”`,
           undo: async () => {
-            await invoke('delete_skill', { id: currentSkillId, user: actor });
+            if (currentSkillId) {
+              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              hideSkillOnLists(currentSkillId, draft.ownerId);
+            }
             await invoke('delete_node', { id: node.id, user: actor });
-            setStorySkills(previous => previous.filter(row => row.id !== currentSkillId));
-            setCharacterSkills(previous =>
-              previous.filter(row => row.id !== currentSkillId)
-            );
           },
           redo: async () => {
             await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
-            const again: CharacterSkill = await invoke('add_skill', {
-              characterId: draft.ownerId,
-              name,
-              rank: draft.rank.trim() || null,
-              effect: description,
-              chapterId: draft.chapterId || null,
-              nodeId: node.id,
-              user: actor,
-            });
+
+            if (!draft.ownerId) return;
+
+            const again = await learn(draft.ownerId);
             currentSkillId = again.id;
-            setStorySkills(previous => [...previous, again]);
-            if (again.character_id === selectedCharacterId) {
-              setCharacterSkills(previous => [...previous, again]);
-            }
+            showSkillOnLists(again);
           },
         });
       }
@@ -8046,6 +8112,28 @@ function App() {
     }
   };
 
+  // A holder added or taken away by a canvas connection touches the story list
+  // always and the open sheet only when it is that character's. Both keep the
+  // order the database reads them in, so the board and the sheet agree before the
+  // story is reopened.
+  const showSkillOnLists = (skill: CharacterSkill) => {
+    const ordered = (list: CharacterSkill[]) =>
+      [...list.filter(other => other.id !== skill.id), skill].sort(
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
+      );
+
+    setStorySkills(ordered);
+    if (skill.character_id === selectedCharacterId) setCharacterSkills(ordered);
+  };
+
+  const hideSkillOnLists = (id: string, characterId: string) => {
+    setStorySkills(previous => previous.filter(row => row.id !== id));
+
+    if (characterId === selectedCharacterId) {
+      setCharacterSkills(previous => previous.filter(row => row.id !== id));
+    }
+  };
+
   // A connection means something different depending on what it joins. Two
   // character cards ask for a relation, a character and a chapter add that
   // character to the chapter's cast, and anything else stays a plain edge.
@@ -8201,6 +8289,133 @@ function App() {
         return;
       }
 
+      // A skill card is one shared identity, so a line to a character card is
+      // that character learning it: the sheet gains a row that points at the
+      // same card, and the card's saved words are the row's words.
+      const skillNode =
+        sourceNode?.data.nodeType === 'skill'
+          ? sourceNode
+          : targetNode?.data.nodeType === 'skill'
+            ? targetNode
+            : null;
+
+      if (skillNode && characterNode) {
+        const characterId = characterNode.data.characterId;
+        // Read once: the narrowing of the two ends is lost inside the callbacks
+        // that draw the line and record the step.
+        const fromNodeId: string = params.source;
+        const toNodeId: string = params.target;
+
+        if (!characterId) {
+          setActionError(
+            'Link this character card to a cast member before giving them a skill.'
+          );
+          return;
+        }
+
+        const held = storySkills.find(
+          row => row.node_id === skillNode.id && row.character_id === characterId
+        );
+
+        if (held) {
+          setActionError(
+            `${characterNode.data.label} already has ${skillNode.data.label}.`
+          );
+          return;
+        }
+
+        const learn = () =>
+          invoke<CharacterSkill>('add_skill', {
+            characterId,
+            name: skillNode.data.label,
+            rank: null,
+            effect: skillNode.data.content?.trim() || null,
+            chapterId: null,
+            nodeId: skillNode.id,
+            user: actor,
+          });
+
+        // A line may already join these two cards: one drawn before a skill hold
+        // was written, or left behind when the skill was deleted from the sheet.
+        // The hold is then the only thing missing, and a second line would say
+        // the same thing twice.
+        const existingEdge = edges.find(
+          candidate =>
+            (candidate.source === fromNodeId && candidate.target === toNodeId) ||
+            (candidate.source === toNodeId && candidate.target === fromNodeId)
+        );
+
+        try {
+          const learned = await learn();
+          let newDbEdge: any = null;
+
+          if (!existingEdge) {
+            try {
+              newDbEdge = await invoke('create_graph_edge', {
+                storyId: currentStory.id,
+                sourceId: fromNodeId,
+                targetId: toNodeId,
+                label: 'skill',
+                relationType: 'skill',
+                createdBy: actor,
+              });
+            } catch (e) {
+              // The line is what the author drew. Without it the sheet row would
+              // be an edit they never asked for, so it goes back.
+              await invoke('delete_skill', { id: learned.id, user: actor }).catch(() => {});
+              throw e;
+            }
+
+            setSelectedEdgeId(null);
+            setEdges(eds =>
+              addEdge(
+                {
+                  id: newDbEdge.id,
+                  source: fromNodeId,
+                  target: toNodeId,
+                  label: 'skill',
+                  data: { createdBy: actor, label: 'skill', relationType: 'skill' },
+                },
+                eds
+              )
+            );
+          }
+
+          showSkillOnLists(learned);
+
+          const heldEdge = newDbEdge;
+          let currentSkillId = learned.id;
+
+          recordStep({
+            label: `${characterNode.data.label} learns ${skillNode.data.label}`,
+            undo: async () => {
+              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              hideSkillOnLists(currentSkillId, characterId);
+              if (heldEdge) await invoke('delete_edge', { id: heldEdge.id, user: actor });
+            },
+            redo: async () => {
+              const again = await learn();
+              currentSkillId = again.id;
+              showSkillOnLists(again);
+              if (heldEdge) {
+                await invoke('restore_deleted', {
+                  id: heldEdge.id,
+                  kind: 'edge',
+                  user: actor,
+                });
+              }
+            },
+          });
+        } catch (e) {
+          console.error('Failed to link a skill to a character:', e);
+          setActionError(
+            `Could not give ${characterNode.data.label} ${skillNode.data.label}: ${String(e)}`
+          );
+        }
+
+        return;
+      }
+
       try {
         const newDbEdge: any = await invoke('create_graph_edge', {
           storyId: currentStory.id,
@@ -8235,7 +8450,18 @@ function App() {
         console.error('Failed to create edge:', e);
       }
     },
-    [currentStory, actor, nodes, storyChapterCast, setEdges, recordStep]
+    [
+      currentStory,
+      actor,
+      nodes,
+      edges,
+      storyChapterCast,
+      storySkills,
+      setEdges,
+      recordStep,
+      showSkillOnLists,
+      hideSkillOnLists,
+    ]
   );
 
   // A connection drag remembers where it started. Ending on a card makes an
@@ -8515,6 +8741,34 @@ function App() {
           }
         }
 
+        // A line between a skill card and a character is that character holding
+        // the skill, so removing the line takes the row off their sheet too.
+        const heldSkill = skillForEdge(edge, nodes, storySkills);
+
+        if (heldSkill) {
+          const characterName =
+            characters.find(character => character.id === heldSkill.character_id)?.name ??
+            'This character';
+          const cardLabel =
+            skillCardEnds(edge, nodes)?.card.data.label ?? heldSkill.name;
+
+          domain.push({
+            edge,
+            kind: 'skill',
+            title: `Remove ${cardLabel} from ${characterName}'s sheet?`,
+            detail: `${characterName} will lose ${cardLabel}, and this connection will be deleted.`,
+            stepLabel: `Remove ${cardLabel} from ${characterName}`,
+            skillId: heldSkill.id,
+            skillCharacterId: heldSkill.character_id,
+            skillName: heldSkill.name,
+            skillRank: heldSkill.rank,
+            skillEffect: heldSkill.effect,
+            skillChapterId: heldSkill.chapter_id,
+            skillNodeId: heldSkill.node_id,
+          });
+          continue;
+        }
+
         plain.push(edge);
       }
 
@@ -8559,8 +8813,10 @@ function App() {
       currentStory,
       actor,
       nodes,
+      characters,
       storyChapterCast,
       storyRelations,
+      storySkills,
       loadStory,
       reloadStory,
       recordStep,
@@ -8622,7 +8878,7 @@ function App() {
               await invoke('delete_edge', { id: entry.edge.id, user: actor });
             },
           });
-        } else {
+        } else if (entry.kind === 'relation') {
           const relationId = entry.relationId;
 
           if (!relationId) continue;
@@ -8664,6 +8920,44 @@ function App() {
               setStoryRelations(previous =>
                 previous.filter(row => row.id !== currentRelationId)
               );
+              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+            },
+          });
+        } else {
+          const { skillId, skillCharacterId } = entry;
+
+          if (!skillId || !skillCharacterId) continue;
+
+          await invoke('delete_skill', { id: skillId, user: actor });
+          hideSkillOnLists(skillId, skillCharacterId);
+          await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
+
+          let currentSkillId = skillId;
+
+          recordStep({
+            label: entry.stepLabel,
+            undo: async () => {
+              const again: CharacterSkill = await invoke('add_skill', {
+                characterId: skillCharacterId,
+                name: entry.skillName,
+                rank: entry.skillRank ?? null,
+                effect: entry.skillEffect ?? null,
+                chapterId: entry.skillChapterId ?? null,
+                nodeId: entry.skillNodeId ?? null,
+                user: actor,
+              });
+              currentSkillId = again.id;
+              showSkillOnLists(again);
+              await invoke('restore_deleted', {
+                id: entry.edge.id,
+                kind: 'edge',
+                user: actor,
+              });
+            },
+            redo: async () => {
+              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              hideSkillOnLists(currentSkillId, skillCharacterId);
               await invoke('delete_edge', { id: entry.edge.id, user: actor });
             },
           });
@@ -9155,6 +9449,11 @@ function App() {
   const removeSkill = async (skill: CharacterSkill) => {
     setCharacterError(null);
 
+    // The canvas line that put this skill on the sheet. A skill typed in by hand
+    // has none; when a line exists, the row and the line leave together, so the
+    // board cannot keep a connection to a hold that no longer exists.
+    const matchingEdge = matchingSkillEdge(edges, nodes, skill);
+
     try {
       await invoke('delete_skill', { id: skill.id, user: actor });
       setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
@@ -9169,10 +9468,62 @@ function App() {
             evolution.parent_skill_id !== skill.id && evolution.child_skill_id !== skill.id
         )
       );
+
+      if (matchingEdge) {
+        await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+        setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
+        if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
+      }
+
       if (editingSkillEventId && storySkillEvents.some(event => event.id === editingSkillEventId && event.skill_id === skill.id)) {
         cancelSkillEventEdit();
       }
       setEditingSkillId(null);
+
+      // The row is deleted for good, so a redo writes it again and remembers the
+      // id it was given; the edge is in the trash and can simply be restored.
+      // Events and evolution links cascade with the row and are not part of the
+      // step: undo puts the skill back, not its change history.
+      let currentSkillId = skill.id;
+
+      recordStep({
+        label: `Delete “${skill.name}”`,
+        undo: async () => {
+          const again: CharacterSkill = await invoke('add_skill', {
+            characterId: skill.character_id,
+            name: skill.name,
+            rank: skill.rank,
+            effect: skill.effect,
+            chapterId: skill.chapter_id,
+            nodeId: skill.node_id,
+            user: actor,
+          });
+          currentSkillId = again.id;
+          showSkillOnLists(again);
+
+          if (matchingEdge) {
+            await invoke('restore_deleted', {
+              id: matchingEdge.id,
+              kind: 'edge',
+              user: actor,
+            });
+            setEdges(previous =>
+              previous.some(edge => edge.id === matchingEdge.id)
+                ? previous
+                : [...previous, matchingEdge]
+            );
+          }
+        },
+        redo: async () => {
+          await invoke('delete_skill', { id: currentSkillId, user: actor });
+          hideSkillOnLists(currentSkillId, skill.character_id);
+
+          if (matchingEdge) {
+            await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+            setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
+          }
+        },
+      });
     } catch (e) {
       console.error('Failed to delete skill:', e);
       setCharacterError(`Could not delete skill: ${String(e)}`);
@@ -18830,7 +19181,7 @@ function App() {
                       );
                     }}
                   >
-                    <option value="">Choose a character</option>
+                    <option value="">No holder yet</option>
                     {characters.map(character => (
                       <option key={character.id} value={character.id}>
                         {character.name}
@@ -18915,9 +19266,13 @@ function App() {
                 </p>
               )}
 
-            {canvasCreate.kind === 'skill' && characters.length === 0 && (
+            {canvasCreate.kind === 'skill' && (
               <p className="canvas-create-hint">
-                Add a character first — a skill needs someone to hold it.
+                {canvasCreate.ownerId
+                  ? 'The skill is written onto that sheet as well as the board.'
+                  : characters.length === 0
+                    ? 'Nobody can hold it yet — place the card now and add a character later.'
+                    : 'Leave the owner unset to place the card now; connect a character to it later to give the skill out.'}
               </p>
             )}
 
@@ -18933,8 +19288,7 @@ function App() {
                 disabled={
                   savingCanvasCreate ||
                   !canvasCreate.name.trim() ||
-                  (canvasCreate.kind === 'quest' && !canvasCreate.chapterId) ||
-                  (canvasCreate.kind === 'skill' && !canvasCreate.ownerId)
+                  (canvasCreate.kind === 'quest' && !canvasCreate.chapterId)
                 }
               >
                 {savingCanvasCreate ? 'Creating…' : 'Create card'}
