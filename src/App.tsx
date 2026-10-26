@@ -39,16 +39,7 @@ import * as trashApi from './domains/trash/api';
 import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { SuggestionInput } from './components/SuggestionInput';
-import { AuditEntryRow } from './domains/audit/AuditEntryRow';
-import {
-  actionLabels,
-  auditFilters,
-  AUDIT_PAGE_SIZE,
-  entityLabel,
-  entityLabels,
-  fieldLabels,
-} from './domains/audit/labels';
-import type { AuditEntry, AuditFilter, AuditPage } from './domains/audit/types';
+import { AuditPanel } from './domains/audit/AuditPanel';
 import type { CharacterAttribute } from './domains/characters/types';
 import { flowNodeTypes } from './domains/canvas/GraphNode';
 import { nodeTypes, NODE_STAT_BADGES } from './domains/canvas/types';
@@ -94,7 +85,7 @@ import type {
 } from './domains/shared/types';
 import type { BackupInfo, Story } from './domains/stories/types';
 import type { DeletedItem } from './domains/trash/types';
-import { formatCount } from './lib/format';
+import { formatCount, formatWhen } from './lib/format';
 // Re-exported where the guide test has always imported it from.
 export { placeTooltip };
 
@@ -833,11 +824,6 @@ function timeOfDay(label?: string | null): number | null {
   return Math.min(23 * 60 + 59, Math.max(0, best.minutes + nudge));
 }
 
-function formatWhen(timestamp: string): string {
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -1074,20 +1060,6 @@ function App() {
   const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
   const [edgeRelationDraft, setEdgeRelationDraft] = useState('');
   const [edgeEditError, setEdgeEditError] = useState<string | null>(null);
-
-  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
-  const [auditTotal, setAuditTotal] = useState(0);
-  const [auditFilter, setAuditFilter] = useState<AuditFilter>(null);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditLoadingMore, setAuditLoadingMore] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
-  const [revertBusyId, setRevertBusyId] = useState<string | null>(null);
-  const [revertNotice, setRevertNotice] = useState<string | null>(null);
-  const [revertError, setRevertError] = useState<string | null>(null);
-
-  // Read by the "show older" request when it returns, so a page fetched under one
-  // filter is never appended to a list showing another.
-  const auditFilterRef = useRef<AuditFilter>(null);
 
   const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -1942,78 +1914,6 @@ function App() {
     };
   }, [searchOpen, stories, currentStory]);
 
-  // History is fetched whenever the tab is opened, the story changes or the
-  // filter changes, so returning to the tab always reflects the latest changes.
-  useEffect(() => {
-    auditFilterRef.current = auditFilter;
-  }, [auditFilter]);
-
-  useEffect(() => {
-    if (selectedTab !== 'audit' || !currentStory) return;
-
-    let cancelled = false;
-
-    const loadAudit = async () => {
-      setAuditLoading(true);
-      setAuditError(null);
-
-      try {
-        const page: AuditPage = await auditApi.getAuditHistory(
-          currentStory.id,
-          auditFilter,
-          null,
-          AUDIT_PAGE_SIZE,
-          0
-        );
-        if (!cancelled) {
-          setAuditEntries(page.entries);
-          setAuditTotal(page.total);
-        }
-      } catch (e) {
-        console.error('Failed to load audit history:', e);
-        if (!cancelled) setAuditError(String(e));
-      } finally {
-        if (!cancelled) setAuditLoading(false);
-      }
-    };
-
-    loadAudit();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTab, currentStory, auditFilter]);
-
-  // Older changes are appended rather than reloaded, so the list grows where the
-  // reader is instead of jumping back to the newest entry.
-  const loadMoreAudit = async () => {
-    if (!currentStory) return;
-
-    const filter = auditFilter;
-    setAuditLoadingMore(true);
-    setAuditError(null);
-
-    try {
-      const page: AuditPage = await auditApi.getAuditHistory(
-        currentStory.id,
-        filter,
-        null,
-        AUDIT_PAGE_SIZE,
-        auditEntries.length
-      );
-
-      if (filter !== auditFilterRef.current) return;
-
-      setAuditEntries(previous => [...previous, ...page.entries]);
-      setAuditTotal(page.total);
-    } catch (e) {
-      console.error('Failed to load more audit history:', e);
-      setAuditError(String(e));
-    } finally {
-      setAuditLoadingMore(false);
-    }
-  };
-
   // A revert changes what the other tabs show, so they are reloaded rather than
   // left displaying the value the history just put back.
   const refreshAfterRevert = async () => {
@@ -2037,54 +1937,6 @@ function App() {
       setCharacterSkills(skills ?? []);
       setCharacterInventory(inventory ?? []);
       setCharacterCurrency(currency ?? []);
-    }
-  };
-
-  // The window is refetched at the size the reader had reached, so a revert adds
-  // its own entry without collapsing "show older changes" back to one page.
-  const reloadAuditWindow = async () => {
-    if (!currentStory) return;
-
-    const page: AuditPage = await auditApi.getAuditHistory(
-      currentStory.id,
-      auditFilter,
-      null,
-      Math.min(Math.max(auditEntries.length, AUDIT_PAGE_SIZE), 500),
-      0
-    );
-
-    setAuditEntries(page.entries);
-    setAuditTotal(page.total);
-  };
-
-  const revertChange = async (entry: AuditEntry) => {
-    setRevertBusyId(entry.id);
-    setRevertError(null);
-    setRevertNotice(null);
-
-    try {
-      const changed: boolean = await auditApi.revertChange(entry.id, actor);
-
-      if (!changed) {
-        setRevertNotice('Nothing to put back: that field already holds its earlier value.');
-      } else {
-        setRevertNotice(
-          `Reverted ${entityLabel(entry)} to “${entry.old_value ?? 'nothing'}”.`
-        );
-      }
-
-      try {
-        await refreshAfterRevert();
-        await reloadAuditWindow();
-      } catch (e) {
-        // The revert itself succeeded; a failed refresh must not be reported as one.
-        console.error('Failed to refresh after a revert:', e);
-      }
-    } catch (e) {
-      console.error('Failed to revert a change:', e);
-      setRevertError(String(e));
-    } finally {
-      setRevertBusyId(null);
     }
   };
 
@@ -8839,8 +8691,6 @@ function App() {
       setChapterNotes([]);
       setCharacters([]);
       setCastStats({});
-      setAuditEntries([]);
-      setAuditTotal(0);
       setTrash([]);
       setDeletedStories([]);
 
@@ -15769,122 +15619,11 @@ function App() {
         )}
 
         {selectedTab === 'audit' && (
-          <div className="tab-content">
-            {!currentStory ? (
-              <div className="empty-state">Load a story to see history</div>
-            ) : (
-              <>
-                <div
-                  className="audit-filters"
-                  role="group"
-                  aria-label="Filter history by what changed"
-                >
-                  {auditFilters.map(filter => (
-                    <button
-                      key={filter.value ?? 'all'}
-                      className={
-                        auditFilter === filter.value ? 'audit-filter active' : 'audit-filter'
-                      }
-                      aria-pressed={auditFilter === filter.value}
-                      title={
-                        filter.value
-                          ? `Show only ${filter.label.toLowerCase()} changes`
-                          : 'Show every kind of change'
-                      }
-                      onClick={() => setAuditFilter(filter.value)}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
-                </div>
-
-                {auditError && (
-                  <div className="audit-error">
-                    Could not load history for this story: {auditError}
-                  </div>
-                )}
-
-                {revertError && (
-                  <div className="audit-error">
-                    Cannot revert that change: {revertError}{' '}
-                    <button
-                      className="status-dismiss"
-                      title="Hide this message"
-                      onClick={() => setRevertError(null)}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                )}
-
-                {revertNotice && (
-                  <div className="status-strip">
-                    {revertNotice}
-                    <button
-                      className="status-dismiss"
-                      title="Hide this message"
-                      onClick={() => setRevertNotice(null)}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                )}
-
-                {auditLoading ? (
-                  <div className="empty">Loading history…</div>
-                ) : auditEntries.length === 0 ? (
-                  auditError ? null : (
-                    <div className="empty">
-                      {auditFilter
-                        ? 'No changes of this kind recorded yet.'
-                        : 'No changes recorded yet. Edits to this story will show up here, newest first.'}
-                    </div>
-                  )
-                ) : (
-                  <>
-                    <div className="audit-summary">
-                      Showing {auditEntries.length} of {auditTotal}{' '}
-                      {auditTotal === 1 ? 'change' : 'changes'}
-                    </div>
-
-                    <ol className="audit-list" aria-label="Change history">
-                      {auditEntries.map(entry => (
-                        <li key={entry.id} className="audit-entry">
-                          <div className="audit-row">
-                            <span className={`audit-badge ${entry.action}`}>
-                              {actionLabels[entry.action] ?? entry.action}
-                            </span>
-                            <span className="audit-entity">{entityLabel(entry)}</span>
-                            <span className="audit-when">
-                              {entry.changed_by} · {formatWhen(entry.changed_at)}
-                            </span>
-                          </div>
-                          <AuditEntryRow
-                            entry={entry}
-                            onRevert={revertChange}
-                            busy={revertBusyId}
-                          />
-                        </li>
-                      ))}
-                    </ol>
-
-                    {auditEntries.length < auditTotal && (
-                      <button
-                        className="audit-more"
-                        title="Load the next page of changes"
-                        onClick={loadMoreAudit}
-                        disabled={auditLoadingMore}
-                      >
-                        {auditLoadingMore
-                          ? 'Loading…'
-                          : `Show older changes (${auditTotal - auditEntries.length} more)`}
-                      </button>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
+          <AuditPanel
+            storyId={currentStory?.id ?? null}
+            actor={actor}
+            onReverted={refreshAfterRevert}
+          />
         )}
       </div>
 

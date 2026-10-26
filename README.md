@@ -826,11 +826,14 @@ page that arrives late, and what it says when a filter matches nothing.
   written, and `@tauri-apps/api/core`'s `invoke` is called nowhere else. The
   argument names are camelCase and Tauri maps them to the snake_case parameters
   of the Rust commands. `App.tsx` owns the story state, the handlers and the tab
-  layout; the pieces that do not need that state live beside it —
+  layout; the pieces that do not need all of it live beside it —
   `src/components/` for shared widgets (help bubble, suggestion field, view
   toggle), `src/domains/<domain>/` for the command module and its types, the
-  canvas card, audit row and labels, progression chart, relations map and skill
-  tree, and `src/lib/` for small formatting helpers.
+  canvas card, the audit tab with its row and labels, progression chart,
+  relations map and skill tree, and `src/lib/` for small formatting helpers.
+  Where a tab reads state nothing else uses, its domain module keeps it: the
+  audit tab holds its own history window, filter and revert notices, and is
+  handed the story, the current user and a way to reload the rest of the app.
 - **`src-tauri/db`** — all SQL, models and migrations, in a crate of its own with
   no Tauri dependency, so its tests build without WebKitGTK or GTK. The connection
   is owned by a `Db` value managed as Tauri state. Every public method takes the lock
