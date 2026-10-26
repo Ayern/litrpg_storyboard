@@ -9454,6 +9454,14 @@ function App() {
     // board cannot keep a connection to a hold that no longer exists.
     const matchingEdge = matchingSkillEdge(edges, nodes, skill);
 
+    // The row takes its history with it: the database cascades both, so the step
+    // keeps a copy to write back if it is undone.
+    const lostEvents = storySkillEvents.filter(event => event.skill_id === skill.id);
+    const lostLinks = storySkillEvolutions.filter(
+      evolution =>
+        evolution.parent_skill_id === skill.id || evolution.child_skill_id === skill.id
+    );
+
     try {
       await invoke('delete_skill', { id: skill.id, user: actor });
       setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
@@ -9482,8 +9490,7 @@ function App() {
 
       // The row is deleted for good, so a redo writes it again and remembers the
       // id it was given; the edge is in the trash and can simply be restored.
-      // Events and evolution links cascade with the row and are not part of the
-      // step: undo puts the skill back, not its change history.
+      // Events and evolution links are written back after it, against the new id.
       let currentSkillId = skill.id;
 
       recordStep({
@@ -9501,6 +9508,64 @@ function App() {
           currentSkillId = again.id;
           showSkillOnLists(again);
 
+          const restoredEvents: CharacterSkillEvent[] = [];
+          const restoredLinks: SkillEvolution[] = [];
+
+          try {
+            for (const event of lostEvents) {
+              restoredEvents.push(
+                await invoke<CharacterSkillEvent>('add_skill_event', {
+                  skillId: currentSkillId,
+                  kind: event.kind,
+                  chapterId: event.chapter_id,
+                  rank: event.rank,
+                  milestoneId: event.milestone_id ?? null,
+                  user: actor,
+                })
+              );
+            }
+
+            for (const evolution of lostLinks) {
+              restoredLinks.push(
+                await invoke<SkillEvolution>('add_skill_evolution', {
+                  parentSkillId:
+                    evolution.parent_skill_id === skill.id
+                      ? currentSkillId
+                      : evolution.parent_skill_id,
+                  childSkillId:
+                    evolution.child_skill_id === skill.id
+                      ? currentSkillId
+                      : evolution.child_skill_id,
+                  evolutionType: evolution.evolution_type,
+                  chapterId: evolution.chapter_id,
+                  requiredRank: evolution.required_rank,
+                  notes: evolution.notes,
+                  user: actor,
+                })
+              );
+            }
+          } catch (e) {
+            // A chapter, a milestone or the skill at the other end of a link can
+            // be gone by now. The half-written restore goes back so the step can
+            // be tried again rather than leaving a sheet that is not the one that
+            // was deleted.
+            await invoke('delete_skill', { id: currentSkillId, user: actor }).catch(() => {});
+            hideSkillOnLists(currentSkillId, skill.character_id);
+            throw e;
+          }
+
+          if (restoredEvents.length > 0) {
+            setStorySkillEvents(previous =>
+              [...previous, ...restoredEvents].sort(
+                (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+              )
+            );
+          }
+
+          if (restoredLinks.length > 0) {
+            setStorySkillEvolutions(previous => [...previous, ...restoredLinks]);
+          }
+
           if (matchingEdge) {
             await invoke('restore_deleted', {
               id: matchingEdge.id,
@@ -9517,6 +9582,16 @@ function App() {
         redo: async () => {
           await invoke('delete_skill', { id: currentSkillId, user: actor });
           hideSkillOnLists(currentSkillId, skill.character_id);
+          setStorySkillEvents(previous =>
+            previous.filter(event => event.skill_id !== currentSkillId)
+          );
+          setStorySkillEvolutions(previous =>
+            previous.filter(
+              evolution =>
+                evolution.parent_skill_id !== currentSkillId &&
+                evolution.child_skill_id !== currentSkillId
+            )
+          );
 
           if (matchingEdge) {
             await invoke('delete_edge', { id: matchingEdge.id, user: actor });

@@ -205,6 +205,31 @@ interface SkillRow {
   updated_at: string;
 }
 
+interface SkillEventRow {
+  id: string;
+  skill_id: string;
+  kind: string;
+  chapter_id: string | null;
+  rank: string | null;
+  milestone_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SkillEvolutionRow {
+  id: string;
+  story_id: string;
+  parent_skill_id: string;
+  child_skill_id: string;
+  evolution_type: string;
+  chapter_id: string | null;
+  required_rank: string | null;
+  notes: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface EdgeRow {
   id: string;
   story_id: string;
@@ -248,6 +273,10 @@ let relationSeq = 0;
 let castSeq = 0;
 let skillSeq = 0;
 let skills: SkillRow[] = [];
+let skillEventSeq = 0;
+let skillEvents: SkillEventRow[] = [];
+let skillEvolutionSeq = 0;
+let skillEvolutions: SkillEvolutionRow[] = [];
 
 function timestamp() {
   return '2026-10-22T12:00:00Z';
@@ -265,10 +294,14 @@ beforeEach(() => {
   chapterCast = [];
   relations = [];
   skills = [];
+  skillEvents = [];
+  skillEvolutions = [];
   edgeSeq = 0;
   relationSeq = 0;
   castSeq = 0;
   skillSeq = 0;
+  skillEventSeq = 0;
+  skillEvolutionSeq = 0;
 
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -400,7 +433,9 @@ beforeEach(() => {
           .filter(row => row.character_id === args.characterId)
           .map(row => ({ ...row }));
       case 'add_skill': {
+        // Seeded rows can already hold the next number, so skip past them.
         skillSeq += 1;
+        while (skills.some(row => row.id === `skill-${skillSeq}`)) skillSeq += 1;
         const row: SkillRow = {
           id: `skill-${skillSeq}`,
           character_id: args.characterId,
@@ -416,8 +451,50 @@ beforeEach(() => {
         return { ...row };
       }
       case 'delete_skill':
+        // The database cascades the events and the tree links with the row.
         skills = skills.filter(row => row.id !== args.id);
+        skillEvents = skillEvents.filter(row => row.skill_id !== args.id);
+        skillEvolutions = skillEvolutions.filter(
+          row => row.parent_skill_id !== args.id && row.child_skill_id !== args.id
+        );
         return null;
+      case 'get_story_skill_events':
+        return skillEvents.map(row => ({ ...row }));
+      case 'get_story_skill_evolutions':
+        return skillEvolutions.map(row => ({ ...row }));
+      case 'add_skill_event': {
+        skillEventSeq += 1;
+        const row: SkillEventRow = {
+          id: `event-${skillEventSeq}`,
+          skill_id: args.skillId,
+          kind: args.kind,
+          chapter_id: args.chapterId ?? null,
+          rank: args.rank ?? null,
+          milestone_id: args.milestoneId ?? null,
+          created_at: timestamp(),
+          updated_at: timestamp(),
+        };
+        skillEvents.push(row);
+        return { ...row };
+      }
+      case 'add_skill_evolution': {
+        skillEvolutionSeq += 1;
+        const row: SkillEvolutionRow = {
+          id: `evolution-${skillEvolutionSeq}`,
+          story_id: story.id,
+          parent_skill_id: args.parentSkillId,
+          child_skill_id: args.childSkillId,
+          evolution_type: args.evolutionType,
+          chapter_id: args.chapterId ?? null,
+          required_rank: args.requiredRank ?? null,
+          notes: args.notes ?? null,
+          created_by: args.user,
+          created_at: timestamp(),
+          updated_at: timestamp(),
+        };
+        skillEvolutions.push(row);
+        return { ...row };
+      }
       default:
         return [];
     }
@@ -738,6 +815,109 @@ describe('connection actions', () => {
     await waitFor(() => expect(skills).toHaveLength(0));
     expect(lastCall('delete_edge')).toEqual({ id: 'e1', user: 'You' });
     expect(screen.queryByRole('button', { name: 'remove e1' })).not.toBeInTheDocument();
+  });
+
+  it('brings a deleted skill\'s events and tree links back with it', async () => {
+    // Rook holds Frost Touch through its card, with a change history and a link
+    // into Wren's skill. Both cascade away with the row.
+    skills = [
+      {
+        id: 'skill-1',
+        character_id: 'char-1',
+        name: 'Frost Touch',
+        rank: 'Rank 1',
+        effect: 'Leaves frost on the skin.',
+        chapter_id: null,
+        node_id: 'n4',
+        created_at: timestamp(),
+        updated_at: timestamp(),
+      },
+      {
+        id: 'skill-2',
+        character_id: 'char-2',
+        name: 'Ember',
+        rank: null,
+        effect: null,
+        chapter_id: null,
+        node_id: null,
+        created_at: timestamp(),
+        updated_at: timestamp(),
+      },
+    ];
+    skillEvents = [
+      {
+        id: 'event-1',
+        skill_id: 'skill-1',
+        kind: 'upgraded',
+        chapter_id: null,
+        rank: 'Rank 2',
+        milestone_id: null,
+        created_at: timestamp(),
+        updated_at: timestamp(),
+      },
+    ];
+    skillEvolutions = [
+      {
+        id: 'evolution-1',
+        story_id: story.id,
+        parent_skill_id: 'skill-1',
+        child_skill_id: 'skill-2',
+        evolution_type: 'upgrade',
+        chapter_id: null,
+        required_rank: null,
+        notes: null,
+        created_by: 'Ada',
+        created_at: timestamp(),
+        updated_at: timestamp(),
+      },
+    ];
+
+    const user = await openCanvas();
+
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(await screen.findByTitle("Show Rook's sheet"));
+    await user.click(screen.getByTitle('Delete Frost Touch'));
+
+    await waitFor(() =>
+      expect(lastCall('delete_skill')).toEqual({ id: 'skill-1', user: 'You' })
+    );
+    expect(skillEvents).toHaveLength(0);
+    expect(skillEvolutions).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('add_skill')).toMatchObject({
+        characterId: 'char-1',
+        name: 'Frost Touch',
+        rank: 'Rank 1',
+      })
+    );
+
+    // The row is written again, and the history is written against that row.
+    const restored = skills.find(row => row.name === 'Frost Touch');
+    expect(restored).toBeDefined();
+    expect(skillEvents).toEqual([
+      expect.objectContaining({
+        skill_id: restored?.id,
+        kind: 'upgraded',
+        rank: 'Rank 2',
+      }),
+    ]);
+    expect(skillEvolutions).toEqual([
+      expect.objectContaining({
+        parent_skill_id: restored?.id,
+        child_skill_id: 'skill-2',
+        evolution_type: 'upgrade',
+      }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() => expect(skills.some(row => row.name === 'Frost Touch')).toBe(false));
+    expect(skillEvents).toHaveLength(0);
+    expect(skillEvolutions).toHaveLength(0);
   });
 
   it('leaves a sheet alone when the character already holds the skill', async () => {

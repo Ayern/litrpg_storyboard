@@ -335,7 +335,8 @@ same character is refused with the reason rather than making a duplicate, and
 deleting the line asks first, then takes the skill off that sheet and removes the
 connection together as one undoable step. Deleting the skill from the sheet is
 the same pair of writes the other way round: the line that drew it goes with the
-row, and one Undo puts both back. A card can also be placed with no holder at
+row, and one Undo puts both back, along with the skill's events and tree links,
+which the database cascades with the row. A card can also be placed with no holder at
 all — **No holder yet** in the owner field — and characters join it later by
 connecting their cards or from the card's **Add holder** form. Skills travel in the JSON export, the story
 bible and an import with their chapter and card remapped like every other
@@ -872,10 +873,12 @@ page that arrives late, and what it says when a filter matches nothing.
   an entry *Changed since* rather than offering a button that would be refused. Creations and
   purges cannot be reverted at all: the first is undone by deleting it, and the
   second has no row left to write to.
-- **Undoing a skill's deletion brings back the skill, not its change history.**
-  A skill's events and evolution links cascade with the row, so undoing the
-  deletion writes the skill — and the canvas line that drew it — again under a
-  new id, while those rows stay gone.
+- **Undoing a skill's deletion needs what it pointed at to still exist.** A
+  skill's events and evolution links cascade with the row, so the undo writes the
+  skill, its history, those links and the canvas line that drew it back against a
+  new row. If a chapter, a milestone or the skill at the other end of a link has
+  been deleted for good in the meantime, the restore is refused and the step stays
+  where it was, rather than leaving half of a sheet behind.
 - **Retention only runs at launch and when it is changed.** A window of 30 days
   means an item deleted 40 days ago goes the next time the app starts, not the
   moment it turns 40 days old — a long-running session keeps everything until it
