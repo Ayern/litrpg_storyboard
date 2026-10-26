@@ -140,6 +140,44 @@ function filterChip(name: string) {
 }
 
 describe('audit history tab', () => {
+  it('keeps a refused step as an entry with nothing to revert', async () => {
+    auditHandler = () => ({
+      entries: [
+        {
+          id: 'entry-history-1',
+          story_id: story.id,
+          entity_type: 'history',
+          entity_id: story.id,
+          action: 'undo_refused',
+          field_changed: null,
+          old_value: null,
+          new_value:
+            'Undo refused — Edit “Opening Two”: the file is locked. The step stays in the history, so it can be tried again.',
+          changed_by: 'Ada',
+          changed_at: '2026-10-22T12:00:00Z',
+        },
+      ],
+      total: 1,
+    });
+
+    const user = await openAuditTab();
+    await screen.findByText(/Showing 1 of 1 change/);
+
+    const item = historyItems()[0];
+    expect(item).toHaveTextContent('undo refused');
+    expect(item).toHaveTextContent('History');
+    expect(item).toHaveTextContent('the file is locked');
+    // Nothing to put back: a step that never ran is not a field edit.
+    expect(within(item).queryByRole('button', { name: /Revert/ })).not.toBeInTheDocument();
+
+    await user.click(filterChip('History'));
+    expect(auditCalls[auditCalls.length - 1]).toEqual({
+      entityType: 'history',
+      limit: 50,
+      offset: 0,
+    });
+  });
+
   it('shows one page of history and how much of it is left', async () => {
     auditHandler = () => ({ entries: rows(50), total: 145 });
 

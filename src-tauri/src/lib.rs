@@ -1097,6 +1097,20 @@ fn get_audit_history(
     .map_err(|e| e.to_string())
 }
 
+/// Writes one line into the history for something the board did not do: a step
+/// the database refused, or the half of a two-part step that was put back.
+#[tauri::command]
+fn record_history_event(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    action: String,
+    detail: String,
+    user: String,
+) -> Result<(), String> {
+    db.record_history_event(&story_id, &action, &detail, &user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn update_story(
     db: tauri::State<'_, Db>,
@@ -1434,6 +1448,7 @@ pub fn run() {
             update_graph_edge,
             get_graph_edges,
             get_audit_history,
+            record_history_event,
             revert_change,
             update_story,
             delete_story,

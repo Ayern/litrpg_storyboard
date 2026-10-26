@@ -1563,6 +1563,7 @@ const entityLabels: Record<string, string> = {
   quest_reward: 'Quest reward',
   node: 'Graph node',
   edge: 'Graph connection',
+  history: 'History',
 };
 
 // One screenful of history at a time. The tab used to request everything up to a
@@ -1591,6 +1592,7 @@ const auditFilters: { value: AuditFilter; label: string }[] = [
   { value: 'quest_reward', label: 'Quest rewards' },
   { value: 'node', label: 'Nodes' },
   { value: 'edge', label: 'Connections' },
+  { value: 'history', label: 'History' },
 ];
 
 // The badge reads as a word; the CSS class stays the raw action so the colours
@@ -1600,6 +1602,9 @@ const actionLabels: Record<string, string> = {
   purge: 'delete forever',
   revert: 'revert',
   level_up: 'level up',
+  undo_refused: 'undo refused',
+  redo_refused: 'redo refused',
+  step_rolled_back: 'rolled back',
 };
 
 // Both lists the trash shows, in one round trip. Shared by the tab's first load
@@ -4136,6 +4141,9 @@ function App() {
   const selectedEdgeIdRef = useRef<string | null>(null);
   const nodeIsDirtyRef = useRef(false);
   const edgeIsDirtyRef = useRef(false);
+  // Set when a step put its own half back, so the move that then failed writes
+  // the rollback's entry instead of a second one saying the same thing.
+  const rollbackRecordedRef = useRef(false);
 
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
@@ -4345,6 +4353,32 @@ function App() {
     setSyncedXpNotice(null);
   }, []);
 
+  // A refusal used to be a notice that faded after a few seconds. It is also a
+  // fact about the story, so it goes where the Audit tab can keep it: what was
+  // attempted, and what stopped it.
+  const recordHistoryEvent = useCallback(
+    async (action: 'undo_refused' | 'redo_refused' | 'step_rolled_back', detail: string) => {
+      const storyId = currentStory?.id ?? lastStoryIdRef.current;
+      if (!storyId) return;
+
+      if (action === 'step_rolled_back') rollbackRecordedRef.current = true;
+
+      try {
+        await invoke('record_history_event', {
+          storyId,
+          action,
+          detail,
+          user: actor,
+        });
+      } catch (e) {
+        // The refusal is what the author needs to see; an entry that could not
+        // be written must not replace it.
+        console.error('Failed to write a refused step into the history:', e);
+      }
+    },
+    [currentStory, actor]
+  );
+
   const moveInHistory = useCallback(
     async (direction: 'undo' | 'redo') => {
       const source = direction === 'undo' ? undoStackRef : redoStackRef;
@@ -4354,6 +4388,7 @@ function App() {
       if (!step) return;
 
       removedNodeIdsRef.current = new Set();
+      rollbackRecordedRef.current = false;
       setActionError(null);
       setReturnedNotice(null);
       setSyncedXpNotice(null);
@@ -4361,9 +4396,21 @@ function App() {
       try {
         await (direction === 'undo' ? step.undo() : step.redo());
       } catch (e) {
-        // The step stays where it was, so the failed change can be retried.
+        // The step stays where it was, so the failed change can be retried. The
+        // half a step put back has already written its own entry; otherwise the
+        // refusal itself is the entry.
         console.error(`Failed to ${direction}:`, e);
         setActionError(`Could not ${direction} ${step.label}: ${String(e)}`);
+
+        if (!rollbackRecordedRef.current) {
+          await recordHistoryEvent(
+            direction === 'undo' ? 'undo_refused' : 'redo_refused',
+            `${direction === 'undo' ? 'Undo' : 'Redo'} refused — ${step.label}: ${String(
+              e
+            )} The step stays in the history, so it can be tried again.`
+          );
+        }
+
         return;
       }
 
@@ -4387,7 +4434,7 @@ function App() {
         setActionError(`The change was made, but the board could not be reloaded: ${String(e)}`);
       }
     },
-    [reloadStory]
+    [reloadStory, recordHistoryEvent]
   );
 
   const undoLast = useCallback(() => moveInHistory('undo'), [moveInHistory]);
@@ -5577,6 +5624,12 @@ function App() {
           } catch (e) {
             // The skill was refused, so the card made for it must not stay behind.
             await invoke('delete_node', { id: node.id, user: actor }).catch(() => {});
+            await recordHistoryEvent(
+              'step_rolled_back',
+              `Put back — “${name}”: its holder row could not be written (${String(
+                e
+              )}), so the card was not kept.`
+            );
             throw e;
           }
         }
@@ -8333,6 +8386,12 @@ function App() {
                 user: actor,
               }).catch(() => {});
               setStoryChapterCast(previous => previous.filter(row => row.id !== member.id));
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Put back — Connecting ${characterNode.data.label} to ${chapterNode.data.label}: the connection could not be saved (${String(
+                  e
+                )}), so the cast member is not on the chapter.`
+              );
             }
             throw e;
           }
@@ -8467,6 +8526,12 @@ function App() {
               // The line is what the author drew. Without it the sheet row would
               // be an edit they never asked for, so it goes back.
               await invoke('delete_skill', { id: learned.id, user: actor }).catch(() => {});
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Put back — ${characterNode.data.label} learning ${skillNode.data.label}: the connection could not be saved (${String(
+                  e
+                )}), so the skill is not on their sheet.`
+              );
               throw e;
             }
 
@@ -8563,6 +8628,7 @@ function App() {
       storySkills,
       setEdges,
       recordStep,
+      recordHistoryEvent,
       showSkillOnLists,
       hideSkillOnLists,
     ]
@@ -8966,6 +9032,19 @@ function App() {
                 ...previous.filter(row => row.id !== castId),
                 again,
               ]);
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Put back — ${entry.stepLabel}: the connection could not be deleted (${String(
+                  e
+                )}), so the cast row is still there. Nothing changed.`
+              );
+            } else {
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Stopped halfway — ${entry.stepLabel}: the connection could not be deleted and the cast row could not be written back (${String(
+                  e
+                )}). The chapter's cast needs checking.`
+              );
             }
             throw e;
           }
@@ -8997,6 +9076,12 @@ function App() {
                   id: again.id,
                   user: actor,
                 }).catch(() => {});
+                await recordHistoryEvent(
+                  'step_rolled_back',
+                  `Put back — Undo of ${entry.stepLabel}: the connection could not be restored (${String(
+                    e
+                  )}), so the cast member is off the chapter again.`
+                );
                 throw e;
               }
 
@@ -9028,6 +9113,12 @@ function App() {
                   previous.some(edge => edge.id === entry.edge.id)
                     ? previous
                     : [...previous, entry.edge]
+                );
+                await recordHistoryEvent(
+                  'step_rolled_back',
+                  `Put back — Redo of ${entry.stepLabel}: the cast member could not be removed (${String(
+                    e
+                  )}), so the connection is drawn again.`
                 );
                 throw e;
               }
@@ -9711,6 +9802,12 @@ function App() {
             // was deleted.
             await invoke('delete_skill', { id: currentSkillId, user: actor }).catch(() => {});
             hideSkillOnLists(currentSkillId, skill.character_id);
+            await recordHistoryEvent(
+              'step_rolled_back',
+              `Put back — Delete “${skill.name}”: its history could not be restored (${String(
+                e
+              )}), so the skill is off the sheet again.`
+            );
             throw e;
           }
 
@@ -9999,6 +10096,12 @@ function App() {
       } catch (e) {
         // No relation, no connection: the edge was only the drawing of it.
         await invoke('delete_edge', { id: edge.id, user: actor }).catch(() => {});
+        await recordHistoryEvent(
+          'step_rolled_back',
+          `Put back — Connecting ${draft.sourceName} and ${draft.targetName}: the relation could not be saved (${String(
+            e
+          )}), so the connection was removed.`
+        );
         throw e;
       }
 

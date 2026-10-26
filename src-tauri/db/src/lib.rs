@@ -6790,6 +6790,50 @@ impl Db {
         Ok(AuditPage { entries, total })
     }
 
+    /// Records a history move the board could not finish: a step the database
+    /// refused, or the half of a two-part step that had to be put back. The
+    /// notice on the board fades after a few seconds; this entry does not, so
+    /// the Audit tab can still say what was attempted and why it stopped.
+    pub fn record_history_event(
+        &self,
+        story_id: &str,
+        action: &str,
+        detail: &str,
+        user: &str,
+    ) -> DbResult<()> {
+        let guard = self.conn()?;
+
+        // A story in the trash has no history on screen to add to, so the entry
+        // would describe a board nobody is looking at.
+        let live: Option<i64> = guard
+            .query_row(
+                "SELECT 1 FROM stories WHERE id = ?1 AND deleted_at IS NULL",
+                params![story_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if live.is_none() {
+            return Ok(());
+        }
+
+        log_audit(
+            &guard,
+            AuditRecord {
+                story_id: Some(story_id),
+                entity_type: "history",
+                entity_id: story_id,
+                action,
+                field_changed: None,
+                old_value: None,
+                new_value: Some(detail.to_string()),
+                changed_by: user,
+            },
+        )?;
+
+        Ok(())
+    }
+
     // ===== EXPORT =====
 
     /// Everything needed to restore a story elsewhere, including its full history.
@@ -8667,8 +8711,10 @@ impl Db {
         Ok(())
     }
 
-    /// Undoes a node deletion and brings back the connections that were removed
-    /// with it, recognised by sharing its deletion timestamp.
+    /// Undoes a node deletion. An ordinary node comes back with the connections
+    /// that were removed with it, recognised by sharing its deletion timestamp.
+    /// A chapter does not: its cast rows were never deleted, so its lines are a
+    /// separate action and each one waits in the trash.
     pub fn restore_node(&self, id: &str, user: String) -> DbResult<()> {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
@@ -8723,7 +8769,14 @@ impl Db {
             }
         }
 
-        let attached = {
+        // A chapter's connections stay in the trash. Deleting a chapter never
+        // touched `chapter_cast`, and its lines are the drawing of those rows, so
+        // restoring the chapter restores the chapter — not the cast and not the
+        // connections, which are put back one at a time once both their ends are
+        // live. Every other node still comes back with what went with it.
+        let attached: Vec<(String, String, String)> = if node_type == "chapter" {
+            Vec::new()
+        } else {
             let mut stmt = tx.prepare(
                 "SELECT id, source_id, target_id FROM edges
                  WHERE (source_id = ?1 OR target_id = ?1)
@@ -10632,6 +10685,9 @@ impl Db {
         for entry in &export.audit_trail {
             let remapped = match entry.entity_type.as_str() {
                 "story" => Some(story_id.clone()),
+                // A refused step is named by the story whose history it belongs
+                // to, so an imported copy points at the new story.
+                "history" => Some(story_id.clone()),
                 "character" => characters.get(&entry.entity_id).cloned(),
                 "character_stat" => stats.get(&entry.entity_id).cloned(),
                 "character_attribute" => attributes.get(&entry.entity_id).cloned(),
@@ -14955,6 +15011,120 @@ mod tests {
         db.restore_node("does-not-exist", "Ada".into()).unwrap();
         db.restore_edge("does-not-exist", "Ada".into()).unwrap();
 
+        assert_eq!(
+            db.get_audit_log(None, None, None, 100).unwrap().len(),
+            before
+        );
+    }
+
+    #[test]
+    fn restoring_a_chapter_leaves_its_cast_and_connections_in_place() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Opening".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let character = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+        let cast = db
+            .add_chapter_cast_member(chapter.id.clone(), character.id.clone(), "Ada".into())
+            .unwrap();
+        let scene = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "The vault door".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let line = db
+            .create_edge(
+                story.id.clone(),
+                chapter.id.clone(),
+                scene.id.clone(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(db.list_edges(&story.id).unwrap().is_empty());
+
+        db.restore_node(&chapter.id, "Ada".into()).unwrap();
+
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 2);
+        assert!(
+            db.list_edges(&story.id).unwrap().is_empty(),
+            "a chapter's connections wait in the trash rather than being drawn again"
+        );
+
+        // The cast row was never deleted with the chapter, so restoring it is a
+        // chapter action only: there is nothing to resurrect.
+        let members = db.list_story_chapter_cast(&story.id).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, cast.id);
+
+        // Each line comes back on its own, now that both of its ends are live.
+        let trashed: Vec<String> = db
+            .list_deleted(Some(&story.id))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert!(trashed.contains(&line.id));
+
+        db.restore_edge(&line.id, "Ada".into()).unwrap();
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_step_is_written_into_the_history() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+
+        db.record_history_event(
+            &story.id,
+            "undo_refused",
+            "Undo of “Delete Rook” was refused: the file is locked. The step stays in the history.",
+            "Ada",
+        )
+        .unwrap();
+
+        let entries = db
+            .get_audit_log(Some(&story.id), Some("history"), None, 10)
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action, "undo_refused");
+        assert_eq!(entries[0].changed_by, "Ada");
+        assert!(entries[0]
+            .new_value
+            .as_deref()
+            .unwrap()
+            .contains("the file is locked"));
+
+        // A story in the trash is not on screen, so it gets no new entry.
+        let gone = db.create_story("Gone".into(), None, "Ada".into()).unwrap();
+        db.delete_story(&gone.id, "Ada".into()).unwrap();
+        let before = db.get_audit_log(None, None, None, 100).unwrap().len();
+        db.record_history_event(&gone.id, "undo_refused", "nothing to say", "Ada")
+            .unwrap();
         assert_eq!(
             db.get_audit_log(None, None, None, 100).unwrap().len(),
             before

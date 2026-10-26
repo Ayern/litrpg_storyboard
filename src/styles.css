@@ -4271,6 +4271,19 @@ body {
   color: #f0a8a8;
 }
 
+/* A step that did not happen: the same red as a refusal, and a softer amber for
+   the half that was put back before it. */
+.audit-badge.undo_refused,
+.audit-badge.redo_refused {
+  background: #4a1f1f;
+  color: #f0a8a8;
+}
+
+.audit-badge.step_rolled_back {
+  background: #4a2f14;
+  color: #f0c39e;
+}
+
 .trash-intro {
   font-size: 12px;
   color: #9a9a9a;

@@ -677,6 +677,14 @@ describe('connection actions', () => {
     // neither half happened.
     expect(await screen.findByText(/Could not remove the connection/)).toBeInTheDocument();
     await waitFor(() => expect(chapterCast).toHaveLength(1));
+
+    // The notice fades; the history says the step was put back and why.
+    expect(lastCall('record_history_event')).toMatchObject({
+      storyId: story.id,
+      action: 'step_rolled_back',
+      user: 'You',
+    });
+    expect((lastCall('record_history_event') as any).detail).toContain('Nothing changed');
     expect(
       invokeMock.mock.calls.filter(call => call[0] === 'add_chapter_cast_member')
     ).toHaveLength(2);
@@ -701,6 +709,13 @@ describe('connection actions', () => {
     // and the step waits in the history as a whole.
     expect(await screen.findByText(/Could not undo/)).toBeInTheDocument();
     await waitFor(() => expect(chapterCast).toHaveLength(0));
+
+    // One entry, naming the half that was put back — not a second one saying the
+    // undo was refused.
+    const recorded = invokeMock.mock.calls.filter(call => call[0] === 'record_history_event');
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0][1]).toMatchObject({ action: 'step_rolled_back', user: 'You' });
+    expect((recorded[0][1] as any).detail).toContain('could not be restored');
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
 

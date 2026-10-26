@@ -104,6 +104,17 @@ vi.mock('reactflow', async () => {
           { onClick: () => onNodesDelete?.([nodes[0]]) },
           'delete first node'
         ),
+      nodes.some((node: any) => node.data.nodeType === 'character') &&
+        React.createElement(
+          'button',
+          {
+            onClick: () =>
+              onNodesDelete?.([
+                nodes.find((node: any) => node.data.nodeType === 'character'),
+              ]),
+          },
+          'delete the character node'
+        ),
       React.createElement(
         'button',
         { onClick: () => onConnect?.({ source: 'n1', target: 'n3' }) },
@@ -223,12 +234,15 @@ interface EdgeRow {
 let dbNodes: Row[] = [];
 let dbEdges: EdgeRow[] = [];
 let stories = [story];
+// Set by a test that wants the next undo to be refused by the database.
+let failNextNodeUpdate = false;
 
 const live = <T extends { deleted_at?: string | null }>(rows: T[]) =>
   rows.filter(row => !row.deleted_at).map(({ deleted_at, ...row }) => row);
 
 beforeEach(() => {
   stories = [story];
+  failNextNodeUpdate = false;
   dbNodes = [
     nodeRow('n1', 'Opening', 'chapter', null, 0, 0),
     nodeRow('n2', 'Rook', 'character', 'char-1', 400, 300),
@@ -270,6 +284,10 @@ beforeEach(() => {
       case 'get_character_attributes':
         return [];
       case 'update_graph_node':
+        if (failNextNodeUpdate) {
+          failNextNodeUpdate = false;
+          throw new Error('the file is locked');
+        }
         if (!node) return null;
         node.label = args.label;
         node.content = args.content;
@@ -332,11 +350,15 @@ beforeEach(() => {
           if (restored) {
             const stamp = restored.deleted_at;
             restored.deleted_at = null;
-            dbEdges
-              .filter(row => row.deleted_at === stamp)
-              .forEach(row => {
-                row.deleted_at = null;
-              });
+            // A chapter comes back on its own; its connections wait in the
+            // trash, as the database now does for any chapter node.
+            if (restored.node_type !== 'chapter') {
+              dbEdges
+                .filter(row => row.deleted_at === stamp)
+                .forEach(row => {
+                  row.deleted_at = null;
+                });
+            }
           }
         }
 
@@ -470,8 +492,26 @@ describe('undo and redo', () => {
   it('brings a deleted node back, connections included', async () => {
     const user = await openApp();
 
-    await user.click(screen.getByRole('button', { name: 'delete first node' }));
+    await user.click(screen.getByRole('button', { name: 'delete the character node' }));
     expect(undoButton()).toBeEnabled();
+
+    await user.click(undoButton());
+
+    await waitFor(() =>
+      expect(lastCall('restore_deleted')).toEqual({
+        id: 'n2',
+        kind: 'node',
+        user: 'You',
+      })
+    );
+    expect(await screen.findByRole('button', { name: 'Rook' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'edge n1 to n2' })).toBeInTheDocument();
+  });
+
+  it('restores a chapter without drawing its connections again', async () => {
+    const user = await openApp();
+
+    await user.click(screen.getByRole('button', { name: 'delete first node' }));
 
     await user.click(undoButton());
 
@@ -482,8 +522,41 @@ describe('undo and redo', () => {
         user: 'You',
       })
     );
+
+    // The chapter is back, and its line is a separate restore: the undo of a
+    // chapter is a chapter action, not a bundle of chapter and connections.
     expect(await screen.findByRole('button', { name: 'Opening' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'edge n1 to n2' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'edge n1 to n2' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('writes a refused undo into the history, not just the notice', async () => {
+    const user = await openApp();
+
+    await user.click(screen.getByRole('button', { name: 'Opening' }));
+    const label = within(drawer()).getByLabelText('Label');
+    await user.clear(label);
+    await user.type(label, 'Opening Two{Enter}');
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+
+    failNextNodeUpdate = true;
+    await user.click(undoButton());
+
+    expect(await screen.findByText(/Could not undo/)).toBeInTheDocument();
+
+    // The notice fades after five seconds; the history keeps the refusal.
+    expect(lastCall('record_history_event')).toMatchObject({
+      storyId: story.id,
+      action: 'undo_refused',
+      user: 'You',
+    });
+    const detail = (lastCall('record_history_event') as any).detail as string;
+    expect(detail).toContain('Undo refused — Edit “Opening Two”');
+    expect(detail).toContain('the file is locked');
+
+    // The step stayed where it was, so it can be tried again.
+    expect(undoButton()).toBeEnabled();
   });
 
   it('puts back a connection edit', async () => {

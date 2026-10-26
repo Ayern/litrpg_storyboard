@@ -502,6 +502,10 @@ A step that writes two halves — a cast row with the line that drew it, a relat
 with its line, a skill with its hold — either finishes or leaves neither behind:
 if the second write is refused, the first is put back and the step stays in the
 history, so a retry starts from where it did rather than from half a change.
+A refusal does not only live in the notice that fades: the attempt, the reason
+and the half that was put back are written into the story's history as `undo
+refused`, `redo refused` or `rolled back`, so the Audit tab still says what was
+tried and why it stopped after the banner has gone.
 The stack holds the last 50 actions of the open story and is emptied when another
 story is opened or something is purged; inside a text field `Ctrl+Z` is left to
 the text being typed.
@@ -536,7 +540,7 @@ launch; the Guide button stays, and the welcome card never blocks the board.
 before/after values, and can be reviewed per story. The tab shows the newest changes
 first, 50 at a time, and can be narrowed to stories, characters, stats, attributes,
 nodes, skills, skill evolutions, inventory, currency, relations, standings, quests,
-quest rewards or connections. "Show older changes" pages further back and says how many are
+quest rewards, connections or the history itself. "Show older changes" pages further back and says how many are
 still there, so a long history is browsable rather than silently truncated. See
 [The audit model](#the-audit-model).
 
@@ -553,7 +557,10 @@ revertible, and neither are links the history stores as labels (a chapter or car
 **Trash** — deleting a story, character, node or connection moves it here rather
 than destroying it. Restoring puts it back exactly as it was: a character returns
 with its stats and attributes, a node with the connections that went with it, a
-story with everything that was live inside it. "Delete forever" is the only
+story with everything that was live inside it. A chapter is the exception: its
+cast rows were never deleted with it, and its connections wait in the trash until
+each is restored on its own, so undoing a chapter deletion is one action rather
+than a bundle of chapter, cast and lines. "Delete forever" is the only
 irreversible action in the app, and it asks first.
 
 **Trash retention** — the trash can be kept forever (the default) or cleared
@@ -632,9 +639,9 @@ An entry records:
 | Column | Meaning |
 | --- | --- |
 | `story_id` | Which story the change belongs to, so history can be shown per story |
-| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, a `quest` or `quest_reward`, or a `node`, `edge` or `chapter_cast` row |
+| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, a `quest` or `quest_reward`, a `node`, `edge` or `chapter_cast` row, or `history` for a step the board could not finish |
 | `entity_id` | The row that changed |
-| `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore` or `purge` |
+| `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore`, `purge`, `undo_refused`, `redo_refused` or `step_rolled_back` |
 | `field_changed` | Name of the changed field, for updates and reverts |
 | `old_value` / `new_value` | Before and after, as text |
 | `changed_by` | The current user's name at the time |
@@ -648,6 +655,12 @@ Behaviour worth knowing:
   edge's label and relation type.
 - **Cascades are recorded individually.** Deleting a node records the node and
   every edge that went with it.
+- **A step that did not happen is recorded too.** An undo or redo the database
+  refused writes `undo_refused` or `redo_refused` against `history`, with the
+  attempt and the reason in `new_value`. A two-part step whose first half had to
+  be put back writes `step_rolled_back` instead, so the rollback is the entry
+  rather than a second refusal beside it. Neither has a field to put back, so
+  their rows carry no Revert button.
 - **A chapter move records the place it left and the place it took.** Moving one
   chapter renumbers the ones between, and each chapter whose number changed gets
   its own `chapter_seq` entry, so the history explains the whole new order rather
