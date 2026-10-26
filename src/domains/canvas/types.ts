@@ -114,3 +114,24 @@ export const NODE_STAT_BADGES = 2;
 // Same for the quests that touch a chapter: two ends of a contract can be told
 // apart at a glance, and the rest are counted rather than shrinking the card.
 export const QUEST_BADGES_SHOWN = 3;
+// Another story's board, read when the palette opens so its nodes can be found
+// without loading the story first. A chapter's note is a node too, and hangs
+// under its chapter rather than on the board, which is what parent_node_id says.
+export interface IndexedNode {
+  id: string;
+  label: string;
+  node_type: string;
+  content: string | null;
+  pos_x: number;
+  pos_y: number;
+  character_id: string | null;
+  parent_node_id: string | null;
+}
+
+export interface IndexedEdge {
+  id: string;
+  source_id: string;
+  target_id: string;
+  label: string | null;
+  relation_type: string | null;
+}

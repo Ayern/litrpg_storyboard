@@ -20,10 +20,22 @@ import ReactFlow, {
 } from 'reactflow';
 import type { Edge, Node, NodeProps } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+// Every database command goes through one of these, so the command string and
+// the row it answers with are named in one place instead of at each call site.
+import * as auditApi from './domains/audit/api';
+import * as canvasApi from './domains/canvas/api';
+import * as charactersApi from './domains/characters/api';
+import * as inventoryApi from './domains/inventory/api';
+import * as narrativeApi from './domains/narrative/api';
+import * as progressionApi from './domains/progression/api';
+import * as questsApi from './domains/quests/api';
+import * as relationsApi from './domains/relations/api';
+import * as skillsApi from './domains/skills/api';
+import * as storiesApi from './domains/stories/api';
+import * as trashApi from './domains/trash/api';
 import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { SuggestionInput } from './components/SuggestionInput';
@@ -37,15 +49,30 @@ import {
   fieldLabels,
 } from './domains/audit/labels';
 import type { AuditEntry, AuditFilter, AuditPage } from './domains/audit/types';
+import type { CharacterAttribute } from './domains/characters/types';
 import { flowNodeTypes } from './domains/canvas/GraphNode';
 import { nodeTypes, NODE_STAT_BADGES } from './domains/canvas/types';
-import type { ChapterCastBadge, NodeData, NodeType, QuestBadge } from './domains/canvas/types';
+import type {
+  ChapterCastBadge,
+  IndexedEdge,
+  IndexedNode,
+  NodeData,
+  NodeType,
+  QuestBadge,
+} from './domains/canvas/types';
+import type { CharacterCurrency, InventoryItem } from './domains/inventory/types';
+import type {
+  ChapterCastMember,
+  ChapterCastState,
+  CharacterChapterState,
+} from './domains/narrative/types';
 import { ProgressionChart } from './domains/progression/ProgressionChart';
 import { milestoneStatChanges, statChangeText } from './domains/progression/helpers';
 import type { ProgressionChartSeries, ProgressionMetric } from './domains/progression/types';
+import type { Quest, QuestReward, QuestWarning } from './domains/quests/types';
 import { RelationsMap } from './domains/relations/RelationsMap';
-import type { SkillEvolutionInput } from './domains/skills/types';
 import { SkillTreeView } from './domains/skills/SkillTreeView';
+import type { CharacterSkillEvent, SkillEventKind, SkillEvolutionInput } from './domains/skills/types';
 import type {
   ChapterContinuityFlag,
   ContinuityPart,
@@ -65,81 +92,16 @@ import type {
   SkillEvolution,
   SkillHolder,
 } from './domains/shared/types';
+import type { BackupInfo, Story } from './domains/stories/types';
+import type { DeletedItem } from './domains/trash/types';
 import { formatCount } from './lib/format';
 // Re-exported where the guide test has always imported it from.
 export { placeTooltip };
-
-interface Story {
-  id: string;
-  title: string;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// One copy of the database, as the backups dialog lists it.
-interface BackupInfo {
-  file_name: string;
-  created_at: string;
-  size_bytes: number;
-}
-
-// One deleted row. `kind` is what it was, `story_id` is the story it belonged to
-// (its own id for a story), so the trash can tell a restore where to look.
-interface DeletedItem {
-  id: string;
-  kind: string;
-  label: string;
-  story_id: string;
-  deleted_at: string;
-}
-
-interface CharacterAttribute {
-  id: string;
-  character_id: string;
-  attr_name: string;
-  value: string;
-  created_at: string;
-  updated_at: string;
-}
 
 interface LevelStatChangeDraft {
   statName: string;
   amount: string;
   valueAfter: string;
-}
-
-// A quest or contract. Its two chapters place it in the reading order, its
-// giver or faction says who issued it, and its rewards are its own children.
-interface Quest {
-  id: string;
-  story_id: string;
-  title: string;
-  giver_character_id: string | null;
-  faction_node_id: string | null;
-  accepted_chapter_id: string | null;
-  completed_chapter_id: string | null;
-  status: string;
-  description: string | null;
-  notes: string | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  rewards: QuestReward[];
-}
-
-// One payout from a quest. The kind decides what the target is: a character for
-// XP, an item and a stat, a faction card for a standing.
-interface QuestReward {
-  id: string;
-  quest_id: string;
-  reward_type: string;
-  target_id: string | null;
-  amount_or_details: string | null;
-  // When this payout last reached the chapter ledger; null until it has.
-  applied_at: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 // The four statuses the form suggests. The database keeps the author's word, so
@@ -162,17 +124,6 @@ const questRewardLabels: Record<string, string> = {
   faction_standing: 'Faction standing',
 };
 
-// One advisory problem in the quest ledger. The chapter links are kept so the
-// Quests tab and the continuity panel can point at the chapters named.
-interface QuestWarning {
-  id: string;
-  questId: string;
-  questTitle: string;
-  kind: string;
-  summary: string;
-  chapterIds: string[];
-}
-
 // The quest form's fields, one draft at a time. A null id means a new quest.
 interface QuestDraft {
   id: string | null;
@@ -193,80 +144,6 @@ interface QuestRewardDraft {
   type: string;
   target: string;
   details: string;
-}
-
-// What a character's sheet held at a chapter, read from the milestone and event
-// ledgers by the database rather than recalculated in the UI.
-interface CharacterChapterState {
-  character_id: string;
-  chapter_id: string;
-  chapter_seq: number;
-  level: number | null;
-  level_milestone_id: string | null;
-  level_is_penalty: boolean;
-  skills: CharacterChapterSkill[];
-}
-
-// The compact form of that snapshot used by a chapter card. The database sends
-// one row per assigned character; the card adds the cast member's name.
-interface ChapterCastState {
-  chapter_id: string;
-  character_id: string;
-  level: number | null;
-  level_is_penalty: boolean;
-  skills: CharacterChapterSkill[];
-}
-
-// One character the author added to a chapter's cast. The linked cast member
-// and POV are kept as links on the node, so they are not rows here.
-interface ChapterCastMember {
-  id: string;
-  chapter_id: string;
-  character_id: string;
-  created_at: string;
-  updated_at: string;
-}
-
-type SkillEventKind = 'upgraded' | 'sacrificed' | 'used';
-
-// One change in a skill's life. The chapter places it in the reading order; the
-// rank is only meaningful for upgrades and uses.
-interface CharacterSkillEvent {
-  id: string;
-  skill_id: string;
-  kind: SkillEventKind;
-  chapter_id: string | null;
-  rank: string | null;
-  milestone_id?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// One item a cast member carries. Rarity and effect are the author's words, the
-// quantity is how many, the chapter is where it was acquired, and the lost
-// chapter is where it left their hands.
-interface InventoryItem {
-  id: string;
-  character_id: string;
-  name: string;
-  rarity: string | null;
-  quantity: number;
-  effect: string | null;
-  chapter_id: string | null;
-  lost_chapter_id: string | null;
-  node_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// A named currency a cast member holds. No exchange rate is implied.
-interface CharacterCurrency {
-  id: string;
-  character_id: string;
-  name: string;
-  amount: number;
-  created_at: string;
-  updated_at: string;
 }
 
 type EdgeData = { label?: string; relationType?: string; createdBy: string };
@@ -440,26 +317,6 @@ interface SearchResult {
   // 0 when the query matched the name the result is listed by, 1 when it only
   // matched what surrounds it. Name matches are listed first.
   rank: number;
-}
-
-// Another story's board, read when the palette opens so its nodes can be found
-// without loading the story first.
-interface IndexedNode {
-  id: string;
-  label: string;
-  node_type: string;
-  content: string | null;
-  pos_x: number;
-  pos_y: number;
-  character_id: string | null;
-}
-
-interface IndexedEdge {
-  id: string;
-  source_id: string;
-  target_id: string;
-  label: string | null;
-  relation_type: string | null;
 }
 
 interface IndexedNote {
@@ -869,9 +726,9 @@ const DEMO_STORY_TITLE = 'The Ember Ledger (Demo)';
 async function fetchTrash(storyId: string | null) {
   const [inStory, stories] = await Promise.all([
     storyId
-      ? invoke<DeletedItem[]>('get_trash', { storyId })
+      ? trashApi.getTrash(storyId)
       : Promise.resolve<DeletedItem[]>([]),
-    invoke<DeletedItem[]>('get_trash', { storyId: null }),
+    trashApi.getTrash(null),
   ]);
 
   return { inStory, stories };
@@ -1544,8 +1401,8 @@ function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        await invoke('initialize_database');
-        const loadedStories: Story[] = await invoke('get_all_stories');
+        await storiesApi.initializeDatabase();
+        const loadedStories: Story[] = await storiesApi.getAllStories();
         setStories(loadedStories);
       } catch (e) {
         console.error('Failed to init DB or load stories:', e);
@@ -1579,8 +1436,8 @@ function App() {
     setMatchedNoteId(null);
 
     try {
-      const dbNodes: any[] = await invoke('get_graph_nodes', { storyId: story.id });
-      const dbEdges: any[] = await invoke('get_graph_edges', { storyId: story.id });
+      const dbNodes: any[] = await canvasApi.getGraphNodes(story.id);
+      const dbEdges: any[] = await canvasApi.getGraphEdges(story.id);
 
       setNodes(dbNodes.map(toFlowNode));
       setEdges(dbEdges.map(toFlowEdge));
@@ -1603,25 +1460,19 @@ function App() {
         evolutions,
       ] =
         await Promise.all([
-          invoke<Character[]>('get_characters', { storyId: story.id }),
-          invoke<CharacterStat[]>('get_story_character_stats', { storyId: story.id }),
-          invoke<CharacterSkill[]>('get_story_skills', { storyId: story.id }),
-          invoke<CharacterSkillEvent[]>('get_story_skill_events', { storyId: story.id }),
-          invoke<CharacterLevelMilestone[]>('get_story_level_milestones', {
-            storyId: story.id,
-          }),
-          invoke<CharacterProgress[]>('get_story_character_progress', {
-            storyId: story.id,
-          }),
-          invoke<InventoryItem[]>('get_story_inventory', { storyId: story.id }),
-          invoke<any[]>('get_chapter_notes', { storyId: story.id }),
-          invoke<ChapterCastMember[]>('get_story_chapter_cast', { storyId: story.id }),
-          invoke<CharacterRelation[]>('get_story_relations', { storyId: story.id }),
-          invoke<FactionStanding[]>('get_story_faction_standings', { storyId: story.id }),
-          invoke<Quest[]>('get_story_quests', { storyId: story.id }),
-          invoke<SkillEvolution[]>('get_story_skill_evolutions', {
-            storyId: story.id,
-          }),
+          charactersApi.getCharacters(story.id),
+          charactersApi.getStoryCharacterStats(story.id),
+          skillsApi.getStorySkills(story.id),
+          skillsApi.getStorySkillEvents(story.id),
+          progressionApi.getStoryLevelMilestones(story.id),
+          progressionApi.getStoryCharacterProgress(story.id),
+          inventoryApi.getStoryInventory(story.id),
+          narrativeApi.getChapterNotes(story.id),
+          narrativeApi.getStoryChapterCast(story.id),
+          relationsApi.getStoryRelations(story.id),
+          relationsApi.getStoryFactionStandings(story.id),
+          questsApi.getStoryQuests(story.id),
+          skillsApi.getStorySkillEvolutions(story.id),
         ]);
       setCharacters(cast);
       setCastStats(statsByCharacter(stats));
@@ -1661,8 +1512,8 @@ function App() {
   const reloadStory = useCallback(
     async (storyId: string) => {
       const [dbNodes, dbEdges] = await Promise.all([
-        invoke<any[]>('get_graph_nodes', { storyId }),
-        invoke<any[]>('get_graph_edges', { storyId }),
+        canvasApi.getGraphNodes(storyId),
+        canvasApi.getGraphEdges(storyId),
       ]);
 
       setNodes(dbNodes.map(toFlowNode));
@@ -1709,12 +1560,7 @@ function App() {
       if (action === 'step_rolled_back') rollbackRecordedRef.current = true;
 
       try {
-        await invoke('record_history_event', {
-          storyId,
-          action,
-          detail,
-          user: actor,
-        });
+        await auditApi.recordHistoryEvent(storyId, action, detail, actor);
       } catch (e) {
         // The refusal is what the author needs to see; an entry that could not
         // be written must not replace it.
@@ -2051,10 +1897,10 @@ function App() {
     Promise.all(
       missing.map(async story => {
         const [nodes, characters, edges, notes] = await Promise.all([
-          invoke<IndexedNode[]>('get_graph_nodes', { storyId: story.id }),
-          invoke<Character[]>('get_characters', { storyId: story.id }),
-          invoke<IndexedEdge[]>('get_graph_edges', { storyId: story.id }),
-          invoke<any[]>('get_chapter_notes', { storyId: story.id }),
+          canvasApi.getGraphNodes(story.id),
+          charactersApi.getCharacters(story.id),
+          canvasApi.getGraphEdges(story.id),
+          narrativeApi.getChapterNotes(story.id),
         ]);
 
         return [
@@ -2112,13 +1958,13 @@ function App() {
       setAuditError(null);
 
       try {
-        const page: AuditPage = await invoke('get_audit_history', {
-          storyId: currentStory.id,
-          entityType: auditFilter,
-          entityId: null,
-          limit: AUDIT_PAGE_SIZE,
-          offset: 0,
-        });
+        const page: AuditPage = await auditApi.getAuditHistory(
+          currentStory.id,
+          auditFilter,
+          null,
+          AUDIT_PAGE_SIZE,
+          0
+        );
         if (!cancelled) {
           setAuditEntries(page.entries);
           setAuditTotal(page.total);
@@ -2148,13 +1994,13 @@ function App() {
     setAuditError(null);
 
     try {
-      const page: AuditPage = await invoke('get_audit_history', {
-        storyId: currentStory.id,
-        entityType: filter,
-        entityId: null,
-        limit: AUDIT_PAGE_SIZE,
-        offset: auditEntries.length,
-      });
+      const page: AuditPage = await auditApi.getAuditHistory(
+        currentStory.id,
+        filter,
+        null,
+        AUDIT_PAGE_SIZE,
+        auditEntries.length
+      );
 
       if (filter !== auditFilterRef.current) return;
 
@@ -2175,28 +2021,16 @@ function App() {
 
     await loadStory(currentStory);
 
-    const loaded: Character[] = await invoke('get_characters', {
-      storyId: currentStory.id,
-    });
+    const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
     setCharacters(loaded);
 
     if (selectedCharacterId) {
       const [stats, attributes, skills, inventory, currency] = await Promise.all([
-        invoke<CharacterStat[]>('get_character_stats', {
-          characterId: selectedCharacterId,
-        }),
-        invoke<CharacterAttribute[]>('get_character_attributes', {
-          characterId: selectedCharacterId,
-        }),
-        invoke<CharacterSkill[]>('get_character_skills', {
-          characterId: selectedCharacterId,
-        }),
-        invoke<InventoryItem[]>('get_character_inventory', {
-          characterId: selectedCharacterId,
-        }),
-        invoke<CharacterCurrency[]>('get_character_currency', {
-          characterId: selectedCharacterId,
-        }),
+        charactersApi.getCharacterStats(selectedCharacterId),
+        charactersApi.getCharacterAttributes(selectedCharacterId),
+        skillsApi.getCharacterSkills(selectedCharacterId),
+        inventoryApi.getCharacterInventory(selectedCharacterId),
+        inventoryApi.getCharacterCurrency(selectedCharacterId),
       ]);
       setCharacterStats(stats);
       setCharacterAttributes(attributes);
@@ -2211,13 +2045,13 @@ function App() {
   const reloadAuditWindow = async () => {
     if (!currentStory) return;
 
-    const page: AuditPage = await invoke('get_audit_history', {
-      storyId: currentStory.id,
-      entityType: auditFilter,
-      entityId: null,
-      limit: Math.min(Math.max(auditEntries.length, AUDIT_PAGE_SIZE), 500),
-      offset: 0,
-    });
+    const page: AuditPage = await auditApi.getAuditHistory(
+      currentStory.id,
+      auditFilter,
+      null,
+      Math.min(Math.max(auditEntries.length, AUDIT_PAGE_SIZE), 500),
+      0
+    );
 
     setAuditEntries(page.entries);
     setAuditTotal(page.total);
@@ -2229,10 +2063,7 @@ function App() {
     setRevertNotice(null);
 
     try {
-      const changed: boolean = await invoke('revert_change', {
-        entryId: entry.id,
-        user: actor,
-      });
+      const changed: boolean = await auditApi.revertChange(entry.id, actor);
 
       if (!changed) {
         setRevertNotice('Nothing to put back: that field already holds its earlier value.');
@@ -2291,9 +2122,7 @@ function App() {
       setCharacterError(null);
 
       try {
-        const loaded: Character[] = await invoke('get_characters', {
-          storyId: currentStory.id,
-        });
+        const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
         if (cancelled) return;
 
         setCharacters(loaded);
@@ -2328,9 +2157,7 @@ function App() {
 
     const loadStats = async () => {
       try {
-        const loaded: CharacterStat[] = await invoke('get_character_stats', {
-          characterId: selectedCharacterId,
-        });
+        const loaded: CharacterStat[] = await charactersApi.getCharacterStats(selectedCharacterId);
         if (!cancelled) setCharacterStats(loaded);
       } catch (e) {
         console.error('Failed to load character stats:', e);
@@ -2356,9 +2183,9 @@ function App() {
 
     const loadAttributes = async () => {
       try {
-        const loaded: CharacterAttribute[] = await invoke('get_character_attributes', {
-          characterId: selectedCharacterId,
-        });
+        const loaded: CharacterAttribute[] = await charactersApi.getCharacterAttributes(
+          selectedCharacterId
+        );
         if (!cancelled) setCharacterAttributes(loaded);
       } catch (e) {
         console.error('Failed to load character attributes:', e);
@@ -2384,9 +2211,7 @@ function App() {
 
     const loadSkills = async () => {
       try {
-        const loaded: CharacterSkill[] = await invoke('get_character_skills', {
-          characterId: selectedCharacterId,
-        });
+        const loaded: CharacterSkill[] = await skillsApi.getCharacterSkills(selectedCharacterId);
         if (!cancelled) setCharacterSkills(loaded ?? []);
       } catch (e) {
         console.error('Failed to load character skills:', e);
@@ -2414,12 +2239,8 @@ function App() {
     const loadLedger = async () => {
       try {
         const [items, currency] = await Promise.all([
-          invoke<InventoryItem[]>('get_character_inventory', {
-            characterId: selectedCharacterId,
-          }),
-          invoke<CharacterCurrency[]>('get_character_currency', {
-            characterId: selectedCharacterId,
-          }),
+          inventoryApi.getCharacterInventory(selectedCharacterId),
+          inventoryApi.getCharacterCurrency(selectedCharacterId),
         ]);
 
         if (cancelled) return;
@@ -2452,7 +2273,7 @@ function App() {
       try {
         const [lists, days] = await Promise.all([
           fetchTrash(currentStory?.id ?? null),
-          invoke<number | null>('get_trash_retention'),
+          trashApi.getTrashRetention(),
         ]);
 
         if (cancelled) return;
@@ -2482,10 +2303,10 @@ function App() {
     setTrashNotice(null);
 
     try {
-      await invoke('restore_deleted', { id: item.id, kind: item.kind, user: actor });
+      await trashApi.restoreDeleted(item.id, item.kind, actor);
 
       if (item.kind === 'story') {
-        const loadedStories: Story[] = await invoke('get_all_stories');
+        const loadedStories: Story[] = await storiesApi.getAllStories();
         setStories(loadedStories);
         setDeletedStories(previous => previous.filter(other => other.id !== item.id));
       } else {
@@ -2494,9 +2315,7 @@ function App() {
         if (currentStory) {
           await loadStory(currentStory);
 
-          const loaded: Character[] = await invoke('get_characters', {
-            storyId: currentStory.id,
-          });
+          const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
           setCharacters(loaded);
           setSelectedCharacterId(previous => {
             if (item.kind === 'character' && loaded.some(other => other.id === item.id)) {
@@ -2522,7 +2341,7 @@ function App() {
     setTrashError(null);
 
     try {
-      await invoke('purge_deleted', { id: item.id, kind: item.kind, user: actor });
+      await trashApi.purgeDeleted(item.id, item.kind, actor);
 
       // Nothing can bring a purged row back, so earlier steps are no longer a
       // safe branch to undo into.
@@ -2557,7 +2376,7 @@ function App() {
     setTrashNotice(null);
 
     try {
-      const purged: number = await invoke('set_trash_retention', { days });
+      const purged: number = await trashApi.setTrashRetention(days);
       setRetentionDays(days);
 
       if (purged > 0) {
@@ -2630,7 +2449,7 @@ function App() {
     setActionError(null);
 
     try {
-      const story: Story = await invoke('create_demo_story', { user: actor });
+      const story: Story = await storiesApi.createDemoStory(actor);
 
       setStories(previous => [story, ...previous.filter(other => other.id !== story.id)]);
       setSelectedTab('graph');
@@ -2651,10 +2470,7 @@ function App() {
     setActionError(null);
 
     try {
-      const story: Story = await invoke('reset_demo_story', {
-        storyId: currentStory.id,
-        user: actor,
-      });
+      const story: Story = await storiesApi.resetDemoStory(currentStory.id, actor);
 
       setStories(previous =>
         previous.map(other => (other.id === story.id ? story : other))
@@ -2681,11 +2497,7 @@ function App() {
     if (!newStoryTitle.trim()) return;
     
     try {
-      const story: Story = await invoke('create_new_story', {
-        title: newStoryTitle.trim(),
-        description: null,
-        user: actor,
-      });
+      const story: Story = await storiesApi.createNewStory(newStoryTitle.trim(), null, actor);
       
       setStories(prev => [story, ...prev]);
       setNewStoryTitle('');
@@ -2707,15 +2519,16 @@ function App() {
     const position = { x: 100 + Math.random() * 400, y: 100 + Math.random() * 300 };
 
     try {
-      const newDbNode: any = await invoke('create_graph_node', {
-        storyId: currentStory.id,
-        nodeType: newNodeType,
-        label: newNodeLabel.trim(),
-        content: null,
-        posX: position.x,
-        posY: position.y,
-        createdBy: actor,
-      });
+      const newDbNode: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        newNodeType,
+        newNodeLabel.trim(),
+        null,
+        position.x,
+        position.y,
+        actor,
+        null
+      );
 
       const flowNode: any = {
         id: newDbNode.id,
@@ -2742,8 +2555,8 @@ function App() {
 
       recordStep({
         label: `Add “${newDbNode.label}”`,
-        undo: () => invoke('delete_node', { id: newDbNode.id, user: actor }),
-        redo: () => invoke('restore_deleted', { id: newDbNode.id, kind: 'node', user: actor }),
+        undo: () => canvasApi.deleteNode(newDbNode.id, actor),
+        redo: () => trashApi.restoreDeleted(newDbNode.id, 'node', actor),
       });
     } catch (e) {
       console.error('Failed to create node:', e);
@@ -2838,22 +2651,22 @@ function App() {
 
     try {
       if (draft.kind === 'character') {
-        const created: Character = await invoke('create_new_character', {
-          storyId: currentStory.id,
+        const created: Character = await charactersApi.createCharacter(
+          currentStory.id,
           name,
           description,
-          user: actor,
-        });
-        const node: any = await invoke('create_graph_node', {
-          storyId: currentStory.id,
-          nodeType: 'character',
-          label: name,
-          content: description,
-          posX: position.x,
-          posY: position.y,
-          createdBy: actor,
-          characterId: created.id,
-        });
+          actor
+        );
+        const node: any = await canvasApi.createGraphNode(
+          currentStory.id,
+          'character',
+          name,
+          description,
+          position.x,
+          position.y,
+          actor,
+          created.id
+        );
 
         setCharacters(previous => [...previous, created]);
         setNodes(nds => [...nds, toFlowNode(node)]);
@@ -2861,17 +2674,13 @@ function App() {
         recordStep({
           label: `Add “${name}”`,
           undo: async () => {
-            await invoke('delete_node', { id: node.id, user: actor });
-            await invoke('delete_character', { id: created.id, user: actor });
+            await canvasApi.deleteNode(node.id, actor);
+            await charactersApi.deleteCharacter(created.id, actor);
             setCharacters(previous => previous.filter(row => row.id !== created.id));
           },
           redo: async () => {
-            await invoke('restore_deleted', {
-              id: created.id,
-              kind: 'character',
-              user: actor,
-            });
-            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            await trashApi.restoreDeleted(created.id, 'character', actor);
+            await trashApi.restoreDeleted(node.id, 'node', actor);
             setCharacters(previous =>
               previous.some(row => row.id === created.id)
                 ? previous
@@ -2881,27 +2690,28 @@ function App() {
         });
       } else if (draft.kind === 'quest') {
         const status = draft.completedChapterId ? 'completed' : 'active';
-        const quest: Quest = await invoke('add_quest', {
-          storyId: currentStory.id,
-          title: name,
-          giverCharacterId: draft.giverId || null,
-          factionNodeId: draft.factionId || null,
-          acceptedChapterId: draft.chapterId,
-          completedChapterId: draft.completedChapterId || null,
+        const quest: Quest = await questsApi.addQuest(
+          currentStory.id,
+          name,
+          draft.giverId || null,
+          draft.factionId || null,
+          draft.chapterId,
+          draft.completedChapterId || null,
           status,
           description,
-          notes: draft.notes.trim() || null,
-          user: actor,
-        });
-        const node: any = await invoke('create_graph_node', {
-          storyId: currentStory.id,
-          nodeType: 'quest',
-          label: name,
-          content: description,
-          posX: position.x,
-          posY: position.y,
-          createdBy: actor,
-        });
+          draft.notes.trim() || null,
+          actor
+        );
+        const node: any = await canvasApi.createGraphNode(
+          currentStory.id,
+          'quest',
+          name,
+          description,
+          position.x,
+          position.y,
+          actor,
+          null
+        );
 
         setStoryQuests(previous => [...previous, { ...quest, rewards: quest.rewards ?? [] }]);
         setNodes(nds => [...nds, toFlowNode(node)]);
@@ -2914,24 +2724,24 @@ function App() {
         recordStep({
           label: `Add “${name}”`,
           undo: async () => {
-            await invoke('delete_node', { id: node.id, user: actor });
-            await invoke('delete_quest', { id: currentQuestId, user: actor });
+            await canvasApi.deleteNode(node.id, actor);
+            await questsApi.deleteQuest(currentQuestId, actor);
             setStoryQuests(previous => previous.filter(row => row.id !== currentQuestId));
           },
           redo: async () => {
-            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
-            const again: Quest = await invoke('add_quest', {
-              storyId: currentStory.id,
-              title: name,
-              giverCharacterId: draft.giverId || null,
-              factionNodeId: draft.factionId || null,
-              acceptedChapterId: draft.chapterId,
-              completedChapterId: draft.completedChapterId || null,
+            await trashApi.restoreDeleted(node.id, 'node', actor);
+            const again: Quest = await questsApi.addQuest(
+              currentStory.id,
+              name,
+              draft.giverId || null,
+              draft.factionId || null,
+              draft.chapterId,
+              draft.completedChapterId || null,
               status,
               description,
-              notes: draft.notes.trim() || null,
-              user: actor,
-            });
+              draft.notes.trim() || null,
+              actor
+            );
             currentQuestId = again.id;
             setStoryQuests(previous => [
               ...previous,
@@ -2940,30 +2750,31 @@ function App() {
           },
         });
       } else {
-        const node: any = await invoke('create_graph_node', {
-          storyId: currentStory.id,
-          nodeType: 'skill',
-          label: name,
-          content: description,
-          posX: position.x,
-          posY: position.y,
-          createdBy: actor,
-        });
+        const node: any = await canvasApi.createGraphNode(
+          currentStory.id,
+          'skill',
+          name,
+          description,
+          position.x,
+          position.y,
+          actor,
+          null
+        );
 
         // An owner is optional: a skill can be placed on the board before anybody
         // holds it. A character joins later by connecting their card to it, or
         // with the card's Add holder form, and that is when the first sheet row
         // and the shared definition are written.
         const learn = (characterId: string) =>
-          invoke<CharacterSkill>('add_skill', {
+          skillsApi.addSkill(
             characterId,
             name,
-            rank: draft.rank.trim() || null,
-            effect: description,
-            chapterId: draft.chapterId || null,
-            nodeId: node.id,
-            user: actor,
-          });
+            draft.rank.trim() || null,
+            description,
+            draft.chapterId || null,
+            node.id,
+            actor
+          );
 
         let skill: CharacterSkill | null = null;
 
@@ -2972,7 +2783,7 @@ function App() {
             skill = await learn(draft.ownerId);
           } catch (e) {
             // The skill was refused, so the card made for it must not stay behind.
-            await invoke('delete_node', { id: node.id, user: actor }).catch(() => {});
+            await canvasApi.deleteNode(node.id, actor).catch(() => {});
             await recordHistoryEvent(
               'step_rolled_back',
               `Put back — “${name}”: its holder row could not be written (${String(
@@ -2992,13 +2803,13 @@ function App() {
           label: `Add “${name}”`,
           undo: async () => {
             if (currentSkillId) {
-              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              await skillsApi.deleteSkill(currentSkillId, actor);
               hideSkillOnLists(currentSkillId, draft.ownerId);
             }
-            await invoke('delete_node', { id: node.id, user: actor });
+            await canvasApi.deleteNode(node.id, actor);
           },
           redo: async () => {
-            await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+            await trashApi.restoreDeleted(node.id, 'node', actor);
 
             if (!draft.ownerId) return;
 
@@ -3031,15 +2842,16 @@ function App() {
     const position = { x: 100 + Math.random() * 400, y: 100 + Math.random() * 300 };
 
     try {
-      const created: any = await invoke('create_graph_node', {
-        storyId: currentStory.id,
-        nodeType: 'faction',
-        label: name.trim(),
-        content: null,
-        posX: position.x,
-        posY: position.y,
-        createdBy: actor,
-      });
+      const created: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        'faction',
+        name.trim(),
+        null,
+        position.x,
+        position.y,
+        actor,
+        null
+      );
 
       setNodes(nds => [...nds, toFlowNode(created)]);
       onCreated(created.id);
@@ -3177,9 +2989,7 @@ function App() {
 
     let cancelled = false;
 
-    invoke<ChapterCastState[]>('get_story_chapter_cast_states', {
-      storyId: currentStory.id,
-    })
+    narrativeApi.getStoryChapterCastStates(currentStory.id)
       .then(states => {
         if (!cancelled) {
           setStoryChapterCastStates(Array.isArray(states) ? states : []);
@@ -4689,11 +4499,7 @@ function App() {
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
 
-    const updated: any[] = await invoke('set_chapter_order', {
-      storyId: currentStory.id,
-      orderedIds,
-      user: actor,
-    });
+    const updated: any[] = await narrativeApi.setChapterOrder(currentStory.id, orderedIds, actor);
 
     const byId = new Map<string, number | null>(
       updated.map(row => [row.id, row.chapter_seq ?? null])
@@ -4854,23 +4660,24 @@ function App() {
     setChapterError(null);
 
     try {
-      const created: any = await invoke('create_graph_node', {
-        storyId: currentStory.id,
-        nodeType: 'chapter',
-        label: newChapterTitle.trim(),
-        content: null,
-        posX: position.x,
-        posY: position.y,
-        createdBy: actor,
-      });
+      const created: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        'chapter',
+        newChapterTitle.trim(),
+        null,
+        position.x,
+        position.y,
+        actor,
+        null
+      );
 
       setNodes(previous => [...previous, toFlowNode(created)]);
       setNewChapterTitle('');
 
       recordStep({
         label: `Add “${created.label}”`,
-        undo: () => invoke('delete_node', { id: created.id, user: actor }),
-        redo: () => invoke('restore_deleted', { id: created.id, kind: 'node', user: actor }),
+        undo: () => canvasApi.deleteNode(created.id, actor),
+        redo: () => trashApi.restoreDeleted(created.id, 'node', actor),
       });
     } catch (e) {
       console.error('Failed to add a chapter:', e);
@@ -4929,16 +4736,16 @@ function App() {
     setChapterError(null);
 
     try {
-      const updated: any = await invoke('set_chapter_details', {
-        nodeId: editingChapterId,
-        arc: chapterArcDraft.trim() || null,
+      const updated: any = await narrativeApi.setChapterDetails(
+        editingChapterId,
+        chapterArcDraft.trim() || null,
         words,
         target,
-        pov: chapterPovDraft || null,
+        chapterPovDraft || null,
         day,
-        time: chapterTimeDraft.trim() || null,
-        user: actor,
-      });
+        chapterTimeDraft.trim() || null,
+        actor
+      );
 
       setNodes(previous =>
         previous.map(node =>
@@ -5102,11 +4909,7 @@ function App() {
 
     try {
       if (present) {
-        const created = await invoke<ChapterCastMember>('add_chapter_cast_member', {
-          chapterId,
-          characterId,
-          user: actor,
-        });
+        const created = await narrativeApi.addChapterCastMember(chapterId, characterId, actor);
 
         setStoryChapterCast(previous =>
           previous.some(member => member.id === created.id) ? previous : [...previous, created]
@@ -5115,7 +4918,7 @@ function App() {
         if (!existing) return;
         const removingId = existing.id;
 
-        await invoke('remove_chapter_cast_member', { id: removingId, user: actor });
+        await narrativeApi.removeChapterCastMember(removingId, actor);
         setStoryChapterCast(previous =>
           previous.filter(member => member.id !== removingId)
         );
@@ -5140,11 +4943,7 @@ function App() {
     setNoteError(null);
 
     try {
-      const created: any = await invoke('add_chapter_note', {
-        chapterId,
-        text,
-        user: actor,
-      });
+      const created: any = await narrativeApi.addChapterNote(chapterId, text, actor);
 
       setChapterNotes(previous => [...previous, toChapterNote(created)]);
       setNoteDraft('');
@@ -5232,11 +5031,7 @@ function App() {
     setNoteError(null);
 
     try {
-      const updated: any = await invoke('update_chapter_note', {
-        id: editingNoteId,
-        text,
-        user: actor,
-      });
+      const updated: any = await narrativeApi.updateChapterNote(editingNoteId, text, actor);
       const row = toChapterNote(updated);
 
       setChapterNotes(previous =>
@@ -5258,7 +5053,7 @@ function App() {
     setNoteError(null);
 
     try {
-      await invoke('delete_node', { id: note.id, user: actor });
+      await canvasApi.deleteNode(note.id, actor);
 
       setChapterNotes(previous => previous.filter(entry => entry.id !== note.id));
       setEditingNoteId(previous => (previous === note.id ? null : previous));
@@ -5512,11 +5307,7 @@ function App() {
       const previousId = target.data.characterId ?? null;
 
       try {
-        const updated: any = await invoke('set_node_character', {
-          nodeId: target.id,
-          characterId: character.id,
-          user: actor,
-        });
+        const updated: any = await canvasApi.setNodeCharacter(target.id, character.id, actor);
 
         setNodes(nds =>
           nds.map(node =>
@@ -5529,17 +5320,9 @@ function App() {
         recordStep({
           label: `Relink “${target.data.label}”`,
           undo: () =>
-            invoke('set_node_character', {
-              nodeId: target.id,
-              characterId: previousId,
-              user: actor,
-            }),
+            canvasApi.setNodeCharacter(target.id, previousId, actor),
           redo: () =>
-            invoke('set_node_character', {
-              nodeId: target.id,
-              characterId: character.id,
-              user: actor,
-            }),
+            canvasApi.setNodeCharacter(target.id, character.id, actor),
         });
 
         // Only the link changes here: the label, notes and type are the
@@ -5571,16 +5354,16 @@ function App() {
       : { x: event.clientX, y: event.clientY };
 
     try {
-      const created: any = await invoke('create_graph_node', {
-        storyId: currentStory.id,
-        nodeType: 'character',
-        label: character.name,
-        content: null,
-        posX: position.x,
-        posY: position.y,
-        createdBy: actor,
-        characterId: character.id,
-      });
+      const created: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        'character',
+        character.name,
+        null,
+        position.x,
+        position.y,
+        actor,
+        character.id
+      );
 
       setNodes(nds => [
         ...nds,
@@ -5601,8 +5384,8 @@ function App() {
 
       recordStep({
         label: `Add “${created.label}”`,
-        undo: () => invoke('delete_node', { id: created.id, user: actor }),
-        redo: () => invoke('restore_deleted', { id: created.id, kind: 'node', user: actor }),
+        undo: () => canvasApi.deleteNode(created.id, actor),
+        redo: () => trashApi.restoreDeleted(created.id, 'node', actor),
       });
 
       // Opening it is what makes the drop feel finished: the numbers are in the
@@ -5703,11 +5486,11 @@ function App() {
         );
 
         try {
-          const member: ChapterCastMember = await invoke('add_chapter_cast_member', {
+          const member: ChapterCastMember = await narrativeApi.addChapterCastMember(
             chapterId,
             characterId,
-            user: actor,
-          });
+            actor
+          );
 
           if (!hadCast) {
             setStoryChapterCast(previous =>
@@ -5718,22 +5501,19 @@ function App() {
           let newDbEdge: any;
 
           try {
-            newDbEdge = await invoke('create_graph_edge', {
-              storyId: currentStory.id,
-              sourceId: params.source,
-              targetId: params.target,
-              label: 'cast',
-              relationType: 'cast',
-              createdBy: actor,
-            });
+            newDbEdge = await canvasApi.createGraphEdge(
+              currentStory.id,
+              params.source,
+              params.target,
+              'cast',
+              'cast',
+              actor
+            );
           } catch (e) {
             // The edge is what the author drew; without it the cast change would
             // be an invisible edit they did not ask for.
             if (!hadCast) {
-              await invoke('remove_chapter_cast_member', {
-                id: member.id,
-                user: actor,
-              }).catch(() => {});
+              await narrativeApi.removeChapterCastMember(member.id, actor).catch(() => {});
               setStoryChapterCast(previous => previous.filter(row => row.id !== member.id));
               await recordHistoryEvent(
                 'step_rolled_back',
@@ -5761,29 +5541,22 @@ function App() {
           recordStep({
             label: `Add ${characterNode.data.label} to ${chapterNode.data.label}'s cast`,
             undo: async () => {
-              await invoke('delete_edge', { id: newDbEdge.id, user: actor });
+              await canvasApi.deleteEdge(newDbEdge.id, actor);
               if (!hadCast) {
-                await invoke('remove_chapter_cast_member', {
-                  id: currentCastId,
-                  user: actor,
-                });
+                await narrativeApi.removeChapterCastMember(currentCastId, actor);
                 setStoryChapterCast(previous =>
                   previous.filter(row => row.id !== currentCastId)
                 );
               }
             },
             redo: async () => {
-              await invoke('restore_deleted', {
-                id: newDbEdge.id,
-                kind: 'edge',
-                user: actor,
-              });
+              await trashApi.restoreDeleted(newDbEdge.id, 'edge', actor);
               if (!hadCast) {
-                const again: ChapterCastMember = await invoke('add_chapter_cast_member', {
+                const again: ChapterCastMember = await narrativeApi.addChapterCastMember(
                   chapterId,
                   characterId,
-                  user: actor,
-                });
+                  actor
+                );
                 currentCastId = again.id;
                 setStoryChapterCast(previous =>
                   previous.some(row => row.id === again.id)
@@ -5837,15 +5610,15 @@ function App() {
         }
 
         const learn = () =>
-          invoke<CharacterSkill>('add_skill', {
+          skillsApi.addSkill(
             characterId,
-            name: skillNode.data.label,
-            rank: null,
-            effect: skillNode.data.content?.trim() || null,
-            chapterId: null,
-            nodeId: skillNode.id,
-            user: actor,
-          });
+            skillNode.data.label,
+            null,
+            skillNode.data.content?.trim() || null,
+            null,
+            skillNode.id,
+            actor
+          );
 
         // A line may already join these two cards: one drawn before a skill hold
         // was written, or left behind when the skill was deleted from the sheet.
@@ -5863,18 +5636,18 @@ function App() {
 
           if (!existingEdge) {
             try {
-              newDbEdge = await invoke('create_graph_edge', {
-                storyId: currentStory.id,
-                sourceId: fromNodeId,
-                targetId: toNodeId,
-                label: 'skill',
-                relationType: 'skill',
-                createdBy: actor,
-              });
+              newDbEdge = await canvasApi.createGraphEdge(
+                currentStory.id,
+                fromNodeId,
+                toNodeId,
+                'skill',
+                'skill',
+                actor
+              );
             } catch (e) {
               // The line is what the author drew. Without it the sheet row would
               // be an edit they never asked for, so it goes back.
-              await invoke('delete_skill', { id: learned.id, user: actor }).catch(() => {});
+              await skillsApi.deleteSkill(learned.id, actor).catch(() => {});
               await recordHistoryEvent(
                 'step_rolled_back',
                 `Put back — ${characterNode.data.label} learning ${skillNode.data.label}: the connection could not be saved (${String(
@@ -5907,20 +5680,16 @@ function App() {
           recordStep({
             label: `${characterNode.data.label} learns ${skillNode.data.label}`,
             undo: async () => {
-              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              await skillsApi.deleteSkill(currentSkillId, actor);
               hideSkillOnLists(currentSkillId, characterId);
-              if (heldEdge) await invoke('delete_edge', { id: heldEdge.id, user: actor });
+              if (heldEdge) await canvasApi.deleteEdge(heldEdge.id, actor);
             },
             redo: async () => {
               const again = await learn();
               currentSkillId = again.id;
               showSkillOnLists(again);
               if (heldEdge) {
-                await invoke('restore_deleted', {
-                  id: heldEdge.id,
-                  kind: 'edge',
-                  user: actor,
-                });
+                await trashApi.restoreDeleted(heldEdge.id, 'edge', actor);
               }
             },
           });
@@ -5935,14 +5704,14 @@ function App() {
       }
 
       try {
-        const newDbEdge: any = await invoke('create_graph_edge', {
-          storyId: currentStory.id,
-          sourceId: params.source,
-          targetId: params.target,
-          label: null,
-          relationType: null,
-          createdBy: actor,
-        });
+        const newDbEdge: any = await canvasApi.createGraphEdge(
+          currentStory.id,
+          params.source,
+          params.target,
+          null,
+          null,
+          actor
+        );
 
         const newEdge: any = {
           id: newDbEdge.id,
@@ -5960,9 +5729,9 @@ function App() {
 
         recordStep({
           label: 'Add a connection',
-          undo: () => invoke('delete_edge', { id: newDbEdge.id, user: actor }),
+          undo: () => canvasApi.deleteEdge(newDbEdge.id, actor),
           redo: () =>
-            invoke('restore_deleted', { id: newDbEdge.id, kind: 'edge', user: actor }),
+            trashApi.restoreDeleted(newDbEdge.id, 'edge', actor),
         });
       } catch (e) {
         console.error('Failed to create edge:', e);
@@ -6074,30 +5843,15 @@ function App() {
       const to = { x: node.position.x, y: node.position.y };
 
       try {
-        await invoke('update_graph_node_position', {
-          id: node.id,
-          posX: to.x,
-          posY: to.y,
-          user: actor,
-        });
+        await canvasApi.updateGraphNodePosition(node.id, to.x, to.y, actor);
 
         if (from && (from.x !== to.x || from.y !== to.y)) {
           recordStep({
             label: `Move “${node.data.label}”`,
             undo: () =>
-              invoke('update_graph_node_position', {
-                id: node.id,
-                posX: from.x,
-                posY: from.y,
-                user: actor,
-              }),
+              canvasApi.updateGraphNodePosition(node.id, from.x, from.y, actor),
             redo: () =>
-              invoke('update_graph_node_position', {
-                id: node.id,
-                posX: to.x,
-                posY: to.y,
-                user: actor,
-              }),
+              canvasApi.updateGraphNodePosition(node.id, to.x, to.y, actor),
           });
         }
       } catch (e) {
@@ -6139,7 +5893,7 @@ function App() {
 
       try {
         for (const node of deleted) {
-          await invoke('delete_node', { id: node.id, user: actor });
+          await canvasApi.deleteNode(node.id, actor);
         }
 
         recordStep({
@@ -6149,12 +5903,12 @@ function App() {
               : `Delete ${deleted.length} nodes`,
           undo: async () => {
             for (const node of deleted) {
-              await invoke('restore_deleted', { id: node.id, kind: 'node', user: actor });
+              await trashApi.restoreDeleted(node.id, 'node', actor);
             }
           },
           redo: async () => {
             for (const node of deleted) {
-              await invoke('delete_node', { id: node.id, user: actor });
+              await canvasApi.deleteNode(node.id, actor);
             }
           },
           undoNote:
@@ -6311,7 +6065,7 @@ function App() {
 
       try {
         for (const edge of plain) {
-          await invoke('delete_edge', { id: edge.id, user: actor });
+          await canvasApi.deleteEdge(edge.id, actor);
         }
 
         if (plain.length > 0) {
@@ -6322,12 +6076,12 @@ function App() {
                 : `Delete ${plain.length} connections`,
             undo: async () => {
               for (const edge of plain) {
-                await invoke('restore_deleted', { id: edge.id, kind: 'edge', user: actor });
+                await trashApi.restoreDeleted(edge.id, 'edge', actor);
               }
             },
             redo: async () => {
               for (const edge of plain) {
-                await invoke('delete_edge', { id: edge.id, user: actor });
+                await canvasApi.deleteEdge(edge.id, actor);
               }
             },
           });
@@ -6383,16 +6137,14 @@ function App() {
           // fails leaves the other where it was: the step stays in the history
           // and can be run again as a whole instead of wedging on a duplicate or
           // a missing row.
-          await invoke('remove_chapter_cast_member', { id: castId, user: actor });
+          await narrativeApi.removeChapterCastMember(castId, actor);
 
           try {
-            await invoke('delete_edge', { id: entry.edge.id, user: actor });
+            await canvasApi.deleteEdge(entry.edge.id, actor);
           } catch (e) {
-            const again = await invoke<ChapterCastMember>('add_chapter_cast_member', {
-              chapterId,
-              characterId,
-              user: actor,
-            }).catch(() => null);
+            const again = await narrativeApi
+              .addChapterCastMember(chapterId, characterId, actor)
+              .catch(() => null);
 
             if (again) {
               setStoryChapterCast(previous => [
@@ -6424,25 +6176,18 @@ function App() {
           recordStep({
             label: entry.stepLabel,
             undo: async () => {
-              const again: ChapterCastMember = await invoke('add_chapter_cast_member', {
+              const again: ChapterCastMember = await narrativeApi.addChapterCastMember(
                 chapterId,
                 characterId,
-                user: actor,
-              });
+                actor
+              );
 
               try {
-                await invoke('restore_deleted', {
-                  id: entry.edge.id,
-                  kind: 'edge',
-                  user: actor,
-                });
+                await trashApi.restoreDeleted(entry.edge.id, 'edge', actor);
               } catch (e) {
                 // The cast member is back but its line is not, so put the row
                 // away again rather than leave the two halves disagreeing.
-                await invoke('remove_chapter_cast_member', {
-                  id: again.id,
-                  user: actor,
-                }).catch(() => {});
+                await narrativeApi.removeChapterCastMember(again.id, actor).catch(() => {});
                 await recordHistoryEvent(
                   'step_rolled_back',
                   `Put back — Undo of ${entry.stepLabel}: the connection could not be restored (${String(
@@ -6463,19 +6208,12 @@ function App() {
               );
             },
             redo: async () => {
-              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+              await canvasApi.deleteEdge(entry.edge.id, actor);
 
               try {
-                await invoke('remove_chapter_cast_member', {
-                  id: currentCastId,
-                  user: actor,
-                });
+                await narrativeApi.removeChapterCastMember(currentCastId, actor);
               } catch (e) {
-                await invoke('restore_deleted', {
-                  id: entry.edge.id,
-                  kind: 'edge',
-                  user: actor,
-                }).catch(() => {});
+                await trashApi.restoreDeleted(entry.edge.id, 'edge', actor).catch(() => {});
                 setEdges(previous =>
                   previous.some(edge => edge.id === entry.edge.id)
                     ? previous
@@ -6501,9 +6239,9 @@ function App() {
 
           if (!relationId) continue;
 
-          await invoke('delete_relation', { id: relationId, user: actor });
+          await relationsApi.deleteRelation(relationId, actor);
           setStoryRelations(previous => previous.filter(row => row.id !== relationId));
-          await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          await canvasApi.deleteEdge(entry.edge.id, actor);
           setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
 
           let currentRelationId = relationId;
@@ -6511,15 +6249,15 @@ function App() {
           recordStep({
             label: entry.stepLabel,
             undo: async () => {
-              const again: CharacterRelation = await invoke('add_relation', {
-                fromCharacterId: entry.relationFromId ?? entry.edge.source,
-                toCharacterId: entry.relationToId ?? entry.edge.target,
-                kind: entry.relationKind ?? 'ally',
-                note: entry.relationNote ?? null,
-                sinceChapterId: entry.relationSinceChapterId ?? null,
-                untilChapterId: entry.relationUntilChapterId ?? null,
-                user: actor,
-              });
+              const again: CharacterRelation = await relationsApi.addRelation(
+                entry.relationFromId ?? entry.edge.source,
+                entry.relationToId ?? entry.edge.target,
+                entry.relationKind ?? 'ally',
+                entry.relationNote ?? null,
+                entry.relationSinceChapterId ?? null,
+                entry.relationUntilChapterId ?? null,
+                actor
+              );
               currentRelationId = again.id;
               setStoryRelations(previous =>
                 [...previous.filter(row => row.id !== again.id), again].sort(
@@ -6527,28 +6265,26 @@ function App() {
                     a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
                 )
               );
-              await invoke('restore_deleted', {
-                id: entry.edge.id,
-                kind: 'edge',
-                user: actor,
-              });
+              await trashApi.restoreDeleted(entry.edge.id, 'edge', actor);
             },
             redo: async () => {
-              await invoke('delete_relation', { id: currentRelationId, user: actor });
+              await relationsApi.deleteRelation(currentRelationId, actor);
               setStoryRelations(previous =>
                 previous.filter(row => row.id !== currentRelationId)
               );
-              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+              await canvasApi.deleteEdge(entry.edge.id, actor);
             },
           });
         } else {
-          const { skillId, skillCharacterId } = entry;
+          const { skillId, skillCharacterId, skillName } = entry;
 
-          if (!skillId || !skillCharacterId) continue;
+          // A step recorded without all three cannot be put back through the
+          // sheet, so it is left alone rather than half-undone.
+          if (!skillId || !skillCharacterId || !skillName) continue;
 
-          await invoke('delete_skill', { id: skillId, user: actor });
+          await skillsApi.deleteSkill(skillId, actor);
           hideSkillOnLists(skillId, skillCharacterId);
-          await invoke('delete_edge', { id: entry.edge.id, user: actor });
+          await canvasApi.deleteEdge(entry.edge.id, actor);
           setEdges(previous => previous.filter(edge => edge.id !== entry.edge.id));
 
           let currentSkillId = skillId;
@@ -6556,27 +6292,23 @@ function App() {
           recordStep({
             label: entry.stepLabel,
             undo: async () => {
-              const again: CharacterSkill = await invoke('add_skill', {
-                characterId: skillCharacterId,
-                name: entry.skillName,
-                rank: entry.skillRank ?? null,
-                effect: entry.skillEffect ?? null,
-                chapterId: entry.skillChapterId ?? null,
-                nodeId: entry.skillNodeId ?? null,
-                user: actor,
-              });
+              const again: CharacterSkill = await skillsApi.addSkill(
+                skillCharacterId,
+                skillName,
+                entry.skillRank ?? null,
+                entry.skillEffect ?? null,
+                entry.skillChapterId ?? null,
+                entry.skillNodeId ?? null,
+                actor
+              );
               currentSkillId = again.id;
               showSkillOnLists(again);
-              await invoke('restore_deleted', {
-                id: entry.edge.id,
-                kind: 'edge',
-                user: actor,
-              });
+              await trashApi.restoreDeleted(entry.edge.id, 'edge', actor);
             },
             redo: async () => {
-              await invoke('delete_skill', { id: currentSkillId, user: actor });
+              await skillsApi.deleteSkill(currentSkillId, actor);
               hideSkillOnLists(currentSkillId, skillCharacterId);
-              await invoke('delete_edge', { id: entry.edge.id, user: actor });
+              await canvasApi.deleteEdge(entry.edge.id, actor);
             },
           });
         }
@@ -6605,11 +6337,7 @@ function App() {
       if (!title || title === story.title) return;
 
       try {
-        const updated: Story = await invoke('update_story', {
-          id: story.id,
-          title,
-          user: actor,
-        });
+        const updated: Story = await storiesApi.updateStory(story.id, title, actor);
 
         // The sidebar is ordered by most recently touched, matching the query.
         setStories(prev =>
@@ -6631,7 +6359,7 @@ function App() {
     setActionError(null);
 
     try {
-      await invoke('delete_story', { id: story.id, user: actor });
+      await storiesApi.deleteStory(story.id, actor);
 
       const remaining = stories.filter(other => other.id !== story.id);
       setStories(remaining);
@@ -6657,12 +6385,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const character: Character = await invoke('create_new_character', {
-        storyId: currentStory.id,
-        name: newCharacterName.trim(),
-        description: newCharacterDescription.trim() || null,
-        user: actor,
-      });
+      const character: Character = await charactersApi.createCharacter(
+        currentStory.id,
+        newCharacterName.trim(),
+        newCharacterDescription.trim() || null,
+        actor
+      );
 
       setCharacters(prev =>
         [...prev, character].sort((a, b) => a.name.localeCompare(b.name))
@@ -6708,13 +6436,13 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: CharacterStat = await invoke('set_character_stat', {
-        characterId: stat.character_id,
-        statName: stat.stat_name,
-        value: Math.trunc(value),
-        notes: statNotesDraft.trim() || null,
-        user: actor,
-      });
+      const updated: CharacterStat = await charactersApi.setCharacterStat(
+        stat.character_id,
+        stat.stat_name,
+        Math.trunc(value),
+        statNotesDraft.trim() || null,
+        actor
+      );
 
       setCharacterStats(prev =>
         [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
@@ -6745,13 +6473,13 @@ function App() {
     try {
       // Setting a stat that already exists updates it, which is what the name
       // implies; the list below merges by id either way.
-      const saved: CharacterStat = await invoke('set_character_stat', {
-        characterId: selectedCharacterId,
-        statName: newStatName.trim(),
-        value: Math.trunc(value),
-        notes: null,
-        user: actor,
-      });
+      const saved: CharacterStat = await charactersApi.setCharacterStat(
+        selectedCharacterId,
+        newStatName.trim(),
+        Math.trunc(value),
+        null,
+        actor
+      );
 
       setCharacterStats(prev =>
         [...prev.filter(other => other.id !== saved.id), saved].sort((a, b) =>
@@ -6785,12 +6513,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: CharacterAttribute = await invoke('set_character_attribute', {
-        characterId: selectedCharacterId,
-        attrName: attribute.attr_name,
+      const updated: CharacterAttribute = await charactersApi.setCharacterAttribute(
+        selectedCharacterId,
+        attribute.attr_name,
         value,
-        user: actor,
-      });
+        actor
+      );
 
       setCharacterAttributes(prev =>
         [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
@@ -6818,12 +6546,12 @@ function App() {
 
     try {
       // Setting a name that already exists updates it, like stats do.
-      const saved: CharacterAttribute = await invoke('set_character_attribute', {
-        characterId: selectedCharacterId,
-        attrName: newAttributeName.trim(),
+      const saved: CharacterAttribute = await charactersApi.setCharacterAttribute(
+        selectedCharacterId,
+        newAttributeName.trim(),
         value,
-        user: actor,
-      });
+        actor
+      );
 
       setCharacterAttributes(prev =>
         [...prev.filter(other => other.id !== saved.id), saved].sort((a, b) =>
@@ -6842,7 +6570,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_character_attribute', { id: attribute.id, user: actor });
+      await charactersApi.deleteCharacterAttribute(attribute.id, actor);
       setCharacterAttributes(prev => prev.filter(other => other.id !== attribute.id));
       setEditingAttributeId(null);
     } catch (e) {
@@ -6960,15 +6688,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: CharacterSkill = await invoke('update_skill', {
-        id: skill.id,
+      const updated: CharacterSkill = await skillsApi.updateSkill(
+        skill.id,
         name,
-        rank: skillRankDraft.trim() || null,
-        effect: skillEffectDraft.trim() || null,
-        chapterId: skillChapterDraft || null,
-        nodeId: skillNodeDraft || null,
-        user: actor,
-      });
+        skillRankDraft.trim() || null,
+        skillEffectDraft.trim() || null,
+        skillChapterDraft || null,
+        skillNodeDraft || null,
+        actor
+      );
 
       applySharedSkillEdit(updated, skill);
       setEditingSkillId(null);
@@ -6984,15 +6712,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterSkill = await invoke('add_skill', {
-        characterId: selectedCharacterId,
-        name: newSkillName.trim(),
-        rank: newSkillRank.trim() || null,
-        effect: newSkillEffect.trim() || null,
-        chapterId: newSkillChapterId || null,
-        nodeId: newSkillNodeId || null,
-        user: actor,
-      });
+      const saved: CharacterSkill = await skillsApi.addSkill(
+        selectedCharacterId,
+        newSkillName.trim(),
+        newSkillRank.trim() || null,
+        newSkillEffect.trim() || null,
+        newSkillChapterId || null,
+        newSkillNodeId || null,
+        actor
+      );
 
       applySkill(saved);
       setNewSkillName('');
@@ -7034,15 +6762,15 @@ function App() {
     setSavingSkillHolder(true);
 
     try {
-      const saved: CharacterSkill = await invoke('add_skill', {
+      const saved: CharacterSkill = await skillsApi.addSkill(
         characterId,
         name,
-        rank: skillHolderRank.trim() || null,
+        skillHolderRank.trim() || null,
         effect,
-        chapterId: skillHolderChapterId || null,
-        nodeId: card.id,
-        user: actor,
-      });
+        skillHolderChapterId || null,
+        card.id,
+        actor
+      );
 
       const ordered = (list: CharacterSkill[]) =>
         [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
@@ -7081,7 +6809,7 @@ function App() {
     );
 
     try {
-      await invoke('delete_skill', { id: skill.id, user: actor });
+      await skillsApi.deleteSkill(skill.id, actor);
       setCharacterSkills(prev => prev.filter(other => other.id !== skill.id));
       setStorySkills(prev => prev.filter(other => other.id !== skill.id));
       // The database cascades the events and evolution links with the skill;
@@ -7096,7 +6824,7 @@ function App() {
       );
 
       if (matchingEdge) {
-        await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+        await canvasApi.deleteEdge(matchingEdge.id, actor);
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
         if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
       }
@@ -7114,15 +6842,15 @@ function App() {
       recordStep({
         label: `Delete “${skill.name}”`,
         undo: async () => {
-          const again: CharacterSkill = await invoke('add_skill', {
-            characterId: skill.character_id,
-            name: skill.name,
-            rank: skill.rank,
-            effect: skill.effect,
-            chapterId: skill.chapter_id,
-            nodeId: skill.node_id,
-            user: actor,
-          });
+          const again: CharacterSkill = await skillsApi.addSkill(
+            skill.character_id,
+            skill.name,
+            skill.rank,
+            skill.effect,
+            skill.chapter_id,
+            skill.node_id,
+            actor
+          );
           currentSkillId = again.id;
           showSkillOnLists(again);
 
@@ -7132,34 +6860,32 @@ function App() {
           try {
             for (const event of lostEvents) {
               restoredEvents.push(
-                await invoke<CharacterSkillEvent>('add_skill_event', {
-                  skillId: currentSkillId,
-                  kind: event.kind,
-                  chapterId: event.chapter_id,
-                  rank: event.rank,
-                  milestoneId: event.milestone_id ?? null,
-                  user: actor,
-                })
+                await skillsApi.addSkillEvent(
+                  currentSkillId,
+                  event.kind,
+                  event.chapter_id,
+                  event.rank,
+                  event.milestone_id ?? null,
+                  actor
+                )
               );
             }
 
             for (const evolution of lostLinks) {
               restoredLinks.push(
-                await invoke<SkillEvolution>('add_skill_evolution', {
-                  parentSkillId:
-                    evolution.parent_skill_id === skill.id
+                await skillsApi.addSkillEvolution(
+                  evolution.parent_skill_id === skill.id
                       ? currentSkillId
                       : evolution.parent_skill_id,
-                  childSkillId:
-                    evolution.child_skill_id === skill.id
+                  evolution.child_skill_id === skill.id
                       ? currentSkillId
                       : evolution.child_skill_id,
-                  evolutionType: evolution.evolution_type,
-                  chapterId: evolution.chapter_id,
-                  requiredRank: evolution.required_rank,
-                  notes: evolution.notes,
-                  user: actor,
-                })
+                  evolution.evolution_type,
+                  evolution.chapter_id,
+                  evolution.required_rank,
+                  evolution.notes,
+                  actor
+                )
               );
             }
           } catch (e) {
@@ -7167,7 +6893,7 @@ function App() {
             // be gone by now. The half-written restore goes back so the step can
             // be tried again rather than leaving a sheet that is not the one that
             // was deleted.
-            await invoke('delete_skill', { id: currentSkillId, user: actor }).catch(() => {});
+            await skillsApi.deleteSkill(currentSkillId, actor).catch(() => {});
             hideSkillOnLists(currentSkillId, skill.character_id);
             await recordHistoryEvent(
               'step_rolled_back',
@@ -7191,11 +6917,7 @@ function App() {
           }
 
           if (matchingEdge) {
-            await invoke('restore_deleted', {
-              id: matchingEdge.id,
-              kind: 'edge',
-              user: actor,
-            });
+            await trashApi.restoreDeleted(matchingEdge.id, 'edge', actor);
             setEdges(previous =>
               previous.some(edge => edge.id === matchingEdge.id)
                 ? previous
@@ -7204,7 +6926,7 @@ function App() {
           }
         },
         redo: async () => {
-          await invoke('delete_skill', { id: currentSkillId, user: actor });
+          await skillsApi.deleteSkill(currentSkillId, actor);
           hideSkillOnLists(currentSkillId, skill.character_id);
           setStorySkillEvents(previous =>
             previous.filter(event => event.skill_id !== currentSkillId)
@@ -7218,7 +6940,7 @@ function App() {
           );
 
           if (matchingEdge) {
-            await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+            await canvasApi.deleteEdge(matchingEdge.id, actor);
             setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
           }
         },
@@ -7235,15 +6957,15 @@ function App() {
     setSkillEvolutionError(null);
 
     try {
-      const saved: SkillEvolution = await invoke('add_skill_evolution', {
-        parentSkillId: input.parentSkillId,
-        childSkillId: input.childSkillId,
-        evolutionType: input.evolutionType,
-        chapterId: input.chapterId,
-        requiredRank: input.requiredRank,
-        notes: input.notes,
-        user: actor,
-      });
+      const saved: SkillEvolution = await skillsApi.addSkillEvolution(
+        input.parentSkillId,
+        input.childSkillId,
+        input.evolutionType,
+        input.chapterId,
+        input.requiredRank,
+        input.notes,
+        actor
+      );
 
       setStorySkillEvolutions(prev => [...prev, saved]);
       return true;
@@ -7258,7 +6980,7 @@ function App() {
     setSkillEvolutionError(null);
 
     try {
-      await invoke('delete_skill_evolution', { id, user: actor });
+      await skillsApi.deleteSkillEvolution(id, actor);
       setStorySkillEvolutions(prev => prev.filter(evolution => evolution.id !== id));
     } catch (e) {
       console.error('Failed to delete a skill evolution:', e);
@@ -7306,18 +7028,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterSkillEvent = await invoke(
-        eventId ? 'update_skill_event' : 'add_skill_event',
-        {
-          ...(eventId ? { id: eventId } : { skillId }),
-          kind: skillEventKindDraft,
-          chapterId: skillEventChapterDraft || null,
-          rank:
-            skillEventKindDraft === 'sacrificed' ? null : skillEventRankDraft.trim() || null,
-          milestoneId: skillEventMilestoneDraft || null,
-          user: actor,
-        }
-      );
+      const kind = skillEventKindDraft;
+      const chapterId = skillEventChapterDraft || null;
+      const rank = kind === 'sacrificed' ? null : skillEventRankDraft.trim() || null;
+      const milestoneId = skillEventMilestoneDraft || null;
+      // Editing writes the row that is open; adding writes a new one, which is
+      // why the two commands take different ids for the same fields.
+      const saved: CharacterSkillEvent = eventId
+        ? await skillsApi.updateSkillEvent(eventId, kind, chapterId, rank, milestoneId, actor)
+        : await skillsApi.addSkillEvent(skillId, kind, chapterId, rank, milestoneId, actor);
 
       applySkillEvent(saved);
       cancelSkillEventEdit();
@@ -7331,7 +7050,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_skill_event', { id: event.id, user: actor });
+      await skillsApi.deleteSkillEvent(event.id, actor);
       setStorySkillEvents(previous => previous.filter(other => other.id !== event.id));
       if (editingSkillEventId === event.id) cancelSkillEventEdit();
     } catch (e) {
@@ -7374,19 +7093,19 @@ function App() {
         const current =
           storyLevelMilestonesRef.current.find(candidate => candidate.id === milestoneId) ??
           milestone;
-        const saved: CharacterLevelMilestone = await invoke('update_level_milestone', {
-          id: current.id,
-          level: current.level,
-          chapterId: current.chapter_id,
-          isDebuff: current.is_debuff,
+        const saved: CharacterLevelMilestone = await progressionApi.updateLevelMilestone(
+          current.id,
+          current.level,
+          current.chapter_id,
+          current.is_debuff,
           xp,
-          statChanges: (current.stat_changes ?? []).map(change => ({
+          (current.stat_changes ?? []).map(change => ({
             stat_name: change.stat_name,
             amount: change.amount ?? null,
             value_after: change.value_after ?? null,
           })),
-          user: actor,
-        });
+          actor
+        );
 
         applyLevelMilestone(saved);
         return saved;
@@ -7438,31 +7157,31 @@ function App() {
     let edgeId: string | null = null;
 
     try {
-      const edge: any = await invoke('create_graph_edge', {
-        storyId: currentStory.id,
-        sourceId: draft.sourceNodeId,
-        targetId: draft.targetNodeId,
-        label: kind,
-        relationType: kind,
-        createdBy: actor,
-      });
+      const edge: any = await canvasApi.createGraphEdge(
+        currentStory.id,
+        draft.sourceNodeId,
+        draft.targetNodeId,
+        kind,
+        kind,
+        actor
+      );
       edgeId = edge.id;
 
       let saved: CharacterRelation;
 
       try {
-        saved = await invoke('add_relation', {
-          fromCharacterId: draft.sourceCharacterId,
-          toCharacterId: draft.targetCharacterId,
+        saved = await relationsApi.addRelation(
+          draft.sourceCharacterId,
+          draft.targetCharacterId,
           kind,
-          note: draft.note.trim() || null,
-          sinceChapterId: draft.chapterId || null,
-          untilChapterId: null,
-          user: actor,
-        });
+          draft.note.trim() || null,
+          draft.chapterId || null,
+          null,
+          actor
+        );
       } catch (e) {
         // No relation, no connection: the edge was only the drawing of it.
-        await invoke('delete_edge', { id: edge.id, user: actor }).catch(() => {});
+        await canvasApi.deleteEdge(edge.id, actor).catch(() => {});
         await recordHistoryEvent(
           'step_rolled_back',
           `Put back — Connecting ${draft.sourceName} and ${draft.targetName}: the relation could not be saved (${String(
@@ -7488,23 +7207,23 @@ function App() {
       recordStep({
         label: `Connect ${draft.sourceName} and ${draft.targetName}`,
         undo: async () => {
-          await invoke('delete_relation', { id: currentRelationId, user: actor });
-          await invoke('delete_edge', { id: edge.id, user: actor });
+          await relationsApi.deleteRelation(currentRelationId, actor);
+          await canvasApi.deleteEdge(edge.id, actor);
           setStoryRelations(previous =>
             previous.filter(relation => relation.id !== currentRelationId)
           );
         },
         redo: async () => {
-          await invoke('restore_deleted', { id: edge.id, kind: 'edge', user: actor });
-          const again: CharacterRelation = await invoke('add_relation', {
-            fromCharacterId: draft.sourceCharacterId,
-            toCharacterId: draft.targetCharacterId,
+          await trashApi.restoreDeleted(edge.id, 'edge', actor);
+          const again: CharacterRelation = await relationsApi.addRelation(
+            draft.sourceCharacterId,
+            draft.targetCharacterId,
             kind,
-            note: draft.note.trim() || null,
-            sinceChapterId: draft.chapterId || null,
-            untilChapterId: null,
-            user: actor,
-          });
+            draft.note.trim() || null,
+            draft.chapterId || null,
+            null,
+            actor
+          );
           currentRelationId = again.id;
           applyRelation(again);
         },
@@ -7542,15 +7261,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterRelation = await invoke('add_relation', {
-        fromCharacterId: selectedCharacterId,
-        toCharacterId: newRelationToId,
+      const saved: CharacterRelation = await relationsApi.addRelation(
+        selectedCharacterId,
+        newRelationToId,
         kind,
-        note: newRelationNote.trim() || null,
-        sinceChapterId: newRelationChapterId || null,
-        untilChapterId: null,
-        user: actor,
-      });
+        newRelationNote.trim() || null,
+        newRelationChapterId || null,
+        null,
+        actor
+      );
 
       applyRelation(saved);
       setNewRelationToId('');
@@ -7608,11 +7327,14 @@ function App() {
       sinceChapterId: string | null;
       untilChapterId: string | null;
     }) => {
-      const saved: CharacterRelation = await invoke('update_relation', {
-        id: relation.id,
-        ...next,
-        user: actor,
-      });
+      const saved: CharacterRelation = await relationsApi.updateRelation(
+        relation.id,
+        next.kind,
+        next.note,
+        next.sinceChapterId,
+        next.untilChapterId,
+        actor
+      );
 
       applyRelation(saved);
     };
@@ -7620,12 +7342,12 @@ function App() {
     const writeEdge = async (label: string | null, relationType: string | null) => {
       if (!matchingEdge) return;
 
-      const updated: any = await invoke('update_graph_edge', {
-        id: matchingEdge.id,
+      const updated: any = await canvasApi.updateGraphEdge(
+        matchingEdge.id,
         label,
         relationType,
-        user: actor,
-      });
+        actor
+      );
 
       setEdges(previous =>
         previous.map(edge =>
@@ -7703,13 +7425,13 @@ function App() {
       'a cast member';
 
     try {
-      await invoke('delete_relation', { id: relation.id, user: actor });
+      await relationsApi.deleteRelation(relation.id, actor);
       setStoryRelations(previous =>
         previous.filter(other => other.id !== relation.id)
       );
 
       if (matchingEdge) {
-        await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+        await canvasApi.deleteEdge(matchingEdge.id, actor);
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
         if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
       }
@@ -7721,24 +7443,20 @@ function App() {
       recordStep({
         label: `Delete the ${relation.kind} relation between ${fromName} and ${toName}`,
         undo: async () => {
-          const again: CharacterRelation = await invoke('add_relation', {
-            fromCharacterId: relation.from_character_id,
-            toCharacterId: relation.to_character_id,
-            kind: relation.kind,
-            note: relation.note,
-            sinceChapterId: relation.since_chapter_id,
-            untilChapterId: relation.until_chapter_id,
-            user: actor,
-          });
+          const again: CharacterRelation = await relationsApi.addRelation(
+            relation.from_character_id,
+            relation.to_character_id,
+            relation.kind,
+            relation.note,
+            relation.since_chapter_id,
+            relation.until_chapter_id,
+            actor
+          );
           currentRelationId = again.id;
           applyRelation(again);
 
           if (matchingEdge) {
-            await invoke('restore_deleted', {
-              id: matchingEdge.id,
-              kind: 'edge',
-              user: actor,
-            });
+            await trashApi.restoreDeleted(matchingEdge.id, 'edge', actor);
             setEdges(previous =>
               previous.some(edge => edge.id === matchingEdge.id)
                 ? previous
@@ -7747,13 +7465,13 @@ function App() {
           }
         },
         redo: async () => {
-          await invoke('delete_relation', { id: currentRelationId, user: actor });
+          await relationsApi.deleteRelation(currentRelationId, actor);
           setStoryRelations(previous =>
             previous.filter(other => other.id !== currentRelationId)
           );
 
           if (matchingEdge) {
-            await invoke('delete_edge', { id: matchingEdge.id, user: actor });
+            await canvasApi.deleteEdge(matchingEdge.id, actor);
             setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
           }
         },
@@ -7798,15 +7516,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: FactionStanding = await invoke('add_faction_standing', {
-        characterId: selectedCharacterId,
-        factionNodeId: newStandingFactionId,
+      const saved: FactionStanding = await relationsApi.addFactionStanding(
+        selectedCharacterId,
+        newStandingFactionId,
         standing,
-        note: newStandingNote.trim() || null,
-        sinceChapterId: newStandingChapterId,
-        untilChapterId: null,
-        user: actor,
-      });
+        newStandingNote.trim() || null,
+        newStandingChapterId,
+        null,
+        actor
+      );
 
       applyStanding(saved);
       setNewStandingText('');
@@ -7849,15 +7567,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: FactionStanding = await invoke('update_faction_standing', {
-        id: standing.id,
-        factionNodeId: standingFactionDraft,
-        standing: text,
-        note: standingNoteDraft.trim() || null,
-        sinceChapterId: standingChapterDraft,
-        untilChapterId: standingUntilChapterDraft || null,
-        user: actor,
-      });
+      const saved: FactionStanding = await relationsApi.updateFactionStanding(
+        standing.id,
+        standingFactionDraft,
+        text,
+        standingNoteDraft.trim() || null,
+        standingChapterDraft,
+        standingUntilChapterDraft || null,
+        actor
+      );
 
       applyStanding(saved);
       setEditingStandingId(null);
@@ -7871,7 +7589,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_faction_standing', { id: standing.id, user: actor });
+      await relationsApi.deleteFactionStanding(standing.id, actor);
       setStoryFactionStandings(previous =>
         previous.filter(other => other.id !== standing.id)
       );
@@ -7982,11 +7700,32 @@ function App() {
         status,
         description: questDraft.description.trim() || null,
         notes: questDraft.notes.trim() || null,
-        user: actor,
       };
       const saved: Quest = questDraft.id
-        ? await invoke('update_quest', { id: questDraft.id, ...payload })
-        : await invoke('add_quest', { storyId: currentStory.id, ...payload });
+        ? await questsApi.updateQuest(
+            questDraft.id,
+            payload.title,
+            payload.giverCharacterId,
+            payload.factionNodeId,
+            payload.acceptedChapterId,
+            payload.completedChapterId,
+            payload.status,
+            payload.description,
+            payload.notes,
+            actor
+          )
+        : await questsApi.addQuest(
+            currentStory.id,
+            payload.title,
+            payload.giverCharacterId,
+            payload.factionNodeId,
+            payload.acceptedChapterId,
+            payload.completedChapterId,
+            payload.status,
+            payload.description,
+            payload.notes,
+            actor
+          );
 
       applyQuest(saved);
       setQuestDraft(null);
@@ -8001,7 +7740,7 @@ function App() {
     setQuestError(null);
 
     try {
-      await invoke('delete_quest', { id: quest.id, user: actor });
+      await questsApi.deleteQuest(quest.id, actor);
       setStoryQuests(previous => previous.filter(other => other.id !== quest.id));
 
       if (questDraft?.id === quest.id) setQuestDraft(null);
@@ -8044,14 +7783,22 @@ function App() {
         rewardType: rewardDraft.type,
         targetId: rewardDraft.target || null,
         amountOrDetails: rewardDraft.details.trim() || null,
-        user: actor,
       };
       const saved: QuestReward = rewardDraft.id
-        ? await invoke('update_quest_reward', { id: rewardDraft.id, ...payload })
-        : await invoke('add_quest_reward', {
-            questId: rewardDraft.questId,
-            ...payload,
-          });
+        ? await questsApi.updateQuestReward(
+            rewardDraft.id,
+            payload.rewardType,
+            payload.targetId,
+            payload.amountOrDetails,
+            actor
+          )
+        : await questsApi.addQuestReward(
+            rewardDraft.questId,
+            payload.rewardType,
+            payload.targetId,
+            payload.amountOrDetails,
+            actor
+          );
 
       setStoryQuests(previous =>
         previous.map(quest =>
@@ -8076,7 +7823,7 @@ function App() {
     setQuestError(null);
 
     try {
-      await invoke('delete_quest_reward', { id: reward.id, user: actor });
+      await questsApi.deleteQuestReward(reward.id, actor);
       setStoryQuests(previous =>
         previous.map(quest =>
           quest.id === reward.quest_id
@@ -8187,17 +7934,17 @@ function App() {
               continue;
             }
 
-            await invoke('add_inventory_item', {
-              characterId: reward.target_id,
-              name: details,
-              rarity: null,
-              quantity: 1,
-              effect: `Reward from ${quest.title}`,
+            await inventoryApi.addInventoryItem(
+              reward.target_id,
+              details,
+              null,
+              1,
+              `Reward from ${quest.title}`,
               chapterId,
-              lostChapterId: null,
-              nodeId: null,
-              user: actor,
-            });
+              null,
+              null,
+              actor
+            );
             applied.push(`${name} +${details}`);
             appliedRewardIds.push(reward.id);
             itemRows += 1;
@@ -8226,22 +7973,17 @@ function App() {
           if (existing) {
             const newTotal = existing.xp_earned + payout.amount;
 
-            await invoke('update_character_progress', {
-              id: existing.id,
-              chapterId,
-              xpEarned: newTotal,
-              user: actor,
-            });
+            await progressionApi.updateCharacterProgress(existing.id, chapterId, newTotal, actor);
             applied.push(
               `${name} +${payout.amount} XP (${existing.xp_earned} → ${newTotal})`
             );
           } else {
-            await invoke('add_character_progress', {
-              characterId: payout.characterId,
+            await progressionApi.addCharacterProgress(
+              payout.characterId,
               chapterId,
-              xpEarned: payout.amount,
-              user: actor,
-            });
+              payout.amount,
+              actor
+            );
             applied.push(`${name} +${payout.amount} XP`);
           }
 
@@ -8254,16 +7996,12 @@ function App() {
       }
 
       if (xpRows > 0) {
-        const rows = await invoke<CharacterProgress[]>('get_story_character_progress', {
-          storyId: currentStory.id,
-        });
+        const rows = await progressionApi.getStoryCharacterProgress(currentStory.id);
         setStoryCharacterProgress(rows ?? []);
       }
 
       if (itemRows > 0) {
-        const rows = await invoke<InventoryItem[]>('get_story_inventory', {
-          storyId: currentStory.id,
-        });
+        const rows = await inventoryApi.getStoryInventory(currentStory.id);
         setStoryInventory(rows ?? []);
       }
 
@@ -8274,7 +8012,7 @@ function App() {
 
       if (appliedRewardIds.length > 0) {
         try {
-          await invoke('mark_quest_rewards_applied', { ids: appliedRewardIds });
+          await questsApi.markQuestRewardsApplied(appliedRewardIds);
         } catch (e) {
           console.error('Failed to remember the applied quest rewards:', e);
           remembered = false;
@@ -8435,15 +8173,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterLevelMilestone = await invoke('update_level_milestone', {
-        id: milestone.id,
+      const saved: CharacterLevelMilestone = await progressionApi.updateLevelMilestone(
+        milestone.id,
         level,
-        chapterId: levelMilestoneChapterDraft || null,
-        isDebuff: levelMilestoneDebuffDraft,
+        levelMilestoneChapterDraft || null,
+        levelMilestoneDebuffDraft,
         xp,
         statChanges,
-        user: actor,
-      });
+        actor
+      );
 
       applyLevelMilestone(saved);
       setEditingLevelMilestoneId(null);
@@ -8472,15 +8210,15 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterLevelMilestone = await invoke('add_level_milestone', {
-        characterId: selectedCharacterId,
+      const saved: CharacterLevelMilestone = await progressionApi.addLevelMilestone(
+        selectedCharacterId,
         level,
-        chapterId: newLevelMilestoneChapter || null,
-        isDebuff: newLevelMilestoneDebuff,
+        newLevelMilestoneChapter || null,
+        newLevelMilestoneDebuff,
         xp,
         statChanges,
-        user: actor,
-      });
+        actor
+      );
 
       applyLevelMilestone(saved);
       setNewLevelMilestoneLevel(String(level));
@@ -8498,7 +8236,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_level_milestone', { id: milestone.id, user: actor });
+      await progressionApi.deleteLevelMilestone(milestone.id, actor);
       setStoryLevelMilestones(previous =>
         previous.filter(other => other.id !== milestone.id)
       );
@@ -8553,12 +8291,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterProgress = await invoke('update_character_progress', {
-        id: entry.id,
-        chapterId: xpEntryChapterDraft,
+      const saved: CharacterProgress = await progressionApi.updateCharacterProgress(
+        entry.id,
+        xpEntryChapterDraft,
         xpEarned,
-        user: actor,
-      });
+        actor
+      );
 
       applyXpEntry(saved);
       setEditingXpEntryId(null);
@@ -8582,12 +8320,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterProgress = await invoke('add_character_progress', {
-        characterId: selectedCharacterId,
-        chapterId: newXpEntryChapter,
+      const saved: CharacterProgress = await progressionApi.addCharacterProgress(
+        selectedCharacterId,
+        newXpEntryChapter,
         xpEarned,
-        user: actor,
-      });
+        actor
+      );
 
       applyXpEntry(saved);
       setNewXpEntryChapter('');
@@ -8602,7 +8340,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_character_progress', { id: entry.id, user: actor });
+      await progressionApi.deleteCharacterProgress(entry.id, actor);
       setStoryCharacterProgress(previous =>
         previous.filter(other => other.id !== entry.id)
       );
@@ -8678,17 +8416,17 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: InventoryItem = await invoke('update_inventory_item', {
-        id: item.id,
+      const updated: InventoryItem = await inventoryApi.updateInventoryItem(
+        item.id,
         name,
-        rarity: itemRarityDraft.trim() || null,
+        itemRarityDraft.trim() || null,
         quantity,
-        effect: itemEffectDraft.trim() || null,
-        chapterId: itemChapterDraft || null,
-        lostChapterId: itemLostChapterDraft || null,
-        nodeId: itemNodeDraft || null,
-        user: actor,
-      });
+        itemEffectDraft.trim() || null,
+        itemChapterDraft || null,
+        itemLostChapterDraft || null,
+        itemNodeDraft || null,
+        actor
+      );
 
       applyInventoryItem(updated);
       setEditingItemId(null);
@@ -8711,17 +8449,17 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: InventoryItem = await invoke('add_inventory_item', {
-        characterId: selectedCharacterId,
-        name: newItemName.trim(),
-        rarity: newItemRarity.trim() || null,
+      const saved: InventoryItem = await inventoryApi.addInventoryItem(
+        selectedCharacterId,
+        newItemName.trim(),
+        newItemRarity.trim() || null,
         quantity,
-        effect: newItemEffect.trim() || null,
-        chapterId: newItemChapterId || null,
-        lostChapterId: newItemLostChapterId || null,
-        nodeId: newItemNodeId || null,
-        user: actor,
-      });
+        newItemEffect.trim() || null,
+        newItemChapterId || null,
+        newItemLostChapterId || null,
+        newItemNodeId || null,
+        actor
+      );
 
       applyInventoryItem(saved);
       setNewItemName('');
@@ -8741,7 +8479,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_inventory_item', { id: item.id, user: actor });
+      await inventoryApi.deleteInventoryItem(item.id, actor);
       setCharacterInventory(prev => prev.filter(other => other.id !== item.id));
       setStoryInventory(prev => prev.filter(other => other.id !== item.id));
       setEditingItemId(null);
@@ -8765,17 +8503,17 @@ function App() {
       setReturningItemId(itemId);
 
       try {
-        const updated: InventoryItem = await invoke('update_inventory_item', {
-          id: item.id,
-          name: item.name,
-          rarity: item.rarity,
-          quantity: item.quantity,
-          effect: item.effect,
-          chapterId: item.chapter_id,
-          lostChapterId: null,
-          nodeId: item.node_id,
-          user: actor,
-        });
+        const updated: InventoryItem = await inventoryApi.updateInventoryItem(
+          item.id,
+          item.name,
+          item.rarity,
+          item.quantity,
+          item.effect,
+          item.chapter_id,
+          null,
+          item.node_id,
+          actor
+        );
 
         applyReturnedItem(updated);
 
@@ -8784,17 +8522,17 @@ function App() {
         const setLostChapter = (lostChapterId: string | null) => async () => {
           const current =
             storyInventoryRef.current.find(candidate => candidate.id === updated.id) ?? updated;
-          const saved: InventoryItem = await invoke('update_inventory_item', {
-            id: current.id,
-            name: current.name,
-            rarity: current.rarity,
-            quantity: current.quantity,
-            effect: current.effect,
-            chapterId: current.chapter_id,
+          const saved: InventoryItem = await inventoryApi.updateInventoryItem(
+            current.id,
+            current.name,
+            current.rarity,
+            current.quantity,
+            current.effect,
+            current.chapter_id,
             lostChapterId,
-            nodeId: current.node_id,
-            user: actor,
-          });
+            current.node_id,
+            actor
+          );
 
           applyReturnedItem(saved);
           return saved;
@@ -8850,12 +8588,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: CharacterCurrency = await invoke('update_currency', {
-        id: currency.id,
+      const updated: CharacterCurrency = await inventoryApi.updateCurrency(
+        currency.id,
         name,
         amount,
-        user: actor,
-      });
+        actor
+      );
 
       applyCurrency(updated);
       setEditingCurrencyId(null);
@@ -8878,12 +8616,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const saved: CharacterCurrency = await invoke('add_currency', {
-        characterId: selectedCharacterId,
-        name: newCurrencyName.trim(),
+      const saved: CharacterCurrency = await inventoryApi.addCurrency(
+        selectedCharacterId,
+        newCurrencyName.trim(),
         amount,
-        user: actor,
-      });
+        actor
+      );
 
       applyCurrency(saved);
       setNewCurrencyName('');
@@ -8898,7 +8636,7 @@ function App() {
     setCharacterError(null);
 
     try {
-      await invoke('delete_currency', { id: currency.id, user: actor });
+      await inventoryApi.deleteCurrency(currency.id, actor);
       setCharacterCurrency(prev => prev.filter(other => other.id !== currency.id));
       setEditingCurrencyId(null);
     } catch (e) {
@@ -8929,12 +8667,12 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: Character = await invoke('update_character', {
-        id: selectedCharacter.id,
+      const updated: Character = await charactersApi.updateCharacter(
+        selectedCharacter.id,
         name,
-        description: characterDescriptionDraft.trim() || null,
-        user: actor,
-      });
+        characterDescriptionDraft.trim() || null,
+        actor
+      );
 
       setCharacters(prev =>
         prev
@@ -8956,7 +8694,7 @@ function App() {
     const removedId = selectedCharacter.id;
 
     try {
-      await invoke('delete_character', { id: removedId, user: actor });
+      await charactersApi.deleteCharacter(removedId, actor);
 
       const remaining = characters.filter(character => character.id !== removedId);
       const removedSkillIds = new Set(
@@ -8996,10 +8734,7 @@ function App() {
       // The dialog returns null when it is dismissed, which is not an error.
       if (typeof selected !== 'string') return;
 
-      const imported: Story = await invoke('import_story_json', {
-        path: selected,
-        user: actor,
-      });
+      const imported: Story = await storiesApi.importStoryJson(selected, actor);
 
       setStories(prev => [
         imported,
@@ -9020,9 +8755,7 @@ function App() {
     setExportStatus(null);
 
     try {
-      const path: string = await invoke('export_story_json', {
-        storyId: currentStory.id,
-      });
+      const path: string = await storiesApi.exportStoryJson(currentStory.id);
       setExportStatus(path);
     } catch (e) {
       console.error('Failed to export story:', e);
@@ -9037,9 +8770,7 @@ function App() {
     setExportStatus(null);
 
     try {
-      const path: string = await invoke('export_story_markdown', {
-        storyId: currentStory.id,
-      });
+      const path: string = await storiesApi.exportStoryMarkdown(currentStory.id);
       setExportStatus(path);
     } catch (e) {
       console.error('Failed to write the story bible:', e);
@@ -9055,9 +8786,7 @@ function App() {
     setCopyNotice(null);
 
     try {
-      const markdown: string = await invoke('story_bible_markdown', {
-        storyId: currentStory.id,
-      });
+      const markdown: string = await storiesApi.storyBibleMarkdown(currentStory.id);
 
       await writeText(markdown);
       setCopyNotice('Story bible copied to the clipboard');
@@ -9074,7 +8803,7 @@ function App() {
     setBackupsLoading(true);
 
     try {
-      const list = await invoke<BackupInfo[]>('list_backups');
+      const list = await storiesApi.listBackups();
       setBackups(list);
     } catch (e) {
       console.error('Failed to list backups:', e);
@@ -9092,7 +8821,7 @@ function App() {
     setBackupsError(null);
 
     try {
-      await invoke('restore_backup', { fileName: file.file_name });
+      await storiesApi.restoreBackup(file.file_name);
 
       undoStackRef.current = [];
       redoStackRef.current = [];
@@ -9115,7 +8844,7 @@ function App() {
       setTrash([]);
       setDeletedStories([]);
 
-      const restored: Story[] = await invoke('get_all_stories');
+      const restored: Story[] = await storiesApi.getAllStories();
       setCurrentStory(null);
       setStories(restored);
 
@@ -9183,12 +8912,7 @@ function App() {
     }
 
     try {
-      const updated: any = await invoke('update_graph_node', {
-        id: selectedNodeId,
-        label,
-        content,
-        user: actor,
-      });
+      const updated: any = await canvasApi.updateGraphNode(selectedNodeId, label, content, actor);
 
       setNodes(nds =>
         nds.map(node =>
@@ -9231,7 +8955,7 @@ function App() {
         recordStep({
           label: `Edit “${label}”`,
           undo: async () => {
-            await invoke('update_graph_node', { id: selectedNodeId, ...before, user: actor });
+            await canvasApi.updateGraphNode(selectedNodeId, before.label, before.content, actor);
             if (cardNameChanged || cardEffectChanged) {
               applySkillCardSync(updated.id, before.label, before.content, {
                 name: cardNameChanged,
@@ -9240,12 +8964,7 @@ function App() {
             }
           },
           redo: async () => {
-            await invoke('update_graph_node', {
-              id: selectedNodeId,
-              label,
-              content,
-              user: actor,
-            });
+            await canvasApi.updateGraphNode(selectedNodeId, label, content, actor);
             if (cardNameChanged || cardEffectChanged) {
               applySkillCardSync(updated.id, label, content, {
                 name: cardNameChanged,
@@ -9336,12 +9055,12 @@ function App() {
       nextLabelValue: string | null,
       nextRelationType: string | null
     ) => {
-      const updated: any = await invoke('update_graph_edge', {
-        id: selectedEdgeId,
-        label: nextLabelValue,
-        relationType: nextRelationType,
-        user: actor,
-      });
+      const updated: any = await canvasApi.updateGraphEdge(
+        selectedEdgeId,
+        nextLabelValue,
+        nextRelationType,
+        actor
+      );
 
       setEdges(eds =>
         eds.map(edge =>
@@ -9368,14 +9087,14 @@ function App() {
     const writeRelationKind = async (kind: string) => {
       if (!linkedRelation) return;
 
-      const saved: CharacterRelation = await invoke('update_relation', {
-        id: linkedRelation.id,
+      const saved: CharacterRelation = await relationsApi.updateRelation(
+        linkedRelation.id,
         kind,
-        note: linkedRelation.note,
-        sinceChapterId: linkedRelation.since_chapter_id,
-        untilChapterId: linkedRelation.until_chapter_id,
-        user: actor,
-      });
+        linkedRelation.note,
+        linkedRelation.since_chapter_id,
+        linkedRelation.until_chapter_id,
+        actor
+      );
 
       applyRelation(saved);
     };
@@ -9419,11 +9138,11 @@ function App() {
     setRenameOffer(null);
 
     try {
-      const updated: any = await invoke('set_node_character', {
-        nodeId: selectedNode.id,
-        characterId: characterId || null,
-        user: actor,
-      });
+      const updated: any = await canvasApi.setNodeCharacter(
+        selectedNode.id,
+        characterId || null,
+        actor
+      );
 
       setNodes(nds =>
         nds.map(node =>
@@ -9436,17 +9155,9 @@ function App() {
       recordStep({
         label: `Relink “${selectedNode.data.label}”`,
         undo: () =>
-          invoke('set_node_character', {
-            nodeId: selectedNode.id,
-            characterId: previousId,
-            user: actor,
-          }),
+          canvasApi.setNodeCharacter(selectedNode.id, previousId, actor),
         redo: () =>
-          invoke('set_node_character', {
-            nodeId: selectedNode.id,
-            characterId: characterId || null,
-            user: actor,
-          }),
+          canvasApi.setNodeCharacter(selectedNode.id, characterId || null, actor),
       });
 
       offerRenameAfterRelink(
@@ -9503,12 +9214,12 @@ function App() {
     setInspectorError(null);
 
     try {
-      const updated: any = await invoke('update_graph_node', {
-        id: node.id,
-        label: renameOffer.to,
-        content: node.data.content ?? null,
-        user: actor,
-      });
+      const updated: any = await canvasApi.updateGraphNode(
+        node.id,
+        renameOffer.to,
+        node.data.content ?? null,
+        actor
+      );
 
       setNodes(nds =>
         nds.map(other =>
@@ -9528,12 +9239,12 @@ function App() {
       recordStep({
         label: `Rename “${node.data.label}”`,
         undo: async () => {
-          await invoke('update_graph_node', {
-            id: node.id,
-            label: node.data.label,
-            content: node.data.content ?? null,
-            user: actor,
-          });
+          await canvasApi.updateGraphNode(
+            node.id,
+            node.data.label,
+            node.data.content ?? null,
+            actor
+          );
           if (node.data.nodeType === 'skill') {
             applySkillCardSync(node.id, node.data.label, node.data.content ?? null, {
               name: true,
@@ -9542,12 +9253,7 @@ function App() {
           }
         },
         redo: async () => {
-          await invoke('update_graph_node', {
-            id: node.id,
-            label: updated.label,
-            content: updated.content ?? null,
-            user: actor,
-          });
+          await canvasApi.updateGraphNode(node.id, updated.label, updated.content ?? null, actor);
           if (node.data.nodeType === 'skill') {
             applySkillCardSync(node.id, updated.label, updated.content ?? null, {
               name: true,
@@ -9591,13 +9297,13 @@ function App() {
     }
 
     try {
-      const updated: CharacterStat = await invoke('set_character_stat', {
-        characterId: inspectorCharacter.id,
-        statName: stat.stat_name,
-        value: Math.trunc(value),
-        notes: stat.notes,
-        user: actor,
-      });
+      const updated: CharacterStat = await charactersApi.setCharacterStat(
+        inspectorCharacter.id,
+        stat.stat_name,
+        Math.trunc(value),
+        stat.notes,
+        actor
+      );
 
       setInspectorStats(prev =>
         [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
@@ -9632,12 +9338,12 @@ function App() {
     }
 
     try {
-      const updated: CharacterAttribute = await invoke('set_character_attribute', {
-        characterId: inspectorCharacter.id,
-        attrName: attribute.attr_name,
+      const updated: CharacterAttribute = await charactersApi.setCharacterAttribute(
+        inspectorCharacter.id,
+        attribute.attr_name,
         value,
-        user: actor,
-      });
+        actor
+      );
 
       setInspectorAttributes(prev =>
         [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
@@ -10648,10 +10354,7 @@ function App() {
 
     Promise.all(
       visibleChartCharacterIds.split('|').map(characterId =>
-        invoke<CharacterChapterState>('get_character_state_at_chapter', {
-          characterId,
-          chapterId: chartStateChapterId,
-        })
+        progressionApi.getCharacterStateAtChapter(characterId, chartStateChapterId)
       )
     )
       .then(states => {
@@ -10893,14 +10596,14 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: Character = await invoke('set_character_progress', {
-        characterId: selectedCharacter.id,
+      const updated: Character = await progressionApi.setCharacterProgress(
+        selectedCharacter.id,
         level,
         xp,
-        rank: progressRankDraft.trim() || null,
-        xpToNext: target,
-        user: actor,
-      });
+        progressRankDraft.trim() || null,
+        target,
+        actor
+      );
 
       applyCharacterRow(updated);
       setEditingProgress(false);
@@ -10917,10 +10620,10 @@ function App() {
     setCharacterError(null);
 
     try {
-      const updated: Character = await invoke('level_up_character', {
-        characterId: selectedCharacter.id,
-        user: actor,
-      });
+      const updated: Character = await progressionApi.levelUpCharacter(
+        selectedCharacter.id,
+        actor
+      );
 
       applyCharacterRow(updated);
     } catch (e) {
@@ -10968,8 +10671,8 @@ function App() {
     const load = async () => {
       try {
         const [stats, attributes] = await Promise.all([
-          invoke<CharacterStat[]>('get_character_stats', { characterId }),
-          invoke<CharacterAttribute[]>('get_character_attributes', { characterId }),
+          charactersApi.getCharacterStats(characterId),
+          charactersApi.getCharacterAttributes(characterId),
         ]);
         if (cancelled) return;
 

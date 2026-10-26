@@ -22,3 +22,18 @@ export interface SkillEvolutionInput {
   requiredRank: string | null;
   notes: string | null;
 }
+
+export type SkillEventKind = 'upgraded' | 'sacrificed' | 'used';
+
+// One change in a skill's life. The chapter places it in the reading order; the
+// rank is only meaningful for upgrades and uses.
+export interface CharacterSkillEvent {
+  id: string;
+  skill_id: string;
+  kind: SkillEventKind;
+  chapter_id: string | null;
+  rank: string | null;
+  milestone_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
