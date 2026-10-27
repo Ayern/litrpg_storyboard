@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Four are done.
+searching ten thousand lines. Five are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -510,6 +510,15 @@ searching ten thousand lines. Four are done.
   restored file holds, so the board, the notes, the cast and the undo history are
   dropped from the one place that owns them. The dialog's markup moved with it
   into `BackupsDialog.tsx`. Direct suite of 32.
+- **`domains/search/useSearchPalette.ts`** — the open flag, the term, the kind
+  filter and the cursor, and the boards of the stories that are not open: read
+  once each when the palette opens, dropped the moment their story is opened, and
+  forgotten whole when the database is replaced. The search itself is a pure
+  function over the open story's rows and those copies, in `results.ts`, so the
+  reach and the ranking are read without React; the wording is in `labels.ts` and
+  the four reads of a closed board in `api.ts`. It also keeps the id of the story
+  the window was showing, which is what the history writes a refused step
+  against. Direct suite of 29.
 
 Each follows one shape, and every later hook should too:
 
@@ -529,24 +538,21 @@ These are the blocks of state still in `App.tsx`, with the handlers that go with
 them. The order is by how much each one would take out of the file, so it is a
 real order rather than a tidy one:
 
-1. **`domains/search/useSearchPalette`** — the open flag, the term, the kind
-   filter, the cursor and the other-stories index, with the result memo they
-   feed. **M**
-2. **`domains/progression/useProgressionChart`** — the stat chosen for the
+1. **`domains/progression/useProgressionChart`** — the stat chosen for the
    chart, the hidden cast, the chapter-state read and the series built from
    them. **M**
-3. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
+2. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
    attributes, one row open at a time, and the four writes that go through the
    same commands the sheet uses. **M**
-4. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
+3. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
    the sheet: the new-stat form, one row open at a time, and the rows
    themselves. **S–M**
-5. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+4. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
    holder is added with, and its reset when another card is opened. **S**
 
-**The search palette is the next cut.** It is the last block that is only
-drafts and a memo, and once it is out the two loads are the only thing left in
-front of the board itself.
+**The chart, the inspector and the sheet's stats are what is left of the
+drafts.** They are smaller than the five hooks already out, and once they are
+gone the two loads are the last thing standing in front of the board itself.
 
 ### What stays in `App.tsx`
 

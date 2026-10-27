@@ -67,6 +67,7 @@ import { GraphTab } from './domains/canvas/GraphTab';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
+import { useSearchPalette } from './domains/search/useSearchPalette';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
@@ -121,7 +122,14 @@ import type {
   SkillHolder,
 } from './domains/shared/types';
 import type { Story } from './domains/stories/types';
+import type { SearchKind, SearchResult } from './domains/search/types';
 import type { DeletedItem } from './domains/trash/types';
+import {
+  SEARCH_RESULTS_SHOWN,
+  searchKindFilters,
+  searchResultTag,
+  searchResultTitles,
+} from './domains/search/labels';
 import { formatCount } from './lib/format';
 // Re-exported where the guide test has always imported it from.
 export { placeTooltip };
@@ -234,82 +242,6 @@ const PROGRESSION_CHART_COLORS = [
 
 // How many note cards hang under one chapter before the rest are counted.
 const NOTE_CARDS_SHOWN = 3;
-
-// The search palette lists this many; the rest are still reachable by typing
-// more of the name, and the hint says how many matched.
-const SEARCH_RESULTS_SHOWN = 8;
-
-// What the palette can find. A card is not the only thing worth searching for:
-// the cast, the connections and the other boards are all destinations, and the
-// kind is what the filter row narrows to.
-type SearchKind = 'node' | 'cast' | 'link' | 'note' | 'story';
-
-const searchKindFilters: {
-  value: 'all' | SearchKind;
-  label: string;
-  noun: string;
-  title: string;
-}[] = [
-  { value: 'all', label: 'All', noun: 'results', title: 'Show every kind of result' },
-  { value: 'node', label: 'Nodes', noun: 'nodes', title: 'Show only cards on the boards' },
-  { value: 'cast', label: 'Cast', noun: 'cast members', title: 'Show only characters in the cast lists' },
-  { value: 'link', label: 'Links', noun: 'connections', title: 'Show only connections between cards' },
-  { value: 'note', label: 'Notes', noun: 'notes', title: 'Show only notes kept with chapters' },
-  { value: 'story', label: 'Stories', noun: 'stories', title: 'Show only other stories' },
-];
-
-// One row in the palette. It carries everything needed to arrive at the thing it
-// names, because a result in another story is chosen before that story is open.
-interface SearchResult {
-  key: string;
-  kind: SearchKind;
-  storyId: string;
-  storyTitle: string;
-  targetId: string;
-  label: string;
-  detail: string | null;
-  nodeType: string | null;
-  characterName: string | null;
-  // Where the viewport goes when this result is chosen.
-  x: number;
-  y: number;
-  content: string | null;
-  edgeLabel: string;
-  edgeRelation: string;
-  // A note is reached through the chapter that holds it, so the result carries
-  // both the chapter and the text that found it.
-  chapterId: string | null;
-  chapterLabel: string | null;
-  // 0 when the query matched the name the result is listed by, 1 when it only
-  // matched what surrounds it. Name matches are listed first.
-  rank: number;
-}
-
-interface IndexedNote {
-  id: string;
-  chapter_id: string | null;
-  text: string;
-}
-
-interface StoryIndex {
-  nodes: IndexedNode[];
-  characters: Character[];
-  edges: IndexedEdge[];
-  notes: IndexedNote[];
-}
-
-const searchResultTitles: Record<SearchKind, string> = {
-  node: 'Open this node on its board',
-  cast: "Open this character's sheet",
-  link: "Open this connection's editor",
-  note: "Open this chapter's notes",
-  story: 'Open this story',
-};
-
-// The line a note is listed by: its first, with the rest left to the panel.
-function noteFirstLine(text: string): string {
-  return text.split('\n')[0].trim();
-}
 
 // The edge that drew a relation: both ends are its two character cards and the
 // edge's verb names the bond. An edge that lost its verb still belongs to the
@@ -443,32 +375,6 @@ function matchingSkillEdge(
       ends.characterId === skill.character_id
     );
   });
-}
-
-// What sits on the right of a result: whose character a card belongs to, both
-// ends of a connection, or the story it lives in when that is not the open one.
-function searchResultTag(result: SearchResult, openStoryId: string | undefined): string | null {
-  const elsewhere = result.storyId !== openStoryId;
-
-  if (result.kind === 'node') {
-    return result.characterName ?? (elsewhere ? result.storyTitle : null);
-  }
-
-  if (result.kind === 'link' || result.kind === 'cast') {
-    return elsewhere ? result.storyTitle : result.detail;
-  }
-
-  // A note says which chapter holds it, since that is where choosing it lands,
-  // and names the story too when it is not the open one.
-  if (result.kind === 'note') {
-    const chapter = result.chapterLabel;
-
-    if (!chapter) return elsewhere ? result.storyTitle : null;
-
-    return elsewhere ? `${chapter} · ${result.storyTitle}` : chapter;
-  }
-
-  return null;
 }
 
 // A database node row as React Flow wants it. One mapping, used by the story
@@ -1018,25 +924,40 @@ function App() {
     }
   });
 
-  // The search palette, opened with Ctrl+F on the Graph and Chapters tabs.
   // A pan asked for while the board was not on screen, applied when it mounts.
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
 
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchIndex, setSearchIndex] = useState(0);
-  // Which kind of result the list is narrowed to; "all" searches everything.
-  const [searchKind, setSearchKind] = useState<'all' | SearchKind>('all');
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // The other stories' boards, read once per story and kept for the session so a
-  // search reaches them without opening them. The copy for a story is dropped
-  // when it is closed, because edits made while it was open would make it stale.
-  const [otherStoryIndex, setOtherStoryIndex] = useState<Record<string, StoryIndex>>({});
-  const otherStoryIndexRef = useRef<Record<string, StoryIndex>>({});
-  const lastStoryIdRef = useRef<string | null>(null);
-  const [otherStoryLoading, setOtherStoryLoading] = useState(false);
-  const [otherStoryError, setOtherStoryError] = useState<string | null>(null);
+  // The search palette's own state — whether it is open, what it is looking for,
+  // which kind of result it is narrowed to, which row the keyboard is on, and the
+  // boards of the stories that are not open — lives in the search domain. The
+  // open story is searched from what is on screen, so its rows go in; choosing a
+  // result stays here, because arriving at one moves the window.
+  const {
+    searchOpen,
+    searchTerm,
+    typeSearch,
+    filterKind,
+    searchKind,
+    searchIndex,
+    highlightResult,
+    moveSearchSelection,
+    searchInputRef,
+    openSearch,
+    closeSearch,
+    searchResults,
+    highlightedResult,
+    otherStoryLoading,
+    otherStoryError,
+    forgetOtherStories,
+    openStoryId,
+  } = useSearchPalette({
+    nodes,
+    edges,
+    characters,
+    notes,
+    stories,
+    currentStory,
+  });
 
   const dragStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   // Nodes React Flow is removing right now, so their connections are not
@@ -1209,7 +1130,7 @@ function App() {
       setReturnedNotice(null);
       setSyncedXpNotice(null);
     },
-    openStoryId: () => lastStoryIdRef.current,
+    openStoryId,
     reloadStory,
     // A refusal is written by the reporter just below, which also keeps the
     // rollback note this hook holds, so it is reached through this rather than
@@ -1223,7 +1144,7 @@ function App() {
   // attempted, and what stopped it.
   const recordHistoryEvent = useCallback(
     async (action: 'undo_refused' | 'redo_refused' | 'step_rolled_back', detail: string) => {
-      const storyId = currentStory?.id ?? lastStoryIdRef.current;
+      const storyId = currentStory?.id ?? openStoryId();
       if (!storyId) return;
 
       if (action === 'step_rolled_back') noteRolledBack();
@@ -1323,8 +1244,7 @@ function App() {
     onDatabaseRestored: restored => {
       forgetHistory();
       forgetRememberedDrafts();
-      otherStoryIndexRef.current = {};
-      setOtherStoryIndex({});
+      forgetOtherStories();
 
       closeEditors();
       setSelectedCharacterId(null);
@@ -1383,17 +1303,13 @@ function App() {
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
-        setSearchOpen(true);
-        setSearchIndex(0);
-        setSearchKind('all');
+        openSearch();
         return;
       }
 
       if (event.key === 'Escape' && searchOpen) {
         event.preventDefault();
-        setSearchOpen(false);
-        setSearchTerm('');
-        setSearchIndex(0);
+        closeSearch();
       }
     };
 
@@ -1412,10 +1328,6 @@ function App() {
     characterConnection,
     pendingEdgeRemoval,
   ]);
-
-  useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus();
-  }, [searchOpen]);
 
   // ? opens the shortcut list on any tab, but never while a field is being typed
   // in — there it is a question mark like any other.
@@ -1525,91 +1437,6 @@ function App() {
     const timer = setTimeout(() => setReturnedNotice(null), 10000);
     return () => clearTimeout(timer);
   }, [returnedNotice]);
-
-  // A story's board is kept for searching only while that story is closed. The
-  // moment it is opened the screen becomes the truth, and when it is left the
-  // cached copy is dropped so the next search reads it again.
-  useEffect(() => {
-    const nextId = currentStory?.id ?? null;
-    const previousId = lastStoryIdRef.current;
-    lastStoryIdRef.current = nextId;
-
-    if (!previousId || previousId === nextId || !otherStoryIndexRef.current[previousId]) {
-      return;
-    }
-
-    const next = { ...otherStoryIndexRef.current };
-    delete next[previousId];
-    otherStoryIndexRef.current = next;
-    setOtherStoryIndex(next);
-  }, [currentStory]);
-
-  // The other stories are read when the palette opens, all at once, so typing
-  // never waits on the database and the results cover every story.
-  useEffect(() => {
-    if (!searchOpen || !currentStory) return;
-
-    const missing = stories.filter(
-      story => story.id !== currentStory.id && !otherStoryIndexRef.current[story.id]
-    );
-    if (missing.length === 0) {
-      // Everything is cached, so a read cancelled by an earlier close cannot
-      // leave the palette saying it is still searching.
-      setOtherStoryLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setOtherStoryLoading(true);
-    setOtherStoryError(null);
-
-    Promise.all(
-      missing.map(async story => {
-        const [nodes, characters, edges, notes] = await Promise.all([
-          canvasApi.getGraphNodes(story.id),
-          charactersApi.getCharacters(story.id),
-          canvasApi.getGraphEdges(story.id),
-          narrativeApi.getChapterNotes(story.id),
-        ]);
-
-        return [
-          story.id,
-          {
-            nodes,
-            characters,
-            edges,
-            notes: (notes ?? []).map(note => ({
-              id: note.id,
-              chapter_id: note.parent_node_id ?? null,
-              text: note.content ?? '',
-            })),
-          },
-        ] as const;
-      })
-    )
-      .then(entries => {
-        if (cancelled) return;
-
-        const next = { ...otherStoryIndexRef.current };
-        entries.forEach(([id, index]) => {
-          next[id] = index;
-        });
-        otherStoryIndexRef.current = next;
-        setOtherStoryIndex(next);
-      })
-      .catch(error => {
-        // A board that cannot be read is left out of the results rather than
-        // failing the whole search; the footer says some stories were skipped.
-        if (!cancelled) setOtherStoryError(String(error));
-      })
-      .finally(() => {
-        if (!cancelled) setOtherStoryLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [searchOpen, stories, currentStory]);
 
   // A revert changes what the other tabs show, so they are reloaded rather than
   // left displaying the value the history just put back.
@@ -3726,14 +3553,6 @@ function App() {
     return id && nodes.some(node => node.id === id) ? id : null;
   };
 
-  const closeCanvasSearch = () => {
-    setSearchOpen(false);
-    setSearchTerm('');
-    setSearchIndex(0);
-    // A filter left on would hide results the next time the palette opens.
-    setSearchKind('all');
-  };
-
   // A board zoomed out further than 1 would arrive too small to read, so the pan
   // never goes below that.
   // The board is unmounted on the other tabs, so a result chosen there has to
@@ -3772,7 +3591,7 @@ function App() {
       (chapterDraftIsDirty() || noteDraftIsDirty()) &&
       (changingStory || targetTab !== 'chapters')
     ) {
-      closeCanvasSearch();
+      closeSearch();
 
       const message =
         changingStory && targetStory
@@ -3793,7 +3612,7 @@ function App() {
       return;
     }
 
-    closeCanvasSearch();
+    closeSearch();
     setSelectedTab(targetTab);
 
     if (result.kind === 'story') {
@@ -7271,255 +7090,6 @@ function App() {
   // connection; a story's title and description — so it can be found the way a
   // person remembers it rather than only by its exact name. A result whose
   // name matched is listed before one found only by its notes or description.
-  const searchResults = useMemo<SearchResult[]>(() => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return [];
-
-    const matches = (value: string | null | undefined) =>
-      typeof value === 'string' && value.toLowerCase().includes(term);
-    const hits = (values: (string | null | undefined)[]) => values.some(matches);
-    const wants = (kind: SearchKind) => searchKind === 'all' || searchKind === kind;
-
-    const result = (
-      kind: SearchKind,
-      story: { id: string; title: string },
-      targetId: string,
-      label: string,
-      extra: Partial<SearchResult> = {}
-    ): SearchResult => ({
-      key: `${kind}:${story.id}:${targetId}`,
-      kind,
-      storyId: story.id,
-      storyTitle: story.title,
-      targetId,
-      label,
-      detail: null,
-      nodeType: null,
-      characterName: null,
-      x: 0,
-      y: 0,
-      content: null,
-      edgeLabel: '',
-      edgeRelation: '',
-      chapterId: null,
-      chapterLabel: null,
-      rank: 1,
-      ...extra,
-    });
-
-    const results: SearchResult[] = [];
-    const openStory = { id: currentStory?.id ?? '', title: currentStory?.title ?? '' };
-
-    // The open story reads from what is on screen, so its results are live.
-    const castById = new Map(characters.map(character => [character.id, character]));
-    const labelOf = new Map(nodes.map(node => [node.id, node.data.label]));
-    const positionOf = new Map(nodes.map(node => [node.id, node.position]));
-
-    if (wants('node')) {
-      nodes.forEach(node => {
-        const characterName = node.data.characterId
-          ? castById.get(node.data.characterId)?.name ?? null
-          : null;
-
-        if (!hits([node.data.label, node.data.content, node.data.nodeType, characterName])) {
-          return;
-        }
-
-        results.push(
-          result('node', openStory, node.id, node.data.label, {
-            nodeType: node.data.nodeType,
-            characterName,
-            detail: node.data.content ?? null,
-            content: node.data.content ?? null,
-            rank: matches(node.data.label) ? 0 : 1,
-            // A node's position is its top-left, so the pan aims at its middle.
-            x: node.position.x + 70,
-            y: node.position.y + 20,
-          })
-        );
-      });
-    }
-
-    if (wants('note')) {
-      notes.forEach(note => {
-        const chapterLabel = labelOf.get(note.chapterId);
-
-        // A note whose chapter is not on the board has nowhere to open.
-        if (!chapterLabel || !hits([note.text])) return;
-
-        const label = noteFirstLine(note.text);
-
-        results.push(
-          result('note', openStory, note.id, label, {
-            chapterId: note.chapterId,
-            chapterLabel,
-            detail: note.text,
-            rank: matches(label) ? 0 : 1,
-          })
-        );
-      });
-    }
-
-    if (wants('cast')) {
-      characters.forEach(character => {
-        if (!hits([character.name, character.description])) return;
-
-        results.push(
-          result('cast', openStory, character.id, character.name, {
-            detail: character.description,
-            rank: matches(character.name) ? 0 : 1,
-          })
-        );
-      });
-    }
-
-    if (wants('link')) {
-      edges.forEach(edge => {
-        const source = labelOf.get(edge.source) ?? '?';
-        const target = labelOf.get(edge.target) ?? '?';
-        const edgeLabel = edge.data?.label ?? '';
-        const edgeRelation = edge.data?.relationType ?? '';
-
-        if (!hits([edgeLabel, edgeRelation, source, target])) return;
-
-        const from = positionOf.get(edge.source);
-        const to = positionOf.get(edge.target);
-
-        results.push(
-          result('link', openStory, edge.id, edgeLabel || edgeRelation || `${source} → ${target}`, {
-            detail: `${source} → ${target}`,
-            edgeLabel,
-            edgeRelation,
-            rank: matches(edgeLabel) ? 0 : 1,
-            x: from && to ? (from.x + to.x) / 2 : 0,
-            y: from && to ? (from.y + to.y) / 2 : 0,
-          })
-        );
-      });
-    }
-
-    // Every other story is searched from the copy read when the palette opened,
-    // so a word can be found without opening the story that holds it.
-    stories.forEach(story => {
-      if (story.id === openStory.id) return;
-
-      const index = otherStoryIndex[story.id];
-      const storyCast = index ? new Map(index.characters.map(entry => [entry.id, entry])) : null;
-
-      if (wants('story') && hits([story.title, story.description])) {
-        results.push(
-          result('story', { id: story.id, title: story.title }, story.id, story.title, {
-            detail: story.description,
-            rank: matches(story.title) ? 0 : 1,
-          })
-        );
-      }
-
-      if (!index) return;
-
-      const storyLabels = new Map(index.nodes.map(node => [node.id, node.label]));
-
-      if (wants('note')) {
-        index.notes.forEach(note => {
-          const chapterLabel = note.chapter_id
-            ? storyLabels.get(note.chapter_id) ?? null
-            : null;
-
-          if (!chapterLabel || !hits([note.text])) return;
-
-          const label = noteFirstLine(note.text);
-
-          results.push(
-            result('note', story, note.id, label, {
-              chapterId: note.chapter_id,
-              chapterLabel,
-              detail: note.text,
-              rank: matches(label) ? 0 : 1,
-            })
-          );
-        });
-      }
-
-      if (wants('node')) {
-        index.nodes.forEach(node => {
-          const characterName = node.character_id
-            ? storyCast?.get(node.character_id)?.name ?? null
-            : null;
-
-          if (!hits([node.label, node.content, node.node_type, characterName])) return;
-
-          results.push(
-            result('node', story, node.id, node.label, {
-              nodeType: node.node_type,
-              characterName,
-              detail: node.content,
-              content: node.content,
-              rank: matches(node.label) ? 0 : 1,
-              x: node.pos_x + 70,
-              y: node.pos_y + 20,
-            })
-          );
-        });
-      }
-
-      if (wants('cast')) {
-        index.characters.forEach(character => {
-          if (!hits([character.name, character.description])) return;
-
-          results.push(
-            result('cast', story, character.id, character.name, {
-              detail: character.description,
-              rank: matches(character.name) ? 0 : 1,
-            })
-          );
-        });
-      }
-
-      if (wants('link')) {
-        const storyPositions = new Map(
-          index.nodes.map(node => [node.id, { x: node.pos_x, y: node.pos_y }])
-        );
-
-        index.edges.forEach(edge => {
-          const source = storyLabels.get(edge.source_id) ?? '?';
-          const target = storyLabels.get(edge.target_id) ?? '?';
-          const edgeLabel = edge.label ?? '';
-          const edgeRelation = edge.relation_type ?? '';
-
-          if (!hits([edgeLabel, edgeRelation, source, target])) return;
-
-          const from = storyPositions.get(edge.source_id);
-          const to = storyPositions.get(edge.target_id);
-
-          results.push(
-            result('link', story, edge.id, edgeLabel || edgeRelation || `${source} → ${target}`, {
-              detail: `${source} → ${target}`,
-              edgeLabel,
-              edgeRelation,
-              rank: matches(edgeLabel) ? 0 : 1,
-              x: from && to ? (from.x + to.x) / 2 : 0,
-              y: from && to ? (from.y + to.y) / 2 : 0,
-            })
-          );
-        });
-      }
-    });
-
-    // Name matches first. The sort is stable, so within each band the results
-    // keep the order they were gathered in: the open story before the others.
-    return results.sort((left, right) => left.rank - right.rank);
-  }, [
-    searchTerm,
-    searchKind,
-    nodes,
-    notes,
-    characters,
-    edges,
-    stories,
-    currentStory,
-    otherStoryIndex,
-  ]);
-
   // Only the open board is outlined: a result in another story is not on screen
   // until it is chosen, which opens that story.
   const searchMatchIds = useMemo(
@@ -7533,15 +7103,6 @@ function App() {
       ),
     [searchResults, currentStory]
   );
-
-  const moveSearchSelection = (delta: number) => {
-    // Only the listed results can be chosen with the keyboard, so the highlight
-    // wraps within them rather than walking into matches that are not on screen.
-    const shown = Math.min(searchResults.length, SEARCH_RESULTS_SHOWN);
-    if (shown === 0) return;
-
-    setSearchIndex(current => (current + delta + shown) % shown);
-  };
 
   // The canvas gets the nodes plus their cast member's name and numbers, and the
   // classes for the relink target and the search hits. Only those nodes are
@@ -8330,12 +7891,6 @@ function App() {
   // Only one tab renders at a time, so there is never a second copy of it.
   // The tab's own Search button: the palette opens on everything, with the first
   // result already selected.
-  const openSearch = () => {
-    setSearchOpen(true);
-    setSearchIndex(0);
-    setSearchKind('all');
-  };
-
   const renderSearchPalette = (placement: 'overlay' | 'inline') =>
     searchOpen && (
       <div
@@ -8347,17 +7902,15 @@ function App() {
           ref={searchInputRef}
           className="canvas-search-input"
           type="search"
-          aria-label="Search everything"                        title="Cards, cast, connections, chapter notes and other stories; Enter goes to the chosen one"
-                        placeholder="Node, cast member, connection, note or story"
+          aria-label="Search everything"
+          title="Cards, cast, connections, chapter notes and other stories; Enter goes to the chosen one"
+          placeholder="Node, cast member, connection, note or story"
           value={searchTerm}
-          onChange={event => {
-            setSearchTerm(event.target.value);
-            setSearchIndex(0);
-          }}
+          onChange={event => typeSearch(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Escape') {
               event.preventDefault();
-              closeCanvasSearch();
+              closeSearch();
             }
             if (event.key === 'ArrowDown') {
               event.preventDefault();
@@ -8369,9 +7922,7 @@ function App() {
             }
             if (event.key === 'Enter') {
               event.preventDefault();
-              const match =
-                searchResults[Math.min(searchIndex, searchResults.length - 1)];
-              if (match) void chooseSearchResult(match);
+              if (highlightedResult) void chooseSearchResult(highlightedResult);
             }
           }}
         />
@@ -8390,10 +7941,7 @@ function App() {
               }`}
               aria-pressed={searchKind === filter.value}
               title={filter.title}
-              onClick={() => {
-                setSearchKind(filter.value);
-                setSearchIndex(0);
-              }}
+              onClick={() => filterKind(filter.value)}
             >
               {filter.label}
             </button>
@@ -8423,7 +7971,7 @@ function App() {
                       index === searchIndex ? ' active' : ''
                     }`}
                     title={searchResultTitles[entry.kind]}
-                    onMouseEnter={() => setSearchIndex(index)}
+                    onMouseEnter={() => highlightResult(index)}
                     onClick={() => void chooseSearchResult(entry)}
                   >
                     {entry.kind === 'node' ? (
