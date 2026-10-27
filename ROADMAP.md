@@ -550,7 +550,10 @@ searching ten thousand lines. Nine are done.
   than being looked up in the board, so nothing about React Flow reaches the
   form; the row that comes back leaves on one callback, because a skill is
   listed by the board and, when the open sheet is showing the character who
-  learned it, by the sheet as well. Direct suite of 16.
+  learned it, by the sheet as well. The form belongs to the card the drawer is
+  showing, so opening another card — or closing the drawer — empties it, and the
+  card's id rather than the object it arrives in decides, because the app builds
+  that object afresh on every render. Direct suite of 21.
 
 Each follows one shape, and every later hook should too:
 
@@ -615,8 +618,6 @@ Individually shippable, in rough value order, to slot between larger features:
   lands.
 - **A visible save beat** — a brief "Saved" in the drawer footer, so silence is
   never ambiguous.
-- **Empty the holder form when another card opens** — the character, rank
-  and chapter typed for one skill card stay in the drawer for the next one.
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import * as skillsApi from '../skills/api';
 import type { CharacterSkill } from '../shared/types';
 
@@ -41,9 +41,32 @@ export function useSkillHolderForm({
   const [skillHolderError, setSkillHolderError] = useState<string | null>(null);
   const [savingSkillHolder, setSavingSkillHolder] = useState(false);
 
+  // The form belongs to the card the drawer is showing. A rank and a chapter typed
+  // for one card are that holder's own facts, so they must not be waiting there
+  // for the next card: opening another card — or closing the drawer — empties the
+  // form and the line it was complaining on. The card's id decides, not the object
+  // it arrives in, because the app builds that object afresh on every render.
+  const cardId = card?.id ?? null;
+  const [formCardId, setFormCardId] = useState<string | null>(cardId);
+
+  // The card the form belongs to, readable from the write that runs outside a
+  // render, so a write finishing for a card that is no longer open cannot empty a
+  // form the author has since started filling for a different one.
+  const openCardId = useRef<string | null>(cardId);
+
+  if (cardId !== formCardId) {
+    setFormCardId(cardId);
+    openCardId.current = cardId;
+    setSkillHolderCharacterId('');
+    setSkillHolderRank('');
+    setSkillHolderChapterId('');
+    setSkillHolderError(null);
+  }
+
   const addSkillHolder = async () => {
     if (!card) return;
 
+    const writtenCardId = card.id;
     const characterId = skillHolderCharacterId;
     const name = card.label.trim();
     const effect = card.content?.trim() || null;
@@ -73,9 +96,15 @@ export function useSkillHolderForm({
       );
 
       onHolderAdded(saved);
-      setSkillHolderCharacterId('');
-      setSkillHolderRank('');
-      setSkillHolderChapterId('');
+
+      // Only the form these answers were typed into is emptied: if the author
+      // opened another card while the write was in flight, what is on screen now
+      // is that card's answers and they are left alone.
+      if (openCardId.current === writtenCardId) {
+        setSkillHolderCharacterId('');
+        setSkillHolderRank('');
+        setSkillHolderChapterId('');
+      }
     } catch (e) {
       console.error('Failed to add a skill holder:', e);
       setSkillHolderError(`Could not add the holder: ${String(e)}`);

@@ -322,3 +322,94 @@ describe('adding a holder', () => {
     expect(result.current.savingSkillHolder).toBe(false);
   });
 });
+
+describe('the form follows the card the drawer shows', () => {
+  // A rank and a chapter are the holder's own facts, not the card's, so they must
+  // not be waiting in the form for whatever card is opened next.
+  const other = { id: 'n-9', label: 'Shield', content: 'Blocks a blow' };
+
+  it('empties the answers when another card is opened', () => {
+    const { result, rerender } = setup();
+
+    act(() => result.current.setSkillHolderCharacterId('ch-2'));
+    act(() => result.current.setSkillHolderRank('Apprentice'));
+    act(() => result.current.setSkillHolderChapterId('c-1'));
+
+    rerender({ ...drawer, card: other });
+
+    expect(result.current.skillHolderCharacterId).toBe('');
+    expect(result.current.skillHolderRank).toBe('');
+    expect(result.current.skillHolderChapterId).toBe('');
+  });
+
+  it('keeps the answers while the same card stays open', () => {
+    const { result, rerender } = setup();
+
+    act(() => result.current.setSkillHolderCharacterId('ch-2'));
+    act(() => result.current.setSkillHolderRank('Apprentice'));
+
+    // A re-render hands over a fresh object for the same card, exactly as the app
+    // does on every render; the form is still that card's.
+    rerender({ ...drawer, card: { ...fireball } });
+
+    expect(result.current.skillHolderCharacterId).toBe('ch-2');
+    expect(result.current.skillHolderRank).toBe('Apprentice');
+  });
+
+  it('drops the complaint raised for the previous card', () => {
+    const { result, rerender } = setup();
+
+    act(() => result.current.setSkillHolderError('Choose the character who learns this skill.'));
+
+    rerender({ ...drawer, card: other });
+
+    expect(result.current.skillHolderError).toBeNull();
+  });
+
+  it('empties the answers when the drawer is closed', () => {
+    const { result, rerender } = setup();
+
+    act(() => result.current.setSkillHolderCharacterId('ch-2'));
+    act(() => result.current.setSkillHolderRank('Apprentice'));
+
+    rerender({ ...drawer, card: null });
+
+    expect(result.current.skillHolderCharacterId).toBe('');
+    expect(result.current.skillHolderRank).toBe('');
+    expect(result.current.skillHolderChapterId).toBe('');
+  });
+
+  it('does not empty the next card when the last card\u2019s write lands', async () => {
+    let release: (row: CharacterSkill) => void = () => {};
+    skillsApi.addSkill.mockImplementation(
+      () =>
+        new Promise<CharacterSkill>(resolve => {
+          release = resolve;
+        })
+    );
+    const { result, rerender } = setup();
+
+    act(() => result.current.setSkillHolderCharacterId('ch-2'));
+    act(() => {
+      void result.current.addSkillHolder();
+    });
+    await waitFor(() => expect(result.current.savingSkillHolder).toBe(true));
+
+    // The author opens another card and starts filling its form while the write
+    // for the first one is still in flight.
+    rerender({ ...drawer, card: other });
+    act(() => result.current.setSkillHolderCharacterId('ch-3'));
+    act(() => result.current.setSkillHolderRank('Journeyman'));
+
+    await act(async () => {
+      release(skill('sk-1', 'ch-2', 'Fireball', null, null, null, 'n-1'));
+    });
+
+    // The row is still reported, and the answers now on screen are kept.
+    expect(onHolderAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ character_id: 'ch-2', name: 'Fireball' })
+    );
+    expect(result.current.skillHolderCharacterId).toBe('ch-3');
+    expect(result.current.skillHolderRank).toBe('Journeyman');
+  });
+});
