@@ -42,6 +42,7 @@ import * as skillsApi from './domains/skills/api';
 import * as storiesApi from './domains/stories/api';
 import * as trashApi from './domains/trash/api';
 import { AttributeList } from './domains/characters/AttributeList';
+import { useSheetStats } from './domains/characters/useSheetStats';
 import { CurrencyList } from './domains/characters/CurrencyList';
 import { InventoryList } from './domains/characters/InventoryList';
 import type { InventoryDraft } from './domains/characters/InventoryList';
@@ -926,13 +927,6 @@ function App() {
 
   const [newCharacterName, setNewCharacterName] = useState('');
   const [newCharacterDescription, setNewCharacterDescription] = useState('');
-
-  const [editingStatId, setEditingStatId] = useState<string | null>(null);
-  const [statValueDraft, setStatValueDraft] = useState('');
-  const [statNotesDraft, setStatNotesDraft] = useState('');
-
-  const [newStatName, setNewStatName] = useState('');
-  const [newStatValue, setNewStatValue] = useState('');
 
   const [editingCharacter, setEditingCharacter] = useState(false);
   const [characterNameDraft, setCharacterNameDraft] = useState('');
@@ -4742,81 +4736,41 @@ function App() {
     actor,
   });
 
-  const startStatEdit = (stat: CharacterStat) => {
-    setEditingStatId(stat.id);
-    setStatValueDraft(String(stat.value));
-    setStatNotesDraft(stat.notes ?? '');
+  // A saved stat reaches both places at once: the sheet's own list, which the
+  // stat read fills, and the story-wide map the canvas badges are drawn from.
+  const applyWrittenStat = (stat: CharacterStat) => {
+    setCharacterStats(previous =>
+      [...previous.filter(other => other.id !== stat.id), stat].sort((a, b) =>
+        a.stat_name.localeCompare(b.stat_name)
+      )
+    );
+    rememberStat(stat);
   };
 
-  const saveStat = async (stat: CharacterStat) => {
-    const value = Number(statValueDraft);
-
-    if (!statValueDraft.trim() || !Number.isFinite(value)) {
-      setCharacterError('A stat value has to be a number.');
-      return;
-    }
-
-    setCharacterError(null);
-
-    try {
-      const updated: CharacterStat = await charactersApi.setCharacterStat(
-        stat.character_id,
-        stat.stat_name,
-        Math.trunc(value),
-        statNotesDraft.trim() || null,
-        actor
-      );
-
-      setCharacterStats(prev =>
-        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
-          a.stat_name.localeCompare(b.stat_name)
-        )
-      );
-      rememberStat(updated);
-      setEditingStatId(null);
-    } catch (e) {
-      console.error('Failed to save stat:', e);
-      setCharacterError(`Could not save stat: ${String(e)}`);
-    }
-  };
-
-  const addStat = async () => {
-    if (!selectedCharacterId || !newStatName.trim()) return;
-
-    const raw = newStatValue.trim();
-    const value = Number(raw || '0');
-
-    if (!Number.isFinite(value)) {
-      setCharacterError('A stat value has to be a number.');
-      return;
-    }
-
-    setCharacterError(null);
-
-    try {
-      // Setting a stat that already exists updates it, which is what the name
-      // implies; the list below merges by id either way.
-      const saved: CharacterStat = await charactersApi.setCharacterStat(
-        selectedCharacterId,
-        newStatName.trim(),
-        Math.trunc(value),
-        null,
-        actor
-      );
-
-      setCharacterStats(prev =>
-        [...prev.filter(other => other.id !== saved.id), saved].sort((a, b) =>
-          a.stat_name.localeCompare(b.stat_name)
-        )
-      );
-      rememberStat(saved);
-      setNewStatName('');
-      setNewStatValue('');
-    } catch (e) {
-      console.error('Failed to add stat:', e);
-      setCharacterError(`Could not add stat: ${String(e)}`);
-    }
-  };
+  // The stat section's new-stat form, its one open row and its two writes live
+  // in the characters domain. The rows stay here, where they are read for the
+  // open cast member and read again after a revert, and the sheet's error line
+  // is shared with the tab's other writes rather than owned by this section.
+  const {
+    newStatName,
+    setNewStatName,
+    newStatValue,
+    setNewStatValue,
+    addStat,
+    editingStatId,
+    setEditingStatId,
+    statValueDraft,
+    setStatValueDraft,
+    statNotesDraft,
+    setStatNotesDraft,
+    startStatEdit,
+    saveStat,
+  } = useSheetStats({
+    characterId: selectedCharacterId,
+    onStatWritten: applyWrittenStat,
+    reportError: message => setCharacterError(message),
+    actor,
+  });
 
   const saveAttribute = async (
     attribute: CharacterAttribute,

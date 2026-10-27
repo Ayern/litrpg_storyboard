@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Seven are done.
+searching ten thousand lines. Eight are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -534,6 +534,15 @@ searching ten thousand lines. Seven are done.
   because the badges are drawn from the story-wide read. The relink and the
   rename report on the same line, so they are handed the hook's own reporter.
   Direct suite of 31.
+- **`domains/characters/useSheetStats.ts`** — the sheet's stat section: the name and
+  value of its new-stat form, the one row open for editing with that row's
+  value and notes, and the two writes, which run the command the sheet has
+  always run. The rows themselves stayed with the app, which reads them for the
+  open cast member and reads them again after a revert, so a write hands the row
+  that came back straight back out: it has two places to go, the sheet's own
+  list and the story-wide map the badges on every card are drawn from. The
+  tab's error line is shared with every other write on it, so it arrives as a
+  callback rather than being owned here. Direct suite of 26.
 
 Each follows one shape, and every later hook should too:
 
@@ -556,15 +565,12 @@ These are the blocks of state still in `App.tsx`, with the handlers that go with
 them. The order is by how much each one would take out of the file, so it is a
 real order rather than a tidy one:
 
-1. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
-   the sheet: the new-stat form, one row open at a time, and the rows
-   themselves. **S–M**
-2. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+1. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
    holder is added with, and its reset when another card is opened. **S**
 
-**The sheet's stats and the skill-holder form are what is left of the drafts.**
-They are the smallest of the hooks, and once they are gone the two loads are the
-last thing standing in front of the board itself.
+**The skill-holder form is what is left of the drafts.** It is the smallest of
+the hooks, and once it is gone the two loads are the last thing standing in
+front of the board itself.
 
 ### What stays in `App.tsx`
 
