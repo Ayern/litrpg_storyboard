@@ -121,11 +121,11 @@ be written the change is rolled back rather than committed unattributed. That is
 database-layer guarantee (`log_audit` inside the same transaction), so no UI path
 can forget it.
 
-**The app re-reads rather than guesses.** After an undo, a tier change or a story
-switch, the board and the panels are read again from the database instead of being
-patched in memory. `reloadStory` and `loadStory` in `App.tsx` are the two places
-that do it, and they exist because a restored row brings its connections with it —
-a fact no local patch can know.
+**The app re-reads rather than guesses.** After an undo, a revert from the audit
+log or a story switch, the board and the panels are read again from the database
+instead of being patched in memory. `reloadStory` and `loadStory` in `App.tsx` are
+the two places that do it, and they exist because a restored row brings its
+connections with it — a fact no local patch can know.
 
 ### What a "step" is
 
@@ -497,9 +497,10 @@ cd src-tauri && cargo fmt --check
 
 The frontend suite renders the real `App` with `invoke` mocked, so it covers what
 the Rust tests cannot see: what a tab requests, what it does with a page that
-arrives late, and what it says when a filter matches nothing. Every domain panel
-also has a direct-render suite of its own, which is the faster place to test a
-change in one panel.
+arrives late, and what it says when a filter matches nothing. Several panels also
+have a direct-render suite of their own — the quest ledger, the Chapters tab, the
+trash, the sheet, the graph tab and most of the domain hooks — which is the faster
+place to test a change in one panel.
 
 ---
 
