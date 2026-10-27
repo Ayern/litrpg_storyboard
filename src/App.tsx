@@ -61,6 +61,7 @@ import {
 } from './domains/characters/CharacterViews';
 import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
+import { useHistory } from './domains/history/useHistory';
 import { TrashPanel } from './domains/trash/TrashPanel';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
@@ -468,24 +469,6 @@ function searchResultTag(result: SearchResult, openStoryId: string | undefined):
   }
 
   return null;
-}
-
-// How many actions this session's undo stack keeps. The audit tab is the
-// permanent record; this is only the last few steps, so it is capped and never
-// written to disk.
-const UNDO_LIMIT = 50;
-
-// One recorded action, with the commands that walk it backwards and forwards.
-// The closures call the ordinary commands, so an undo is an audited change like
-// any other rather than a quiet rewrite of the database.
-interface UndoStep {
-  label: string;
-  undo: () => Promise<unknown>;
-  redo: () => Promise<unknown>;
-  // Said after a successful undo only. A step whose work left something else
-  // behind — a chapter's connections, which are restored separately — names it
-  // here, so the notice says where the rest went.
-  undoNote?: string;
 }
 
 // A database node row as React Flow wants it. One mapping, used by the story
@@ -1020,13 +1003,6 @@ function App() {
   const [otherStoryLoading, setOtherStoryLoading] = useState(false);
   const [otherStoryError, setOtherStoryError] = useState<string | null>(null);
 
-  // This session's actions, with a command for each direction. The stacks are
-  // refs because they are read only when a key is pressed; the counts below are
-  // what the toolbar draws.
-  const undoStackRef = useRef<UndoStep[]>([]);
-  const redoStackRef = useRef<UndoStep[]>([]);
-  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
-  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const dragStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   // Nodes React Flow is removing right now, so their connections are not
   // recorded as a separate deletion.
@@ -1036,10 +1012,6 @@ function App() {
   const selectedEdgeIdRef = useRef<string | null>(null);
   const nodeIsDirtyRef = useRef(false);
   const edgeIsDirtyRef = useRef(false);
-  // Set when a step put its own half back, so the move that then failed writes
-  // the rollback's entry instead of a second one saying the same thing.
-  const rollbackRecordedRef = useRef(false);
-
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
@@ -1096,10 +1068,8 @@ function App() {
     setDemoResetConfirm(false);
 
     // Undo is scoped to the story it was recorded in, so a switch starts clean.
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    setHistoryDepth({ undo: 0, redo: 0 });
-    setHistoryNotice(null);
+    forgetHistory();
+    clearHistoryNotice();
     setReturnedNotice(null);
     setSyncedXpNotice(null);
 
@@ -1211,16 +1181,41 @@ function App() {
     [setNodes, setEdges]
   );
 
-  const recordStep = useCallback((step: UndoStep) => {
-    // A new action makes the old redo branch impossible, as in any editor.
-    redoStackRef.current = [];
-    undoStackRef.current = [...undoStackRef.current, step].slice(-UNDO_LIMIT);
-    setHistoryDepth({ undo: undoStackRef.current.length, redo: 0 });
-    // A newer action owns the board now; the old correction's Undo would be a
-    // step out of order.
-    setReturnedNotice(null);
-    setSyncedXpNotice(null);
-  }, []);
+  // This session's undo and redo stacks live in the history domain. What a walk
+  // reaches outside it — the notices the last step left, the error line, the
+  // board it re-reads and the entry a refusal writes — comes back through these.
+  const {
+    depth: historyDepth,
+    notice: historyNotice,
+    clearNotice: clearHistoryNotice,
+    recordStep,
+    noteRolledBack,
+    undoLast,
+    redoLast,
+    forget: forgetHistory,
+  } = useHistory({
+    // A newer action owns the board: the correction the last step offered would
+    // be a step out of order.
+    onBoardTaken: () => {
+      setReturnedNotice(null);
+      setSyncedXpNotice(null);
+    },
+    // A step is about to run, so the error the last one reported and the nodes
+    // it was removing belong to the step before it.
+    onStepStarting: () => {
+      removedNodeIdsRef.current = new Set();
+      setActionError(null);
+      setReturnedNotice(null);
+      setSyncedXpNotice(null);
+    },
+    openStoryId: () => lastStoryIdRef.current,
+    reloadStory,
+    // A refusal is written by the reporter just below, which also keeps the
+    // rollback note this hook holds, so it is reached through this rather than
+    // named here. The hook only calls it when a step fails.
+    onRefused: (action, detail) => recordHistoryEvent(action, detail),
+    onError: setActionError,
+  });
 
   // A refusal used to be a notice that faded after a few seconds. It is also a
   // fact about the story, so it goes where the Audit tab can keep it: what was
@@ -1230,7 +1225,7 @@ function App() {
       const storyId = currentStory?.id ?? lastStoryIdRef.current;
       if (!storyId) return;
 
-      if (action === 'step_rolled_back') rollbackRecordedRef.current = true;
+      if (action === 'step_rolled_back') noteRolledBack();
 
       try {
         await auditApi.recordHistoryEvent(storyId, action, detail, actor);
@@ -1240,73 +1235,8 @@ function App() {
         console.error('Failed to write a refused step into the history:', e);
       }
     },
-    [currentStory, actor]
+    [currentStory, actor, noteRolledBack]
   );
-
-  const moveInHistory = useCallback(
-    async (direction: 'undo' | 'redo') => {
-      const source = direction === 'undo' ? undoStackRef : redoStackRef;
-      const target = direction === 'undo' ? redoStackRef : undoStackRef;
-      const step = source.current[source.current.length - 1];
-
-      if (!step) return;
-
-      removedNodeIdsRef.current = new Set();
-      rollbackRecordedRef.current = false;
-      setActionError(null);
-      setReturnedNotice(null);
-      setSyncedXpNotice(null);
-
-      try {
-        await (direction === 'undo' ? step.undo() : step.redo());
-      } catch (e) {
-        // The step stays where it was, so the failed change can be retried. The
-        // half a step put back has already written its own entry; otherwise the
-        // refusal itself is the entry.
-        console.error(`Failed to ${direction}:`, e);
-        setActionError(`Could not ${direction} ${step.label}: ${String(e)}`);
-
-        if (!rollbackRecordedRef.current) {
-          await recordHistoryEvent(
-            direction === 'undo' ? 'undo_refused' : 'redo_refused',
-            `${direction === 'undo' ? 'Undo' : 'Redo'} refused — ${step.label}: ${String(
-              e
-            )} The step stays in the history, so it can be tried again.`
-          );
-        }
-
-        return;
-      }
-
-      source.current = source.current.slice(0, -1);
-      target.current = [...target.current, step];
-      setHistoryDepth({
-        undo: undoStackRef.current.length,
-        redo: redoStackRef.current.length,
-      });
-      // The note belongs to the undo: a redo takes the same things away again.
-      const note = direction === 'undo' ? step.undoNote : null;
-      setHistoryNotice(
-        `${direction === 'undo' ? 'Undid' : 'Redid'}: ${step.label}${note ? ` — ${note}` : ''}`
-      );
-
-      const storyId = lastStoryIdRef.current;
-      if (!storyId) return;
-
-      try {
-        await reloadStory(storyId);
-      } catch (e) {
-        // The change itself went through; a failed refresh is reported, not
-        // pretended away.
-        console.error('Failed to reload the board after moving through history:', e);
-        setActionError(`The change was made, but the board could not be reloaded: ${String(e)}`);
-      }
-    },
-    [reloadStory, recordHistoryEvent]
-  );
-
-  const undoLast = useCallback(() => moveInHistory('undo'), [moveInHistory]);
-  const redoLast = useCallback(() => moveInHistory('redo'), [moveInHistory]);
 
   // Putting the card away is a decision about this machine, not about the
   // story, so it is remembered rather than shown again on the next launch.
@@ -1500,14 +1430,6 @@ function App() {
     const timer = setTimeout(() => setSyncedXpNotice(null), 10000);
     return () => clearTimeout(timer);
   }, [syncedXpNotice]);
-
-  // A notice about an undo is useful for a moment, then it is just stale text.
-  useEffect(() => {
-    if (!historyNotice) return;
-
-    const timer = setTimeout(() => setHistoryNotice(null), 5000);
-    return () => clearTimeout(timer);
-  }, [historyNotice]);
 
   // Mark returned's Undo is a correction offered straight away; the toolbar and
   // shortcut keep the step after this prompt has gone.
@@ -1845,14 +1767,6 @@ function App() {
     if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
       await loadStory(currentStory);
     }
-  };
-
-  // Nothing can bring a purged row back, so earlier steps are no longer a safe
-  // branch to undo into.
-  const forgetHistoryBehind = () => {
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    setHistoryDepth({ undo: 0, redo: 0 });
   };
 
   const loadDemoStory = async () => {
@@ -7428,9 +7342,7 @@ function App() {
     try {
       await storiesApi.restoreBackup(file.file_name);
 
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      setHistoryDepth({ undo: 0, redo: 0 });
+      forgetHistory();
       nodeDraftsRef.current = {};
       otherStoryIndexRef.current = {};
       setOtherStoryIndex({});
@@ -10097,7 +10009,7 @@ function App() {
             reloadToken={trashReloadToken}
             onRestored={restoredFromTrash}
             onPurged={purgedFromTrash}
-            onIrreversible={forgetHistoryBehind}
+            onIrreversible={forgetHistory}
           />
         )}
 

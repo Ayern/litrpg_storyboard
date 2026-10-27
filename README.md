@@ -828,7 +828,8 @@ page that arrives late, and what it says when a filter matches nothing.
   of the Rust commands. `App.tsx` owns the story state, the handlers and the tab
   layout; the pieces that do not need all of it live beside it —
   `src/components/` for shared widgets (help bubble, suggestion field, view
-  toggle), `src/domains/<domain>/` for the command module and its types, the
+  toggle), `src/domains/<domain>/` for the command module, its types and any
+  hook of its own, the
   canvas card, the Graph tab's board with its cast rail, connection editor and
   inspector drawer, the audit tab with its row and labels, progression chart,
   relations map, skill tree and the sheet's skill section, the Chapters tab with
@@ -858,7 +859,16 @@ page that arrives late, and what it says when a filter matches nothing.
   save that happened; the Graph tab works out for itself only
   which holders the selected skill card already has and which cast members could
   still learn it, because that list is shown nowhere else, and takes the drafts,
-  the board, its handlers and the cast member's numbers as props; the badge map
+  the board, its handlers and the cast member's numbers as props; and the
+  history domain is a hook rather than a tab, because what it holds belongs to
+  the session rather than to a view: `useHistory` keeps the last few actions
+  with a command for each direction, the cap on them, the counts the toolbar
+  draws and the notice that fades on its own, and is handed the story whose
+  board a step re-reads, the notices a walk makes stale, the error line and the
+  entry a refusal writes into the audit log. A step is two closures calling the
+  ordinary commands, so walking one is an audited change like any other, and a
+  step that puts its own half back says so, so the failure that follows does not
+  write a second entry about the same thing; the badge map
   the chapter cards draw and
   the grouping of those warnings are plain functions in `ledger.ts`, for the
   same reason as the chapter logic below;
