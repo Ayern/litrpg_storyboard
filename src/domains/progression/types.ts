@@ -12,6 +12,13 @@ export interface ProgressionChartSeries {
 
 export type ProgressionMetric = 'level' | 'xp' | 'earned' | 'stat';
 
+// The row a jump just landed on, so the sheet or the board can mark it. The kind
+// says which list to look in; a level-up, a skill and a relation can share an id.
+export interface ProgressionFocus {
+  kind: 'skill' | 'skill-event' | 'level' | 'relation' | 'faction-standing';
+  id: string;
+}
+
 // One stat a level-up changed, as the form hands it to the database. `amount` is
 // the points gained and `value_after` the sheet value once they applied; either
 // can be left out, which is how a row written before the amount existed reads.

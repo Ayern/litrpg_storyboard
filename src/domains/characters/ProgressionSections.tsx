@@ -1,0 +1,668 @@
+import React from 'react';
+import type { ChapterNode } from '../narrative/chapters';
+import { StatChangeRows } from '../progression/StatChangeRows';
+import type { LevelStatChangeDraft } from '../progression/drafts';
+import { milestoneStatChanges, statChangeText } from '../progression/helpers';
+import type { ProgressionFocus } from '../progression/types';
+import type {
+  Character,
+  CharacterLevelMilestone,
+  CharacterProgress,
+  CharacterSkill,
+} from '../shared/types';
+import type { CharacterSkillEvent } from '../skills/types';
+
+// The three lists a character's progression is made of: the level and XP the
+// sheet shows now, the milestones that record where a level was reached, and the
+// XP each chapter paid out.
+//
+// They are one group because they share one question: what changed, and where in
+// the reading order did it change. The milestones and the income feed the power
+// curve above this sheet, and each of the three writes its own audited row, so
+// the drafts stay in the app with the handlers that save them and arrive here as
+// props - a save is still one audited action, and an undo still reverses it.
+//
+// What it reads: the selected character, the milestones and income already
+// filtered to that character and sorted in reading order, and the skill events
+// that hang off a milestone, so a level can say which skill it moved.
+
+export interface ProgressionSectionsProps {
+  // The selected character, and the numbers the app works out from it.
+  character: Character | null;
+  shownLevel: number;
+  shownXp: number;
+  shownTarget: number | null;
+  progressPercent: number;
+
+  // The level and XP editor.
+  editingProgress: boolean;
+  setEditingProgress: (editing: boolean) => void;
+  progressLevelDraft: string;
+  setProgressLevelDraft: (level: string) => void;
+  progressXpDraft: string;
+  setProgressXpDraft: (xp: string) => void;
+  progressTargetDraft: string;
+  setProgressTargetDraft: (target: string) => void;
+  progressRankDraft: string;
+  setProgressRankDraft: (rank: string) => void;
+  saveProgress: () => Promise<void>;
+  levelUpCharacter: () => Promise<void>;
+  startProgressEdit: () => void;
+
+  // The chapters a milestone or an XP entry can name, in reading order.
+  chapterChoices: ChapterNode[];
+
+  // Level milestones.
+  milestones: CharacterLevelMilestone[];
+  focus: ProgressionFocus | null;
+  skillEvents: CharacterSkillEvent[];
+  skills: CharacterSkill[];
+  statNameOptions: string[];
+  editingMilestoneId: string | null;
+  setEditingMilestoneId: (milestoneId: string | null) => void;
+  milestoneLevelDraft: string;
+  setMilestoneLevelDraft: (level: string) => void;
+  milestoneChapterDraft: string;
+  setMilestoneChapterDraft: (chapterId: string) => void;
+  milestoneDebuffDraft: boolean;
+  setMilestoneDebuffDraft: (debuff: boolean) => void;
+  milestoneXpDraft: string;
+  setMilestoneXpDraft: (xp: string) => void;
+  milestoneStatChangesDraft: LevelStatChangeDraft[];
+  setMilestoneStatChangesDraft: React.Dispatch<
+    React.SetStateAction<LevelStatChangeDraft[]>
+  >;
+  startMilestoneEdit: (milestone: CharacterLevelMilestone) => void;
+  saveMilestone: (milestone: CharacterLevelMilestone) => Promise<void>;
+  removeMilestone: (milestone: CharacterLevelMilestone) => Promise<void>;
+  newMilestoneLevel: string;
+  setNewMilestoneLevel: (level: string) => void;
+  newMilestoneChapter: string;
+  setNewMilestoneChapter: (chapterId: string) => void;
+  newMilestoneDebuff: boolean;
+  setNewMilestoneDebuff: (debuff: boolean) => void;
+  newMilestoneXp: string;
+  setNewMilestoneXp: (xp: string) => void;
+  newMilestoneStatChanges: LevelStatChangeDraft[];
+  setNewMilestoneStatChanges: React.Dispatch<
+    React.SetStateAction<LevelStatChangeDraft[]>
+  >;
+  addMilestone: () => Promise<void>;
+
+  // XP by chapter.
+  xpEntries: CharacterProgress[];
+  editingXpEntryId: string | null;
+  setEditingXpEntryId: (entryId: string | null) => void;
+  xpEntryChapterDraft: string;
+  setXpEntryChapterDraft: (chapterId: string) => void;
+  xpEntryXpDraft: string;
+  setXpEntryXpDraft: (xp: string) => void;
+  startXpEntryEdit: (entry: CharacterProgress) => void;
+  saveXpEntry: (entry: CharacterProgress) => Promise<void>;
+  removeXpEntry: (entry: CharacterProgress) => Promise<void>;
+  newXpEntryChapter: string;
+  setNewXpEntryChapter: (chapterId: string) => void;
+  newXpEntryXp: string;
+  setNewXpEntryXp: (xp: string) => void;
+  addXpEntry: () => Promise<void>;
+}
+
+export function ProgressionSections({
+  character,
+  shownLevel,
+  shownXp,
+  shownTarget,
+  progressPercent,
+  editingProgress,
+  setEditingProgress,
+  progressLevelDraft,
+  setProgressLevelDraft,
+  progressXpDraft,
+  setProgressXpDraft,
+  progressTargetDraft,
+  setProgressTargetDraft,
+  progressRankDraft,
+  setProgressRankDraft,
+  saveProgress,
+  levelUpCharacter,
+  startProgressEdit,
+  chapterChoices,
+  milestones,
+  focus,
+  skillEvents,
+  skills,
+  statNameOptions,
+  editingMilestoneId,
+  setEditingMilestoneId,
+  milestoneLevelDraft,
+  setMilestoneLevelDraft,
+  milestoneChapterDraft,
+  setMilestoneChapterDraft,
+  milestoneDebuffDraft,
+  setMilestoneDebuffDraft,
+  milestoneXpDraft,
+  setMilestoneXpDraft,
+  milestoneStatChangesDraft,
+  setMilestoneStatChangesDraft,
+  startMilestoneEdit,
+  saveMilestone,
+  removeMilestone,
+  newMilestoneLevel,
+  setNewMilestoneLevel,
+  newMilestoneChapter,
+  setNewMilestoneChapter,
+  newMilestoneDebuff,
+  setNewMilestoneDebuff,
+  newMilestoneXp,
+  setNewMilestoneXp,
+  newMilestoneStatChanges,
+  setNewMilestoneStatChanges,
+  addMilestone,
+  xpEntries,
+  editingXpEntryId,
+  setEditingXpEntryId,
+  xpEntryChapterDraft,
+  setXpEntryChapterDraft,
+  xpEntryXpDraft,
+  setXpEntryXpDraft,
+  startXpEntryEdit,
+  saveXpEntry,
+  removeXpEntry,
+  newXpEntryChapter,
+  setNewXpEntryChapter,
+  newXpEntryXp,
+  setNewXpEntryXp,
+  addXpEntry,
+}: ProgressionSectionsProps) {
+  return (
+    <>
+      <section className="progress-section" aria-label="Progression">
+        <div className="progress-head">
+          <h4 className="character-section-heading">Progression</h4>
+          <span className="progress-rank">{character?.rank || 'Unranked'}</span>
+        </div>
+
+        <div className="progress-stats">
+          <div className="progress-stat">
+            <span className="progress-stat-label">Level</span>
+            <span className="progress-stat-value">{shownLevel}</span>
+          </div>
+          <div className="progress-stat">
+            <span className="progress-stat-label">Experience</span>
+            <span className="progress-stat-value">
+              {shownTarget ? `${shownXp} / ${shownTarget}` : shownXp}
+            </span>
+          </div>
+        </div>
+
+        <div
+          className="progress-bar"
+          role="progressbar"
+          aria-label="Progress to the next level"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progressPercent}
+        >
+          <div
+            className="progress-bar-fill"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+
+        <div className="progress-caption">
+          {shownTarget
+            ? `${Math.max(0, shownTarget - shownXp)} XP to level ${shownLevel + 1}`
+            : 'No target set — edit progression to show a bar.'}
+        </div>
+
+        {editingProgress ? (
+          <div className="progress-form">
+            <label>
+              Level
+              <input
+                type="number"
+                min={1}
+                autoFocus
+                value={progressLevelDraft}
+                onChange={(e) => setProgressLevelDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveProgress();
+                  if (e.key === 'Escape') setEditingProgress(false);
+                }}
+              />
+            </label>
+            <label>
+              Experience
+              <input
+                type="number"
+                min={0}
+                value={progressXpDraft}
+                onChange={(e) => setProgressXpDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveProgress();
+                  if (e.key === 'Escape') setEditingProgress(false);
+                }}
+              />
+            </label>
+            <label>
+              XP to next
+              <input
+                type="number"
+                min={1}
+                placeholder="None"
+                value={progressTargetDraft}
+                onChange={(e) => setProgressTargetDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveProgress();
+                  if (e.key === 'Escape') setEditingProgress(false);
+                }}
+              />
+            </label>
+            <label>
+              Rank
+              <input
+                placeholder="Unranked"
+                value={progressRankDraft}
+                onChange={(e) => setProgressRankDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveProgress();
+                  if (e.key === 'Escape') setEditingProgress(false);
+                }}
+              />
+            </label>
+            <div className="progress-actions">
+              <button
+                title="Save level, experience, rank and the next-level target"
+                onClick={saveProgress}
+              >
+                Save
+              </button>
+              <button
+                title="Leave the progression as it was"
+                onClick={() => setEditingProgress(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="progress-actions">
+            <button
+              title="Add one level, recorded as a level-up in the audit log"
+              onClick={levelUpCharacter}
+            >
+              Level up
+            </button>
+            <button
+              title="Type the level, experience, rank and XP target directly"
+              onClick={startProgressEdit}
+            >
+              Edit progression
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* A milestone is where a level was reached, not the level
+          the sheet shows now. It is what continuity compares in
+          reading order, and a deliberate drop can say so. */}
+      <section className="level-section" aria-label="Level milestones">
+        <h4 className="character-section-heading">Level milestones</h4>
+
+        <div className="level-list">
+          {milestones.length === 0 && (
+            <div className="empty">
+              No level milestones yet — record where a level was reached.
+            </div>
+          )}
+
+          {milestones.map(milestone => {
+            const chapter = chapterChoices.find(
+              choice => choice.id === milestone.chapter_id
+            );
+            const focused =
+              focus?.kind === 'level' && focus.id === milestone.id;
+
+            return (
+              <div
+                key={milestone.id}
+                className={`level-row${focused ? ' progression-row-focused' : ''}`}
+                data-progression={`level-${milestone.id}`}
+              >
+                {editingMilestoneId === milestone.id ? (
+                  <div className="level-editor">
+                    <input
+                      aria-label="Milestone level"
+                      type="number"
+                      min={1}
+                      step={1}
+                      autoFocus
+                      value={milestoneLevelDraft}
+                      onChange={(e) => setMilestoneLevelDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveMilestone(milestone);
+                        if (e.key === 'Escape') setEditingMilestoneId(null);
+                      }}
+                    />
+                    <select
+                      aria-label="Milestone chapter"
+                      title="The chapter where this level was reached"
+                      value={milestoneChapterDraft}
+                      onChange={(e) => setMilestoneChapterDraft(e.target.value)}
+                    >
+                      <option value="">No chapter</option>
+                      {milestoneChapterDraft &&
+                        !chapterChoices.some(
+                          choice => choice.id === milestoneChapterDraft
+                        ) && (
+                          <option value={milestoneChapterDraft}>
+                            Chapter in the trash
+                          </option>
+                        )}
+                      {chapterChoices.map(choice => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.data.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="level-penalty-field">
+                      <input
+                        aria-label="Level drop is a penalty"
+                        type="checkbox"
+                        checked={milestoneDebuffDraft}
+                        onChange={(e) => setMilestoneDebuffDraft(e.target.checked)}
+                      />
+                      Penalty
+                    </label>
+                    <label className="level-metric-field">
+                      Total XP
+                      <input
+                        aria-label="Milestone total XP"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="Optional"
+                        value={milestoneXpDraft}
+                        onChange={e => setMilestoneXpDraft(e.target.value)}
+                      />
+                    </label>
+                    <StatChangeRows
+                      drafts={milestoneStatChangesDraft}
+                      setDrafts={setMilestoneStatChangesDraft}
+                      prefix="Milestone"
+                      statNameOptions={statNameOptions}
+                    />
+                    <div className="level-actions">
+                      <button
+                        title={`Save this level ${milestone.level} milestone`}
+                        onClick={() => saveMilestone(milestone)}
+                      >
+                        Save milestone
+                      </button>
+                      <button
+                        title="Leave the milestone as it was"
+                        onClick={() => setEditingMilestoneId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="level-summary">
+                      <span className="level-value">Level {milestone.level}</span>
+                      <span className="level-chapter">
+                        {chapter
+                          ? `Reached in ${chapter.data.label}`
+                          : milestone.chapter_id
+                            ? 'Chapter in the trash'
+                            : 'No chapter recorded'}
+                      </span>
+                      {milestone.is_debuff && (
+                        <span className="level-penalty">Penalty</span>
+                      )}
+                      {milestone.xp != null && (
+                        <span className="level-xp">XP {milestone.xp}</span>
+                      )}
+                      {milestoneStatChanges(milestone).map(change => (
+                        <span className="level-stat" key={change.id}>
+                          {statChangeText(change)}
+                        </span>
+                      ))}
+                      {skillEvents
+                        .filter(event => event.milestone_id === milestone.id)
+                        .map(event => {
+                          const skill = skills.find(
+                            entry => entry.id === event.skill_id
+                          );
+
+                          return (
+                            <span
+                              className="level-stat level-skill-change"
+                              key={event.id}
+                            >
+                              {skill?.name ?? 'Skill'} · {event.kind}
+                              {event.rank ? ` ${event.rank}` : ''}
+                            </span>
+                          );
+                        })}
+                    </div>
+                    <button
+                      title={`Change the level and chapter of the level ${milestone.level} milestone`}
+                      onClick={() => startMilestoneEdit(milestone)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      title={`Delete the level ${milestone.level} milestone`}
+                      onClick={() => removeMilestone(milestone)}
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="level-creator">
+          <input
+            aria-label="New milestone level"
+            type="number"
+            min={1}
+            step={1}
+            value={newMilestoneLevel}
+            onChange={(e) => setNewMilestoneLevel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addMilestone()}
+          />
+          <select
+            aria-label="New milestone chapter"
+            title="The chapter where this level was reached"
+            value={newMilestoneChapter}
+            onChange={(e) => setNewMilestoneChapter(e.target.value)}
+          >
+            <option value="">No chapter</option>
+            {chapterChoices.map(choice => (
+              <option key={choice.id} value={choice.id}>
+                {choice.data.label}
+              </option>
+            ))}
+          </select>
+          <label className="level-penalty-field">
+            <input
+              aria-label="New milestone is a penalty"
+              type="checkbox"
+              checked={newMilestoneDebuff}
+              onChange={(e) => setNewMilestoneDebuff(e.target.checked)}
+            />
+            Penalty
+          </label>
+          <label className="level-metric-field">
+            Total XP
+            <input
+              aria-label="New milestone total XP"
+              type="number"
+              min={0}
+              step={1}
+              placeholder="Optional"
+              value={newMilestoneXp}
+              onChange={e => setNewMilestoneXp(e.target.value)}
+            />
+          </label>
+          <StatChangeRows
+            drafts={newMilestoneStatChanges}
+            setDrafts={setNewMilestoneStatChanges}
+            prefix="New milestone"
+            statNameOptions={statNameOptions}
+          />
+          <button
+            title="Record this level in the selected character's timeline"
+            onClick={addMilestone}
+          >
+            Add milestone
+          </button>
+        </div>
+      </section>
+
+      {/* Income is what a chapter paid out, kept separate from the
+          running total on a milestone so the chart can show either. */}
+      <section className="xp-ledger-section" aria-label="XP by chapter">
+        <h4 className="character-section-heading">XP by chapter</h4>
+
+        <div className="xp-ledger-list">
+          {xpEntries.length === 0 && (
+            <div className="empty">
+              No XP earned by chapter yet — record what a chapter paid out.
+            </div>
+          )}
+
+          {xpEntries.map(entry => {
+            const chapter = chapterChoices.find(
+              choice => choice.id === entry.chapter_id
+            );
+            const chapterLabel = chapter
+              ? chapter.data.label
+              : 'Chapter in the trash';
+
+            return (
+              <div
+                key={entry.id}
+                className="xp-ledger-row"
+                data-xp-entry={entry.id}
+              >
+                {editingXpEntryId === entry.id ? (
+                  <div className="level-editor">
+                    <select
+                      aria-label="XP entry chapter"
+                      value={xpEntryChapterDraft}
+                      onChange={e => setXpEntryChapterDraft(e.target.value)}
+                    >
+                      <option value="">Choose chapter</option>
+                      {xpEntryChapterDraft &&
+                        !chapterChoices.some(
+                          choice => choice.id === xpEntryChapterDraft
+                        ) && (
+                          <option value={xpEntryChapterDraft}>
+                            Chapter in the trash
+                          </option>
+                        )}
+                      {chapterChoices.map(choice => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.data.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="level-metric-field">
+                      XP earned
+                      <input
+                        aria-label="XP entry earned XP"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={xpEntryXpDraft}
+                        onChange={e => setXpEntryXpDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') saveXpEntry(entry);
+                          if (e.key === 'Escape') setEditingXpEntryId(null);
+                        }}
+                      />
+                    </label>
+                    <div className="level-actions">
+                      <button
+                        title={`Save the XP earned in ${chapterLabel}`}
+                        onClick={() => saveXpEntry(entry)}
+                      >
+                        Save XP
+                      </button>
+                      <button
+                        title="Leave the XP entry as it was"
+                        onClick={() => setEditingXpEntryId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="xp-ledger-summary">
+                      <span className="xp-ledger-chapter">{chapterLabel}</span>
+                      <span className="level-xp">
+                        {entry.xp_earned} XP earned
+                      </span>
+                    </div>
+                    <button
+                      title={`Change the XP earned in ${chapterLabel}`}
+                      onClick={() => startXpEntryEdit(entry)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      title={`Delete the XP earned in ${chapterLabel}`}
+                      onClick={() => removeXpEntry(entry)}
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="level-creator xp-ledger-creator">
+          <select
+            aria-label="New XP entry chapter"
+            value={newXpEntryChapter}
+            onChange={e => setNewXpEntryChapter(e.target.value)}
+          >
+            <option value="">Choose chapter</option>
+            {chapterChoices.map(choice => (
+              <option key={choice.id} value={choice.id}>
+                {choice.data.label}
+              </option>
+            ))}
+          </select>
+          <label className="level-metric-field">
+            XP earned
+            <input
+              aria-label="New XP entry earned XP"
+              type="number"
+              min={0}
+              step={1}
+              value={newXpEntryXp}
+              onChange={e => setNewXpEntryXp(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addXpEntry()}
+            />
+          </label>
+          <button
+            title="Record the XP this chapter paid out"
+            onClick={addXpEntry}
+          >
+            Add XP
+          </button>
+        </div>
+      </section>
+    </>
+  );
+}
