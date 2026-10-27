@@ -1,6 +1,6 @@
 # Roadmap and integrity checklist
 
-LitRPG Storyboard Tracker · updated 23 October 2026
+LitRPG Storyboard Tracker · updated 27 October 2026
 
 This is the working plan. The [README](README.md) says what the app does today;
 this file says what must stay true as it grows, and what comes next. One feature
@@ -28,6 +28,10 @@ the next begins.
 - **The suite is real.** Frontend tests run against the actual `App` with IPC
   mocked; database tests cover rollback, migration from earlier versions and
   import round-trips; CI typechecks and builds both.
+- **The app is being taken apart at its seams.** Each tab, and then the state
+  behind it, has moved into `src/domains/` with tests of its own, so `App.tsx` is
+  the story state and the layout rather than every one of them at once. §5 has
+  what is left.
 
 **Thin ice**
 
@@ -167,6 +171,9 @@ short enough to actually read each time.
 | 3 | **Model the world** — skills, inventory, relationships, LitRPG node types | The vocabulary players expect, attached to chapters and cast |
 | 4 | **See the story** — continuity checks, dashboard, story-bible export | Only possible once phases 2–3 give it something to check |
 | 5 | **Make it feel inevitable** — onboarding, starters, canvas and cast ergonomics | Polish last, on a model that is already right |
+
+That is the product order. Beside it, the app is being taken apart at its seams,
+which §5 covers.
 
 ---
 
@@ -474,7 +481,87 @@ Empty states on every tab say what the tab is for in one line. **M**
 
 ---
 
-## 5. Smaller wins
+## 5. Stage 4 — the domain hooks
+
+The tab panels came out of `App.tsx` one domain at a time. What is left there is
+mostly *state*: the drafts, prompts and notices of a single slice, spread from the
+top of the file to the bottom. Stage 4 moves each slice into a hook beside its
+domain, so a change to the canvas or the history opens one file instead of
+searching ten thousand lines. Two are done.
+
+- **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
+  50-step cap, the counts the toolbar draws, the undo notice and its own fade,
+  the walk between the stacks, and the note that stops a half-step being reported
+  twice. Direct suite of 19.
+- **`domains/canvas/useCanvasDrafts.ts`** — which card or connection is open, the
+  label and notes its fields hold, the half-written text remembered per card, the
+  close prompt, the rename offer, both editors' messages, and the rule that an
+  open editor follows the stored row unless it holds typing. Direct suite of 22.
+
+Both follow one shape, and every later hook should too:
+
+- **The rows come in.** A hook that has to measure a draft against a stored row
+  takes the rows as an argument rather than reading the database.
+- **Writes stay with the app.** A save still runs its command, its history step
+  and its audit entry in `App.tsx`; the hook is handed the row that came back.
+- **Outside work is a callback.** What a hook cannot own — the error line, the
+  board reload, the audit entry — arrives as a named callback, never a bare
+  setter.
+- **Each one lands with its own suite.** A direct test of the hook, mutation
+  checks against it, then `tsc`, the full suite and the build before one commit.
+
+### What is left, largest first
+
+These are the blocks of state still in `App.tsx`, with the handlers that go with
+them. The order is by how much each one would take out of the file, so it is a
+real order rather than a tidy one:
+
+1. **`domains/narrative/useChapterWorkspace`** — the chapter form drafts, the
+   notes, the cast panel and the four prompts: roughly 30 declarations and 600
+   lines of handlers that write them. **L**
+2. **`domains/stories/useStoryShelf`** — the sidebar's rename, delete and confirm
+   state, the import and export notices and the backups dialog: 13 declarations
+   and their handlers. **L**
+3. **`domains/search/useSearchPalette`** — the open flag, the term, the kind
+   filter, the cursor and the other-stories index, with the result memo they
+   feed. **M**
+4. **`domains/progression/useProgressionChart`** — the stat chosen for the
+   chart, the hidden cast, the chapter-state read and the series built from
+   them. **M**
+5. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
+   attributes, one row open at a time, and the four writes that go through the
+   same commands the sheet uses. **M**
+6. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
+   the sheet: the new-stat form, one row open at a time, and the rows
+   themselves. **S–M**
+7. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+   holder is added with, and its reset when another card is opened. **S**
+
+**1 and 2 are the big two, and they are not equal.** The chapter workspace is
+mostly drafts, and its panel already takes them as props, so the move is
+mechanical. The story shelf also carries the import and export round trips and
+the backup restore — the one action that replaces the whole database — so it
+wants its own suite written first.
+
+### What stays in `App.tsx`
+
+- **The rows every tab reads.** `stories`, `currentStory`, `characters`, `nodes`,
+  `edges` and the story-wide lists are read by several tabs at once, so they stay
+  where the loads and the writes can both reach them.
+- **The two loads.** `loadStory` and `reloadStory` are the pair every write ends
+  with. Taking the board's half of them into a `useStoryBoard` is the biggest
+  remaining cut and the riskiest, because the canvas writes, the undo refresh and
+  the sheet all read the same rows. It comes after 1 and 2, when the drafts that
+  read those rows are already out.
+- **The writes themselves.** A handler that runs a command, records a history
+  step and writes an audit entry belongs beside the history hook, not inside a
+  drafts hook.
+- **`actionError`.** One line at the top of the window collects whatever any of
+  them refused, so it stays app-wide rather than per-slice.
+
+---
+
+## 6. Smaller wins
 
 Individually shippable, in rough value order, to slot between larger features:
 
@@ -498,7 +585,7 @@ Individually shippable, in rough value order, to slot between larger features:
 
 ---
 
-## 6. Deliberately not planned
+## 7. Deliberately not planned
 
 - **Sync, accounts, sharing.** Local-first is the product. Copying the file is
   the sharing story until it stops being true.
