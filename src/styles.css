@@ -6105,31 +6105,145 @@ body {
   color: #dbe6ff;
 }
 
-/* The guide is the same dialog shell as the shortcut list, with its three
-   rules written out. */
-.guide-concepts {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+/* The guide reader is the same dialog shell as the shortcut list, holding the
+   guide itself: its headings, tables, code and pictures, in a body that scrolls
+   while the header and the two buttons stay put. */
+.guide-reader {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  max-width: min(1080px, 94vw);
+  /* The shell scrolls as a whole; here the body does. */
+  overflow: hidden;
 }
 
-.guide-concepts h3 {
-  margin: 0 0 3px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #8fc7c2;
-}
-
-.guide-concepts p {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
+.guide-reader-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 2px 0 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
   color: #c8c8c8;
 }
 
+.guide-reader-body h1 {
+  margin: 4px 0 10px;
+  font-size: 19px;
+  color: #e8e8ea;
+}
+
+.guide-reader-body h2 {
+  margin: 22px 0 8px;
+  font-size: 15px;
+  color: #e8e8ea;
+}
+
+.guide-reader-body h3 {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  color: #8fc7c2;
+}
+
+.guide-reader-body p {
+  margin: 0 0 10px;
+}
+
+.guide-reader-body ul,
+.guide-reader-body ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.guide-reader-body li {
+  margin: 0 0 4px;
+}
+
+.guide-reader-body a {
+  color: #8ab4f8;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.guide-reader-body a:hover {
+  text-decoration: underline;
+}
+
+.guide-reader-body code {
+  padding: 1px 4px;
+  background: #1e1e20;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #d7d7d7;
+}
+
+.guide-reader-body pre {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: #1c1c1e;
+  border: 1px solid #34343a;
+  border-radius: 5px;
+}
+
+.guide-reader-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.guide-reader-body hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid #3a3a3f;
+}
+
+/* A picture is worth the width it is given: the guide's pictures are 1600×1000
+   of interface, and they are the reason the reader is this wide. */
+.guide-reader-body img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 8px 0 14px;
+  background: #1c1c1e;
+  border: 1px solid #3a3a3f;
+  border-radius: 5px;
+}
+
+.guide-reader-body table {
+  width: 100%;
+  margin: 0 0 14px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.guide-reader-body th,
+.guide-reader-body td {
+  padding: 5px 8px;
+  border: 1px solid #3a3a3f;
+  text-align: left;
+  vertical-align: top;
+}
+
+.guide-reader-body th {
+  background: #2b2b2f;
+  color: #e0e0e0;
+  font-weight: 600;
+}
+
+/* A path inside the repository: named, but not a link, because the app has no
+   way to open the working copy it was built from. */
+.guide-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #9aa0a6;
+}
+
+.guide-missing-image {
+  color: #e0a0a0;
+}
+
 .guide-actions {
-  margin-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #35353a;
 }

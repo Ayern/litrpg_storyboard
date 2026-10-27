@@ -62,6 +62,7 @@ import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
 import { useHistory } from './domains/history/useHistory';
 import { TrashPanel } from './domains/trash/TrashPanel';
 import { BackupsDialog } from './domains/stories/BackupsDialog';
+import { GuideReader } from './domains/guide/GuideReader';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
@@ -135,26 +136,21 @@ const relationKindSuggestions = ['ally', 'rival', 'mentor', 'family', 'enemy', '
 // story. The guide stays reachable from the header either way.
 const GUIDE_DISMISSED_KEY = 'litrpg.guide.dismissed';
 
-// The three rules the welcome card lists and the guide explains, written once so
-// the short card and the long dialog cannot drift apart.
+// The three rules the first-run card lists, one line each. Their long form is the
+// guide itself: the card's button opens `GUIDE.md`, whose first section is these
+// rules written out, so the two cannot say different things.
 const guideConcepts = [
   {
     title: 'The canvas is a database',
     short: 'A line you draw is a record: a relation, a cast entry, an audit entry.',
-    body:
-      'A connection is not decoration. Draw one between two characters and a relation is written onto both sheets; draw one to a chapter and that character joins its cast; draw one from a skill card to a character and that character becomes one of its holders. Every one of those writes is recorded in the history with your name on it.',
   },
   {
     title: 'A skill card has one identity',
     short: 'Editing a card changes every character who holds that skill.',
-    body:
-      'A skill’s name, rank and effect belong to the skill itself, not to the card or to one holder. A card and every sheet that holds it show the same values, so a correction made in one place reaches the others at once — as a single undo step.',
   },
   {
     title: 'History goes back whole actions',
     short: 'Undo and the Audit Log reverse a change made on the sheet or the canvas.',
-    body:
-      'One save is one step, even when it touches a card and a sheet together. Ctrl+Z walks back through those steps and Redo walks forward again; the Audit Log keeps the longer record of who changed what, with a Revert on each field.',
   },
 ] as const;
 
@@ -7884,7 +7880,7 @@ function App() {
             )}
             <button
               className="backups-button"
-              title="What the canvas, the skill cards and the history record"
+              title="Read the illustrated guide: what the canvas, the skill cards and the history record"
               onClick={() => setGuideOpen(true)}
             >
               Guide
@@ -7951,7 +7947,7 @@ function App() {
             <div className="welcome-actions">
               <button
                 type="button"
-                title="Read the three rules in full, with the keyboard routes one click away"
+                title="Read the illustrated guide, pictures and all"
                 onClick={() => setGuideOpen(true)}
               >
                 Open the guide
@@ -8639,61 +8635,13 @@ function App() {
       )}
 
       {guideOpen && (
-        <div
-          className="shortcuts-backdrop"
-          role="presentation"
-          onClick={() => setGuideOpen(false)}
-        >
-          <div
-            className="shortcuts guide"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Guide"
-            onClick={event => event.stopPropagation()}
-          >
-            <div className="shortcuts-head">
-              <h2>Guide</h2>
-              <button
-                className="shortcuts-close"
-                aria-label="Close guide"
-                title="Close this guide (Esc)"
-                onClick={() => setGuideOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-
-            <p className="shortcuts-intro">
-              Three rules the canvas, the skill cards and the history keep. If you
-              put the welcome card away, this is where it lives.
-            </p>
-
-            <ol className="guide-concepts">
-              {guideConcepts.map(concept => (
-                <li key={concept.title}>
-                  <h3>{concept.title}</h3>
-                  <p>{concept.body}</p>
-                </li>
-              ))}
-            </ol>
-
-            <div className="guide-actions">
-              <button
-                type="button"
-                title={`Show every keyboard route (${shortcutKeys.help})`}
-                onClick={() => {
-                  setGuideOpen(false);
-                  setShortcutsOpen(true);
-                }}
-              >
-                Keyboard shortcuts
-              </button>
-              <button type="button" title="Close this guide" onClick={() => setGuideOpen(false)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <GuideReader
+          onClose={() => setGuideOpen(false)}
+          onOpenShortcuts={() => {
+            setGuideOpen(false);
+            setShortcutsOpen(true);
+          }}
+        />
       )}
 
       {backupsOpen && (

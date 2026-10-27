@@ -39,13 +39,13 @@ The screenshots are of the real app, rendered against a sample story — see
 ## 1. The mental model
 
 Three rules explain almost every behaviour in the app. They are the same three the
-in-app guide opens with.
+first-run card lists in one line each, and this section is what its button opens:
+the header's **Guide** button reads this document, in the app, pictures included.
 
-![The welcome card and the Guide dialog](screenshots/onboarding-welcome.png)
+![The welcome card on first run](screenshots/onboarding-welcome.png)
 
-*The first-run card, and the dialog behind **Open the guide** — three rules and
-the keyboard list, kept in one place in `App.tsx` so a shortcut cannot be
-documented unless it works.*
+*The first-run card. **Open the guide** opens this file where it is read; the card
+itself lists the three rules one line each and then gets out of the way.*
 
 **1. The canvas is a database.** A card is a row; a connection is a row. Drawing a
 line between two character cards does not decorate the board, it writes a
@@ -484,15 +484,18 @@ its name behind, not its description.
 | Change a query, a cascade or an audit entry | `src-tauri/db/src/lib.rs`, in the `Db` method that owns it |
 | Change the history, its notices or its refusals | `src/domains/history/useHistory.ts` |
 | Change a tab's panel | `src/domains/<domain>/<Panel>.tsx`; the panel takes props and keeps only what nothing else uses |
+| Change this guide | `GUIDE.md` itself, which is what the app reads; how it is read is `src/domains/guide/` |
+| Change the demo story, or what the pictures show | `seed_demo_story` in `src-tauri/db/src/lib.rs`, which builds the story `npm run screenshots` photographs |
 
 Verification, after any of the above:
 
 ```bash
 npx tsc --noEmit                  # types
-npm test                          # 690 frontend tests (vitest, jsdom)
+npm test                          # 704 frontend tests (vitest, jsdom)
 npm run build                     # tsc + the production bundle
 cd src-tauri && cargo test -p litrpg-db   # 184 database tests
 cd src-tauri && cargo fmt --check
+npm run screenshots               # the guide's pictures, and the check that none drifted
 ```
 
 The frontend suite renders the real `App` with `invoke` mocked, so it covers what
@@ -525,7 +528,7 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | 12 | Quest ledger with rewards and the apply button | — | [`screenshots/quest-ledger.png`](screenshots/quest-ledger.png) |
 | 13 | Audit log with filters and entries | D | [`screenshots/audit-log.png`](screenshots/audit-log.png) |
 | 14 | Trash: deleted stories and deleted rows | D | [`screenshots/trash-tab.png`](screenshots/trash-tab.png) |
-| 15 | In-app Guide dialog | Mental model | [`screenshots/in-app-guide.png`](screenshots/in-app-guide.png) |
+| 15 | This guide read in the app, pictures and all | Mental model | [`screenshots/in-app-guide.png`](screenshots/in-app-guide.png) |
 | 16 | Board with chapter notes shown | C | [`screenshots/canvas-notes.png`](screenshots/canvas-notes.png) |
 
 An anchor point with no picture, and why: **a drag in progress** — a cast name held
@@ -541,8 +544,17 @@ Not with a second UI. `tools/screenshots/` renders `src/App.tsx` in a browser pa
 with the four Tauri modules aliased to a small in-memory backend, which serves the
 story in `fixture.json` — and that file is written by the database crate's own
 example, `src-tauri/db/examples/screenshot_fixture.rs`, so every row has the shape
-the desktop build sends. The sample story is the app's prepared demo story plus the
-cards, bonds, quests, loot and trash the workflows needed.
+the desktop build sends.
+
+The story is the demo story itself. `seed_demo_story` in `src-tauri/db/src/lib.rs`
+builds the cast, the chapters, the board and its connections, the quests, the loot
+and the rows waiting in the trash, and the app seeds it from **Load demo story** —
+the example only writes down what the database then answers. So the story pictured
+here is the story you can open and click, and a picture that no longer matches the
+app means the app changed, not that the harness drifted.
+
+This document is read in the app as well: `src/domains/guide/` renders `GUIDE.md`
+and the pictures beside it where the header's **Guide** button can open them.
 
 To regenerate the story and every picture above in one step, run
 `npm run screenshots`. The run shoots each anchor, then compares what it shot with

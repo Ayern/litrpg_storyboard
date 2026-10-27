@@ -926,6 +926,433 @@ impl Db {
             )?;
         }
 
+        // ---- the story the guide documents -----------------------------------
+        //
+        // The rest of the demo is not decoration: this is the story `GUIDE.md`
+        // walks through and the story the pictures in `screenshots/` show, so
+        // its cards, connections, ledgers and trash rows are built here rather
+        // than in the screenshot harness. Loading the demo in the app, resetting
+        // it, and re-shooting the guide all build the same story, because there
+        // is one place that builds it.
+
+        // A third cast member, so the rail, the relations map and the quest
+        // ledger have somebody on the other side of the debt.
+        let vane = self.create_character(
+            story_id.to_string(),
+            "Halden Vane".into(),
+            Some("The Ember Court's clerk, who keeps every debt in his own hand.".into()),
+            user.clone(),
+        )?;
+
+        // The cards the board draws. Their positions are the demo's layout, and
+        // the guide's pictures show this board, so a card that moves here moves
+        // in the guide too.
+        let rook_card = demo_card(
+            self,
+            story_id,
+            "character",
+            "Rook Valebright",
+            "Reads the System like a ledger and owes the Court a debt he cannot name.",
+            200.0,
+            400.0,
+            Some(rook.id.clone()),
+            &user,
+        )?;
+        let mira_card = demo_card(
+            self,
+            story_id,
+            "character",
+            "Mira Sable",
+            "A courier with a stolen ember and a talent for exits.",
+            620.0,
+            400.0,
+            Some(mira.id.clone()),
+            &user,
+        )?;
+        let vane_card = demo_card(
+            self,
+            story_id,
+            "character",
+            "Halden Vane",
+            "The clerk who wrote the debt down, and who intends to collect it.",
+            1040.0,
+            400.0,
+            Some(vane.id.clone()),
+            &user,
+        )?;
+        let court_card = demo_card(
+            self,
+            story_id,
+            "faction",
+            "The Ember Court",
+            "Every flame in this room remembers what it was paid.",
+            1040.0,
+            700.0,
+            None,
+            &user,
+        )?;
+        let ash_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Ash Step",
+            "A short step through smoke that leaves a grey afterimage.",
+            200.0,
+            700.0,
+            None,
+            &user,
+        )?;
+        let ember_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Ember Whisper",
+            "Reads the last emotion a flame touched.",
+            620.0,
+            700.0,
+            None,
+            &user,
+        )?;
+        let toll_card = demo_card(
+            self,
+            story_id,
+            "idea",
+            "Cut: the toll bell",
+            "Dropped from chapter two; kept on the board in case the gate needs it again.",
+            1380.0,
+            700.0,
+            None,
+            &user,
+        )?;
+
+        // The demo's own skill rows are pointed at the cards that now stand for
+        // them, which is what makes the holder list on a skill card real.
+        self.update_skill(
+            ash_step.id.clone(),
+            "Ash Step".into(),
+            Some("Rank 2".into()),
+            Some("A short step through smoke that leaves a grey afterimage.".into()),
+            Some(first.id.clone()),
+            Some(ash_card.clone()),
+            user.clone(),
+        )?;
+        self.update_skill(
+            ember_whisper.id.clone(),
+            "Ember Whisper".into(),
+            Some("Rank 1".into()),
+            Some("Reads the last emotion a flame touched.".into()),
+            Some(first.id.clone()),
+            Some(ember_card.clone()),
+            user.clone(),
+        )?;
+
+        // A skill a sheet holds without a card of its own, and the evolution
+        // link between the two, so the tree view draws a parent and a child.
+        let cinder_step = self.add_skill(
+            rook.id.clone(),
+            "Cinder Step".into(),
+            Some("Rank 1".into()),
+            Some("The step carries heat once the ember answers.".into()),
+            Some(third.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        self.add_skill_evolution(
+            ash_step.id.clone(),
+            cinder_step.id.clone(),
+            "upgrade".into(),
+            Some(third.id.clone()),
+            Some("Rank 2".into()),
+            Some("Learned when the debt came due and the ember answered.".into()),
+            user.clone(),
+        )?;
+
+        // ---- the board's connections ----------------------------------------
+
+        // The reading order, and each chapter's cast.
+        self.create_edge(
+            story_id.to_string(),
+            first.id.clone(),
+            second.id.clone(),
+            Some("next".into()),
+            Some("next".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            second.id.clone(),
+            third.id.clone(),
+            Some("next".into()),
+            Some("next".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            first.id.clone(),
+            mira_card.clone(),
+            Some("cast".into()),
+            Some("cast".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            second.id.clone(),
+            rook_card.clone(),
+            Some("cast".into()),
+            Some("cast".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            third.id.clone(),
+            mira_card.clone(),
+            Some("cast".into()),
+            Some("cast".into()),
+            user.clone(),
+        )?;
+
+        // A skill card to each character who holds it.
+        self.create_edge(
+            story_id.to_string(),
+            rook_card.clone(),
+            ash_card.clone(),
+            Some("skill".into()),
+            Some("skill".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            mira_card.clone(),
+            ember_card.clone(),
+            Some("skill".into()),
+            Some("skill".into()),
+            user.clone(),
+        )?;
+
+        // A bond and a grudge, drawn exactly as the canvas draws them.
+        self.create_edge(
+            story_id.to_string(),
+            rook_card.clone(),
+            mira_card.clone(),
+            Some("rival".into()),
+            Some("rival".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            rook_card.clone(),
+            vane_card.clone(),
+            Some("enemy".into()),
+            Some("enemy".into()),
+            user.clone(),
+        )?;
+        self.create_edge(
+            story_id.to_string(),
+            vane_card.clone(),
+            court_card.clone(),
+            Some("serves".into()),
+            Some("serves".into()),
+            user.clone(),
+        )?;
+
+        // ---- the ledgers behind the cards -----------------------------------
+
+        self.add_relation(
+            rook.id.clone(),
+            mira.id.clone(),
+            "rival".into(),
+            Some("Two couriers who keep meeting at the same locked door.".into()),
+            Some(second.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        self.add_relation(
+            rook.id.clone(),
+            vane.id.clone(),
+            "enemy".into(),
+            Some("The debt Rook cannot name is the one Vane wrote down.".into()),
+            Some(first.id.clone()),
+            None,
+            user.clone(),
+        )?;
+
+        // A finished contract with its rewards, and one still open, so the
+        // ledger has both states to filter.
+        let debt = self.add_quest(
+            story_id.to_string(),
+            "Pay the Ember Debt".into(),
+            Some(vane.id.clone()),
+            Some(court_card.clone()),
+            first.id.clone(),
+            Some(third.id.clone()),
+            "completed".into(),
+            Some("The debt comes due in a room where every flame remembers.".into()),
+            Some("Settled with the ledger Rook was never meant to read.".into()),
+            user.clone(),
+        )?;
+
+        for (reward_type, target, details) in [
+            ("xp", rook.id.clone(), "1200"),
+            ("item", rook.id.clone(), "Sealed Ledger"),
+            ("stat", rook.id.clone(), "Insight +2"),
+            ("faction_standing", court_card.clone(), "cleared"),
+        ] {
+            self.add_quest_reward(
+                debt.id.clone(),
+                reward_type.into(),
+                Some(target),
+                Some(details.into()),
+                user.clone(),
+            )?;
+        }
+
+        self.add_quest(
+            story_id.to_string(),
+            "Find the Cinder Road".into(),
+            Some(mira.id.clone()),
+            None,
+            second.id.clone(),
+            None,
+            "active".into(),
+            Some("Mira needs the road that only burns for people who owe nothing.".into()),
+            Some("Open: the gate only answers at dusk.".into()),
+            user.clone(),
+        )?;
+
+        for (character, name, rarity, quantity, effect, chapter, lost) in [
+            (
+                &rook,
+                "Sealed Ledger",
+                Some("Rare"),
+                1,
+                Some("Every name in it reads as a number the reader cannot forget."),
+                Some(&first),
+                None,
+            ),
+            (
+                &rook,
+                "Cinder Key",
+                Some("Uncommon"),
+                2,
+                Some("Opens a door that has been paid for."),
+                Some(&third),
+                None,
+            ),
+            (
+                &mira,
+                "Stolen Ember",
+                Some("Legendary"),
+                1,
+                Some("Warm to the touch, warmer when somebody lies."),
+                Some(&first),
+                Some(&third),
+            ),
+            (&mira, "Courier's Cache", None, 1, None, Some(&second), None),
+        ] {
+            self.add_inventory_item(
+                character.id.clone(),
+                name.into(),
+                rarity.map(str::to_string),
+                quantity,
+                effect.map(str::to_string),
+                chapter.map(|node| node.id.clone()),
+                lost.map(|node| node.id.clone()),
+                None,
+                user.clone(),
+            )?;
+        }
+
+        self.add_currency(rook.id.clone(), "Marks".into(), 420, user.clone())?;
+        self.add_currency(rook.id.clone(), "Ember Script".into(), 3, user.clone())?;
+        self.add_currency(mira.id.clone(), "Marks".into(), 95, user.clone())?;
+
+        for (character, name, value) in [
+            (&rook, "Class", "Delver"),
+            (&rook, "Homeland", "Ashfall"),
+            (&mira, "Class", "Courier"),
+            (&mira, "Notable", "Never caught twice"),
+        ] {
+            self.add_or_update_attribute(
+                character.id.clone(),
+                name.into(),
+                value.into(),
+                user.clone(),
+            )?;
+        }
+
+        // Two notes under their chapters, so the Notes button, the board's
+        // pinned cards and the story bible have something to show.
+        self.add_chapter_note(
+            &second.id,
+            "Rook's debt is named for the first time in this chapter, and he still \
+             cannot repeat it out loud."
+                .into(),
+            user.clone(),
+        )?;
+        self.add_chapter_note(
+            &third.id,
+            "Check the candle count against chapter two before the confrontation \
+             is revised."
+                .into(),
+            user.clone(),
+        )?;
+
+        for (character, standing, note) in [
+            (
+                &rook,
+                "wary",
+                Some("Known to the Court by debt rather than by name."),
+            ),
+            (
+                &mira,
+                "wanted",
+                Some("The stolen ember is still on the Court's ledger."),
+            ),
+        ] {
+            self.add_faction_standing(
+                character.id.clone(),
+                Some(court_card.clone()),
+                standing.into(),
+                note.map(str::to_string),
+                first.id.clone(),
+                None,
+                user.clone(),
+            )?;
+        }
+
+        // ---- something in the trash -----------------------------------------
+
+        // A cut scene and a cut cast member, so the trash is not empty on a
+        // fresh demo. Both are written and then deleted through the ordinary
+        // commands, which is what puts them in the history as well.
+        let cut = self.create_character(
+            story_id.to_string(),
+            "Wren Ashgrove".into(),
+            Some("Cut in the second draft; kept here so the deletion can be undone.".into()),
+            user.clone(),
+        )?;
+        self.delete_character(&cut.id, user.clone())?;
+        self.delete_node(&toll_card, user.clone())?;
+
+        // A whole story in the trash too, since the shelf has a section for
+        // those. A previous demo's scratch story is left as it is rather than
+        // answered with a second copy: the story is not the demo's to delete,
+        // and a reset would otherwise drop one more into the trash each time.
+        let scratch_title = "Scratch: gate variants";
+        let already_in_the_trash = self
+            .list_deleted(None)?
+            .iter()
+            .any(|item| item.kind == "story" && item.label == scratch_title);
+
+        if !already_in_the_trash {
+            let scratch = self.create_story(
+                scratch_title.into(),
+                Some("Two drafts of the gate scene, kept for a week and then let go.".into()),
+                user.clone(),
+            )?;
+            self.delete_story(&scratch.id, user.clone())?;
+        }
+
         Ok(())
     }
 
@@ -12788,6 +13215,39 @@ fn clean_level_xp(xp: Option<i64>) -> DbResult<Option<i64>> {
 }
 
 /// A stat a level-up raised, with both what it gained and what it became.
+/// Creates one of the demo story's cards, optionally already linked to a cast
+/// member, and hands back its id.
+///
+/// Kept beside the seed rather than inside it so the seven cards of the guide's
+/// board read as a list. The positions are that board's layout: the three
+/// chapters in a row along the top, the cast below them, the two skill cards
+/// under that. `GUIDE.md` and the pictures in `screenshots/` show this board, so
+/// a card that moves here moves in the guide too.
+fn demo_card(
+    db: &Db,
+    story_id: &str,
+    node_type: &str,
+    label: &str,
+    content: &str,
+    x: f64,
+    y: f64,
+    character_id: Option<String>,
+    user: &str,
+) -> DbResult<String> {
+    Ok(db
+        .create_node_with_character(
+            story_id.to_string(),
+            node_type.to_string(),
+            label.to_string(),
+            Some(content.to_string()),
+            x,
+            y,
+            user.to_string(),
+            character_id,
+        )?
+        .id)
+}
+
 fn stat_gain(stat_name: &str, amount: i64, value_after: i64) -> LevelStatChangeInput {
     LevelStatChangeInput {
         stat_name: stat_name.to_string(),
@@ -14206,8 +14666,14 @@ mod tests {
             .as_deref()
             .is_some_and(|description| description.contains("intentionally 100 XP short")));
 
+        // The demo is also the story the guide documents, so its cast is the
+        // three the pictures name. Wren Ashgrove is not among them: the seed
+        // writes that one and deletes it, which is how the trash is filled.
         let characters = db.list_characters(&story.id).unwrap();
-        assert_eq!(characters.len(), 2);
+        assert_eq!(characters.len(), 3);
+        assert!(characters
+            .iter()
+            .any(|character| character.name == "Halden Vane"));
         let rook = characters
             .iter()
             .find(|character| character.name == "Rook Valebright")
@@ -14287,9 +14753,18 @@ mod tests {
             .sum();
         assert_eq!(rook_income, 2400);
 
-        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+
+        // The board, the ledgers and the trash the guide shows, all of them part
+        // of the seed rather than of the screenshot harness.
+        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 9);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 10);
+        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
+        assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_chapter_notes(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_deleted(Some(&story.id)).unwrap().len(), 2);
     }
 
     #[test]
@@ -14327,14 +14802,19 @@ mod tests {
             .is_some_and(|description| description.contains("intentionally 100 XP short")));
 
         let characters = db.list_characters(&story.id).unwrap();
-        assert_eq!(characters.len(), 2);
+        assert_eq!(characters.len(), 3);
         assert!(characters
             .iter()
             .all(|character| character.name != "Trespasser"));
 
         let nodes = db.list_nodes(&story.id).unwrap();
-        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes.len(), 9, "three chapters and the six live cards");
         assert!(nodes.iter().all(|node| node.label != "Stray chapter"));
+        assert_eq!(
+            db.list_deleted(Some(&story.id)).unwrap().len(),
+            2,
+            "the cut cast member and the cut card are back in the trash"
+        );
 
         let progress = db.list_story_character_progress(&story.id).unwrap();
         assert_eq!(progress.len(), 6);
@@ -14350,9 +14830,11 @@ mod tests {
         assert_eq!(mira_income, 1400, "the intentional XP gap is back");
 
         assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 6);
-        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 10);
+        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
 
         // The trial run's history went with the data it described, and the reset
         // itself is recorded under the person who asked for it.

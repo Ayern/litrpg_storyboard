@@ -257,24 +257,30 @@ describe('help tooltips', () => {
 });
 
 describe('the guide', () => {
-  it('opens from the header and explains the three rules', async () => {
+  it('opens from the header with the illustrated guide in it', async () => {
     const user = await openApp();
 
     await user.click(screen.getByRole('button', { name: 'Guide' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Guide' });
 
-    for (const title of [
-      'The canvas is a database',
-      'A skill card has one identity',
-      'History goes back whole actions',
-    ]) {
-      expect(within(dialog).getByRole('heading', { name: title })).toBeInTheDocument();
-    }
+    // The document itself, not a summary of it: GUIDE.md is what the app reads.
+    expect(
+      within(dialog).getByRole('heading', { name: /How It Works/ })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '1. The mental model' })).toBeInTheDocument();
 
-    // The long form says what the short card promised.
-    expect(within(dialog).getByText(/a relation is written onto both sheets/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/single undo step/)).toBeInTheDocument();
+    // And its pictures, which are the ones the screenshot run shoots.
+    expect(within(dialog).getAllByRole('img').length).toBeGreaterThan(0);
+
+    // The three rules the welcome card promises are here in full.
+    for (const rule of [
+      /The canvas is a database/,
+      /A skill card has one identity/,
+      /History goes back whole actions/,
+    ]) {
+      expect(within(dialog).getByText(rule)).toBeInTheDocument();
+    }
   });
 
   it('closes on Escape and on the backdrop, but not on its own text', async () => {

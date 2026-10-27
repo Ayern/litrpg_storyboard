@@ -346,10 +346,45 @@ async function shoot(page, fixture) {
   await page.waitForTimeout(300);
   await capture(page, 'trash-tab.png');
 
-  // 11. The app's own guide, which the long-form guide opens with.
+  // 11. The app's own guide, which is the document this guide is: the header's
+  //     button opens GUIDE.md itself, pictures included.
   await page.getByRole('button', { name: 'Guide' }).click();
-  await page.getByRole('heading', { name: 'Guide' }).waitFor({ timeout: 5_000 });
+  await page.getByRole('dialog', { name: 'Guide' }).waitFor({ timeout: 5_000 });
+
+  // Scrolled to the guide's first section, which is short enough that its own
+  // picture follows it on screen: the shot shows the document being read in the
+  // app, one of its pictures among the words.
+  await page.evaluate(() => {
+    const body = document.querySelector('.guide-reader-body');
+    const section = body && body.querySelector('[data-guide-anchor="1-the-mental-model"]');
+
+    if (body && section) {
+      const offset =
+        section.getBoundingClientRect().top - body.getBoundingClientRect().top;
+      body.scrollTop += offset - 16;
+    }
+  });
+
+  // And then waited for that picture to draw. The guide's pictures load as they
+  // come into view, so the wait is for the one the shot is of — a picture of a
+  // broken image would be a picture of a bug the run reports as fine.
+  const guidePictureDrawn = await page
+    .waitForFunction(
+      () => {
+        const picture = document.querySelector('.guide-reader-body img');
+        return picture !== null && picture.complete && picture.naturalWidth > 0;
+      },
+      undefined,
+      { timeout: 20_000 }
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!guidePictureDrawn) fail(chat('the guide opened but its pictures never loaded'));
+
+  await page.waitForTimeout(300);
   await capture(page, 'in-app-guide.png');
+
   // The dialog has both a “×” and a “Close”, and the first is named “Close
   // guide”, so the exact name is what picks the one in the footer.
   await page.getByRole('button', { name: 'Close', exact: true }).click();

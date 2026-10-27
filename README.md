@@ -17,11 +17,7 @@ that trip — is in the illustrated [GUIDE.md](GUIDE.md).
 ## Features
 
 **Stories** — create, rename and delete. The sidebar orders them by most recently
-touched. **Load demo story** builds a prepared three-chapter story with two cast
-members, stats, skills, chapter cast, level and stat milestones, and XP income
-rows. Its last chapter deliberately leaves Mira's ledger 100 XP short of her
-total, so the continuity warning and chapter-card badge can be tried without
-touching a real story. While it keeps its prepared title and the demo is
+touched.**Load demo story** builds a prepared three-chapter story with three cast members, stats, skills, relations and faction standings, chapter cast, level and stat milestones, and XP income rows. Its board is already drawn — the three chapter cards, cards for each cast member, an item card, a faction card, a quest card, two skill cards, and the connections between them — and its ledgers are filled: one finished quest with its four rewards, one still open, two chapter notes, an inventory and two currency rows. A cut cast member, a cut card and a scratch story wait in the trash, so restoring something can be tried without deleting anything of your own. Everything the guide documents is this story: the app builds it, and so do the pictures in [`GUIDE.md`](GUIDE.md). Its last chapter deliberately leaves Mira's ledger 100 XP short of her total, so the continuity warning and chapter-card badge can be tried without touching a real story. While it keeps its prepared title and the demo is
 selected, **Reset demo story** replaces its chapters, cast, progression and
 history in place with a fresh copy of the sample data, so a walkthrough can be
 repeated without piling up demo stories. It is an ordinary story otherwise:
@@ -531,14 +527,15 @@ the pointer leaves. The bubble is placed in the window rather than inside the
 panel it belongs to and is clamped to the margins, so a badge near an edge still
 shows the whole sentence instead of a clipped one.
 
-**Guide and the first-run card.** The header's *Guide* explains the three rules
-the app keeps: the canvas is a database (a line writes a relation, a cast entry,
-an audit entry), a skill card has one identity (its edits reach every holder),
-and history goes back whole actions (one save is one undo step across sheet and
-canvas). A first run offers the same three as a *Start here* card above the tab
-content, with *Open the guide* and *Got it*. Dismissing it writes
-`litrpg.guide.dismissed` to local storage, so it does not come back on the next
-launch; the Guide button stays, and the welcome card never blocks the board.
+**Guide and the first-run card.** The header's *Guide* opens [GUIDE.md](GUIDE.md)
+where it is, inside the app: the illustrated guide to what happens between a line
+drawn on the canvas and the row it writes, with its sixteen pictures of this app,
+its tables, and a link to the keyboard reference at the foot. It is the same file
+the repository keeps, so there is one guide and not a summary of one. A first run
+offers its three rules as a *Start here* card above the tab content, with *Open
+the guide* and *Got it*. Dismissing it writes `litrpg.guide.dismissed` to local
+storage, so it does not come back on the next launch; the Guide button stays, and
+the welcome card never blocks the board.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes
