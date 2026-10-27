@@ -135,3 +135,27 @@ export interface IndexedEdge {
   label: string | null;
   relation_type: string | null;
 }
+
+// The data on a drawn connection: its optional label, the verb it carries and
+// who drew it.
+export interface EdgeData {
+  label?: string;
+  relationType?: string;
+  createdBy: string;
+}
+
+// What a cast chip carries when it is dragged onto the board. The type, not the
+// id, is what tells a drop that the drag is ours even before state catches up.
+export const CAST_DRAG_TYPE = 'application/x-litrpg-character';
+
+// Suggested relation types for a connection. The field stays free text, because
+// a story's own verbs matter more than a fixed list.
+export const edgeRelationTypes = ['unlocks', 'requires', 'rewards'] as const;
+
+// The card types whose Add form also creates the record behind the card. The
+// other types are narrative cards and keep the quick label-only creation.
+export type CanvasCreateKind = 'character' | 'quest' | 'skill';
+
+export function isCanvasCreateKind(value: string): value is CanvasCreateKind {
+  return value === 'character' || value === 'quest' || value === 'skill';
+}

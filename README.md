@@ -829,7 +829,8 @@ page that arrives late, and what it says when a filter matches nothing.
   layout; the pieces that do not need all of it live beside it —
   `src/components/` for shared widgets (help bubble, suggestion field, view
   toggle), `src/domains/<domain>/` for the command module and its types, the
-  canvas card, the audit tab with its row and labels, progression chart,
+  canvas card, the Graph tab's board with its cast rail, connection editor and
+  inspector drawer, the audit tab with its row and labels, progression chart,
   relations map, skill tree and the sheet's skill section, the Chapters tab with
   its cast and note panels and the chapter logic behind it, the Quests tab with
   the ledger behind it, the Characters tab's shell with the power curve and cast
@@ -845,9 +846,14 @@ page that arrives late, and what it says when a filter matches nothing.
   the setter that owns them, and is handed the chapters, the faction cards, the
   cast, the continuity warnings and the two reloads a payout reaches; the sheet
   shell draws the power curve, the cast rail and the selected header from props
-  and takes the rest of the sheet as children while those sections move across,
-  so it holds no state of its own yet and every draft behind a form still lives
-  in the app beside the write it feeds; the badge map the chapter cards draw and
+  and takes the rest of the sheet as children, and each of those sections keeps
+  its own open row and draft fields and hands the app what the form typed, with
+  every write answering whether the row was written so a form closes only on a
+  save that happened; the Graph tab works out for itself only
+  which holders the selected skill card already has and which cast members could
+  still learn it, because that list is shown nowhere else, and takes the drafts,
+  the board, its handlers and the cast member's numbers as props; the badge map
+  the chapter cards draw and
   the grouping of those warnings are plain functions in `ledger.ts`, for the
   same reason as the chapter logic below;
   `chapters.ts` works out the reading order, the numbering
