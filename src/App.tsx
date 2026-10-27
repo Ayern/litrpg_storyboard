@@ -67,6 +67,7 @@ import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { useCanvasInspector } from './domains/canvas/useCanvasInspector';
+import { useSkillHolderForm } from './domains/canvas/useSkillHolderForm';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
@@ -773,13 +774,6 @@ function App() {
     followStoredRows,
   } = useCanvasDrafts({ nodes, edges });
 
-  // Adding a holder from a skill card copies the card's name and notes onto that
-  // character's sheet; rank and chapter stay the holder's own facts.
-  const [skillHolderCharacterId, setSkillHolderCharacterId] = useState('');
-  const [skillHolderRank, setSkillHolderRank] = useState('');
-  const [skillHolderChapterId, setSkillHolderChapterId] = useState('');
-  const [skillHolderError, setSkillHolderError] = useState<string | null>(null);
-  const [savingSkillHolder, setSavingSkillHolder] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -4985,63 +4979,48 @@ function App() {
     }
   };
 
-  // A skill card is a link target, not a template the sheet knows about. Adding
-  // a holder from the card is the deliberate exception: the card's saved name
-  // and notes become the new row's name and effect, because those identify the
-  // skill. Rank and chapter are the holder's own facts, so they are entered
-  // here rather than copied from somebody else's row.
-  const addSkillHolder = async () => {
-    const card = nodes.find(node => node.id === selectedNodeId);
+  // The card the holder form is filling. Only a skill card has holders, so a
+  // drawer showing anything else leaves the form with no card to add to.
+  const skillHolderCard =
+    selectedNode?.data.nodeType === 'skill'
+      ? {
+          id: selectedNode.id,
+          label: selectedNode.data.label,
+          content: selectedNode.data.content ?? null,
+        }
+      : null;
 
-    if (!card || card.data.nodeType !== 'skill') return;
-
-    const characterId = skillHolderCharacterId;
-    const name = card.data.label.trim();
-    const effect = card.data.content?.trim() || null;
-
-    if (!characterId) {
-      setSkillHolderError('Choose the character who learns this skill.');
-      return;
-    }
-
-    if (!name) {
-      setSkillHolderError('The card needs a name before it can be added to a sheet.');
-      return;
-    }
-
-    setSkillHolderError(null);
-    setSavingSkillHolder(true);
-
-    try {
-      const saved: CharacterSkill = await skillsApi.addSkill(
-        characterId,
-        name,
-        skillHolderRank.trim() || null,
-        effect,
-        skillHolderChapterId || null,
-        card.id,
-        actor
+  // A holder added from a card is listed by the board and, when it is the open
+  // sheet's own character who learns it, by the sheet's list as well.
+  const applyHolderAdded = (saved: CharacterSkill) => {
+    const ordered = (list: CharacterSkill[]) =>
+      [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name)
       );
 
-      const ordered = (list: CharacterSkill[]) =>
-        [...list.filter(other => other.id !== saved.id), saved].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        );
-
-      setStorySkills(ordered);
-      if (saved.character_id === selectedCharacterId) {
-        setCharacterSkills(ordered);
-      }
-      setSkillHolderCharacterId('');
-      setSkillHolderRank('');
-      setSkillHolderChapterId('');
-    } catch (e) {
-      console.error('Failed to add a skill holder:', e);
-      setSkillHolderError(`Could not add the holder: ${String(e)}`);
-    } finally {
-      setSavingSkillHolder(false);
-    }
+    setStorySkills(ordered);
+    if (saved.character_id === selectedCharacterId) setCharacterSkills(ordered);
   };
+
+  // The three answers, the line and the write behind the holder form live in the
+  // canvas domain. The card is handed over rather than looked up in the board,
+  // and the row that comes back is what the app lists.
+  const {
+    skillHolderCharacterId,
+    setSkillHolderCharacterId,
+    skillHolderRank,
+    setSkillHolderRank,
+    skillHolderChapterId,
+    setSkillHolderChapterId,
+    skillHolderError,
+    setSkillHolderError,
+    savingSkillHolder,
+    addSkillHolder,
+  } = useSkillHolderForm({
+    card: skillHolderCard,
+    onHolderAdded: applyHolderAdded,
+    actor,
+  });
 
   const removeSkill = async (skill: CharacterSkill): Promise<boolean> => {
     setCharacterError(null);

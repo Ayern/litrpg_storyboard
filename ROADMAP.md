@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Eight are done.
+searching ten thousand lines. Nine are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -543,6 +543,14 @@ searching ten thousand lines. Eight are done.
   list and the story-wide map the badges on every card are drawn from. The
   tab's error line is shared with every other write on it, so it arrives as a
   callback rather than being owned here. Direct suite of 26.
+- **`domains/canvas/useSkillHolderForm.ts`** — the character, rank and chapter a
+  holder is added with, the line the form complains on, the busy flag the
+  button reads, and the write, which copies the card's saved name and notes
+  onto the chosen character's sheet. The card arrives as an argument rather
+  than being looked up in the board, so nothing about React Flow reaches the
+  form; the row that comes back leaves on one callback, because a skill is
+  listed by the board and, when the open sheet is showing the character who
+  learned it, by the sheet as well. Direct suite of 16.
 
 Each follows one shape, and every later hook should too:
 
@@ -559,18 +567,14 @@ Each follows one shape, and every later hook should too:
 - **Each one lands with its own suite.** A direct test of the hook, mutation
   checks against it, then `tsc`, the full suite and the build before one commit.
 
-### What is left, largest first
+### What is left
 
-These are the blocks of state still in `App.tsx`, with the handlers that go with
-them. The order is by how much each one would take out of the file, so it is a
-real order rather than a tidy one:
-
-1. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
-   holder is added with, and its reset when another card is opened. **S**
-
-**The skill-holder form is what is left of the drafts.** It is the smallest of
-the hooks, and once it is gone the two loads are the last thing standing in
-front of the board itself.
+The drafts are out: the nine hooks above hold every field, prompt and notice
+that belonged to a single slice of the app. What remains in `App.tsx` is the
+board's half of the two loads — `loadStory` and `reloadStory`, the pair every
+write ends with, and the rows the canvas, the undo refresh and the sheet all
+read. A `useStoryBoard` is the biggest remaining cut and the riskiest, and it
+is described with everything else that stays.
 
 ### What stays in `App.tsx`
 
@@ -611,6 +615,8 @@ Individually shippable, in rough value order, to slot between larger features:
   lands.
 - **A visible save beat** — a brief "Saved" in the drawer footer, so silence is
   never ambiguous.
+- **Empty the holder form when another card opens** — the character, rank
+  and chapter typed for one skill card stay in the drawer for the next one.
 
 ---
 
