@@ -141,12 +141,15 @@ let calls: Call[] = [];
 let cardLabel = card.label;
 let cardDescription: string | null = card.content;
 let skills: SkillRow[] = [skillRow()];
+// Any further cards the board is holding, so a test can open a second one.
+let extraNodes: unknown[] = [];
 
 beforeEach(() => {
   calls = [];
   cardLabel = card.label;
   cardDescription = card.content;
   skills = [skillRow()];
+  extraNodes = [];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -156,7 +159,7 @@ beforeEach(() => {
       case 'get_all_stories':
         return [story];
       case 'get_graph_nodes':
-        return [{ ...card, label: cardLabel, content: cardDescription }, chapter];
+        return [{ ...card, label: cardLabel, content: cardDescription }, chapter, ...extraNodes];
       case 'get_graph_edges':
         return [];
       case 'get_characters':
@@ -302,6 +305,29 @@ describe('adding a skill holder from its card', () => {
     ).toBeInTheDocument();
     expect(within(panel).getByText('Rank 2')).toBeInTheDocument();
     expect(chooser).toHaveValue('');
+    expect(within(panel).getByLabelText('Rank')).toHaveValue('');      expect(within(panel).getByLabelText('Learned in')).toHaveValue('');
+  });
+
+  it('empties the holder form when another card is opened', async () => {
+    // A second skill card on the board, so the drawer has somewhere to switch to.
+    extraNodes = [{ ...card, id: 'n-ember', label: 'Ember', content: null }];
+    const { user, panel } = await openCard();
+
+    await user.selectOptions(within(panel).getByLabelText('Character'), 'char-2');
+    await user.type(within(panel).getByLabelText('Rank'), 'Rank 2');
+    await user.selectOptions(within(panel).getByLabelText('Learned in'), 'n1');
+
+    // The rank and the chapter are that holder's own facts, so the next card
+    // starts from nothing rather than offering them to a different character.
+    await user.click(screen.getByRole('button', { name: 'skill: Ember' }));
+
+    expect(within(panel).getByLabelText('Character')).toHaveValue('');
+    expect(within(panel).getByLabelText('Rank')).toHaveValue('');
+    expect(within(panel).getByLabelText('Learned in')).toHaveValue('');
+
+    // Coming back to the first card does not bring them back either.
+    await user.click(screen.getByRole('button', { name: 'skill: Frost Touch' }));
+
     expect(within(panel).getByLabelText('Rank')).toHaveValue('');
     expect(within(panel).getByLabelText('Learned in')).toHaveValue('');
   });
