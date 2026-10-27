@@ -61,6 +61,7 @@ import {
 } from './domains/characters/CharacterViews';
 import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
+import { TrashPanel } from './domains/trash/TrashPanel';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
@@ -658,38 +659,9 @@ function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[
   return grouped;
 }
 
-const trashKindLabels: Record<string, string> = {
-  story: 'Story',
-  character: 'Character',
-  node: 'Graph node',
-  edge: 'Graph connection',
-};
-
 // The prepared story's title. It is how the sidebar knows that a reset would
 // replace sample data rather than a story the author has made their own.
 const DEMO_STORY_TITLE = 'The Ember Ledger (Demo)';
-
-// Both lists the trash shows, in one round trip. Shared by the tab's first load
-// and by anything that changes what is in the trash.
-async function fetchTrash(storyId: string | null) {
-  const [inStory, stories] = await Promise.all([
-    storyId
-      ? trashApi.getTrash(storyId)
-      : Promise.resolve<DeletedItem[]>([]),
-    trashApi.getTrash(null),
-  ]);
-
-  return { inStory, stories };
-}
-
-// How long the trash is kept. `null` is forever, which is the default.
-const retentionChoices: { value: string; label: string }[] = [
-  { value: 'forever', label: 'Forever' },
-  { value: '7', label: '7 days' },
-  { value: '30', label: '30 days' },
-  { value: '90', label: '90 days' },
-  { value: '365', label: '1 year' },
-];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -1088,14 +1060,9 @@ function App() {
   const [characterDescriptionDraft, setCharacterDescriptionDraft] = useState('');
   const [confirmDeleteCharacter, setConfirmDeleteCharacter] = useState(false);
 
-
-  const [trash, setTrash] = useState<DeletedItem[]>([]);
-  const [deletedStories, setDeletedStories] = useState<DeletedItem[]>([]);
-  const [trashLoading, setTrashLoading] = useState(false);
-  const [trashError, setTrashError] = useState<string | null>(null);
-  const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null);
-  const [trashNotice, setTrashNotice] = useState<string | null>(null);
-  const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  // Restoring a copy of the database replaces every row the trash lists, so the
+  // tab is told to read both lists again even when the open story did not change.
+  const [trashReloadToken, setTrashReloadToken] = useState(0);
 
   // The launch copies beside the database, and the dialog that lists them.
   const [backupsOpen, setBackupsOpen] = useState(false);
@@ -1845,188 +1812,48 @@ function App() {
     };
   }, [selectedCharacterId]);
 
-  // The trash is re-read every time the tab is opened, so it always reflects the
-  // latest deletions — including ones made a moment ago from another tab.
-  useEffect(() => {
-    if (selectedTab !== 'trash') return;
+  // Everything a restore or a purge touches outside the tab belongs to the app
+  // and is done here: the story list, the open story's cards, whichever sheet is
+  // selected, and the history that an irreversible delete makes unsafe.
+  const restoredFromTrash = async (item: DeletedItem) => {
+    if (item.kind === 'story') {
+      const loadedStories: Story[] = await storiesApi.getAllStories();
+      setStories(loadedStories);
+      return;
+    }
 
-    let cancelled = false;
+    if (currentStory) {
+      await loadStory(currentStory);
 
-    const loadTrash = async () => {
-      setTrashLoading(true);
-      setTrashError(null);
-
-      try {
-        const [lists, days] = await Promise.all([
-          fetchTrash(currentStory?.id ?? null),
-          trashApi.getTrashRetention(),
-        ]);
-
-        if (cancelled) return;
-        setTrash(lists.inStory);
-        setDeletedStories(lists.stories);
-        setRetentionDays(days);
-      } catch (e) {
-        console.error('Failed to load the trash:', e);
-        if (!cancelled) setTrashError(String(e));
-      } finally {
-        if (!cancelled) setTrashLoading(false);
-      }
-    };
-
-    loadTrash();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTab, currentStory]);
-
-  // A restored item has to reappear where the user last saw it, so the sides of
-  // the app that show it are reloaded rather than patched by hand.
-  const restoreDeleted = async (item: DeletedItem) => {
-    setConfirmPurgeId(null);
-    setTrashError(null);
-    setTrashNotice(null);
-
-    try {
-      await trashApi.restoreDeleted(item.id, item.kind, actor);
-
-      if (item.kind === 'story') {
-        const loadedStories: Story[] = await storiesApi.getAllStories();
-        setStories(loadedStories);
-        setDeletedStories(previous => previous.filter(other => other.id !== item.id));
-      } else {
-        setTrash(previous => previous.filter(other => other.id !== item.id));
-
-        if (currentStory) {
-          await loadStory(currentStory);
-
-          const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
-          setCharacters(loaded);
-          setSelectedCharacterId(previous => {
-            if (item.kind === 'character' && loaded.some(other => other.id === item.id)) {
-              return item.id;
-            }
-            return previous && loaded.some(other => other.id === previous)
-              ? previous
-              : loaded[0]?.id ?? null;
-          });
+      const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
+      setCharacters(loaded);
+      setSelectedCharacterId(previous => {
+        if (item.kind === 'character' && loaded.some(other => other.id === item.id)) {
+          return item.id;
         }
-      }
-
-      setTrashNotice(`Restored ${trashKindLabels[item.kind] ?? item.kind} “${item.label}”.`);
-    } catch (e) {
-      console.error('Failed to restore:', e);
-      setTrashError(String(e));
+        return previous && loaded.some(other => other.id === previous)
+          ? previous
+          : loaded[0]?.id ?? null;
+      });
     }
   };
 
-  // The one irreversible action in the app, so it stays behind a confirmation.
-  const purgeDeleted = async (item: DeletedItem) => {
-    setConfirmPurgeId(null);
-    setTrashError(null);
-
-    try {
-      await trashApi.purgeDeleted(item.id, item.kind, actor);
-
-      // Nothing can bring a purged row back, so earlier steps are no longer a
-      // safe branch to undo into.
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      setHistoryDepth({ undo: 0, redo: 0 });
-
-      if (item.kind === 'story') {
-        setDeletedStories(previous => previous.filter(other => other.id !== item.id));
-      } else {
-        setTrash(previous => previous.filter(other => other.id !== item.id));
-
-        // Purging a cast member clears every node linked to it, and purging a
-        // faction card clears the standings that named it, so the story is
-        // re-read instead of being left pointing at a row that no longer exists.
-        if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
-          await loadStory(currentStory);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to delete permanently:', e);
-      setTrashError(String(e));
+  // A purged cast member or card clears every node linked to it, and purging a
+  // faction card clears the standings that named it, so the story is re-read
+  // instead of being left pointing at a row that no longer exists.
+  const purgedFromTrash = async (item: DeletedItem) => {
+    if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
+      await loadStory(currentStory);
     }
   };
 
-  // Shortening the window applies it straight away, so the effect of the choice
-  // is visible instead of deferred to the next launch.
-  const changeRetention = async (value: string) => {
-    const days = value === 'forever' ? null : Number(value);
-
-    setTrashError(null);
-    setTrashNotice(null);
-
-    try {
-      const purged: number = await trashApi.setTrashRetention(days);
-      setRetentionDays(days);
-
-      if (purged > 0) {
-        // Retention is a purge too: undoing past it could not restore what went.
-        undoStackRef.current = [];
-        redoStackRef.current = [];
-        setHistoryDepth({ undo: 0, redo: 0 });
-
-        const lists = await fetchTrash(currentStory?.id ?? null);
-        setTrash(lists.inStory);
-        setDeletedStories(lists.stories);
-
-        setTrashNotice(
-          `Removed ${purged} ${purged === 1 ? 'item' : 'items'} deleted more than ${days} ${
-            days === 1 ? 'day' : 'days'
-          } ago.`
-        );
-      }
-    } catch (e) {
-      console.error('Failed to change how long the trash is kept:', e);
-      setTrashError(String(e));
-    }
+  // Nothing can bring a purged row back, so earlier steps are no longer a safe
+  // branch to undo into.
+  const forgetHistoryBehind = () => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setHistoryDepth({ undo: 0, redo: 0 });
   };
-
-  const renderTrashItem = (item: DeletedItem) => (
-    <li key={item.id} className="trash-item">
-      <span className={`trash-kind ${item.kind}`}>
-        {trashKindLabels[item.kind] ?? item.kind}
-      </span>
-      <span className="trash-label">{item.label}</span>
-      <span className="trash-when">deleted {formatWhen(item.deleted_at)}</span>
-
-      {confirmPurgeId === item.id ? (
-        <>
-          <button
-            className="trash-danger"
-            title="Delete permanently — this cannot be undone"
-            onClick={() => purgeDeleted(item)}
-          >
-            Yes, delete forever
-          </button>
-          <button title="Keep it in the trash" onClick={() => setConfirmPurgeId(null)}>
-            Cancel
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            title="Put it back exactly as it was"
-            onClick={() => restoreDeleted(item)}
-          >
-            Restore
-          </button>
-          <button
-            className="trash-danger"
-            title="Delete permanently — this cannot be undone"
-            onClick={() => setConfirmPurgeId(item.id)}
-          >
-            Delete forever
-          </button>
-        </>
-      )}
-    </li>
-  );
 
   const loadDemoStory = async () => {
     if (demoStoryBusy) return;
@@ -7617,8 +7444,7 @@ function App() {
       setChapterNotes([]);
       setCharacters([]);
       setCastStats({});
-      setTrash([]);
-      setDeletedStories([]);
+      setTrashReloadToken(previous => previous + 1);
 
       const restored: Story[] = await storiesApi.getAllStories();
       setCurrentStory(null);
@@ -8140,14 +7966,6 @@ function App() {
     },
     [onNodesChange]
   );
-
-  // A window the list does not offer (a hand-edited database, or one written by
-  // a future build) still has to show as itself rather than as a blank box.
-  const retentionOptions =
-    retentionDays !== null &&
-    !retentionChoices.some(choice => choice.value === String(retentionDays))
-      ? [...retentionChoices, { value: String(retentionDays), label: `${retentionDays} days` }]
-      : retentionChoices;
 
   // A search looks at everything a result is made of — a card's label, notes,
   // type and cast member; a character's name and description; both ends of a
@@ -10273,83 +10091,14 @@ function App() {
         )}
 
         {selectedTab === 'trash' && (
-          <div className="tab-content">
-            <div className="trash-intro">
-              Deleting a story, character, node or connection puts it here instead of
-              destroying it. Restoring brings it back exactly as it was.
-            </div>
-
-            {trashError && (
-              <div className="audit-error">Could not use the trash: {trashError}</div>
-            )}
-
-            {trashNotice && (
-              <div className="status-strip">
-                {trashNotice}
-                <button
-                  className="status-dismiss"
-                  title="Hide this message"
-                  onClick={() => setTrashNotice(null)}
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            <div className="trash-retention">
-              <label htmlFor="trash-retention">Keep deleted items for</label>
-              <select
-                id="trash-retention"
-                title="How long deleted items are kept before they are removed for good"
-                value={retentionDays === null ? 'forever' : String(retentionDays)}
-                onChange={event => changeRetention(event.target.value)}
-              >
-                {retentionOptions.map(choice => (
-                  <option key={choice.value} value={choice.value}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
-              <span className="hint">
-                Older items are removed when the app starts, and as soon as you shorten
-                this window.
-              </span>
-            </div>
-
-            {trashLoading ? (
-              <div className="empty">Loading the trash…</div>
-            ) : (
-              <>
-                <div className="trash-section">
-                  <h4 className="character-section-heading">Deleted stories</h4>
-
-                  {deletedStories.length === 0 ? (
-                    <div className="empty">No stories in the trash.</div>
-                  ) : (
-                    <ul className="trash-list" aria-label="Deleted stories">
-                      {deletedStories.map(item => renderTrashItem(item))}
-                    </ul>
-                  )}
-                </div>
-
-                <div className="trash-section">
-                  <h4 className="character-section-heading">
-                    {currentStory ? `Deleted from “${currentStory.title}”` : 'Deleted items'}
-                  </h4>
-
-                  {!currentStory ? (
-                    <div className="empty">Select a story to see what was deleted from it.</div>
-                  ) : trash.length === 0 ? (
-                    <div className="empty">Nothing deleted from this story.</div>
-                  ) : (
-                    <ul className="trash-list" aria-label="Deleted from this story">
-                      {trash.map(item => renderTrashItem(item))}
-                    </ul>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          <TrashPanel
+            story={currentStory}
+            actor={actor}
+            reloadToken={trashReloadToken}
+            onRestored={restoredFromTrash}
+            onPurged={purgedFromTrash}
+            onIrreversible={forgetHistoryBehind}
+          />
         )}
 
         {selectedTab === 'audit' && (

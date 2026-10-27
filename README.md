@@ -833,7 +833,8 @@ page that arrives late, and what it says when a filter matches nothing.
   inspector drawer, the audit tab with its row and labels, progression chart,
   relations map, skill tree and the sheet's skill section, the Chapters tab with
   its cast and note panels and the chapter logic behind it, the Quests tab with
-  the ledger behind it, the Characters tab's shell with the power curve and cast
+  the ledger behind it, the Trash tab with its two lists and the window that
+  empties them, the Characters tab's shell with the power curve and cast
   rail above its sheets plus the wrappers that switch to the relations map and
   the skill tree, and `src/lib/` for small formatting helpers. Where a
   tab reads state nothing else uses, its domain module keeps it: the audit tab
@@ -845,7 +846,11 @@ page that arrives late, and what it says when a filter matches nothing.
   a save that happened; the quest ledger holds its quest and reward drafts, its
   status filter and its apply notices, writes the story's quests back through
   the setter that owns them, and is handed the chapters, the faction cards, the
-  cast, the continuity warnings and the two reloads a payout reaches; the sheet
+  cast, the continuity warnings and the two reloads a payout reaches; the trash
+  tab holds both of its lists, which one is waiting on a permanent-delete
+  confirmation, the retention window and its notices, reads them on arrival,
+  and is handed the story list, the open story's cards and the history that a
+  purge makes unsafe to undo into through three callbacks; the sheet
   shell draws the power curve, the cast rail and the selected header from props
   and takes the rest of the sheet as children, and each of those sections keeps
   its own open row and draft fields and hands the app what the form typed, with
