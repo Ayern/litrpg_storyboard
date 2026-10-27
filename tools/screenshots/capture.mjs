@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Regenerates the guide's sample story and re-shoots every picture in it.
 //
-//   npm run screenshots                 # the fixture, then all sixteen images
+//   npm run screenshots                 # the fixture, then all eighteen images
 //   npm run screenshots -- --no-fixture # images only, from the fixture on disk
 //   npm run fixture                     # the fixture only, no images
 //
 // The pictures are of the app, so this drives the app: it starts the harness
 // server (the real `src/App.tsx`, Tauri's commands answered from
-// `backend.ts`), walks the sixteen anchor states in order, and writes each one
+// `backend.ts`), walks the eighteen anchor states in order, and writes each one
 // into `screenshots/`. A step that cannot be reached fails the run rather than
 // quietly writing a picture of the wrong screen.
 //
@@ -346,8 +346,8 @@ async function shoot(page, fixture) {
   await page.waitForTimeout(300);
   await capture(page, 'trash-tab.png');
 
-  // 11. The app's own guide, which is the document this guide is: the header's
-  //     button opens GUIDE.md itself, pictures included.
+  // 11. The app's own guide, which is the author's document: the header's button
+  //     opens STORYBOARDING.md itself, pictures included.
   await page.getByRole('button', { name: 'Guide' }).click();
   await page.getByRole('dialog', { name: 'Guide' }).waitFor({ timeout: 5_000 });
 
@@ -356,7 +356,7 @@ async function shoot(page, fixture) {
   // app, one of its pictures among the words.
   await page.evaluate(() => {
     const body = document.querySelector('.guide-reader-body');
-    const section = body && body.querySelector('[data-guide-anchor="1-the-mental-model"]');
+    const section = body && body.querySelector('[data-guide-anchor="1-get-a-story-open"]');
 
     if (body && section) {
       const offset =
@@ -396,25 +396,110 @@ async function shoot(page, fixture) {
   await page.waitForTimeout(700);
   await capture(page, 'canvas-notes.png');
 
+  // 13. The search palette over the board: the query's matches listed by kind,
+  //     the matching cards outlined behind it, and the filter row under the
+  //     field. Two things are put back first: the line's editor, open on the
+  //     board since step 5 (its own anchor was shot there), and the notes, so
+  //     the picture is of the palette and the board it is searching.
+  const openEdgeEditor = page.locator('.node-editor');
+
+  if ((await openEdgeEditor.count()) > 0) {
+    await openEdgeEditor.getByRole('button', { name: 'Close', exact: true }).click();
+    await page
+      .locator('.edge-endpoints')
+      .waitFor({ state: 'detached', timeout: 5_000 })
+      .catch(() => fail(chat('the connection editor would not close')));
+  }
+
+  await page.getByRole('button', { name: 'Hide notes' }).click();
+  await page.waitForTimeout(200);
+  await page.getByRole('button', { name: 'Search' }).click();
+
+  await page
+    .getByRole('dialog', { name: 'Search the storyboard' })
+    .waitFor({ timeout: 5_000 })
+    .catch(() => fail(chat('the Search button opened no palette')));
+
+  await page.fill('.canvas-search-input', 'ember');
+
+  // A word the fixture is full of: cards, cast members and connections. Fewer
+  // than five results would mean the picture was of a search that found almost
+  // nothing, which is not the state this anchor is of.
+  await page
+    .waitForFunction(
+      () => document.querySelectorAll('.canvas-search-result').length >= 5,
+      undefined,
+      { timeout: 5_000 }
+    )
+    .catch(() => fail(chat('the query matched fewer results than the story holds')));
+
+  await capture(page, 'search-palette.png');
+  await page.keyboard.press('Escape');
+  await page
+    .locator('.canvas-search')
+    .waitFor({ state: 'detached', timeout: 5_000 })
+    .catch(() => fail(chat('Escape did not close the search palette')));
+
+  // 14. Creating a quest card: the form that writes the ledger row and the card
+  //     together, filled in but not sent, because the picture is of what the
+  //     author is about to create. Cancelling afterwards leaves nothing behind.
+  await page.locator('.graph-toolbar select').selectOption('quest');
+  await page.getByRole('button', { name: 'Add Node' }).click();
+
+  const questForm = page.getByRole('dialog', { name: 'New quest' });
+  await questForm.waitFor({ timeout: 5_000 }).catch(() => {
+    fail(chat('choosing the quest type and pressing Add Node opened no form'));
+  });
+
+  await questForm.locator('input').first().fill('Pay the Ember Debt');
+
+  const questFields = questForm.locator('select');
+  await questFields.nth(0).selectOption({ label: 'Rook Valebright' });
+  await questFields.nth(1).selectOption({ label: 'The Ember Court' });
+  await questFields.nth(2).selectOption({ label: 'A Ledger of Cinders' });
+
+  const questText = questForm.locator('textarea');
+  await questText
+    .nth(0)
+    .fill('Recover Halden Vane’s ledger from the Ashen Gate before the Court’s auditors tally it.');
+  await questText.nth(1).fill('Rook wants the debt in his own hand; Vane wants it paid quietly.');
+
+  await capture(page, 'quest-form.png');
+  await questForm.getByRole('button', { name: 'Cancel' }).click();
+
   return story;
 }
 
-// ---- the gallery against the guide ---------------------------------------
+// ---- the gallery against the documents -----------------------------------
 
-// The pictures this script shoots and the ones `GUIDE.md` shows are two lists of
-// the same files, kept by hand on one side and by the walk on the other. Ending
-// every run by comparing them is what catches the drift in either direction.
+// The pictures this script shoots and the ones the documents show are two lists
+// of the same files, kept by hand on one side and by the walk on the other.
+// Ending every run by comparing them is what catches the drift in either
+// direction.
+//
+// Every Markdown file at the top of the project is read, rather than a list of
+// the two there are today, so a third guide is covered the day it is added.
 async function galleryDrift(shot) {
-  const guide = await readFile(path.join(root, 'GUIDE.md'), 'utf8');
-  const shown = new Set(
-    [...guide.matchAll(/screenshots\/([A-Za-z0-9._-]+\.png)/g)].map(match => match[1])
-  );
-  const onDisk = (await readdir(outDir)).filter(name => name.endsWith('.png'));
+  const documents = (await readdir(root)).filter(name => name.endsWith('.md'));
+  const shown = new Map();
 
+  for (const document of documents) {
+    const text = await readFile(path.join(root, document), 'utf8');
+
+    for (const match of text.matchAll(/screenshots\/([A-Za-z0-9._-]+\.png)/g)) {
+      const shows = shown.get(match[1]) ?? [];
+      shows.push(document);
+      shown.set(match[1], shows);
+    }
+  }
+
+  const onDisk = (await readdir(outDir)).filter(name => name.endsWith('.png'));
   const problems = [];
 
-  for (const name of shown) {
-    if (!shot.has(name)) problems.push(`GUIDE.md shows ${name}, which this run did not shoot`);
+  for (const [name, where] of shown) {
+    const who = where.length === 1 ? where[0] : `${where.slice(0, -1).join(', ')} and ${where.at(-1)}`;
+
+    if (!shot.has(name)) problems.push(`${who} show ${name}, which this run did not shoot`);
   }
 
   for (const name of onDisk) {
@@ -422,7 +507,7 @@ async function galleryDrift(shot) {
 
     problems.push(
       shot.has(name)
-        ? `screenshots/${name} was shot but no page of the guide shows it`
+        ? `screenshots/${name} was shot but no document shows it`
         : `screenshots/${name} is in the gallery but nothing shot it`
     );
   }
@@ -467,7 +552,7 @@ async function main() {
     await page.goto(base, { waitUntil: 'domcontentloaded' });
     await shoot(page, fixture);
 
-    log('· checking the gallery against GUIDE.md');
+    log('· checking the gallery against the documents that show it');
     const drift = await galleryDrift(written);
 
     if (drift.length > 0) {

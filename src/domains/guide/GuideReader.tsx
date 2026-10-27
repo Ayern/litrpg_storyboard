@@ -1,17 +1,21 @@
 import { useMemo, useRef, type MouseEvent } from 'react';
 
-import guideSource from '../../../GUIDE.md?raw';
+import authorGuide from '../../../STORYBOARDING.md?raw';
 
 import { renderGuide } from './markdown';
 
-// The guide the header's Guide button opens: `GUIDE.md` itself, read inside the
+// The guide the header's Guide button opens: `STORYBOARDING.md`, read inside the
 // app instead of in an editor beside it, pictures included.
+//
+// That is the author's document — what to click, in what order, to plot a story.
+// `GUIDE.md`, the developer's document, is not shown here: it is about the code,
+// and its first page sends a reader who wants to use the app to this one.
 //
 // There is one document, not two. The app imports the repository's file at build
 // time, so the guide a reader opens here is the guide the repository keeps, and
 // the pictures it shows are the files `npm run screenshots` writes into
-// `screenshots/` — the same run that checks the guide's list of pictures against
-// the ones it shot.
+// `screenshots/` — the same run that checks each document's list of pictures
+// against the ones it shot.
 
 // Three levels up: this file is `src/domains/guide/`, and the gallery sits at the
 // top of the project beside the guide it illustrates.
@@ -30,8 +34,8 @@ const pictures: Record<string, string> = Object.fromEntries(
 export interface GuideReaderProps {
   onClose: () => void;
   onOpenShortcuts: () => void;
-  // The document and its pictures both default to the repository's guide. A test
-  // passes a shorter document and its own picture map.
+  // The document and its pictures both default to the repository's author guide.
+  // A test passes a shorter document and its own picture map.
   source?: string;
   images?: Record<string, string>;
 }
@@ -39,7 +43,7 @@ export interface GuideReaderProps {
 export function GuideReader({
   onClose,
   onOpenShortcuts,
-  source = guideSource,
+  source = authorGuide,
   images = pictures,
 }: GuideReaderProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -88,8 +92,8 @@ export function GuideReader({
         </div>
 
         <p className="shortcuts-intro">
-          The whole guide, pictures included — the same document the repository keeps in GUIDE.md, and
-          the same pictures the screenshot run writes. The three rules the welcome card lists open it.
+          Using the app, start to finish, pictures included: the same document the repository keeps
+          in STORYBOARDING.md. How it works underneath is GUIDE.md, for whoever changes the app.
         </p>
 
         <div className="guide-reader-body" ref={bodyRef} onClick={followAnchor}>

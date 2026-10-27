@@ -9,10 +9,13 @@ records who changed what.
 Everything lives in a single SQLite file on your machine. No accounts, no network,
 no sync.
 
-What comes next, and the invariants every change keeps, are in
-[ROADMAP.md](ROADMAP.md). How the engine works — what happens between a line
-drawn on the canvas and the row it writes, and which module owns which part of
-that trip — is in the illustrated [GUIDE.md](GUIDE.md).
+How to use it — plotting a story on the board, keeping its numbers straight, and
+getting it back out — is the illustrated [STORYBOARDING.md](STORYBOARDING.md),
+which is also what the app's own **Guide** button opens. How the engine works —
+what happens between a line drawn on the canvas and the row it writes, and which
+module owns which part of that trip — is the illustrated [GUIDE.md](GUIDE.md),
+written for whoever changes the app. What comes next, and the invariants every
+change keeps, are in [ROADMAP.md](ROADMAP.md).
 
 ## Features
 
@@ -527,15 +530,17 @@ the pointer leaves. The bubble is placed in the window rather than inside the
 panel it belongs to and is clamped to the margins, so a badge near an edge still
 shows the whole sentence instead of a clipped one.
 
-**Guide and the first-run card.** The header's *Guide* opens [GUIDE.md](GUIDE.md)
-where it is, inside the app: the illustrated guide to what happens between a line
-drawn on the canvas and the row it writes, with its sixteen pictures of this app,
-its tables, and a link to the keyboard reference at the foot. It is the same file
-the repository keeps, so there is one guide and not a summary of one. A first run
-offers its three rules as a *Start here* card above the tab content, with *Open
-the guide* and *Got it*. Dismissing it writes `litrpg.guide.dismissed` to local
-storage, so it does not come back on the next launch; the Guide button stays, and
-the welcome card never blocks the board.
+**Guide and the first-run card.** The header's *Guide* opens
+[STORYBOARDING.md](STORYBOARDING.md) where it is, inside the app: the author's
+walkthrough of plotting a story, from an empty shelf to an export, with the
+seventeen pictures of this app it needs, its reference table, and a link to the
+keyboard list at the foot. It is the same file the repository keeps, so there is
+one guide and not a summary of one; the developer's [GUIDE.md](GUIDE.md) is the
+document underneath it, and neither is a copy of the other. A first run offers the
+three rules as a *Start here* card above the tab content, with *Open the guide* and
+*Got it*. Dismissing it writes `litrpg.guide.dismissed` to local storage, so it does
+not come back on the next launch; the Guide button stays, and the welcome card
+never blocks the board.
 
 **Audit log** — every change is recorded with the acting user, the field, and the
 before/after values, and can be reviewed per story. The tab shows the newest changes

@@ -1,22 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 
+import authorGuide from '../../../STORYBOARDING.md?raw';
 import guideSource from '../../../GUIDE.md?raw';
 import { renderGuide, slugify } from './markdown';
 
-// The pictures the guide shows, by file name, as the reader would look them up.
-const guidePictures = [...new Set(
-  [...guideSource.matchAll(/screenshots\/([\w.-]+\.png)/g)].map(match => match[1])
-)];
-const pictures = Object.fromEntries(guidePictures.map(name => [name, `/assets/${name}`]));
-
-// What the document says, with its code blocks taken out: a fence is quoted
-// text, so a `#` or a `|` inside one is not a heading or a table row.
-const prose = guideSource.replace(/```[\s\S]*?```/g, '');
+// Both documents the app and the repository keep: this file's job is that the
+// reader draws either of them without meeting syntax it does not understand.
+const documents = [
+  { name: 'STORYBOARDING.md', source: authorGuide },
+  { name: 'GUIDE.md', source: guideSource },
+];
 
 const count = (pattern: RegExp, source: string) => [...source.matchAll(pattern)].length;
 
-function draw(source: string, images: Record<string, string> = pictures) {
+// What the document says, with its code blocks taken out: a fence is quoted
+// text, so a `#` or a `|` inside one is not a heading or a table row.
+const proseOf = (source: string) => source.replace(/```[\s\S]*?```/g, '');
+
+// The pictures a document shows, by file name, as the reader would look them up.
+const picturesOf = (source: string) =>
+  Object.fromEntries(
+    [...new Set([...source.matchAll(/screenshots\/([\w.-]+\.png)/g)].map(match => match[1]))].map(
+      name => [name, `/assets/${name}`]
+    )
+  );
+
+function draw(source: string, images: Record<string, string> = picturesOf(source)) {
   const { container } = render(<div>{renderGuide(source, { images })}</div>);
   return container;
 }
@@ -41,7 +51,8 @@ describe('the renderer', () => {
         'A paragraph with **bold**, *slanted* and `code`,',
         'wrapped over two lines.',
         '',
-        '- one',
+        '- one that runs',
+        '  onto a second line',
         '- two',
         '',
         '1. first',
@@ -64,7 +75,9 @@ describe('the renderer', () => {
     expect(container.querySelector('strong')).toHaveTextContent('bold');
     expect(container.querySelector('em')).toHaveTextContent('slanted');
     expect(container.querySelector('code')).toHaveTextContent('code');
+    // A wrapped bullet is one item, not an item and a stray paragraph.
     expect(container.querySelectorAll('ul li')).toHaveLength(2);
+    expect(container.querySelector('ul li')).toHaveTextContent('one that runs onto a second line');
     expect(container.querySelectorAll('ol li')).toHaveLength(2);
     expect(container.querySelector('pre code')).toHaveTextContent('npm test');
     expect(container.querySelector('hr')).toBeInTheDocument();
@@ -114,15 +127,25 @@ describe('the renderer', () => {
   });
 });
 
-describe('GUIDE.md', () => {
+describe.each(documents)('$name', ({ source }) => {
+  const prose = proseOf(source);
+  const pictures = picturesOf(source);
+
   it('renders every heading, rule, code block and table it has', () => {
-    const container = draw(guideSource);
+    const container = draw(source, pictures);
 
     expect(container.querySelectorAll('h1, h2, h3, h4, h5, h6')).toHaveLength(
       count(/^#{1,6} /gm, prose)
     );
     expect(container.querySelectorAll('hr')).toHaveLength(count(/^-{3,}\s*$/gm, prose));
-    expect(container.querySelectorAll('pre')).toHaveLength(count(/^```/gm, guideSource) / 2);
+    expect(container.querySelectorAll('pre')).toHaveLength(count(/^```/gm, source) / 2);
+
+    // One rendered item per line that begins one, and none for a line that
+    // continues one. (The unit tests above say a wrapped bullet's text stays in
+    // its item; this says the wrapping did not add an item of its own.)
+    expect(container.querySelectorAll('li')).toHaveLength(
+      count(/^\s*([-*]|\d+\.)\s+\S/gm, prose)
+    );
 
     // Every table the document draws, each with as many cells per row as its
     // header has columns.
@@ -141,7 +164,7 @@ describe('GUIDE.md', () => {
   });
 
   it('shows every picture it embeds, from the bundle', () => {
-    const container = draw(guideSource);
+    const container = draw(source, pictures);
     const images = [...container.querySelectorAll('img')];
 
     expect(images).toHaveLength(count(/!\[[^\]]*\]\([^)]+\)/g, prose));
@@ -155,7 +178,7 @@ describe('GUIDE.md', () => {
   });
 
   it('resolves every link its contents list makes', () => {
-    const container = draw(guideSource);
+    const container = draw(source, pictures);
     const anchors = [...prose.matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1]);
 
     expect(anchors.length).toBeGreaterThan(0);
@@ -169,7 +192,7 @@ describe('GUIDE.md', () => {
   });
 
   it('leaves no Markdown syntax in the text it draws', () => {
-    const container = draw(guideSource);
+    const container = draw(source, pictures);
     const text = container.textContent ?? '';
 
     // If any of these survive into the text, the reader has a construct it does

@@ -27,17 +27,17 @@ npm run screenshots
 
 That is the whole refresh, and the only command the gallery needs: it regenerates
 `fixture.json` with the Rust example below, then walks the app in a real browser
-and re-shoots the sixteen pictures `GUIDE.md` shows. `npm run screenshots --
+and re-shoots the eighteen pictures `GUIDE.md` shows. `npm run screenshots --
 --no-fixture` shoots from the fixture already on disk, and `npm run fixture`
 regenerates the story and leaves the pictures alone.
 
 The run fails rather than photographing the wrong screen. Each anchor is waited
 for and checked — the connection editor, the relation dialog, the holder form — so
 a state the script cannot reach stops the walk instead of quietly writing a
-picture of somewhere else. It then reads `GUIDE.md`, collects the images that
-file links and compares them with the ones it just shot, failing on either kind
-of drift: a picture the guide shows that this run did not shoot, or one sitting in
-`screenshots/` that no page of the guide shows.
+picture of somewhere else. It then reads every Markdown document at the top of the project,
+collects the images they link and compares them with the ones it just shot, failing
+on either kind of drift: a picture a document shows that this run did not shoot, or
+one sitting in `screenshots/` that no page shows.
 
 A browser is not downloaded: `playwright-core` drives an installed Chrome, Edge
 or Chromium. Set `SCREENSHOTS_BROWSER` to an executable path to name one

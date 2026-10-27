@@ -257,30 +257,28 @@ describe('help tooltips', () => {
 });
 
 describe('the guide', () => {
-  it('opens from the header with the illustrated guide in it', async () => {
+  it('opens from the header with the author’s guide in it', async () => {
     const user = await openApp();
 
     await user.click(screen.getByRole('button', { name: 'Guide' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Guide' });
 
-    // The document itself, not a summary of it: GUIDE.md is what the app reads.
+    // The author's document, not the developer's and not a summary of either:
+    // STORYBOARDING.md is what the app reads.
     expect(
-      within(dialog).getByRole('heading', { name: /How It Works/ })
+      within(dialog).getByRole('heading', { name: 'Storyboarding a story' })
     ).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: '1. The mental model' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '1. Get a story open' })).toBeInTheDocument();
 
-    // And its pictures, which are the ones the screenshot run shoots.
+    // A workflow, in the author's words, rather than a tour of the code.
+    expect(
+      within(dialog).getByText(/to turn an idea into a storyboard you can draft from/)
+    ).toBeInTheDocument();
+
+    // Its tables and its pictures, both drawn by the reader.
+    expect(within(dialog).getAllByRole('table').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByRole('img').length).toBeGreaterThan(0);
-
-    // The three rules the welcome card promises are here in full.
-    for (const rule of [
-      /The canvas is a database/,
-      /A skill card has one identity/,
-      /History goes back whole actions/,
-    ]) {
-      expect(within(dialog).getByText(rule)).toBeInTheDocument();
-    }
   });
 
   it('closes on Escape and on the backdrop, but not on its own text', async () => {

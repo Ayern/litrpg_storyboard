@@ -5,17 +5,21 @@ between drawing a line on the canvas and finding a row in the database, which
 module owns which part of that trip, and what four ordinary pieces of work look
 like end to end.
 
-It is written for two readers:
+It is written for whoever changes the app:
 
-- **Authors** who want to know what the app will and will not do to their story —
-  why a skill rename reaches every sheet, why a connection is not "just a line".
 - **Developers** who have to change it — the domain boundaries, the command
   names, and where a new feature belongs.
+- **Anyone** who wants to know why the app behaves as it does — why a skill rename
+  reaches every sheet, why a connection is not "just a line".
 
-The in-app **Guide** button in the top bar answers the author's version of this in
-three sentences; this document is the long form. For the schema, the audit model
-and the data location, [`README.md`](README.md) is the reference and is not
-repeated here.
+**If you are here to use the app rather than to change it, read
+[`STORYBOARDING.md`](STORYBOARDING.md) instead.** That is the author's guide: what
+to click, in what order, to plot a story and keep its numbers straight, with the
+same pictures. It is what the header's **Guide** button opens in the app, and this
+document is what happens underneath it.
+
+For the schema, the audit model and the data location,
+[`README.md`](README.md) is the reference and is not repeated here.
 
 The screenshots are of the real app, rendered against a sample story — see
 [How the pictures were taken](#how-the-pictures-were-taken).
@@ -39,8 +43,10 @@ The screenshots are of the real app, rendered against a sample story — see
 ## 1. The mental model
 
 Three rules explain almost every behaviour in the app. They are the same three the
-first-run card lists in one line each, and this section is what its button opens:
-the header's **Guide** button reads this document, in the app, pictures included.
+first-run card lists in one line each, and the same three
+[`STORYBOARDING.md`](STORYBOARDING.md) closes with. (That is the document the app's
+**Guide** button opens — the author's guide. This one is for whoever is changing
+the code, and it starts by explaining the same three rules from the inside.)
 
 ![The welcome card on first run](screenshots/onboarding-welcome.png)
 
@@ -526,10 +532,12 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | 10 | Relations and faction standings map | A | [`screenshots/relations-map.png`](screenshots/relations-map.png) |
 | 11 | Skill tree with an evolution link | B | [`screenshots/skill-tree.png`](screenshots/skill-tree.png) |
 | 12 | Quest ledger with rewards and the apply button | — | [`screenshots/quest-ledger.png`](screenshots/quest-ledger.png) |
-| 13 | Audit log with filters and entries | D | [`screenshots/audit-log.png`](screenshots/audit-log.png) |
-| 14 | Trash: deleted stories and deleted rows | D | [`screenshots/trash-tab.png`](screenshots/trash-tab.png) |
-| 15 | This guide read in the app, pictures and all | Mental model | [`screenshots/in-app-guide.png`](screenshots/in-app-guide.png) |
-| 16 | Board with chapter notes shown | C | [`screenshots/canvas-notes.png`](screenshots/canvas-notes.png) |
+| 13 | The board's form for making a quest card | — | [`screenshots/quest-form.png`](screenshots/quest-form.png) |
+| 14 | The search palette with a word typed | — | [`screenshots/search-palette.png`](screenshots/search-palette.png) |
+| 15 | Audit log with filters and entries | D | [`screenshots/audit-log.png`](screenshots/audit-log.png) |
+| 16 | Trash: deleted stories and deleted rows | D | [`screenshots/trash-tab.png`](screenshots/trash-tab.png) |
+| 17 | The author's guide read in the app, pictures and all | — | [`screenshots/in-app-guide.png`](screenshots/in-app-guide.png) |
+| 18 | Board with chapter notes shown | C | [`screenshots/canvas-notes.png`](screenshots/canvas-notes.png) |
 
 An anchor point with no picture, and why: **a drag in progress** — a cast name held
 over the board, or a connection being pulled out of a card's handle. A screenshot

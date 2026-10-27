@@ -141,8 +141,18 @@ function parseBlocks(source: string): Block[] {
       let match = bulletPattern.exec(lines[index]) ?? numberedPattern.exec(lines[index]);
 
       while (index < lines.length && match) {
-        items.push(match[1].trim());
+        let item = match[1].trim();
         index += 1;
+
+        // A wrapped line belongs to the item above it, which is how Markdown
+        // reads it: both documents here write bullets that run onto a second
+        // line, and each of those is one list item, not an item and a paragraph.
+        while (index < lines.length && lines[index].trim() && !startsBlock(lines[index])) {
+          item += ` ${lines[index].trim()}`;
+          index += 1;
+        }
+
+        items.push(item);
         match = ordered ? numberedPattern.exec(lines[index]) : bulletPattern.exec(lines[index]);
       }
 

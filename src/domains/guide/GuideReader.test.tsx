@@ -106,17 +106,18 @@ describe('the guide reader', () => {
     expect(onOpenShortcuts).toHaveBeenCalledTimes(1);
   });
 
-  it('reads the repository’s guide when it is given nothing else', () => {
-    // The default source is `GUIDE.md` itself: the app has no second copy of it.
+  it('reads the repository’s author guide when it is given nothing else', () => {
+    // The default source is `STORYBOARDING.md` itself: the app has no copy of it,
+    // and the document the header's button opens is the author's one.
     render(<GuideReader onClose={() => {}} onOpenShortcuts={() => {}} />);
 
     const dialog = screen.getByRole('dialog', { name: 'Guide' });
 
     expect(
-      within(dialog).getByRole('heading', { name: /How It Works/ })
+      within(dialog).getByRole('heading', { name: 'Storyboarding a story' })
     ).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: '1. The mental model' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: '9. Visual asset checklist' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '1. Get a story open' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '13. A short reference' })).toBeInTheDocument();
 
     // The pictures come from the bundle, not from the repository's folder.
     expect(within(dialog).getAllByRole('img').length).toBeGreaterThan(0);
