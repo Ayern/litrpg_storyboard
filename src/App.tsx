@@ -50,6 +50,9 @@ import * as skillsApi from './domains/skills/api';
 import * as storiesApi from './domains/stories/api';
 import * as trashApi from './domains/trash/api';
 import { CharacterViewToggle } from './components/CharacterViewToggle';
+import { AttributeList } from './domains/characters/AttributeList';
+import { CurrencyList } from './domains/characters/CurrencyList';
+import { InventoryList } from './domains/characters/InventoryList';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { SuggestionInput } from './components/SuggestionInput';
 import { AuditPanel } from './domains/audit/AuditPanel';
@@ -10961,89 +10964,21 @@ function App() {
               addXpEntry={addXpEntry}
             />
 
-            <div className="attribute-section">
-              <h4 className="character-section-heading">Attributes</h4>
-
-              <div className="attribute-list">
-                {characterAttributes.length === 0 && (
-                  <div className="empty">
-                    No attributes yet — Class, Title, Aura, Affinity.
-                  </div>
-                )}
-
-                {characterAttributes.map(attribute => (
-                  <div key={attribute.id} className="attribute-row">
-                    <span className="attribute-name">{attribute.attr_name}</span>
-
-                    {editingAttributeId === attribute.id ? (
-                      <>
-                        <input
-                          className="attribute-value-input"
-                          autoFocus
-                          value={attributeValueDraft}
-                          onChange={(e) => setAttributeValueDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveAttribute(attribute);
-                            if (e.key === 'Escape') setEditingAttributeId(null);
-                          }}
-                        />
-                        <button
-                          title={`Save this new ${attribute.attr_name} value`}
-                          onClick={() => saveAttribute(attribute)}
-                        >
-                          Save
-                        </button>
-                        <button
-                          title="Leave the value as it was"
-                          onClick={() => setEditingAttributeId(null)}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <span className="attribute-value">{attribute.value}</span>
-                        <button
-                          title={`Change this ${attribute.attr_name} value`}
-                          onClick={() => startAttributeEdit(attribute)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          title={`Delete ${attribute.attr_name}`}
-                          onClick={() => removeAttribute(attribute)}
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="attribute-creator">
-                <input
-                  placeholder="Attribute (Class)"
-                  value={newAttributeName}
-                  onChange={(e) => setNewAttributeName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
-                />
-                <input
-                  className="attribute-value-input"
-                  placeholder="Value (Rogue)"
-                  value={newAttributeValue}
-                  onChange={(e) => setNewAttributeValue(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
-                />
-                <button
-                  title="Add this attribute, or update it if the name already exists"
-                  onClick={addAttribute}
-                  disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
-                >
-                  Add attribute
-                </button>
-              </div>
-            </div>
+            <AttributeList
+              attributes={characterAttributes}
+              editingAttributeId={editingAttributeId}
+              setEditingAttributeId={setEditingAttributeId}
+              attributeValueDraft={attributeValueDraft}
+              setAttributeValueDraft={setAttributeValueDraft}
+              startAttributeEdit={startAttributeEdit}
+              saveAttribute={saveAttribute}
+              removeAttribute={removeAttribute}
+              newAttributeName={newAttributeName}
+              setNewAttributeName={setNewAttributeName}
+              newAttributeValue={newAttributeValue}
+              setNewAttributeValue={setNewAttributeValue}
+              addAttribute={addAttribute}
+            />
 
             {/* Skills are rows of their own: a rank and an effect are
                 the author's words, and the chapter is where it was
@@ -11070,392 +11005,63 @@ function App() {
               onDeleteEvent={removeSkillEvent}
             />
 
-            {/* Inventory is a ledger, not a game engine: a name, a
-                rarity, how many, what it does and where it was found. */}
-            <div className="inventory-section">
-              <h4 className="character-section-heading">Inventory</h4>
+            <InventoryList
+              items={characterInventory}
+              chapters={chapterChoices}
+              cards={itemCardChoices}
+              editingItemId={editingItemId}
+              setEditingItemId={setEditingItemId}
+              itemNameDraft={itemNameDraft}
+              setItemNameDraft={setItemNameDraft}
+              itemRarityDraft={itemRarityDraft}
+              setItemRarityDraft={setItemRarityDraft}
+              itemQuantityDraft={itemQuantityDraft}
+              setItemQuantityDraft={setItemQuantityDraft}
+              itemEffectDraft={itemEffectDraft}
+              setItemEffectDraft={setItemEffectDraft}
+              itemChapterDraft={itemChapterDraft}
+              setItemChapterDraft={setItemChapterDraft}
+              itemLostChapterDraft={itemLostChapterDraft}
+              setItemLostChapterDraft={setItemLostChapterDraft}
+              itemNodeDraft={itemNodeDraft}
+              setItemNodeDraft={setItemNodeDraft}
+              startItemEdit={startItemEdit}
+              saveItem={saveItem}
+              removeItem={removeItem}
+              newItemName={newItemName}
+              setNewItemName={setNewItemName}
+              newItemRarity={newItemRarity}
+              setNewItemRarity={setNewItemRarity}
+              newItemQuantity={newItemQuantity}
+              setNewItemQuantity={setNewItemQuantity}
+              newItemEffect={newItemEffect}
+              setNewItemEffect={setNewItemEffect}
+              newItemChapterId={newItemChapterId}
+              setNewItemChapterId={setNewItemChapterId}
+              newItemLostChapterId={newItemLostChapterId}
+              setNewItemLostChapterId={setNewItemLostChapterId}
+              newItemNodeId={newItemNodeId}
+              setNewItemNodeId={setNewItemNodeId}
+              addItem={addItem}
+            />
 
-              <div className="inventory-list">
-                {characterInventory.length === 0 && (
-                  <div className="empty">
-                    No items yet — add one below.
-                  </div>
-                )}
-
-                {characterInventory.map(item => {
-                  const chapter = chapterChoices.find(
-                    choice => choice.id === item.chapter_id
-                  );
-                  const card = itemCardChoices.find(
-                    choice => choice.id === item.node_id
-                  );
-                  const lostChapter = chapterChoices.find(
-                    choice => choice.id === item.lost_chapter_id
-                  );
-
-                  return (
-                    <div key={item.id} className="inventory-row">
-                      {editingItemId === item.id ? (
-                        <div className="inventory-editor">
-                          <input
-                            aria-label="Item name"
-                            autoFocus
-                            value={itemNameDraft}
-                            onChange={(e) => setItemNameDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveItem(item);
-                              if (e.key === 'Escape') setEditingItemId(null);
-                            }}
-                          />
-                          <input
-                            aria-label="Item rarity"
-                            placeholder="Rarity (optional)"
-                            value={itemRarityDraft}
-                            onChange={(e) => setItemRarityDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveItem(item);
-                              if (e.key === 'Escape') setEditingItemId(null);
-                            }}
-                          />
-                          <input
-                            aria-label="Item quantity"
-                            type="number"
-                            min={0}
-                            step={1}
-                            title="How many of this item the character carries"
-                            value={itemQuantityDraft}
-                            onChange={(e) => setItemQuantityDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveItem(item);
-                              if (e.key === 'Escape') setEditingItemId(null);
-                            }}
-                          />
-                          <input
-                            aria-label="Item effect"
-                            placeholder="Effect (optional)"
-                            value={itemEffectDraft}
-                            onChange={(e) => setItemEffectDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveItem(item);
-                              if (e.key === 'Escape') setEditingItemId(null);
-                            }}
-                          />
-                          <select
-                            aria-label="Item chapter acquired"
-                            title="The chapter this item was acquired in"
-                            value={itemChapterDraft}
-                            onChange={(e) => setItemChapterDraft(e.target.value)}
-                          >
-                            <option value="">No chapter</option>
-                            {itemChapterDraft &&
-                              !chapterChoices.some(
-                                choice => choice.id === itemChapterDraft
-                              ) && (
-                                <option value={itemChapterDraft}>
-                                  Chapter in the trash
-                                </option>
-                              )}
-                            {chapterChoices.map(choice => (
-                              <option key={choice.id} value={choice.id}>
-                                {choice.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="Item chapter lost"
-                            title="The chapter this item was lost in"
-                            value={itemLostChapterDraft}
-                            onChange={(e) => setItemLostChapterDraft(e.target.value)}
-                          >
-                            <option value="">Not lost</option>
-                            {itemLostChapterDraft &&
-                              !chapterChoices.some(
-                                choice => choice.id === itemLostChapterDraft
-                              ) && (
-                                <option value={itemLostChapterDraft}>
-                                  Chapter in the trash
-                                </option>
-                              )}
-                            {chapterChoices.map(choice => (
-                              <option key={choice.id} value={choice.id}>
-                                {choice.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="Item card"
-                            title="The item card this row belongs to"
-                            value={itemNodeDraft}
-                            onChange={(e) => setItemNodeDraft(e.target.value)}
-                          >
-                            <option value="">No card</option>
-                            {itemNodeDraft &&
-                              !itemCardChoices.some(
-                                choice => choice.id === itemNodeDraft
-                              ) && (
-                                <option value={itemNodeDraft}>
-                                  Card in the trash
-                                </option>
-                              )}
-                            {itemCardChoices.map(choice => (
-                              <option key={choice.id} value={choice.id}>
-                                {choice.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="inventory-actions">
-                            <button
-                              title={`Save this ${item.name}`}
-                              onClick={() => saveItem(item)}
-                            >
-                              Save item
-                            </button>
-                            <button
-                              title="Leave the item as it was"
-                              onClick={() => setEditingItemId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="inventory-summary">
-                            <span className="inventory-name">{item.name}</span>
-                            <span className="inventory-quantity">
-                              ×{formatCount(item.quantity)}
-                            </span>
-                            {item.rarity && (
-                              <span className="inventory-rarity">{item.rarity}</span>
-                            )}
-                            {item.effect && (
-                              <span className="inventory-effect">{item.effect}</span>
-                            )}
-                            <span className="inventory-chapter">
-                              {chapter
-                                ? `Found in ${chapter.data.label}`
-                                : item.chapter_id
-                                  ? 'Chapter in the trash'
-                                  : 'Chapter not recorded'}
-                            </span>
-                            {item.lost_chapter_id && (
-                              <span className="inventory-lost">
-                                {lostChapter
-                                  ? `Lost in ${lostChapter.data.label}`
-                                  : 'Lost in a chapter in the trash'}
-                              </span>
-                            )}
-                            {card && (
-                              <span className="inventory-card-link">
-                                Card: {card.data.label}
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            title={`Change ${item.name}'s rarity, quantity, effect or chapter`}
-                            onClick={() => startItemEdit(item)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            title={`Delete ${item.name}`}
-                            onClick={() => removeItem(item)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="inventory-creator">
-                <input
-                  aria-label="New item name"
-                  placeholder="Item"
-                  value={newItemName}
-                  onChange={(e) => setNewItemName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
-                />
-                <input
-                  aria-label="New item rarity"
-                  placeholder="Rarity"
-                  value={newItemRarity}
-                  onChange={(e) => setNewItemRarity(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
-                />
-                <input
-                  aria-label="New item quantity"
-                  type="number"
-                  min={0}
-                  step={1}
-                  title="How many of this item the character carries"
-                  value={newItemQuantity}
-                  onChange={(e) => setNewItemQuantity(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
-                />
-                <input
-                  aria-label="New item effect"
-                  placeholder="Effect"
-                  value={newItemEffect}
-                  onChange={(e) => setNewItemEffect(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
-                />
-                <select
-                  aria-label="New item chapter"
-                  title="The chapter this item was acquired in"
-                  value={newItemChapterId}
-                  onChange={(e) => setNewItemChapterId(e.target.value)}
-                >
-                  <option value="">No chapter</option>
-                  {chapterChoices.map(choice => (
-                    <option key={choice.id} value={choice.id}>
-                      {choice.data.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="New item lost chapter"
-                  title="The chapter this item was lost in"
-                  value={newItemLostChapterId}
-                  onChange={(e) => setNewItemLostChapterId(e.target.value)}
-                >
-                  <option value="">Not lost</option>
-                  {chapterChoices.map(choice => (
-                    <option key={choice.id} value={choice.id}>
-                      {choice.data.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="New item card"
-                  title="The item card this row belongs to"
-                  value={newItemNodeId}
-                  onChange={(e) => setNewItemNodeId(e.target.value)}
-                >
-                  <option value="">No card</option>
-                  {itemCardChoices.map(choice => (
-                    <option key={choice.id} value={choice.id}>
-                      {choice.data.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  title="Add this item to the selected character"
-                  onClick={addItem}
-                  disabled={!newItemName.trim()}
-                >
-                  Add item
-                </button>
-              </div>
-            </div>
-
-            {/* Currency is a named amount per character. Nothing adds
-                up across names: gold and mana crystals stay separate. */}
-            <div className="currency-section">
-              <h4 className="character-section-heading">Currency</h4>
-
-              <div className="currency-list">
-                {characterCurrency.length === 0 && (
-                  <div className="empty">
-                    No currency yet — add one below.
-                  </div>
-                )}
-
-                {characterCurrency.map(currency => (
-                  <div key={currency.id} className="currency-row">
-                    {editingCurrencyId === currency.id ? (
-                      <div className="currency-editor">
-                        <input
-                          aria-label="Currency name"
-                          autoFocus
-                          value={currencyNameDraft}
-                          onChange={(e) => setCurrencyNameDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCurrency(currency);
-                            if (e.key === 'Escape') setEditingCurrencyId(null);
-                          }}
-                        />
-                        <input
-                          aria-label="Currency amount"
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={currencyAmountDraft}
-                          onChange={(e) => setCurrencyAmountDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCurrency(currency);
-                            if (e.key === 'Escape') setEditingCurrencyId(null);
-                          }}
-                        />
-                        <div className="currency-actions">
-                          <button
-                            title={`Save this ${currency.name} amount`}
-                            onClick={() => saveCurrency(currency)}
-                          >
-                            Save currency
-                          </button>
-                          <button
-                            title="Leave the amount as it was"
-                            onClick={() => setEditingCurrencyId(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="currency-summary">
-                          <span className="currency-amount">
-                            {formatCount(currency.amount)}
-                          </span>
-                          <span className="currency-name">{currency.name}</span>
-                        </div>
-                        <button
-                          title={`Change the amount of ${currency.name}`}
-                          onClick={() => startCurrencyEdit(currency)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          title={`Delete ${currency.name}`}
-                          onClick={() => removeCurrency(currency)}
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="currency-creator">
-                <input
-                  aria-label="New currency name"
-                  placeholder="Currency (Gold)"
-                  value={newCurrencyName}
-                  onChange={(e) => setNewCurrencyName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
-                />
-                <input
-                  aria-label="New currency amount"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={newCurrencyAmount}
-                  onChange={(e) => setNewCurrencyAmount(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
-                />
-                <button
-                  title="Add this currency to the selected character"
-                  onClick={addCurrency}
-                  disabled={!newCurrencyName.trim()}
-                >
-                  Add currency
-                </button>
-              </div>
-            </div>
+            <CurrencyList
+              currencies={characterCurrency}
+              editingCurrencyId={editingCurrencyId}
+              setEditingCurrencyId={setEditingCurrencyId}
+              currencyNameDraft={currencyNameDraft}
+              setCurrencyNameDraft={setCurrencyNameDraft}
+              currencyAmountDraft={currencyAmountDraft}
+              setCurrencyAmountDraft={setCurrencyAmountDraft}
+              startCurrencyEdit={startCurrencyEdit}
+              saveCurrency={saveCurrency}
+              removeCurrency={removeCurrency}
+              newCurrencyName={newCurrencyName}
+              setNewCurrencyName={setNewCurrencyName}
+              newCurrencyAmount={newCurrencyAmount}
+              setNewCurrencyAmount={setNewCurrencyAmount}
+              addCurrency={addCurrency}
+            />
 
             {/* Relations join two cast members, so they live on the
                 sheet beside the skills and items rather than on a card. */}
