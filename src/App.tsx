@@ -53,8 +53,9 @@ import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { AttributeList } from './domains/characters/AttributeList';
 import { CurrencyList } from './domains/characters/CurrencyList';
 import { InventoryList } from './domains/characters/InventoryList';
+import { RelationList } from './domains/characters/RelationList';
+import { StandingList } from './domains/characters/StandingList';
 import { HelpTip, placeTooltip } from './components/HelpTip';
-import { SuggestionInput } from './components/SuggestionInput';
 import { AuditPanel } from './domains/audit/AuditPanel';
 import { CharacterSheetPanel } from './domains/characters/CharacterSheetPanel';
 import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
@@ -11063,463 +11064,74 @@ function App() {
               addCurrency={addCurrency}
             />
 
-            {/* Relations join two cast members, so they live on the
-                sheet beside the skills and items rather than on a card. */}
-            <div className="relations-section">
-              <h4 className="character-section-heading">Relations</h4>
+            <RelationList
+              relations={selectedRelations}
+              selectedCharacterId={selectedCharacterId}
+              characterNameById={characterNameById}
+              chapterLabelById={chapterLabelById}
+              chapters={chapterChoices}
+              characters={characters}
+              kindSuggestions={relationKindSuggestions}
+              focus={focusedProgression}
+              editingRelationId={editingRelationId}
+              setEditingRelationId={setEditingRelationId}
+              relationKindDraft={relationKindDraft}
+              setRelationKindDraft={setRelationKindDraft}
+              relationChapterDraft={relationChapterDraft}
+              setRelationChapterDraft={setRelationChapterDraft}
+              relationUntilChapterDraft={relationUntilChapterDraft}
+              setRelationUntilChapterDraft={setRelationUntilChapterDraft}
+              relationNoteDraft={relationNoteDraft}
+              setRelationNoteDraft={setRelationNoteDraft}
+              startRelationEdit={startRelationEdit}
+              saveRelation={saveRelation}
+              removeRelation={removeRelation}
+              newRelationKind={newRelationKind}
+              setNewRelationKind={setNewRelationKind}
+              newRelationToId={newRelationToId}
+              setNewRelationToId={setNewRelationToId}
+              newRelationChapterId={newRelationChapterId}
+              setNewRelationChapterId={setNewRelationChapterId}
+              newRelationNote={newRelationNote}
+              setNewRelationNote={setNewRelationNote}
+              addRelation={addRelation}
+            />
 
-              <div className="relation-list">
-                {selectedRelations.length === 0 && (
-                  <div className="empty">
-                    No relations yet — a bond with another cast member is
-                    recorded below.
-                  </div>
-                )}
-
-                {selectedRelations.map(relation => {
-                  const otherId =
-                    relation.from_character_id === selectedCharacterId
-                      ? relation.to_character_id
-                      : relation.from_character_id;
-                  const otherName =
-                    characterNameById.get(otherId) ??
-                    'a cast member in the trash';
-                  const sinceLabel = relation.since_chapter_id
-                    ? chapterLabelById.get(relation.since_chapter_id) ??
-                      'a chapter in the trash'
-                    : null;
-                  const untilLabel = relation.until_chapter_id
-                    ? chapterLabelById.get(relation.until_chapter_id) ??
-                      'a chapter in the trash'
-                    : null;
-                  const focused =
-                    focusedProgression?.kind === 'relation' &&
-                    focusedProgression.id === relation.id;
-
-                  return (
-                    <div
-                      key={relation.id}
-                      data-progression={`relation-${relation.id}`}
-                      className={`relation-row${
-                        focused ? ' progression-row-focused' : ''
-                      }`}
-                    >
-                      {editingRelationId === relation.id ? (
-                        <div className="relation-editor">
-                          <SuggestionInput
-                            label="Relation kind"
-                            title="Ally, rival, mentor, family and owes are only suggestions"
-                            autoFocus
-                            value={relationKindDraft}
-                            suggestions={relationKindSuggestions}
-                            onChange={setRelationKindDraft}
-                            onEnter={() => void saveRelation(relation)}
-                            onEscape={() => setEditingRelationId(null)}
-                          />
-                          <span className="relation-other">{otherName}</span>
-                          <select
-                            aria-label="Relation since chapter"
-                            title="The chapter this bond began in"
-                            value={relationChapterDraft}
-                            onChange={(e) => setRelationChapterDraft(e.target.value)}
-                          >
-                            <option value="">No chapter recorded</option>
-                            {chapterChoices.map(node => (
-                              <option key={node.id} value={node.id}>
-                                {node.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="Relation until chapter"
-                            title="The chapter this bond ended in, if it did"
-                            value={relationUntilChapterDraft}
-                            onChange={(e) =>
-                              setRelationUntilChapterDraft(e.target.value)
-                            }
-                          >
-                            <option value="">Still current</option>
-                            {chapterChoices.map(node => (
-                              <option key={node.id} value={node.id}>
-                                {node.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            aria-label="Relation note"
-                            placeholder="Note"
-                            value={relationNoteDraft}
-                            onChange={(e) => setRelationNoteDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void saveRelation(relation);
-                              if (e.key === 'Escape') setEditingRelationId(null);
-                            }}
-                          />
-                          <div className="relation-actions">
-                            <button
-                              title={`Save this ${relation.kind} relation`}
-                              onClick={() => void saveRelation(relation)}
-                            >
-                              Save relation
-                            </button>
-                            <button
-                              title="Leave the relation as it was"
-                              onClick={() => setEditingRelationId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="relation-summary">
-                            <span className="relation-kind">
-                              {relation.kind}
-                            </span>
-                            <span className="relation-other">{otherName}</span>
-                            <span className="relation-when">
-                              {sinceLabel
-                                ? `since ${sinceLabel}`
-                                : 'no chapter recorded'}
-                              {untilLabel ? ` – ${untilLabel}` : ''}
-                            </span>
-                          </div>
-                          {relation.note && (
-                            <span className="relation-note">
-                              {relation.note}
-                            </span>
-                          )}
-                          <button
-                            title={`Change this ${relation.kind} relation`}
-                            onClick={() => startRelationEdit(relation)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            title={`Delete this ${relation.kind} relation`}
-                            onClick={() => void removeRelation(relation)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="relation-creator">
-                <SuggestionInput
-                  label="New relation kind"
-                  title="Ally, rival, mentor, family and owes are only suggestions"
-                  placeholder="Kind (ally)"
-                  value={newRelationKind}
-                  suggestions={relationKindSuggestions}
-                  onChange={setNewRelationKind}
-                  onEnter={() => void addRelation()}
-                />
-                <select
-                  aria-label="New relation with"
-                  title="The other cast member in this relation"
-                  value={newRelationToId}
-                  onChange={(e) => setNewRelationToId(e.target.value)}
-                >
-                  <option value="">Choose cast…</option>
-                  {characters
-                    .filter(character => character.id !== selectedCharacterId)
-                    .map(character => (
-                      <option key={character.id} value={character.id}>
-                        {character.name}
-                      </option>
-                    ))}
-                </select>
-                <select
-                  aria-label="New relation since chapter"
-                  title="The chapter this bond began in"
-                  value={newRelationChapterId}
-                  onChange={(e) => setNewRelationChapterId(e.target.value)}
-                >
-                  <option value="">No chapter recorded</option>
-                  {chapterChoices.map(node => (
-                    <option key={node.id} value={node.id}>
-                      {node.data.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  aria-label="New relation note"
-                  placeholder="Note"
-                  value={newRelationNote}
-                  onChange={(e) => setNewRelationNote(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void addRelation()}
-                />
-                <button
-                  title="Record this relation on the character's sheet"
-                  onClick={() => void addRelation()}
-                  disabled={!newRelationToId || !newRelationKind.trim()}
-                >
-                  Add relation
-                </button>
-              </div>
-            </div>
-
-            {/* A faction is a card, so the standing names it by its
-                label and keeps the arc it began in. */}
-            <div className="standings-section">
-              <h4 className="character-section-heading">
-                Faction standings
-              </h4>
-
-              <div className="standing-list">
-                {selectedStandings.length === 0 && (
-                  <div className="empty">
-                    No faction standings yet — record one below.
-                  </div>
-                )}
-
-                {selectedStandings.map(standing => {
-                  const factionName =
-                    (standing.faction_node_id
-                      ? factionCardChoices.find(
-                          node => node.id === standing.faction_node_id
-                        )?.data.label
-                      : null) ?? 'a faction no longer on the board';
-                  const sinceLabel = standing.since_chapter_id
-                    ? chapterLabelById.get(standing.since_chapter_id) ??
-                      'a chapter in the trash'
-                    : null;
-                  const untilLabel = standing.until_chapter_id
-                    ? chapterLabelById.get(standing.until_chapter_id) ??
-                      'a chapter in the trash'
-                    : null;
-                  const focused =
-                    focusedProgression?.kind === 'faction-standing' &&
-                    focusedProgression.id === standing.id;
-
-                  return (
-                    <div
-                      key={standing.id}
-                      data-progression={`faction-standing-${standing.id}`}
-                      className={`standing-row${
-                        focused ? ' progression-row-focused' : ''
-                      }`}
-                    >
-                      {editingStandingId === standing.id ? (
-                        <div className="standing-editor">
-                          <select
-                            aria-label="Standing faction"
-                            title="The faction card this standing belongs to"
-                            value={standingFactionDraft}
-                            onChange={(e) =>
-                              setStandingFactionDraft(e.target.value)
-                            }
-                          >
-                            <option value="">Choose faction…</option>
-                            {factionCardChoices.map(node => (
-                              <option key={node.id} value={node.id}>
-                                {node.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            aria-label="Standing role"
-                            placeholder="Standing (Member)"
-                            autoFocus
-                            value={standingTextDraft}
-                            onChange={(e) => setStandingTextDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void saveStanding(standing);
-                              if (e.key === 'Escape') setEditingStandingId(null);
-                            }}
-                          />
-                          <select
-                            aria-label="Standing since chapter"
-                            title="The chapter this standing began in"
-                            value={standingChapterDraft}
-                            onChange={(e) =>
-                              setStandingChapterDraft(e.target.value)
-                            }
-                          >
-                            <option value="">Choose chapter…</option>
-                            {chapterChoices.map(node => (
-                              <option key={node.id} value={node.id}>
-                                {node.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="Standing until chapter"
-                            title="The chapter this standing ended in, if it did"
-                            value={standingUntilChapterDraft}
-                            onChange={(e) =>
-                              setStandingUntilChapterDraft(e.target.value)
-                            }
-                          >
-                            <option value="">Still standing</option>
-                            {chapterChoices.map(node => (
-                              <option key={node.id} value={node.id}>
-                                {node.data.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            aria-label="Standing note"
-                            placeholder="Note"
-                            value={standingNoteDraft}
-                            onChange={(e) => setStandingNoteDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void saveStanding(standing);
-                              if (e.key === 'Escape') setEditingStandingId(null);
-                            }}
-                          />
-                          <div className="standing-actions">
-                            <button
-                              title="Save this faction standing"
-                              onClick={() => void saveStanding(standing)}
-                            >
-                              Save standing
-                            </button>
-                            <button
-                              title="Leave the standing as it was"
-                              onClick={() => setEditingStandingId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="standing-summary">
-                            <span className="standing-faction">
-                              {factionName}
-                            </span>
-                            <span className="standing-role">
-                              {standing.standing}
-                            </span>
-                            <span className="standing-when">
-                              {sinceLabel
-                                ? `since ${sinceLabel}`
-                                : 'no chapter recorded'}
-                              {untilLabel ? ` – ${untilLabel}` : ''}
-                            </span>
-                          </div>
-                          {standing.note && (
-                            <span className="standing-note">
-                              {standing.note}
-                            </span>
-                          )}
-                          <button
-                            title={`Change this ${standing.standing} standing`}
-                            onClick={() => startStandingEdit(standing)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            title={`Delete this ${standing.standing} standing`}
-                            onClick={() => void removeStanding(standing)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="standing-creator">
-                <select
-                  aria-label="New standing faction"
-                  title="The faction card this standing belongs to"
-                  value={newStandingFactionId}
-                  onChange={(e) => setNewStandingFactionId(e.target.value)}
-                >
-                  <option value="">Choose faction…</option>
-                  {factionCardChoices.map(node => (
-                    <option key={node.id} value={node.id}>
-                      {node.data.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="faction-quick-add">
-                  <input
-                    aria-label="New standing faction name"
-                    title="Make a faction card and record this standing in it"
-                    placeholder="New faction…"
-                    value={newStandingFactionName}
-                    onChange={event =>
-                      setNewStandingFactionName(event.target.value)
-                    }
-                    onKeyDown={event => {
-                      if (event.key !== 'Enter') return;
-                      event.preventDefault();
-                      void createFactionCard(
-                        newStandingFactionName,
-                        id => {
-                          setNewStandingFactionId(id);
-                          setNewStandingFactionName('');
-                        },
-                        setCharacterError
-                      );
-                    }}
-                  />
-                  <button
-                    type="button"
-                    title="Create this faction card and choose it"
-                    disabled={!newStandingFactionName.trim()}
-                    onClick={() =>
-                      void createFactionCard(
-                        newStandingFactionName,
-                        id => {
-                          setNewStandingFactionId(id);
-                          setNewStandingFactionName('');
-                        },
-                        setCharacterError
-                      )
-                    }
-                  >
-                    Add faction
-                  </button>
-                </span>
-                <input
-                  aria-label="New standing role"
-                  placeholder="Standing (Member)"
-                  value={newStandingText}
-                  onChange={(e) => setNewStandingText(e.target.value)}
-                />
-                <select
-                  aria-label="New standing since chapter"
-                  title="The chapter this standing began in"
-                  value={newStandingChapterId}
-                  onChange={(e) => setNewStandingChapterId(e.target.value)}
-                >
-                  <option value="">Choose chapter…</option>
-                  {chapterChoices.map(node => (
-                    <option key={node.id} value={node.id}>
-                      {node.data.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  aria-label="New standing note"
-                  placeholder="Note"
-                  value={newStandingNote}
-                  onChange={(e) => setNewStandingNote(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void addStanding()}
-                />
-                <button
-                  title="Record this faction standing on the character's sheet"
-                  onClick={() => void addStanding()}
-                  disabled={
-                    !newStandingFactionId ||
-                    !newStandingText.trim() ||
-                    !newStandingChapterId
-                  }
-                >
-                  Add standing
-                </button>
-              </div>
-            </div>
+            <StandingList
+              standings={selectedStandings}
+              factions={factionCardChoices}
+              chapters={chapterChoices}
+              chapterLabelById={chapterLabelById}
+              focus={focusedProgression}
+              editingStandingId={editingStandingId}
+              setEditingStandingId={setEditingStandingId}
+              standingFactionDraft={standingFactionDraft}
+              setStandingFactionDraft={setStandingFactionDraft}
+              standingTextDraft={standingTextDraft}
+              setStandingTextDraft={setStandingTextDraft}
+              standingChapterDraft={standingChapterDraft}
+              setStandingChapterDraft={setStandingChapterDraft}
+              standingUntilChapterDraft={standingUntilChapterDraft}
+              setStandingUntilChapterDraft={setStandingUntilChapterDraft}
+              standingNoteDraft={standingNoteDraft}
+              setStandingNoteDraft={setStandingNoteDraft}
+              startStandingEdit={startStandingEdit}
+              saveStanding={saveStanding}
+              removeStanding={removeStanding}
+              newStandingFactionId={newStandingFactionId}
+              setNewStandingFactionId={setNewStandingFactionId}
+              newStandingFactionName={newStandingFactionName}
+              setNewStandingFactionName={setNewStandingFactionName}
+              newStandingText={newStandingText}
+              setNewStandingText={setNewStandingText}
+              newStandingChapterId={newStandingChapterId}
+              setNewStandingChapterId={setNewStandingChapterId}
+              newStandingNote={newStandingNote}
+              setNewStandingNote={setNewStandingNote}
+              addStanding={addStanding}
+              createFaction={createFactionCard}
+              onError={setCharacterError}
+            />
 
             <div className="stat-list">
               {characterStats.length === 0 && (
