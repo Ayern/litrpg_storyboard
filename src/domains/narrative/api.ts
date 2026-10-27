@@ -18,6 +18,13 @@ export function updateChapterNote(id: string, text: string, actor: string) {
   return invoke<IndexedNode>('update_chapter_note', { id, text, user: actor });
 }
 
+// A note is a node, so deleting one is the board's delete: it goes to the trash
+// like a card, which is why the panel drops the row without the database having
+// forgotten it.
+export function deleteChapterNote(id: string, actor: string) {
+  return invoke<void>('delete_node', { id, user: actor });
+}
+
 // Writes the reading order and answers with the renumbered chapters, so a
 // refused list leaves the board as it was rather than half-renumbered.
 export function setChapterOrder(storyId: string, orderedIds: string[], actor: string) {

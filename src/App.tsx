@@ -30,7 +30,6 @@ import {
   castBadgesByChapter,
   describeNumberingIssues,
   formatChapterWords,
-  groupNotesByChapter,
   liveChapters,
   numberingIssues,
   sumChapterWords,
@@ -67,6 +66,7 @@ import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
+import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
@@ -108,7 +108,6 @@ import type {
   ProgressionTarget,
 } from './domains/shared/types';
 import type {
-  ChapterNote,
   Character,
   CharacterChapterSkill,
   CharacterLevelMilestone,
@@ -497,14 +496,6 @@ function toFlowNode(row: any): Node<NodeData> {
   };
 }
 
-function toChapterNote(row: any): ChapterNote {
-  return {
-    id: row.id,
-    chapterId: row.parent_node_id ?? '',
-    text: row.content ?? '',
-  };
-}
-
 // The plain sentence behind a continuity flag, without its chapter buttons.
 function continuityText(parts: ContinuityPart[]): string {
   return parts.map(part => (typeof part === 'string' ? part : part.text)).join('');
@@ -752,78 +743,114 @@ function App() {
   // it was until the author asks for the reminders to hang under their chapters.
   const [showChapterNotes, setShowChapterNotes] = useState(false);
 
-  // The chapter list's own controls.
-  const [newChapterTitle, setNewChapterTitle] = useState('');
-  const [chapterError, setChapterError] = useState<string | null>(null);
-  const [chapterBusy, setChapterBusy] = useState(false);
-  // A chapter being dragged, and the row under the pointer with the side the
-  // drop would land on. Both are cleared when the drag ends, however it ends.
-  const [draggedChapterId, setDraggedChapterId] = useState<string | null>(null);
-  const [chapterDrop, setChapterDrop] = useState<{ id: string; after: boolean } | null>(
-    null
-  );
-
-  // The arc and word counts, edited one chapter at a time in the list.
-  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
-  // The chapter a continuity flag just opened, lit briefly so the eye can find
-  // the row the scroll landed on.
-  const [revealedChapterId, setRevealedChapterId] = useState<string | null>(null);
-  const revealTimer = useRef<number | null>(null);
-  // The question the open form is waiting on: opening another chapter while this
-  // one has unsaved edits, closing the form, or navigating away from it — a tab,
-  // a story, a search result. One state, so two questions can never be asked at
-  // once.
-  const [chapterFormPrompt, setChapterFormPrompt] = useState<
-    | { kind: 'open'; id: string }
-    | { kind: 'close' }
-    | { kind: 'leave'; message: string; go: () => void }
-    | null
-  >(null);
-  // The drafts the open form started with, so an untouched form is known to be
-  // clean even when its values are not what the saved chapter holds.
-  const chapterOpenedDrafts = useRef<string[] | null>(null);
-  // Where focus goes when a question appears, so the keyboard is on the answer
-  // rather than left in the field the question is about.
-  const chapterKeepEditingRef = useRef<HTMLButtonElement | null>(null);
-  const noteKeepEditingRef = useRef<HTMLButtonElement | null>(null);
+  // Closing the window is the last way to lose a draft, so it asks first. The
+  // drafts themselves belong to the chapter workspace; what is left here is the
+  // question, because it is about the window rather than about a chapter.
+  const [quitPrompt, setQuitPrompt] = useState(false);
   const quitKeepWorkingRef = useRef<HTMLButtonElement | null>(null);
-  // Where the keyboard goes back to once a question is answered, so dismissing it
-  // does not leave focus on a button that is about to disappear.
-  const chapterArcInputRef = useRef<HTMLInputElement | null>(null);
-  const noteEditorRef = useRef<HTMLTextAreaElement | null>(null);
-  const noteAddRef = useRef<HTMLTextAreaElement | null>(null);
-  const [chapterArcDraft, setChapterArcDraft] = useState('');
-  const [chapterWordsDraft, setChapterWordsDraft] = useState('');
-  const [chapterTargetDraft, setChapterTargetDraft] = useState('');
-  const [chapterPovDraft, setChapterPovDraft] = useState('');
-  const [chapterDayDraft, setChapterDayDraft] = useState('');
-  const [chapterTimeDraft, setChapterTimeDraft] = useState('');
 
   // The explicit cast of each chapter: everyone present beyond the card's own
-  // linked cast member and its point of view. One picker is open at a time.
+  // linked cast member and its point of view. The board writes these rows too —
+  // a character drawn into a chapter adds one — so they stay here and the
+  // workspace is handed them.
   const [storyChapterCast, setStoryChapterCast] = useState<ChapterCastMember[]>([]);
-  const [openChapterCastId, setOpenChapterCastId] = useState<string | null>(null);
-  const [chapterCastBusyId, setChapterCastBusyId] = useState<string | null>(null);
-  const [chapterCastError, setChapterCastError] = useState<string | null>(null);
 
-  // The plain-text notes kept with each chapter, and the one panel that is open.
-  const [chapterNotes, setChapterNotes] = useState<ChapterNote[]>([]);
-  const [openNotesChapterId, setOpenNotesChapterId] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState('');
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-  const [noteEditDraft, setNoteEditDraft] = useState('');
-  const [noteError, setNoteError] = useState<string | null>(null);
-  const [noteBusy, setNoteBusy] = useState(false);
-  // The note a search result pointed at, marked for a moment after it is opened.
-  const [matchedNoteId, setMatchedNoteId] = useState<string | null>(null);
-  const noteHighlightRef = useRef<number | null>(null);
-  // Closing the note panel or moving it to another chapter is a way to lose a
-  // half-written note, so it asks first, in the panel where the typing is.
-  const [notePrompt, setNotePrompt] = useState<{ message: string; go: () => void } | null>(
-    null
-  );
-  // Closing the window is the last way to lose a draft, so it asks too.
-  const [quitPrompt, setQuitPrompt] = useState(false);
+  // The live chapters, in reading order. The board says which cards are chapters
+  // and the narrative domain says what order they read in; the tab, the cards
+  // and the workspace below all work from this one list.
+  const chapterNodes = useMemo(() => liveChapters(nodes), [nodes]);
+
+  // The Chapters tab's own state lives in the narrative domain: the reading
+  // list's controls, the details form and the question it asks before being
+  // left, the notes panel, and the cast picker. The cards arrive as an argument
+  // because the board writes them, and the cast rows go back out the same way,
+  // since a connection drawn on the canvas adds a cast member too.
+  const {
+    newChapterTitle,
+    setNewChapterTitle,
+    chapterError,
+    setChapterError,
+    chapterBusy,
+    setChapterBusy,
+    revealedChapterId,
+    revealChapter,
+    editingChapterId,
+    chapterArcDraft,
+    setChapterArcDraft,
+    chapterWordsDraft,
+    setChapterWordsDraft,
+    chapterTargetDraft,
+    setChapterTargetDraft,
+    chapterPovDraft,
+    setChapterPovDraft,
+    chapterDayDraft,
+    setChapterDayDraft,
+    chapterTimeDraft,
+    setChapterTimeDraft,
+    chapterArcInputRef,
+    chapterKeepEditingRef,
+    chapterDraftIsDirty,
+    openChapterDetails,
+    requestChapterClose,
+    requestChapterLeave,
+    askToLeaveChapter,
+    chapterFormPrompt,
+    dismissChapterPrompt,
+    discardChapterEdit,
+    closeChapterForm,
+    leaveChapterForm,
+    finishChapterSave,
+    abandonChapterDrafts,
+    notes,
+    notesByChapter,
+    noteCount,
+    followLoadedNotes,
+    clearNotes,
+    openNotesChapterId,
+    toggleChapterNotes,
+    openChapterNotes,
+    noteDraft,
+    setNoteDraft,
+    noteDraftIsDirty,
+    editingNoteId,
+    noteEditDraft,
+    setNoteEditDraft,
+    matchedNoteId,
+    noteBusy,
+    noteError,
+    noteEditorRef,
+    noteAddRef,
+    noteKeepEditingRef,
+    notePrompt,
+    setNotePrompt,
+    askNoteQuestion,
+    dismissNotePrompt,
+    discardNoteDraft,
+    abandonNoteDrafts,
+    addNote,
+    startNoteEdit,
+    requestNoteEditCancel,
+    saveNoteEdit,
+    deleteNote,
+    openChapterCastId,
+    chapterCastBusyId,
+    chapterCastError,
+    chapterCastIsExplicit,
+    toggleChapterCastPanel,
+    closeChapterCastPanel,
+    setChapterCastPresence,
+    focusDraftField,
+  } = useChapterWorkspace({
+    chapterNodes,
+    chapterCast: storyChapterCast,
+    actor,
+    onCastMemberAdded: row =>
+      setStoryChapterCast(previous =>
+        previous.some(member => member.id === row.id) ? previous : [...previous, row]
+      ),
+    onCastMemberRemoved: id =>
+      setStoryChapterCast(previous => previous.filter(member => member.id !== id)),
+  });
 
   // Which card or connection is open, the label and notes its fields hold, and
   // the half-written text remembered for the cards visited this session live in
@@ -1089,14 +1116,9 @@ function App() {
     setSyncedXpNotice(null);
 
     // A note or cast panel belongs to the story it was opened in, so a switch
-    // closes it.
-    setOpenChapterCastId(null);
-    setChapterCastError(null);
-    setOpenNotesChapterId(null);
-    setEditingNoteId(null);
-    setNoteDraft('');
-    setNoteError(null);
-    setMatchedNoteId(null);
+    // closes it and drops whatever was being typed in it.
+    closeChapterCastPanel();
+    abandonNoteDrafts();
 
     try {
       const dbNodes: any[] = await canvasApi.getGraphNodes(story.id);
@@ -1115,7 +1137,7 @@ function App() {
         levels,
         progress,
         inventory,
-        notes,
+        noteRows,
         chapterCast,
         relations,
         standings,
@@ -1144,7 +1166,7 @@ function App() {
       setStoryLevelMilestones(levels ?? []);
       setStoryCharacterProgress(progress ?? []);
       setStoryInventory(inventory ?? []);
-      setChapterNotes((notes ?? []).map(toChapterNote));
+      followLoadedNotes(noteRows ?? []);
       setStoryChapterCast(chapterCast ?? []);
       setStoryRelations(relations ?? []);
       setStoryFactionStandings(standings ?? []);
@@ -1802,9 +1824,8 @@ function App() {
 
       // The reset was confirmed, so any draft about the replaced rows goes with
       // them rather than being left pointing at a chapter that no longer exists.
-      setChapterFormPrompt(null);
-      setNotePrompt(null);
-      setEditingChapterId(null);
+      abandonChapterDrafts();
+      abandonNoteDrafts();
 
       await loadStory(story);
       setImportStatus(`Rebuilt "${story.title}" with its original sample data`);
@@ -1830,7 +1851,7 @@ function App() {
       // it up would let a node from the old story be edited from this one.
       setNodes([]);
       setEdges([]);
-      setChapterNotes([]);
+      clearNotes();
       closeEditors();
     } catch (e) {
       console.error('Failed to create story:', e);
@@ -2185,10 +2206,9 @@ function App() {
     }
   };
 
-  // The live chapters, in reading order, and everything the Chapters tab and
-  // the chapter cards work out from them. The chapter logic itself lives in the
-  // narrative domain; these memos only say when it is worth running again.
-  const chapterNodes = useMemo(() => liveChapters(nodes), [nodes]);
+  // Everything the Chapters tab and the chapter cards work out from the reading
+  // order. The chapter logic itself lives in the narrative domain; these memos
+  // only say when it is worth running again.
 
   // A quest shows on both chapters it names. The badge map itself lives in the
   // quests domain, because the ledger and the chapter cards read the same one.
@@ -2265,11 +2285,7 @@ function App() {
     [storyChapterCastStates, castNames]
   );
 
-  // The notes grouped by their chapter, and the chapters placed on the day.
-  const notesByChapter = useMemo(() => groupNotesByChapter(chapterNotes), [chapterNotes]);
-
-  const noteCount = (chapterId: string) => notesByChapter.get(chapterId)?.length ?? 0;
-
+  // The chapters placed on the day, which is the reading order by other means.
   const chapterTimeline = useMemo(() => timelineOrder(chapterNodes), [chapterNodes]);
 
   // The lost-item checks are worked out once so the Chapters tab and the chapter
@@ -3392,95 +3408,9 @@ function App() {
     return warnings;
   }, [chapterNodes, castNames, inventoryContinuity, progressContinuity]);
 
-  const focusChapterRow = (chapterId: string) => {
-    document
-      .querySelector(`[data-chapter-id="${chapterId}"]`)
-      ?.scrollIntoView?.({ block: 'nearest' });
-
-    setRevealedChapterId(chapterId);
-
-    if (revealTimer.current != null) window.clearTimeout(revealTimer.current);
-
-    revealTimer.current = window.setTimeout(() => {
-      setRevealedChapterId(null);
-      revealTimer.current = null;
-    }, 1200);
-  };
-
-  // Whether the open form holds anything that has not been saved. Comparing with
-  // the drafts it opened with, rather than with the stored chapter, means typing
-  // a value and undoing it leaves the form clean.
-  const chapterDraftIsDirty = () => {
-    // A closed form holds no draft. Saving closes it and leaves the baseline it
-    // opened with behind, so comparing against that would call saved work dirty
-    // and block every tab with a question that has no form left to show it in.
-    if (editingChapterId == null) return false;
-
-    const opened = chapterOpenedDrafts.current;
-
-    if (!opened) return false;
-
-    return [
-      chapterArcDraft,
-      chapterWordsDraft,
-      chapterTargetDraft,
-      chapterPovDraft,
-      chapterDayDraft,
-      chapterTimeDraft,
-    ].some((draft, index) => draft !== opened[index]);
-  };
-
-  // Opens a chapter's details. When another chapter's form has unsaved drafts the
-  // switch waits for an answer instead of dropping them, which is what a flag or
-  // another row's Edit button used to do silently. Answers whether the details
-  // are now open on that chapter.
-  const openChapterDetails = (node: { id: string; data: NodeData }) => {
-    if (editingChapterId === node.id) return true;
-
-    if (editingChapterId != null && chapterDraftIsDirty()) {
-      setChapterError(null);
-      setChapterFormPrompt({ kind: 'open', id: node.id });
-      return false;
-    }
-
-    setChapterFormPrompt(null);
-    startChapterEdit(node);
-    return true;
-  };
-
-  // Answering a question returns the keyboard to the field it was about.
-  const dismissChapterPrompt = () => {
-    setChapterFormPrompt(null);
-    chapterArcInputRef.current?.focus();
-  };
-
-  // Closing the form is the other way to lose a draft, so it asks the same
-  // question when there is something to lose. A second Escape dismisses the
-  // question, as it does for a note.
-  const requestChapterClose = () => {
-    if (chapterFormPrompt) {
-      dismissChapterPrompt();
-      return;
-    }
-
-    if (chapterDraftIsDirty()) {
-      setChapterFormPrompt({ kind: 'close' });
-      return;
-    }
-
-    setEditingChapterId(null);
-  };
-
-  // Leaving the form behind — another tab, another story, a search result — asks
-  // the same question, then does what was asked.
-  const requestChapterLeave = (message: string, go: () => void) => {
-    if (chapterDraftIsDirty()) {
-      setChapterFormPrompt({ kind: 'leave', message, go });
-      return;
-    }
-
-    go();
-  };
+  useEffect(() => {
+    if (quitPrompt) quitKeepWorkingRef.current?.focus();
+  }, [quitPrompt]);
 
   // A chapter card's quest badge opens the ledger on that quest, the way a cast
   // badge opens a sheet. The ledger puts its filter back to every status and
@@ -3513,101 +3443,20 @@ function App() {
     }
 
     const openStory = () => {
-      setChapterFormPrompt(null);
+      abandonChapterDrafts();
       setNotePrompt(null);
-      setEditingChapterId(null);
       void loadStory(story);
     };
 
     // A note draft lives in the notes panel, so its question is asked there. The
     // same answer drops a chapter edit too, if both were open.
     if (noteDraftIsDirty()) {
-      setChapterFormPrompt(null);
-      setNotePrompt({
-        message: `Open “${story.title}” and drop these changes?`,
-        go: openStory,
-      });
+      askNoteQuestion(`Open “${story.title}” and drop these changes?`, openStory);
       return;
     }
 
     requestChapterLeave(`Open “${story.title}” and drop these changes?`, openStory);
   };
-
-  // A flag leads somewhere: the chapter it names opens its details, and the row
-  // is brought into view and lit for a moment so the warning is answered where
-  // it was raised.
-  const revealChapter = (chapterId: string) => {
-    const node = chapterNodes.find(candidate => candidate.id === chapterId);
-
-    if (!node || !openChapterDetails(node)) return;
-
-    focusChapterRow(chapterId);
-  };
-
-  // The answer to the prompt: drop the open drafts and go where the flag pointed.
-  const discardChapterEdit = () => {
-    const next =
-      chapterFormPrompt?.kind === 'open'
-        ? chapterNodes.find(candidate => candidate.id === chapterFormPrompt.id)
-        : null;
-
-    setChapterFormPrompt(null);
-
-    if (!next) return;
-
-    startChapterEdit(next);
-    focusChapterRow(next.id);
-  };
-
-  // The same answer when the form was being closed: drop the drafts and close.
-  const closeChapterForm = () => {
-    setChapterFormPrompt(null);
-    setEditingChapterId(null);
-  };
-
-  // The answer when the form was being left behind: drop the drafts, then go
-  // where the author asked to go.
-  const leaveChapterForm = () => {
-    if (chapterFormPrompt?.kind !== 'leave') return;
-
-    const go = chapterFormPrompt.go;
-
-    setChapterFormPrompt(null);
-    setEditingChapterId(null);
-    go();
-  };
-
-  // A timer left behind by a flag must not reach into an unmounted panel.
-  useEffect(
-    () => () => {
-      if (revealTimer.current != null) window.clearTimeout(revealTimer.current);
-    },
-    []
-  );
-
-  // Closing the note panel drops the question with it.
-  useEffect(() => {
-    if (openNotesChapterId == null) setNotePrompt(null);
-  }, [openNotesChapterId]);
-
-  // A question takes the keyboard with it: the safe answer is already focused, so
-  // Enter keeps the work instead of discarding it.
-  useEffect(() => {
-    if (chapterFormPrompt) chapterKeepEditingRef.current?.focus();
-  }, [chapterFormPrompt]);
-
-  useEffect(() => {
-    if (notePrompt) noteKeepEditingRef.current?.focus();
-  }, [notePrompt]);
-
-  useEffect(() => {
-    if (quitPrompt) quitKeepWorkingRef.current?.focus();
-  }, [quitPrompt]);
-
-  // Closing the form drops the question with it.
-  useEffect(() => {
-    if (editingChapterId == null) setChapterFormPrompt(null);
-  }, [editingChapterId]);
 
   const applyChapterOrder = async (orderedIds: string[]) => {
     if (!currentStory) return;
@@ -3694,29 +3543,6 @@ function App() {
     }
   };
 
-  const startChapterEdit = (node: { id: string; data: NodeData }) => {
-    setChapterError(null);
-    setEditingChapterId(node.id);
-
-    const drafts = [
-      node.data.chapterArc ?? '',
-      node.data.chapterWords != null ? String(node.data.chapterWords) : '',
-      node.data.chapterTarget != null ? String(node.data.chapterTarget) : '',
-      node.data.chapterPov ?? '',
-      node.data.chapterDay != null ? String(node.data.chapterDay) : '',
-      node.data.chapterTime ?? '',
-    ];
-
-    setChapterArcDraft(drafts[0]);
-    setChapterWordsDraft(drafts[1]);
-    setChapterTargetDraft(drafts[2]);
-    setChapterPovDraft(drafts[3]);
-    setChapterDayDraft(drafts[4]);
-    setChapterTimeDraft(drafts[5]);
-
-    chapterOpenedDrafts.current = drafts;
-  };
-
   const saveChapterDetails = async () => {
     if (!editingChapterId) return;
 
@@ -3773,25 +3599,13 @@ function App() {
         )
       );
 
-      setEditingChapterId(null);
+      finishChapterSave();
     } catch (e) {
       console.error('Failed to save chapter details:', e);
       setChapterError(`Could not save the chapter details: ${String(e)}`);
     } finally {
       setChapterBusy(false);
     }
-  };
-
-  // Whether the note panel holds something not yet saved: an edited note whose
-  // text has changed, or a new note that has been typed into.
-  const noteDraftIsDirty = () => {
-    if (editingNoteId != null) {
-      const saved = chapterNotes.find(note => note.id === editingNoteId);
-
-      return saved != null && noteEditDraft !== saved.text;
-    }
-
-    return noteDraft.trim() !== '';
   };
 
   // Closing the window is the last way to lose a draft. The listener is installed
@@ -3836,10 +3650,7 @@ function App() {
   // draft is in, so the next keystroke still acts on it.
   const dismissQuitPrompt = () => {
     setQuitPrompt(false);
-
-    if (editingNoteId != null) noteEditorRef.current?.focus();
-    else if (openNotesChapterId != null) noteAddRef.current?.focus();
-    else if (editingChapterId != null) chapterArcInputRef.current?.focus();
+    focusDraftField();
   };
 
   // The answer when the work can go: close the window without writing. Destroying
@@ -3855,248 +3666,6 @@ function App() {
       });
   };
 
-  const requestNoteLeave = (go: () => void) => {
-    if (!noteDraftIsDirty()) {
-      go();
-      return;
-    }
-
-    setNoteError(null);
-    setNotePrompt({
-      message:
-        editingNoteId != null
-          ? 'Discard your changes to this note?'
-          : 'Discard this new note?',
-      go,
-    });
-  };
-
-  // Notes are shown one chapter at a time. Opening another or closing this one
-  // asks first when there is typing to lose.
-  const toggleChapterNotes = (chapterId: string) => {
-    const closing = openNotesChapterId === chapterId;
-
-    requestNoteLeave(() => {
-      setEditingNoteId(null);
-      setNoteDraft('');
-      setNoteError(null);
-      setMatchedNoteId(null);
-      setNotePrompt(null);
-      setOpenNotesChapterId(closing ? null : chapterId);
-    });
-  };
-
-  const chapterCastIsExplicit = (chapterId: string, characterId: string) =>
-    storyChapterCast.some(
-      member => member.chapter_id === chapterId && member.character_id === characterId
-    );
-
-  const toggleChapterCastPanel = (chapterId: string) => {
-    setChapterCastError(null);
-    setOpenChapterCastId(current => (current === chapterId ? null : chapterId));
-  };
-
-  // The card's linked cast member and POV are always present. This adds or
-  // removes the rest of the scene's cast, one command per person, so every
-  // change is recorded in the history like any other edit.
-  const setChapterCastPresence = async (
-    chapterId: string,
-    characterId: string,
-    present: boolean
-  ) => {
-    const existing = storyChapterCast.find(
-      member => member.chapter_id === chapterId && member.character_id === characterId
-    );
-
-    if (present && existing) return;
-    if (!present && !existing) return;
-
-    setChapterCastBusyId(characterId);
-    setChapterCastError(null);
-
-    try {
-      if (present) {
-        const created = await narrativeApi.addChapterCastMember(chapterId, characterId, actor);
-
-        setStoryChapterCast(previous =>
-          previous.some(member => member.id === created.id) ? previous : [...previous, created]
-        );
-      } else {
-        if (!existing) return;
-        const removingId = existing.id;
-
-        await narrativeApi.removeChapterCastMember(removingId, actor);
-        setStoryChapterCast(previous =>
-          previous.filter(member => member.id !== removingId)
-        );
-      }
-    } catch (e) {
-      console.error('Failed to change the chapter cast:', e);
-      setChapterCastError(`Could not change the chapter cast: ${String(e)}`);
-    } finally {
-      setChapterCastBusyId(null);
-    }
-  };
-
-  const addNote = async (chapterId: string) => {
-    const text = noteDraft.trim();
-
-    if (!text) {
-      setNoteError('A note needs some text.');
-      return;
-    }
-
-    setNoteBusy(true);
-    setNoteError(null);
-
-    try {
-      const created: any = await narrativeApi.addChapterNote(chapterId, text, actor);
-
-      setChapterNotes(previous => [...previous, toChapterNote(created)]);
-      setNoteDraft('');
-    } catch (e) {
-      console.error('Failed to add a note:', e);
-      setNoteError(`Could not add the note: ${String(e)}`);
-    } finally {
-      setNoteBusy(false);
-    }
-  };
-
-  const startNoteEdit = (note: ChapterNote) => {
-    if (editingNoteId === note.id) return;
-
-    const open = () => {
-      setNoteError(null);
-      setEditingNoteId(note.id);
-      setNoteEditDraft(note.text);
-      setNotePrompt(null);
-    };
-
-    // Editing another note is a move within the panel, and only an edited note
-    // holds a draft that the move would drop.
-    if (editingNoteId != null) {
-      requestNoteLeave(open);
-      return;
-    }
-
-    open();
-  };
-
-  const dismissNotePrompt = () => {
-    setNotePrompt(null);
-    (editingNoteId != null ? noteEditorRef.current : noteAddRef.current)?.focus();
-  };
-
-  // Cancelling an edit closes the editor rather than the panel, and asks first
-  // when the note has been changed. A second Escape is the answer to the
-  // question: it dismisses it, the same as Keep editing.
-  const requestNoteEditCancel = () => {
-    if (notePrompt) {
-      dismissNotePrompt();
-      return;
-    }
-
-    const closeEditor = () => {
-      setEditingNoteId(null);
-      setNoteEditDraft('');
-      setNotePrompt(null);
-    };
-
-    if (editingNoteId != null && noteDraftIsDirty()) {
-      setNoteError(null);
-      setNotePrompt({
-        message: 'Discard your changes to this note?',
-        go: closeEditor,
-      });
-      return;
-    }
-
-    closeEditor();
-  };
-
-  // The answer to the note prompt: drop the draft and do what was asked.
-  const discardNoteDraft = () => {
-    if (!notePrompt) return;
-
-    const go = notePrompt.go;
-
-    setNotePrompt(null);
-    go();
-  };
-
-  const saveNoteEdit = async () => {
-    if (!editingNoteId) return;
-
-    const text = noteEditDraft.trim();
-
-    if (!text) {
-      setNoteError('A note needs some text.');
-      return;
-    }
-
-    setNoteBusy(true);
-    setNoteError(null);
-
-    try {
-      const updated: any = await narrativeApi.updateChapterNote(editingNoteId, text, actor);
-      const row = toChapterNote(updated);
-
-      setChapterNotes(previous =>
-        previous.map(note => (note.id === row.id ? row : note))
-      );
-      setEditingNoteId(null);
-    } catch (e) {
-      console.error('Failed to save a note:', e);
-      setNoteError(`Could not save the note: ${String(e)}`);
-    } finally {
-      setNoteBusy(false);
-    }
-  };
-
-  // Deleting a note moves it to the trash, like a card: the Trash tab can bring it
-  // back for as long as the retention window lasts.
-  const deleteNote = async (note: ChapterNote) => {
-    setNoteBusy(true);
-    setNoteError(null);
-
-    try {
-      await canvasApi.deleteNode(note.id, actor);
-
-      setChapterNotes(previous => previous.filter(entry => entry.id !== note.id));
-      setEditingNoteId(previous => (previous === note.id ? null : previous));
-    } catch (e) {
-      console.error('Failed to delete a note:', e);
-      setNoteError(`Could not delete the note: ${String(e)}`);
-    } finally {
-      setNoteBusy(false);
-    }
-  };
-
-  // A search result for a note opens the chapter it lives in and marks the note
-  // for a moment, so the found text does not have to be hunted for in the list.
-  const openChapterNotes = (chapterId: string, noteId: string | null) => {
-    // An edit in progress in another chapter keeps its draft: the panel hides it
-    // rather than throwing the typing away.
-    setNoteError(null);
-    setOpenNotesChapterId(chapterId);
-    setMatchedNoteId(noteId);
-
-    if (noteHighlightRef.current !== null) {
-      window.clearTimeout(noteHighlightRef.current);
-    }
-    noteHighlightRef.current = window.setTimeout(() => {
-      setMatchedNoteId(null);
-      noteHighlightRef.current = null;
-    }, 2400);
-
-    // The tab is rendered by now, but the row still has to be scrolled to.
-    setTimeout(() => {
-      document
-        .querySelector(`[data-chapter-id="${chapterId}"]`)
-        ?.scrollIntoView?.({ block: 'nearest' });
-    }, 0);
-  };
-
   // A note card on the canvas is a way into the note, not another copy of it: the
   // Chapters tab opens with that chapter's notes showing and the card's note lit.
   const openNoteFromGraph = useCallback(
@@ -4104,7 +3673,7 @@ function App() {
       setSelectedTab('chapters');
       openChapterNotes(chapterId, noteId);
     },
-    []
+    [openChapterNotes]
   );
 
   // Which node the pointer is over, read from the card the event landed on.
@@ -4172,23 +3741,13 @@ function App() {
       // The answer drops every draft this panel could be holding, then the
       // result is followed with the question already behind it.
       const go = () => {
-        setChapterFormPrompt(null);
-        setNotePrompt(null);
-        setEditingChapterId(null);
-        setEditingNoteId(null);
-        setNoteEditDraft('');
-        setNoteDraft('');
-        setNoteError(null);
-        setMatchedNoteId(null);
+        abandonChapterDrafts();
+        abandonNoteDrafts();
         void chooseSearchResult(result, true);
       };
 
-      if (noteDraftIsDirty()) {
-        setChapterFormPrompt(null);
-        setNotePrompt({ message, go });
-      } else {
-        setChapterFormPrompt({ kind: 'leave', message, go });
-      }
+      if (noteDraftIsDirty()) askNoteQuestion(message, go);
+      else askToLeaveChapter(message, go);
 
       return;
     }
@@ -5348,7 +4907,7 @@ function App() {
           setCurrentStory(null);
           setNodes([]);
           setEdges([]);
-          setChapterNotes([]);
+          clearNotes();
         }
       }
     } catch (e) {
@@ -7325,7 +6884,7 @@ function App() {
       setClosePrompt(false);
       setNodes([]);
       setEdges([]);
-      setChapterNotes([]);
+      clearNotes();
       setCharacters([]);
       setCastStats({});
       setTrashReloadToken(previous => previous + 1);
@@ -7932,7 +7491,7 @@ function App() {
     }
 
     if (wants('note')) {
-      chapterNotes.forEach(note => {
+      notes.forEach(note => {
         const chapterLabel = labelOf.get(note.chapterId);
 
         // A note whose chapter is not on the board has nowhere to open.
@@ -8103,7 +7662,7 @@ function App() {
     searchTerm,
     searchKind,
     nodes,
-    chapterNotes,
+    notes,
     characters,
     edges,
     stories,
