@@ -10,7 +10,9 @@ Everything lives in a single SQLite file on your machine. No accounts, no networ
 no sync.
 
 What comes next, and the invariants every change keeps, are in
-[ROADMAP.md](ROADMAP.md).
+[ROADMAP.md](ROADMAP.md). How the engine works — what happens between a line
+drawn on the canvas and the row it writes, and which module owns which part of
+that trip — is in the illustrated [GUIDE.md](GUIDE.md).
 
 ## Features
 

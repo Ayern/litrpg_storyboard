@@ -1,0 +1,3204 @@
+{
+  "audit": [
+    {
+      "action": "soft_delete",
+      "changed_at": "2026-10-27T19:24:00.275267800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ea482db8-ffed-4430-80e4-44bef970a2c3",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "c1cef532-0626-4e7f-a108-fe34a4bf91c6",
+      "new_value": null,
+      "old_value": "Cut: the toll bell",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "soft_delete",
+      "changed_at": "2026-10-27T19:24:00.271221900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "755c16ab-bfb1-46ef-a86e-7cc32491149a",
+      "entity_type": "character",
+      "field_changed": null,
+      "id": "718d7ae9-9e28-4a8e-962d-663d8624e9c5",
+      "new_value": null,
+      "old_value": "Wren Ashgrove",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.268623400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "755c16ab-bfb1-46ef-a86e-7cc32491149a",
+      "entity_type": "character",
+      "field_changed": null,
+      "id": "723586b2-4985-47d5-aafb-3bc785e54eb7",
+      "new_value": "Wren Ashgrove",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.266155200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ee71cc90-22b5-4b33-b3ef-1b7fee2fe721",
+      "entity_type": "faction_standing",
+      "field_changed": "standing",
+      "id": "d687a24e-28d7-4918-81f0-312c8f0579ec",
+      "new_value": "wanted",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.263254400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f977d083-bc51-4ce1-b081-6a14790c8a4a",
+      "entity_type": "faction_standing",
+      "field_changed": "standing",
+      "id": "9133a908-e723-4423-be99-2b4d7944cae0",
+      "new_value": "wary",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.260494800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ca62e8d4-e403-487a-b6b4-a3e38d03549a",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "d152d555-1775-455e-a2bc-e0cfde1f64a5",
+      "new_value": "Check the candle count against chapter two before the confro…",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.257978100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "182a9817-7cb2-46d7-ac67-11b7f5bd2441",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "0ffdd426-a4cf-47b6-b801-e3bcb4bd929a",
+      "new_value": "Rook's debt is named for the first time in this chapter, and…",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.255622800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "0e6254a9-286e-40ea-9ab5-c9716f835252",
+      "entity_type": "character_attribute",
+      "field_changed": "value",
+      "id": "60d2af7c-b7f3-47a6-9513-aeb086411f7b",
+      "new_value": "Never caught twice",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.253098900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "afd0d41f-5c0e-45a3-8908-37f0f0dbfc25",
+      "entity_type": "character_attribute",
+      "field_changed": "value",
+      "id": "dcf268ef-100c-4c59-ac52-c1da644dafee",
+      "new_value": "Courier",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.250387800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "b7980a45-c9a7-4734-828d-a95c85a69996",
+      "entity_type": "character_attribute",
+      "field_changed": "value",
+      "id": "b57f3284-8737-4a79-864e-86de7cb73262",
+      "new_value": "Ashfall",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.247884300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "39ca4ab5-27c2-4810-b3a5-ce8876ce71ea",
+      "entity_type": "character_attribute",
+      "field_changed": "value",
+      "id": "335e06e5-0c65-4147-a681-150c090476c5",
+      "new_value": "Delver",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.245345400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "51acacba-f954-43f6-819e-8895654f08e9",
+      "entity_type": "character_currency",
+      "field_changed": "name",
+      "id": "ef8112e4-2912-41bc-8e0d-3f181379fd86",
+      "new_value": "Marks",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.242620800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "75d8dc57-05ba-4816-99a2-9e42568bc845",
+      "entity_type": "character_currency",
+      "field_changed": "name",
+      "id": "4dc0765c-ec11-4229-9365-fec8ec6135cf",
+      "new_value": "Ember Script",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.239527900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f5f3a4d7-b58b-4c43-9446-908a6e620396",
+      "entity_type": "character_currency",
+      "field_changed": "name",
+      "id": "d6852d2e-8c3a-4225-bad8-fd854b259bfb",
+      "new_value": "Marks",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.236466200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "fdfd9f3c-ed7a-4273-961c-32c3a617460a",
+      "entity_type": "character_inventory",
+      "field_changed": "name",
+      "id": "16cd3152-d120-4f60-acb3-0b489d0b56d8",
+      "new_value": "Courier's Cache",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.233835900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "369785bb-f5f6-44df-9ed4-8d3f63589a78",
+      "entity_type": "character_inventory",
+      "field_changed": "name",
+      "id": "9df77b5c-564e-4631-bae4-dbd3f0ab0524",
+      "new_value": "Stolen Ember",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.230258100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c754eca2-b793-4b1f-bde7-bec802230591",
+      "entity_type": "character_inventory",
+      "field_changed": "name",
+      "id": "a87471a4-a011-4083-b694-adaadbc6908d",
+      "new_value": "Cinder Key",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.227757900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "082c9fea-4cf4-43d5-abaf-b72e2609e6db",
+      "entity_type": "character_inventory",
+      "field_changed": "name",
+      "id": "08e2c8b4-9aa2-45d7-98c2-0300a359f97d",
+      "new_value": "Sealed Ledger",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.225255+00:00",
+      "changed_by": "Ada",
+      "entity_id": "16250d35-f252-495a-add4-20fccffb4a9b",
+      "entity_type": "quest",
+      "field_changed": "title",
+      "id": "c70f83f1-3290-433b-a00a-a50540fb69d7",
+      "new_value": "Find the Cinder Road",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.222676900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "1225d39a-9864-4563-8035-3b3314daf7e5",
+      "entity_type": "quest_reward",
+      "field_changed": "type",
+      "id": "a5f3771c-b746-4498-85ad-83bd23cf17e9",
+      "new_value": "faction_standing",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.219962500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bc20ce1e-7de7-4cfb-bb02-decd2bcdd83a",
+      "entity_type": "quest_reward",
+      "field_changed": "type",
+      "id": "626b1e52-3ba4-4e39-bef6-50a8cbff1861",
+      "new_value": "stat",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.217444300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8708e227-d388-4613-a0d5-7391a28e0372",
+      "entity_type": "quest_reward",
+      "field_changed": "type",
+      "id": "081de17f-5b9e-4d22-83d7-121dfdca84f9",
+      "new_value": "item",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.214933+00:00",
+      "changed_by": "Ada",
+      "entity_id": "929532aa-8777-42a4-8baf-76764427f769",
+      "entity_type": "quest_reward",
+      "field_changed": "type",
+      "id": "ce1ed233-9ac6-45c3-bd31-acc6c6a215e8",
+      "new_value": "xp",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.212425500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+      "entity_type": "quest",
+      "field_changed": "title",
+      "id": "71cabccc-ea45-4d9e-b705-3dcc234ad0a9",
+      "new_value": "Pay the Ember Debt",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.209477800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "d8bef365-015a-4251-9773-cafc7cca651c",
+      "entity_type": "character_relation",
+      "field_changed": "kind",
+      "id": "0559c843-be6d-4e76-8106-df198e51ad52",
+      "new_value": "enemy",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.206875600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "173756a9-3e16-4c0e-a168-60e0d876396b",
+      "entity_type": "character_relation",
+      "field_changed": "kind",
+      "id": "1379330f-b19c-4fc5-8869-cc62e9eceae6",
+      "new_value": "rival",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.204130600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65dfd93e-6f33-446f-9071-60c76289d124",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "80d6443a-8baf-455f-b3a3-13a70765d389",
+      "new_value": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad -> 9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.201808500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e4c00772-719b-48ed-b824-ba6e341d9ea9",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "2e116cf2-a269-4a9a-baa6-f6b2752bb86e",
+      "new_value": "8ff6ac04-d6c1-4005-9030-2f8754821b04 -> 6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.199082+00:00",
+      "changed_by": "Ada",
+      "entity_id": "30bad95f-aa5e-4388-925c-58b02a0597e4",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "507953af-1320-48a5-bc19-721619db62d9",
+      "new_value": "8ff6ac04-d6c1-4005-9030-2f8754821b04 -> e49c6c30-02db-4234-a79a-8acf838886f1",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.196137100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "351eb14f-112f-4acb-8197-ba13f3e2db5f",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "88c5f5c6-9ba5-4250-b5d0-984c587c6646",
+      "new_value": "e49c6c30-02db-4234-a79a-8acf838886f1 -> fc604dac-634e-495b-93ce-04da546442c5",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.193481600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bd35e4f3-bccb-49b0-9904-e2c7ffa317d1",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "3dc3b0e7-2aa2-45b6-84b7-d7e185710775",
+      "new_value": "8ff6ac04-d6c1-4005-9030-2f8754821b04 -> 6a238c05-faaa-4238-9ce5-8eccbf086765",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.189675700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "50bf550c-752c-4a9b-b569-571aeb0bd63f",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "f9a99587-f30b-4fc8-9035-b464be867b6e",
+      "new_value": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe -> e49c6c30-02db-4234-a79a-8acf838886f1",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.187490200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "a7458b94-e8a2-43e9-9843-b8be63ac802c",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "6a2d3df3-00bc-4d14-8c27-380af90c6b2b",
+      "new_value": "45856003-e853-421f-96f4-4f2d96515ace -> 8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.185194900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "77b32cb2-f39a-41d8-8888-8191d45ab0b7",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "385f3924-e15a-4848-92c4-2e7d6b29c848",
+      "new_value": "432da51a-24c7-4fc5-a08a-5fb6f86a097d -> e49c6c30-02db-4234-a79a-8acf838886f1",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.183064500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e1d10fa4-df90-4610-91e6-7548b6697529",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "e44292cb-cfc6-45b9-a35a-79044f2d4f86",
+      "new_value": "45856003-e853-421f-96f4-4f2d96515ace -> 65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.180535+00:00",
+      "changed_by": "Ada",
+      "entity_id": "b592c078-6d8c-4391-9824-fc136782bf62",
+      "entity_type": "edge",
+      "field_changed": null,
+      "id": "8ce0b01b-bd04-40b2-a628-67497dc97d97",
+      "new_value": "432da51a-24c7-4fc5-a08a-5fb6f86a097d -> 45856003-e853-421f-96f4-4f2d96515ace",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.178241300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ded4002c-7f3f-4f7a-9aeb-1bdcc95a8840",
+      "entity_type": "skill_evolution",
+      "field_changed": "notes",
+      "id": "e1e7147a-6147-49b1-861b-8c8c2fddce4a",
+      "new_value": "Learned when the debt came due and the ember answered.",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.178191700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ded4002c-7f3f-4f7a-9aeb-1bdcc95a8840",
+      "entity_type": "skill_evolution",
+      "field_changed": "required rank",
+      "id": "6cd1b9b1-85c7-43d6-889b-e1737f5a73c7",
+      "new_value": "Rank 2",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.178153500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ded4002c-7f3f-4f7a-9aeb-1bdcc95a8840",
+      "entity_type": "skill_evolution",
+      "field_changed": "chapter",
+      "id": "d34123e3-2fc4-4bf9-8479-ae8d6f508d35",
+      "new_value": "The Ember Court",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.178022900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ded4002c-7f3f-4f7a-9aeb-1bdcc95a8840",
+      "entity_type": "skill_evolution",
+      "field_changed": "evolution",
+      "id": "f46e510b-3778-467a-8047-fdb41e2b7196",
+      "new_value": "Ash Step → Cinder Step (upgrade)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.175356400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b",
+      "entity_type": "character_skill",
+      "field_changed": "name",
+      "id": "78472721-4c16-4a8a-8799-5704157d8a86",
+      "new_value": "Cinder Step",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.172715800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df",
+      "entity_type": "character_skill",
+      "field_changed": "card",
+      "id": "54aa1b9b-6bd6-4409-b702-b1c4beb620e7",
+      "new_value": "Ember Whisper",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.170166+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "entity_type": "character_skill",
+      "field_changed": "card",
+      "id": "228b36e3-4ae1-4c7e-b88f-9213e5fc5b28",
+      "new_value": "Ash Step",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.167418800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ea482db8-ffed-4430-80e4-44bef970a2c3",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "385600be-755e-451a-8c13-42a5e4ac44e7",
+      "new_value": "Cut: the toll bell",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.165320500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "fc604dac-634e-495b-93ce-04da546442c5",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "6e9a4a10-bc4b-4682-819b-a8dc97869233",
+      "new_value": "Ember Whisper",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.163094100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "6a238c05-faaa-4238-9ce5-8eccbf086765",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "3f5e89a3-094f-491b-b261-e12307784abd",
+      "new_value": "Ash Step",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.160563200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "106a7cb0-1811-4104-9f5b-531b1c10aa2e",
+      "new_value": "The Ember Court",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.158207500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "4234e3b4-f491-4e2c-b822-73e0d80f58d8",
+      "new_value": "Halden Vane",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.158091500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "e2b917a1-2d9b-43ca-9eff-cbbfe5f004c5",
+      "new_value": "Halden Vane",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.155635+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e49c6c30-02db-4234-a79a-8acf838886f1",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "ada873bc-18b0-42ce-be4f-8ff82e64aa79",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.155569300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e49c6c30-02db-4234-a79a-8acf838886f1",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "d82fbc85-33bc-4b71-9615-3946031a975a",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.153164+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "eddf6b90-f640-44c7-a20f-9f3719067cdf",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.153076100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "3ee35397-7443-48d2-a290-d1b45ebe43b9",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.149100400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "entity_type": "character",
+      "field_changed": null,
+      "id": "10216a87-d6c3-4ace-b1d6-6a2d58d82444",
+      "new_value": "Halden Vane",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.146352300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "439a7ef3-a6ca-4b43-80a7-494691514ea2",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "f556073b-9e65-4f26-950c-2dfd87f72df5",
+      "new_value": "600",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.146274+00:00",
+      "changed_by": "Ada",
+      "entity_id": "439a7ef3-a6ca-4b43-80a7-494691514ea2",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "f8a4b115-f9f4-44a8-9614-df5f51a6ab75",
+      "new_value": "The Ember Court",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.143815500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f49bbf7a-66b3-451e-a828-8807bd91902f",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "7d82e64f-a897-4178-8fe7-e8fcb4f0043c",
+      "new_value": "600",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.143748800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f49bbf7a-66b3-451e-a828-8807bd91902f",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "b44bdd06-4a7f-4dd4-8d0e-d09b24e0db1b",
+      "new_value": "A Ledger of Cinders",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.141157+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c81c6916-f60d-4ff4-bab8-838eb31c54d2",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "f3c4572d-8ec4-443b-9246-cc2a96c11afb",
+      "new_value": "200",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.141063100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c81c6916-f60d-4ff4-bab8-838eb31c54d2",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "3bfdeb56-7a6e-4914-bc27-a9000aea6687",
+      "new_value": "The Ashen Gate",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.138440100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f7b74760-543c-473f-ad6c-2486f10cd90d",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "23feb899-d3a7-41fb-a55c-ce0430195314",
+      "new_value": "900",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.138354800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f7b74760-543c-473f-ad6c-2486f10cd90d",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "95d7d968-299e-427d-92a5-27a797aeb8e1",
+      "new_value": "The Ember Court",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.135744+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bfb5138e-b11c-4241-8dab-ea5344b0cb3e",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "2b2a96e1-516b-4a0e-935d-21e4d802dd04",
+      "new_value": "900",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.135663800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bfb5138e-b11c-4241-8dab-ea5344b0cb3e",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "6d1e56fd-2e27-45e5-97a7-90ee8c571789",
+      "new_value": "A Ledger of Cinders",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.133126900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f1bbfe1e-1892-479c-8250-aa9aa8fc97e3",
+      "entity_type": "character_progress",
+      "field_changed": "xp_earned",
+      "id": "16145bed-f1ee-42bd-8586-25a1ed282464",
+      "new_value": "600",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.133059400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f1bbfe1e-1892-479c-8250-aa9aa8fc97e3",
+      "entity_type": "character_progress",
+      "field_changed": "chapter",
+      "id": "730a7dd6-2e5b-4a1e-85ac-bfb5eb8e609f",
+      "new_value": "The Ashen Gate",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.130287100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Perception",
+      "id": "804283ea-32bb-4b17-9c1c-d1e87989f752",
+      "new_value": "+1 (now 14)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.130268200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Agility",
+      "id": "b1c795b3-da57-4f61-9e06-ff52631610a4",
+      "new_value": "+2 (now 17)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.130209700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "696de257-035c-4ec3-8ea0-ca1d18c2e6e4",
+      "new_value": "1500",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.130126700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "f03acb56-d67b-434e-bf22-3fdab292827e",
+      "new_value": "3",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.127591100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Perception",
+      "id": "4ca1c06c-ddc6-4dca-9c1f-b7a6a52b4ff7",
+      "new_value": "+1 (now 13)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.127569400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Agility",
+      "id": "dda16825-ae9d-4e1f-93da-38ae5e264a74",
+      "new_value": "+2 (now 15)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.127460700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "72111451-63f3-4e8c-b0ff-920f860132ee",
+      "new_value": "800",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.127409800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "2b61f2c6-5ab4-41d5-94de-926ce4cf350b",
+      "new_value": "2",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.124879200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Perception",
+      "id": "ebc31d79-82be-4c80-9270-9b2225aece2e",
+      "new_value": "+1 (now 12)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.124857500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Agility",
+      "id": "2b934bc6-da3b-41c6-9ec9-8619f3fc1c6d",
+      "new_value": "+2 (now 13)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.124748700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "cf52bd80-a0ae-420d-b5b4-85cb173279ea",
+      "new_value": "200",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.124696800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "27edefd4-e319-4bdc-99d8-1baaf757783c",
+      "new_value": "1",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.122136900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "15540f0e-0c9e-41ff-b1a0-5d31fcc7330c",
+      "entity_type": "character_skill_event",
+      "field_changed": "milestone",
+      "id": "c50f3b10-a95d-4c51-9a02-2e42f4beb94c",
+      "new_value": "Level 4",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.122070200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "15540f0e-0c9e-41ff-b1a0-5d31fcc7330c",
+      "entity_type": "character_skill_event",
+      "field_changed": "event",
+      "id": "4388f3cd-676d-408a-b3e7-056bff54c4be",
+      "new_value": "upgraded",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.119218300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Endurance",
+      "id": "48346464-7239-41b0-8f06-85d8036f073b",
+      "new_value": "+1 (now 13)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.119202200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Agility",
+      "id": "765c8ee9-3520-454c-9b63-4d5b340029f3",
+      "new_value": "+1 (now 12)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.119181800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Strength",
+      "id": "e5fc3704-d061-4499-864f-3b33977a8b9c",
+      "new_value": "+2 (now 18)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.119075300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "cfe8436e-9c3c-4581-bcac-3769e55f9223",
+      "new_value": "2400",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.119023700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "e8440a3d-4d91-4eeb-81f4-ad224efb3e67",
+      "new_value": "4",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.116384600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Endurance",
+      "id": "60e68e49-97c8-4b55-9173-ca0f21a99f2e",
+      "new_value": "+1 (now 12)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.116363400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Strength",
+      "id": "37219dba-685a-411f-9b4a-3c178b0c9834",
+      "new_value": "+1 (now 16)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.116256600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "00f3a5da-02de-4c4f-ad31-9523c3327516",
+      "new_value": "1500",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.116206+00:00",
+      "changed_by": "Ada",
+      "entity_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "38707f5e-7583-4a2e-9e27-1a73514c2d34",
+      "new_value": "3",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.113397600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Endurance",
+      "id": "48520e72-c1dc-4e77-bd13-2194c25da0bd",
+      "new_value": "+1 (now 11)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.113375300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "entity_type": "character_level_milestone",
+      "field_changed": "stat:Strength",
+      "id": "6404f7cc-86ff-4e52-b37d-d8f3be67e47d",
+      "new_value": "+2 (now 15)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.113251300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "entity_type": "character_level_milestone",
+      "field_changed": "xp",
+      "id": "87718573-0673-450a-85f2-7be49932881f",
+      "new_value": "600",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.113198700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "entity_type": "character_level_milestone",
+      "field_changed": "level",
+      "id": "7f586a72-d5e5-497d-afc7-88e588739329",
+      "new_value": "2",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.110577800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "05910294-82af-4cdf-9c1b-0ad5d2f3d02f",
+      "entity_type": "character_skill_event",
+      "field_changed": "event",
+      "id": "ffd171db-e22a-42ce-aec3-6cfd51f06a3d",
+      "new_value": "used",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.107684700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "680a32eb-823b-4ee8-a58f-3a0e8ec74d5f",
+      "entity_type": "character_skill_event",
+      "field_changed": "event",
+      "id": "80f53ec8-4122-4e50-a40a-768709a806df",
+      "new_value": "used",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.104684400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df",
+      "entity_type": "character_skill",
+      "field_changed": "name",
+      "id": "6f747649-5947-49d9-b12b-ef85d45f91ac",
+      "new_value": "Ember Whisper",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.101873900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "entity_type": "character_skill",
+      "field_changed": "name",
+      "id": "9bcdacdf-ff18-4818-b63b-8728802202bf",
+      "new_value": "Ash Step",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.099237+00:00",
+      "changed_by": "Ada",
+      "entity_id": "0a20ceb0-6376-4238-b7de-9a15cf57e9d5",
+      "entity_type": "chapter_cast",
+      "field_changed": null,
+      "id": "b44167a9-c2d7-4f11-8ece-74d000fcf6a4",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.096755700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "22c9ea0d-6467-45d5-a1c5-9a3ad5a7f891",
+      "entity_type": "chapter_cast",
+      "field_changed": null,
+      "id": "0c4804ae-24d2-4132-b56a-09fee9fffe2e",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.094067+00:00",
+      "changed_by": "Ada",
+      "entity_id": "466fb2f2-effc-4914-9b51-3cdc728967bc",
+      "entity_type": "chapter_cast",
+      "field_changed": null,
+      "id": "b80c1c8e-9a22-4323-8f7e-a42300a44790",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091321700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_time",
+      "id": "e8861b94-a0af-432f-81ff-b654cdbf4b30",
+      "new_value": "Night",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091314100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_day",
+      "id": "669338d8-fe4a-4f64-b089-9ce98b26c623",
+      "new_value": "3",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091306200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_pov",
+      "id": "6687a2ed-4766-4888-bfb6-c9969eb984ac",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091297300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_target",
+      "id": "341a0412-63a3-4af6-b480-0b02b6c7c1d9",
+      "new_value": "3000",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091284500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_words",
+      "id": "1b1f9d85-a434-43ac-8a07-162559f6236b",
+      "new_value": "3200",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.091201300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "chapter_arc",
+      "id": "d4560d62-fcc3-458f-85b5-13ecaaf0ec97",
+      "new_value": "Confrontation",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088605600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_time",
+      "id": "97fca369-66cb-483f-a539-aa44a4bc6468",
+      "new_value": "Morning",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088597900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_day",
+      "id": "4f87a7fc-3eea-40f8-9251-cfa0f8eaa323",
+      "new_value": "2",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088589900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_pov",
+      "id": "d70b5d48-f332-4ca8-9ebb-664fb297d3a0",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088581100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_target",
+      "id": "d5855cd5-cc4a-48b4-bb89-f3cea9e13f19",
+      "new_value": "3000",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088567300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_words",
+      "id": "3a20101e-158c-47d3-bd45-9b205bb70fd9",
+      "new_value": "2600",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.088459400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "chapter_arc",
+      "id": "caee1f33-3ad8-4125-b655-20eb2a34e7fd",
+      "new_value": "Bargain",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.086114200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_time",
+      "id": "e85b1edc-3b41-49a6-ac6c-ef92259959db",
+      "new_value": "Dusk",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.086106300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_day",
+      "id": "8f6d9167-842b-4219-a422-705bd58474e1",
+      "new_value": "1",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.086098+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_pov",
+      "id": "ae782c9d-44db-455b-8874-46adb0a655e1",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.086089300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_target",
+      "id": "bf8c458b-3b0b-409e-a1f3-0288254c1d99",
+      "new_value": "2500",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.086075700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_words",
+      "id": "bc6883ae-4d67-454d-96bc-fba6b529cf53",
+      "new_value": "2200",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.085983700+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "chapter_arc",
+      "id": "cad7b02d-5091-4f53-a08c-f62d396170ae",
+      "new_value": "Arrival",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.083823500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "9cbf56e1-c7f0-41e9-8b80-d32e4273fc25",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.083688100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "25f09653-5e0f-45c1-a746-76a4710c6084",
+      "new_value": "The Ember Court",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.080844800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "805c307b-e031-44cb-9ce9-0fe9c0cfa120",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.080763+00:00",
+      "changed_by": "Ada",
+      "entity_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "cd9ded4c-dad8-49f4-b808-8bdab4fb3cec",
+      "new_value": "A Ledger of Cinders",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.078582200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": "character",
+      "id": "a68ecc60-18d5-4e03-bd88-db0c884dfa81",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.078486600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "entity_type": "node",
+      "field_changed": null,
+      "id": "435335c9-8e19-4acb-ae12-98b976e8d3ad",
+      "new_value": "The Ashen Gate",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.075750+00:00",
+      "changed_by": "Ada",
+      "entity_id": "988c1d3b-ca9d-4289-87e6-9121733dc3f2",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "c759e635-0114-4b9f-8578-4642c4035316",
+      "new_value": "9",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.073426500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "c353999d-7301-4b44-9a84-b18c8c2bd5d8",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "0387dcad-df1b-4acd-8e3d-f9cf5dfcbed3",
+      "new_value": "16",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.070502600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "f729dfcc-3a98-4ad3-9aa0-dab8c4f09a97",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "6ccc443e-7e36-4f46-a2f0-3c75def40d48",
+      "new_value": "17",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.066995400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "07c3e5ab-9fd3-4f92-8473-5e93cbae2563",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "4627d480-e528-4501-8a82-4d033c3f74b5",
+      "new_value": "12",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.064422900+00:00",
+      "changed_by": "Ada",
+      "entity_id": "61c73757-ef38-4df1-9020-50f36d879cd0",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "2d3eef82-965d-41d1-b02c-27956a41f8b3",
+      "new_value": "14",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.061864100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "63ce77d3-3092-4426-a7c9-805ee1adf441",
+      "entity_type": "character_stat",
+      "field_changed": "value",
+      "id": "b85f3a3b-1f44-42cb-8e84-60225054a28d",
+      "new_value": "18",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.059161600+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "entity_type": "character",
+      "field_changed": "xp_to_next",
+      "id": "1f9aa562-eb87-4cc8-9777-f8d36e528d46",
+      "new_value": "2200",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.059152800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "entity_type": "character",
+      "field_changed": "rank",
+      "id": "e0ebb075-5f8d-4da3-b9aa-4506bdcb048d",
+      "new_value": "Bronze",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.059140200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "entity_type": "character",
+      "field_changed": "xp",
+      "id": "665a2766-37e6-4de2-8129-1715e2f7c914",
+      "new_value": "1500",
+      "old_value": "0",
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.059056+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "entity_type": "character",
+      "field_changed": "level",
+      "id": "6f7ac4cd-41be-4705-88ad-a9ba26920dce",
+      "new_value": "3",
+      "old_value": "1",
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.056723500+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "entity_type": "character",
+      "field_changed": "xp_to_next",
+      "id": "911eeab2-9f34-4cac-95f6-ee9410237277",
+      "new_value": "3000",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.056714300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "entity_type": "character",
+      "field_changed": "rank",
+      "id": "6f5de6ff-b5fb-4b76-8533-8d4e3478cd9d",
+      "new_value": "Bronze",
+      "old_value": null,
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.056701200+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "entity_type": "character",
+      "field_changed": "xp",
+      "id": "6a6e2528-c092-42c1-908c-2a9e3676e5d7",
+      "new_value": "2400",
+      "old_value": "0",
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "update",
+      "changed_at": "2026-10-27T19:24:00.056610800+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "entity_type": "character",
+      "field_changed": "level",
+      "id": "f0284c35-5c01-4138-a243-2b0e53f92b01",
+      "new_value": "4",
+      "old_value": "1",
+      "revert_state": "available",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.054186400+00:00",
+      "changed_by": "Ada",
+      "entity_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "entity_type": "character",
+      "field_changed": null,
+      "id": "881ade03-f439-404e-9ae8-735236ec2501",
+      "new_value": "Mira Sable",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.051852300+00:00",
+      "changed_by": "Ada",
+      "entity_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "entity_type": "character",
+      "field_changed": null,
+      "id": "6b9fedd4-df43-4de7-95aa-880b446f8292",
+      "new_value": "Rook Valebright",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "action": "create",
+      "changed_at": "2026-10-27T19:24:00.049183100+00:00",
+      "changed_by": "Ada",
+      "entity_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "entity_type": "story",
+      "field_changed": null,
+      "id": "7b73a339-d3b5-4510-9e96-d68ea47d28d9",
+      "new_value": "The Ember Ledger (Demo)",
+      "old_value": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    }
+  ],
+  "backups": [],
+  "chapter_cast_states": [
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 2,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 2",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        }
+      ]
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 2,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 4,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 2",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        },
+        {
+          "effect": "The step carries heat once the ember answers.",
+          "learned_chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+          "learned_chapter_seq": 3,
+          "name": "Cinder Step",
+          "rank": "Rank 1",
+          "skill_id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b"
+        }
+      ]
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 1,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 3,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 1",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        }
+      ]
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 3,
+      "level_is_penalty": false,
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    }
+  ],
+  "chapter_notes": [
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": null,
+      "content": "Rook's debt is named for the first time in this chapter, and he still cannot repeat it out loud.",
+      "created_at": "2026-10-27T19:24:00.257538700+00:00",
+      "created_by": "Ada",
+      "id": "182a9817-7cb2-46d7-ac67-11b7f5bd2441",
+      "label": "Rook's debt is named for the first time in this chapter, and…",
+      "node_type": "note",
+      "parent_node_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "pos_x": 0.0,
+      "pos_y": 0.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.257538700+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": null,
+      "content": "Check the candle count against chapter two before the confrontation is revised.",
+      "created_at": "2026-10-27T19:24:00.259829300+00:00",
+      "created_by": "Ada",
+      "id": "ca62e8d4-e403-487a-b6b4-a3e38d03549a",
+      "label": "Check the candle count against chapter two before the confro…",
+      "node_type": "note",
+      "parent_node_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "pos_x": 0.0,
+      "pos_y": 0.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.259829300+00:00"
+    }
+  ],
+  "chapter_states": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271|432da51a-24c7-4fc5-a08a-5fb6f86a097d": {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "chapter_seq": 1,
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 1,
+      "level_is_penalty": false,
+      "level_milestone_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    },
+    "8a7968df-a96e-4377-9b56-17f5ade48271|45856003-e853-421f-96f4-4f2d96515ace": {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "chapter_seq": 2,
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 2,
+      "level_is_penalty": false,
+      "level_milestone_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    },
+    "8a7968df-a96e-4377-9b56-17f5ade48271|65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe": {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "chapter_seq": 3,
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 3,
+      "level_is_penalty": false,
+      "level_milestone_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "skills": [
+        {
+          "effect": "Reads the last emotion a flame touched.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ember Whisper",
+          "rank": "Rank 1",
+          "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df"
+        }
+      ]
+    },
+    "b164566f-55e7-4b20-9ce7-daca2da278ca|432da51a-24c7-4fc5-a08a-5fb6f86a097d": {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "chapter_seq": 1,
+      "character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "level": null,
+      "level_is_penalty": false,
+      "level_milestone_id": null,
+      "skills": []
+    },
+    "b164566f-55e7-4b20-9ce7-daca2da278ca|45856003-e853-421f-96f4-4f2d96515ace": {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "chapter_seq": 2,
+      "character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "level": null,
+      "level_is_penalty": false,
+      "level_milestone_id": null,
+      "skills": []
+    },
+    "b164566f-55e7-4b20-9ce7-daca2da278ca|65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe": {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "chapter_seq": 3,
+      "character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "level": null,
+      "level_is_penalty": false,
+      "level_milestone_id": null,
+      "skills": []
+    },
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c|432da51a-24c7-4fc5-a08a-5fb6f86a097d": {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "chapter_seq": 1,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 2,
+      "level_is_penalty": false,
+      "level_milestone_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 2",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        }
+      ]
+    },
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c|45856003-e853-421f-96f4-4f2d96515ace": {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "chapter_seq": 2,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 3,
+      "level_is_penalty": false,
+      "level_milestone_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 1",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        }
+      ]
+    },
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c|65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe": {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "chapter_seq": 3,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 4,
+      "level_is_penalty": false,
+      "level_milestone_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "skills": [
+        {
+          "effect": "A short step through smoke that leaves a grey afterimage.",
+          "learned_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+          "learned_chapter_seq": 1,
+          "name": "Ash Step",
+          "rank": "Rank 2",
+          "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4"
+        },
+        {
+          "effect": "The step carries heat once the ember answers.",
+          "learned_chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+          "learned_chapter_seq": 3,
+          "name": "Cinder Step",
+          "rank": "Rank 1",
+          "skill_id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b"
+        }
+      ]
+    }
+  },
+  "character_attributes": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271": [
+      {
+        "attr_name": "Class",
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.252655700+00:00",
+        "id": "afd0d41f-5c0e-45a3-8908-37f0f0dbfc25",
+        "updated_at": "2026-10-27T19:24:00.252655700+00:00",
+        "value": "Courier"
+      },
+      {
+        "attr_name": "Notable",
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.254935500+00:00",
+        "id": "0e6254a9-286e-40ea-9ab5-c9716f835252",
+        "updated_at": "2026-10-27T19:24:00.254935500+00:00",
+        "value": "Never caught twice"
+      }
+    ],
+    "b164566f-55e7-4b20-9ce7-daca2da278ca": [],
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c": [
+      {
+        "attr_name": "Class",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.247193800+00:00",
+        "id": "39ca4ab5-27c2-4810-b3a5-ce8876ce71ea",
+        "updated_at": "2026-10-27T19:24:00.247193800+00:00",
+        "value": "Delver"
+      },
+      {
+        "attr_name": "Homeland",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.249729700+00:00",
+        "id": "b7980a45-c9a7-4734-828d-a95c85a69996",
+        "updated_at": "2026-10-27T19:24:00.249729700+00:00",
+        "value": "Ashfall"
+      }
+    ]
+  },
+  "character_currency": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271": [
+      {
+        "amount": 95,
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.244652800+00:00",
+        "id": "51acacba-f954-43f6-819e-8895654f08e9",
+        "name": "Marks",
+        "updated_at": "2026-10-27T19:24:00.244652800+00:00"
+      }
+    ],
+    "b164566f-55e7-4b20-9ce7-daca2da278ca": [],
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c": [
+      {
+        "amount": 3,
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.241921500+00:00",
+        "id": "75d8dc57-05ba-4816-99a2-9e42568bc845",
+        "name": "Ember Script",
+        "updated_at": "2026-10-27T19:24:00.241921500+00:00"
+      },
+      {
+        "amount": 420,
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.238793700+00:00",
+        "id": "f5f3a4d7-b58b-4c43-9446-908a6e620396",
+        "name": "Marks",
+        "updated_at": "2026-10-27T19:24:00.238793700+00:00"
+      }
+    ]
+  },
+  "character_inventory": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271": [
+      {
+        "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.235798400+00:00",
+        "effect": null,
+        "id": "fdfd9f3c-ed7a-4273-961c-32c3a617460a",
+        "lost_chapter_id": null,
+        "name": "Courier's Cache",
+        "node_id": null,
+        "quantity": 1,
+        "rarity": null,
+        "updated_at": "2026-10-27T19:24:00.235798400+00:00"
+      },
+      {
+        "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.233141800+00:00",
+        "effect": "Warm to the touch, warmer when somebody lies.",
+        "id": "369785bb-f5f6-44df-9ed4-8d3f63589a78",
+        "lost_chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+        "name": "Stolen Ember",
+        "node_id": null,
+        "quantity": 1,
+        "rarity": "Legendary",
+        "updated_at": "2026-10-27T19:24:00.233141800+00:00"
+      }
+    ],
+    "b164566f-55e7-4b20-9ce7-daca2da278ca": [],
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c": [
+      {
+        "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.229583200+00:00",
+        "effect": "Opens a door that has been paid for.",
+        "id": "c754eca2-b793-4b1f-bde7-bec802230591",
+        "lost_chapter_id": null,
+        "name": "Cinder Key",
+        "node_id": null,
+        "quantity": 2,
+        "rarity": "Uncommon",
+        "updated_at": "2026-10-27T19:24:00.229583200+00:00"
+      },
+      {
+        "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.227019900+00:00",
+        "effect": "Every name in it reads as a number the reader cannot forget.",
+        "id": "082c9fea-4cf4-43d5-abaf-b72e2609e6db",
+        "lost_chapter_id": null,
+        "name": "Sealed Ledger",
+        "node_id": null,
+        "quantity": 1,
+        "rarity": "Rare",
+        "updated_at": "2026-10-27T19:24:00.227019900+00:00"
+      }
+    ]
+  },
+  "character_skills": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271": [
+      {
+        "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.104062600+00:00",
+        "effect": "Reads the last emotion a flame touched.",
+        "id": "c7e957f0-791b-4c8a-9a0a-747a778a01df",
+        "name": "Ember Whisper",
+        "node_id": "fc604dac-634e-495b-93ce-04da546442c5",
+        "rank": "Rank 1",
+        "updated_at": "2026-10-27T19:24:00.172174+00:00"
+      }
+    ],
+    "b164566f-55e7-4b20-9ce7-daca2da278ca": [],
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c": [
+      {
+        "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.101197500+00:00",
+        "effect": "A short step through smoke that leaves a grey afterimage.",
+        "id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+        "name": "Ash Step",
+        "node_id": "6a238c05-faaa-4238-9ce5-8eccbf086765",
+        "rank": "Rank 2",
+        "updated_at": "2026-10-27T19:24:00.169600600+00:00"
+      },
+      {
+        "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.174740500+00:00",
+        "effect": "The step carries heat once the ember answers.",
+        "id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b",
+        "name": "Cinder Step",
+        "node_id": null,
+        "rank": "Rank 1",
+        "updated_at": "2026-10-27T19:24:00.174740500+00:00"
+      }
+    ]
+  },
+  "character_stats": {
+    "8a7968df-a96e-4377-9b56-17f5ade48271": [
+      {
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.070029100+00:00",
+        "id": "f729dfcc-3a98-4ad3-9aa0-dab8c4f09a97",
+        "notes": null,
+        "stat_name": "Agility",
+        "updated_at": "2026-10-27T19:24:00.070029100+00:00",
+        "value": 17
+      },
+      {
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.072801900+00:00",
+        "id": "c353999d-7301-4b44-9a84-b18c8c2bd5d8",
+        "notes": null,
+        "stat_name": "Insight",
+        "updated_at": "2026-10-27T19:24:00.072801900+00:00",
+        "value": 16
+      },
+      {
+        "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+        "created_at": "2026-10-27T19:24:00.075323500+00:00",
+        "id": "988c1d3b-ca9d-4289-87e6-9121733dc3f2",
+        "notes": null,
+        "stat_name": "Strength",
+        "updated_at": "2026-10-27T19:24:00.075323500+00:00",
+        "value": 9
+      }
+    ],
+    "b164566f-55e7-4b20-9ce7-daca2da278ca": [],
+    "ffa5e48f-1c58-4a6b-b96a-6fade30e786c": [
+      {
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.063799400+00:00",
+        "id": "61c73757-ef38-4df1-9020-50f36d879cd0",
+        "notes": null,
+        "stat_name": "Agility",
+        "updated_at": "2026-10-27T19:24:00.063799400+00:00",
+        "value": 14
+      },
+      {
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.066354+00:00",
+        "id": "07c3e5ab-9fd3-4f92-8473-5e93cbae2563",
+        "notes": null,
+        "stat_name": "Insight",
+        "updated_at": "2026-10-27T19:24:00.066354+00:00",
+        "value": 12
+      },
+      {
+        "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+        "created_at": "2026-10-27T19:24:00.061140900+00:00",
+        "id": "63ce77d3-3092-4426-a7c9-805ee1adf441",
+        "notes": null,
+        "stat_name": "Strength",
+        "updated_at": "2026-10-27T19:24:00.061140900+00:00",
+        "value": 18
+      }
+    ]
+  },
+  "characters": [
+    {
+      "created_at": "2026-10-27T19:24:00.148723400+00:00",
+      "description": "The Ember Court's clerk, who keeps every debt in his own hand.",
+      "id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "level": 1,
+      "name": "Halden Vane",
+      "rank": null,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.148723400+00:00",
+      "xp": 0,
+      "xp_to_next": null
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.053587500+00:00",
+      "description": "A courier with a stolen ember and a talent for exits.",
+      "id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "level": 3,
+      "name": "Mira Sable",
+      "rank": "Bronze",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.058479400+00:00",
+      "xp": 1500,
+      "xp_to_next": 2200
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.051220700+00:00",
+      "description": "A debt-bound delver who reads the System like a ledger.",
+      "id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "level": 4,
+      "name": "Rook Valebright",
+      "rank": "Bronze",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.055953+00:00",
+      "xp": 2400,
+      "xp_to_next": 3000
+    }
+  ],
+  "edges": [
+    {
+      "created_at": "2026-10-27T19:24:00.180134700+00:00",
+      "created_by": "Ada",
+      "id": "b592c078-6d8c-4391-9824-fc136782bf62",
+      "label": "next",
+      "relation_type": "next",
+      "source_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "45856003-e853-421f-96f4-4f2d96515ace"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.182411800+00:00",
+      "created_by": "Ada",
+      "id": "e1d10fa4-df90-4610-91e6-7548b6697529",
+      "label": "next",
+      "relation_type": "next",
+      "source_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.184815900+00:00",
+      "created_by": "Ada",
+      "id": "77b32cb2-f39a-41d8-8888-8191d45ab0b7",
+      "label": "cast",
+      "relation_type": "cast",
+      "source_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "e49c6c30-02db-4234-a79a-8acf838886f1"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.186948400+00:00",
+      "created_by": "Ada",
+      "id": "a7458b94-e8a2-43e9-9843-b8be63ac802c",
+      "label": "cast",
+      "relation_type": "cast",
+      "source_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.189259700+00:00",
+      "created_by": "Ada",
+      "id": "50bf550c-752c-4a9b-b569-571aeb0bd63f",
+      "label": "cast",
+      "relation_type": "cast",
+      "source_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "e49c6c30-02db-4234-a79a-8acf838886f1"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.192848300+00:00",
+      "created_by": "Ada",
+      "id": "bd35e4f3-bccb-49b0-9904-e2c7ffa317d1",
+      "label": "skill",
+      "relation_type": "skill",
+      "source_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "6a238c05-faaa-4238-9ce5-8eccbf086765"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.195682100+00:00",
+      "created_by": "Ada",
+      "id": "351eb14f-112f-4acb-8197-ba13f3e2db5f",
+      "label": "skill",
+      "relation_type": "skill",
+      "source_id": "e49c6c30-02db-4234-a79a-8acf838886f1",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "fc604dac-634e-495b-93ce-04da546442c5"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.198514900+00:00",
+      "created_by": "Ada",
+      "id": "30bad95f-aa5e-4388-925c-58b02a0597e4",
+      "label": "rival",
+      "relation_type": "rival",
+      "source_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "e49c6c30-02db-4234-a79a-8acf838886f1"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.201338100+00:00",
+      "created_by": "Ada",
+      "id": "e4c00772-719b-48ed-b824-ba6e341d9ea9",
+      "label": "enemy",
+      "relation_type": "enemy",
+      "source_id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.203740+00:00",
+      "created_by": "Ada",
+      "id": "65dfd93e-6f33-446f-9071-60c76289d124",
+      "label": "serves",
+      "relation_type": "serves",
+      "source_id": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "target_id": "9fbf95d0-a501-4fef-9096-b3da88975c82"
+    }
+  ],
+  "nodes": [
+    {
+      "chapter_arc": "Arrival",
+      "chapter_day": 1,
+      "chapter_pov": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "chapter_seq": 1,
+      "chapter_target": 2500,
+      "chapter_time": "Dusk",
+      "chapter_words": 2200,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "content": "Rook buys a place at the gate with a debt he cannot name.",
+      "created_at": "2026-10-27T19:24:00.077835500+00:00",
+      "created_by": "Ada",
+      "id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "label": "The Ashen Gate",
+      "node_type": "chapter",
+      "parent_node_id": null,
+      "pos_x": 140.0,
+      "pos_y": 120.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.085536+00:00"
+    },
+    {
+      "chapter_arc": "Bargain",
+      "chapter_day": 2,
+      "chapter_pov": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "chapter_seq": 2,
+      "chapter_target": 3000,
+      "chapter_time": "Morning",
+      "chapter_words": 2600,
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "content": "Mira offers the ember to the clerk who wrote Rook's debt.",
+      "created_at": "2026-10-27T19:24:00.080283800+00:00",
+      "created_by": "Ada",
+      "id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "label": "A Ledger of Cinders",
+      "node_type": "chapter",
+      "parent_node_id": null,
+      "pos_x": 500.0,
+      "pos_y": 120.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.087833600+00:00"
+    },
+    {
+      "chapter_arc": "Confrontation",
+      "chapter_day": 3,
+      "chapter_pov": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "chapter_seq": 3,
+      "chapter_target": 3000,
+      "chapter_time": "Night",
+      "chapter_words": 3200,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "content": "The debt comes due in a room where every flame remembers.",
+      "created_at": "2026-10-27T19:24:00.083059200+00:00",
+      "created_by": "Ada",
+      "id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "label": "The Ember Court",
+      "node_type": "chapter",
+      "parent_node_id": null,
+      "pos_x": 860.0,
+      "pos_y": 120.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.090772200+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "content": "Reads the System like a ledger and owes the Court a debt he cannot name.",
+      "created_at": "2026-10-27T19:24:00.152439+00:00",
+      "created_by": "Ada",
+      "id": "8ff6ac04-d6c1-4005-9030-2f8754821b04",
+      "label": "Rook Valebright",
+      "node_type": "character",
+      "parent_node_id": null,
+      "pos_x": 200.0,
+      "pos_y": 400.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.152439+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "content": "A courier with a stolen ember and a talent for exits.",
+      "created_at": "2026-10-27T19:24:00.155106900+00:00",
+      "created_by": "Ada",
+      "id": "e49c6c30-02db-4234-a79a-8acf838886f1",
+      "label": "Mira Sable",
+      "node_type": "character",
+      "parent_node_id": null,
+      "pos_x": 620.0,
+      "pos_y": 400.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.155106900+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "content": "The clerk who wrote the debt down, and who intends to collect it.",
+      "created_at": "2026-10-27T19:24:00.157507200+00:00",
+      "created_by": "Ada",
+      "id": "6cf9aabd-ed5c-4114-a7f6-42e4cae9cdad",
+      "label": "Halden Vane",
+      "node_type": "character",
+      "parent_node_id": null,
+      "pos_x": 1040.0,
+      "pos_y": 400.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.157507200+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": null,
+      "content": "Every flame in this room remembers what it was paid.",
+      "created_at": "2026-10-27T19:24:00.160152300+00:00",
+      "created_by": "Ada",
+      "id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "label": "The Ember Court",
+      "node_type": "faction",
+      "parent_node_id": null,
+      "pos_x": 1040.0,
+      "pos_y": 700.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.160152300+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": null,
+      "content": "A short step through smoke that leaves a grey afterimage.",
+      "created_at": "2026-10-27T19:24:00.162623200+00:00",
+      "created_by": "Ada",
+      "id": "6a238c05-faaa-4238-9ce5-8eccbf086765",
+      "label": "Ash Step",
+      "node_type": "skill",
+      "parent_node_id": null,
+      "pos_x": 200.0,
+      "pos_y": 700.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.162623200+00:00"
+    },
+    {
+      "chapter_arc": null,
+      "chapter_day": null,
+      "chapter_pov": null,
+      "chapter_seq": null,
+      "chapter_target": null,
+      "chapter_time": null,
+      "chapter_words": null,
+      "character_id": null,
+      "content": "Reads the last emotion a flame touched.",
+      "created_at": "2026-10-27T19:24:00.164938300+00:00",
+      "created_by": "Ada",
+      "id": "fc604dac-634e-495b-93ce-04da546442c5",
+      "label": "Ember Whisper",
+      "node_type": "skill",
+      "parent_node_id": null,
+      "pos_x": 620.0,
+      "pos_y": 700.0,
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.164938300+00:00"
+    }
+  ],
+  "stories": [
+    {
+      "created_at": "2026-10-27T19:24:00.048778600+00:00",
+      "description": "A prepared story for trying cast badges, milestones, stat snapshots, XP income and continuity. Mira's ledger is intentionally 100 XP short in Chapter Three.",
+      "id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "title": "The Ember Ledger (Demo)",
+      "updated_at": "2026-10-27T19:24:00.048778600+00:00"
+    }
+  ],
+  "story": {
+    "created_at": "2026-10-27T19:24:00.048778600+00:00",
+    "description": "A prepared story for trying cast badges, milestones, stat snapshots, XP income and continuity. Mira's ledger is intentionally 100 XP short in Chapter Three.",
+    "id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+    "title": "The Ember Ledger (Demo)",
+    "updated_at": "2026-10-27T19:24:00.048778600+00:00"
+  },
+  "storyId": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+  "story_chapter_cast": [
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.093480300+00:00",
+      "id": "466fb2f2-effc-4914-9b51-3cdc728967bc",
+      "updated_at": "2026-10-27T19:24:00.093480300+00:00"
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.096363600+00:00",
+      "id": "22c9ea0d-6467-45d5-a1c5-9a3ad5a7f891",
+      "updated_at": "2026-10-27T19:24:00.096363600+00:00"
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.098851800+00:00",
+      "id": "0a20ceb0-6376-4238-b7de-9a15cf57e9d5",
+      "updated_at": "2026-10-27T19:24:00.098851800+00:00"
+    }
+  ],
+  "story_faction_standings": [
+    {
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.262776+00:00",
+      "created_by": "Ada",
+      "faction_node_id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "id": "f977d083-bc51-4ce1-b081-6a14790c8a4a",
+      "note": "Known to the Court by debt rather than by name.",
+      "since_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "standing": "wary",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "until_chapter_id": null,
+      "updated_at": "2026-10-27T19:24:00.262776+00:00"
+    },
+    {
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.265365100+00:00",
+      "created_by": "Ada",
+      "faction_node_id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "id": "ee71cc90-22b5-4b33-b3ef-1b7fee2fe721",
+      "note": "The stolen ember is still on the Court's ledger.",
+      "since_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "standing": "wanted",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "until_chapter_id": null,
+      "updated_at": "2026-10-27T19:24:00.265365100+00:00"
+    }
+  ],
+  "story_inventory": [
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.229583200+00:00",
+      "effect": "Opens a door that has been paid for.",
+      "id": "c754eca2-b793-4b1f-bde7-bec802230591",
+      "lost_chapter_id": null,
+      "name": "Cinder Key",
+      "node_id": null,
+      "quantity": 2,
+      "rarity": "Uncommon",
+      "updated_at": "2026-10-27T19:24:00.229583200+00:00"
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.235798400+00:00",
+      "effect": null,
+      "id": "fdfd9f3c-ed7a-4273-961c-32c3a617460a",
+      "lost_chapter_id": null,
+      "name": "Courier's Cache",
+      "node_id": null,
+      "quantity": 1,
+      "rarity": null,
+      "updated_at": "2026-10-27T19:24:00.235798400+00:00"
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.227019900+00:00",
+      "effect": "Every name in it reads as a number the reader cannot forget.",
+      "id": "082c9fea-4cf4-43d5-abaf-b72e2609e6db",
+      "lost_chapter_id": null,
+      "name": "Sealed Ledger",
+      "node_id": null,
+      "quantity": 1,
+      "rarity": "Rare",
+      "updated_at": "2026-10-27T19:24:00.227019900+00:00"
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.233141800+00:00",
+      "effect": "Warm to the touch, warmer when somebody lies.",
+      "id": "369785bb-f5f6-44df-9ed4-8d3f63589a78",
+      "lost_chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "name": "Stolen Ember",
+      "node_id": null,
+      "quantity": 1,
+      "rarity": "Legendary",
+      "updated_at": "2026-10-27T19:24:00.233141800+00:00"
+    }
+  ],
+  "story_level_milestones": [
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.112681100+00:00",
+      "id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+      "is_debuff": false,
+      "level": 2,
+      "stat_changes": [
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.112681100+00:00",
+          "id": "6bc25c01-8a72-42fb-893c-c32b963bdfde",
+          "milestone_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+          "stat_name": "Endurance",
+          "updated_at": "2026-10-27T19:24:00.112681100+00:00",
+          "value_after": 11
+        },
+        {
+          "amount": 2,
+          "created_at": "2026-10-27T19:24:00.112681100+00:00",
+          "id": "3f301a00-8995-4327-a7e7-99714ae09f49",
+          "milestone_id": "4ac69db0-3b67-4316-9238-fadc326a8c1c",
+          "stat_name": "Strength",
+          "updated_at": "2026-10-27T19:24:00.112681100+00:00",
+          "value_after": 15
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.112681100+00:00",
+      "xp": 600
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.115514+00:00",
+      "id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+      "is_debuff": false,
+      "level": 3,
+      "stat_changes": [
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.115514+00:00",
+          "id": "7f197b5f-0ad6-4b9b-9b4f-9bd7896434b4",
+          "milestone_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+          "stat_name": "Endurance",
+          "updated_at": "2026-10-27T19:24:00.115514+00:00",
+          "value_after": 12
+        },
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.115514+00:00",
+          "id": "e09ea69c-aa33-4c58-9dae-3209d832d059",
+          "milestone_id": "26375534-1a8f-490e-b5b3-ac1ee0ac6ffb",
+          "stat_name": "Strength",
+          "updated_at": "2026-10-27T19:24:00.115514+00:00",
+          "value_after": 16
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.115514+00:00",
+      "xp": 1500
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.118354900+00:00",
+      "id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "is_debuff": false,
+      "level": 4,
+      "stat_changes": [
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.118354900+00:00",
+          "id": "a42114c9-6811-4ca8-a064-6547785cc451",
+          "milestone_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+          "stat_name": "Agility",
+          "updated_at": "2026-10-27T19:24:00.118354900+00:00",
+          "value_after": 12
+        },
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.118354900+00:00",
+          "id": "61ed6e32-3e13-4e4e-8760-71bf555e7a11",
+          "milestone_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+          "stat_name": "Endurance",
+          "updated_at": "2026-10-27T19:24:00.118354900+00:00",
+          "value_after": 13
+        },
+        {
+          "amount": 2,
+          "created_at": "2026-10-27T19:24:00.118354900+00:00",
+          "id": "8f73f8b3-776c-4e1d-a9aa-74f08b0ace4c",
+          "milestone_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+          "stat_name": "Strength",
+          "updated_at": "2026-10-27T19:24:00.118354900+00:00",
+          "value_after": 18
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.118354900+00:00",
+      "xp": 2400
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.124039700+00:00",
+      "id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+      "is_debuff": false,
+      "level": 1,
+      "stat_changes": [
+        {
+          "amount": 2,
+          "created_at": "2026-10-27T19:24:00.124039700+00:00",
+          "id": "b7063ae9-15a7-4df8-ac4a-1e977a3fd604",
+          "milestone_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+          "stat_name": "Agility",
+          "updated_at": "2026-10-27T19:24:00.124039700+00:00",
+          "value_after": 13
+        },
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.124039700+00:00",
+          "id": "2a0cb48a-716b-483c-8d09-0841b3661025",
+          "milestone_id": "bbc40a93-421d-4cda-ba5d-a36f64c7a360",
+          "stat_name": "Perception",
+          "updated_at": "2026-10-27T19:24:00.124039700+00:00",
+          "value_after": 12
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.124039700+00:00",
+      "xp": 200
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.126727+00:00",
+      "id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+      "is_debuff": false,
+      "level": 2,
+      "stat_changes": [
+        {
+          "amount": 2,
+          "created_at": "2026-10-27T19:24:00.126727+00:00",
+          "id": "1e052a05-12c1-47ec-bac3-3e32cf6b936b",
+          "milestone_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+          "stat_name": "Agility",
+          "updated_at": "2026-10-27T19:24:00.126727+00:00",
+          "value_after": 15
+        },
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.126727+00:00",
+          "id": "b2c68fd9-1aa3-4b6e-ad60-0cc152c96d22",
+          "milestone_id": "9aaaa5b7-4494-448b-8cc1-c516894c1f3b",
+          "stat_name": "Perception",
+          "updated_at": "2026-10-27T19:24:00.126727+00:00",
+          "value_after": 13
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.126727+00:00",
+      "xp": 800
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.129449400+00:00",
+      "id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+      "is_debuff": false,
+      "level": 3,
+      "stat_changes": [
+        {
+          "amount": 2,
+          "created_at": "2026-10-27T19:24:00.129449400+00:00",
+          "id": "2e8f13f3-ebbe-424a-86d2-db9a033aaa5b",
+          "milestone_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+          "stat_name": "Agility",
+          "updated_at": "2026-10-27T19:24:00.129449400+00:00",
+          "value_after": 17
+        },
+        {
+          "amount": 1,
+          "created_at": "2026-10-27T19:24:00.129449400+00:00",
+          "id": "b5a1c17f-d7eb-491a-8ade-6a7aebdfd634",
+          "milestone_id": "99b66140-aa65-468e-9a0a-3da37dd6f9f6",
+          "stat_name": "Perception",
+          "updated_at": "2026-10-27T19:24:00.129449400+00:00",
+          "value_after": 14
+        }
+      ],
+      "updated_at": "2026-10-27T19:24:00.129449400+00:00",
+      "xp": 1500
+    }
+  ],
+  "story_progress": [
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.132262900+00:00",
+      "id": "f1bbfe1e-1892-479c-8250-aa9aa8fc97e3",
+      "updated_at": "2026-10-27T19:24:00.132262900+00:00",
+      "xp_earned": 600
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.134877400+00:00",
+      "id": "bfb5138e-b11c-4241-8dab-ea5344b0cb3e",
+      "updated_at": "2026-10-27T19:24:00.134877400+00:00",
+      "xp_earned": 900
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.137581300+00:00",
+      "id": "f7b74760-543c-473f-ad6c-2486f10cd90d",
+      "updated_at": "2026-10-27T19:24:00.137581300+00:00",
+      "xp_earned": 900
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.140249100+00:00",
+      "id": "c81c6916-f60d-4ff4-bab8-838eb31c54d2",
+      "updated_at": "2026-10-27T19:24:00.140249100+00:00",
+      "xp_earned": 200
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.143048900+00:00",
+      "id": "f49bbf7a-66b3-451e-a828-8807bd91902f",
+      "updated_at": "2026-10-27T19:24:00.143048900+00:00",
+      "xp_earned": 600
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.145570300+00:00",
+      "id": "439a7ef3-a6ca-4b43-80a7-494691514ea2",
+      "updated_at": "2026-10-27T19:24:00.145570300+00:00",
+      "xp_earned": 600
+    }
+  ],
+  "story_quests": [
+    {
+      "accepted_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "completed_chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "created_at": "2026-10-27T19:24:00.211655200+00:00",
+      "created_by": "Ada",
+      "description": "The debt comes due in a room where every flame remembers.",
+      "faction_node_id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+      "giver_character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+      "notes": "Settled with the ledger Rook was never meant to read.",
+      "rewards": [
+        {
+          "amount_or_details": "1200",
+          "applied_at": null,
+          "created_at": "2026-10-27T19:24:00.214245500+00:00",
+          "id": "929532aa-8777-42a4-8baf-76764427f769",
+          "quest_id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+          "reward_type": "xp",
+          "target_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+          "updated_at": "2026-10-27T19:24:00.214245500+00:00"
+        },
+        {
+          "amount_or_details": "Sealed Ledger",
+          "applied_at": null,
+          "created_at": "2026-10-27T19:24:00.216716200+00:00",
+          "id": "8708e227-d388-4613-a0d5-7391a28e0372",
+          "quest_id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+          "reward_type": "item",
+          "target_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+          "updated_at": "2026-10-27T19:24:00.216716200+00:00"
+        },
+        {
+          "amount_or_details": "Insight +2",
+          "applied_at": null,
+          "created_at": "2026-10-27T19:24:00.219283+00:00",
+          "id": "bc20ce1e-7de7-4cfb-bb02-decd2bcdd83a",
+          "quest_id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+          "reward_type": "stat",
+          "target_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+          "updated_at": "2026-10-27T19:24:00.219283+00:00"
+        },
+        {
+          "amount_or_details": "cleared",
+          "applied_at": null,
+          "created_at": "2026-10-27T19:24:00.222021700+00:00",
+          "id": "1225d39a-9864-4563-8035-3b3314daf7e5",
+          "quest_id": "445dadb5-0931-4b59-afd2-757b06a4ea08",
+          "reward_type": "faction_standing",
+          "target_id": "9fbf95d0-a501-4fef-9096-b3da88975c82",
+          "updated_at": "2026-10-27T19:24:00.222021700+00:00"
+        }
+      ],
+      "status": "completed",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "title": "Pay the Ember Debt",
+      "updated_at": "2026-10-27T19:24:00.211655200+00:00"
+    },
+    {
+      "accepted_chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "completed_chapter_id": null,
+      "created_at": "2026-10-27T19:24:00.224570900+00:00",
+      "created_by": "Ada",
+      "description": "Mira needs the road that only burns for people who owe nothing.",
+      "faction_node_id": null,
+      "giver_character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "id": "16250d35-f252-495a-add4-20fccffb4a9b",
+      "notes": "Open: the gate only answers at dusk.",
+      "rewards": [],
+      "status": "active",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "title": "Find the Cinder Road",
+      "updated_at": "2026-10-27T19:24:00.224570900+00:00"
+    }
+  ],
+  "story_relations": [
+    {
+      "created_at": "2026-10-27T19:24:00.206155200+00:00",
+      "created_by": "Ada",
+      "from_character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "id": "173756a9-3e16-4c0e-a168-60e0d876396b",
+      "kind": "rival",
+      "note": "Two couriers who keep meeting at the same locked door.",
+      "since_chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "to_character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "until_chapter_id": null,
+      "updated_at": "2026-10-27T19:24:00.206155200+00:00"
+    },
+    {
+      "created_at": "2026-10-27T19:24:00.208768600+00:00",
+      "created_by": "Ada",
+      "from_character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "id": "d8bef365-015a-4251-9773-cafc7cca651c",
+      "kind": "enemy",
+      "note": "The debt Rook cannot name is the one Vane wrote down.",
+      "since_chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "to_character_id": "b164566f-55e7-4b20-9ce7-daca2da278ca",
+      "until_chapter_id": null,
+      "updated_at": "2026-10-27T19:24:00.208768600+00:00"
+    }
+  ],
+  "story_skill_events": [
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "created_at": "2026-10-27T19:24:00.106960900+00:00",
+      "id": "680a32eb-823b-4ee8-a58f-3a0e8ec74d5f",
+      "kind": "used",
+      "rank": "Rank 1",
+      "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "updated_at": "2026-10-27T19:24:00.106960900+00:00"
+    },
+    {
+      "chapter_id": "45856003-e853-421f-96f4-4f2d96515ace",
+      "created_at": "2026-10-27T19:24:00.109853600+00:00",
+      "id": "05910294-82af-4cdf-9c1b-0ad5d2f3d02f",
+      "kind": "used",
+      "rank": "Rank 1",
+      "skill_id": "c7e957f0-791b-4c8a-9a0a-747a778a01df",
+      "updated_at": "2026-10-27T19:24:00.109853600+00:00"
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "created_at": "2026-10-27T19:24:00.121267900+00:00",
+      "id": "15540f0e-0c9e-41ff-b1a0-5d31fcc7330c",
+      "kind": "upgraded",
+      "milestone_id": "e8649696-615d-4a61-9faf-e7630fcbb075",
+      "rank": "Rank 2",
+      "skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "updated_at": "2026-10-27T19:24:00.121267900+00:00"
+    }
+  ],
+  "story_skill_evolutions": [
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "child_skill_id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b",
+      "created_at": "2026-10-27T19:24:00.177201500+00:00",
+      "created_by": "Ada",
+      "evolution_type": "upgrade",
+      "id": "ded4002c-7f3f-4f7a-9aeb-1bdcc95a8840",
+      "notes": "Learned when the debt came due and the ember answered.",
+      "parent_skill_id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "required_rank": "Rank 2",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e",
+      "updated_at": "2026-10-27T19:24:00.177201500+00:00"
+    }
+  ],
+  "story_skills": [
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.101197500+00:00",
+      "effect": "A short step through smoke that leaves a grey afterimage.",
+      "id": "f79616d6-f839-4c6f-9cd2-e464d3c7f8d4",
+      "name": "Ash Step",
+      "node_id": "6a238c05-faaa-4238-9ce5-8eccbf086765",
+      "rank": "Rank 2",
+      "updated_at": "2026-10-27T19:24:00.169600600+00:00"
+    },
+    {
+      "chapter_id": "65ef00ef-2a31-447e-9ef1-3cd0d15dbbfe",
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.174740500+00:00",
+      "effect": "The step carries heat once the ember answers.",
+      "id": "6a5a65bd-be5c-4801-ad55-969c22fbac3b",
+      "name": "Cinder Step",
+      "node_id": null,
+      "rank": "Rank 1",
+      "updated_at": "2026-10-27T19:24:00.174740500+00:00"
+    },
+    {
+      "chapter_id": "432da51a-24c7-4fc5-a08a-5fb6f86a097d",
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.104062600+00:00",
+      "effect": "Reads the last emotion a flame touched.",
+      "id": "c7e957f0-791b-4c8a-9a0a-747a778a01df",
+      "name": "Ember Whisper",
+      "node_id": "fc604dac-634e-495b-93ce-04da546442c5",
+      "rank": "Rank 1",
+      "updated_at": "2026-10-27T19:24:00.172174+00:00"
+    }
+  ],
+  "story_stats": [
+    {
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.063799400+00:00",
+      "id": "61c73757-ef38-4df1-9020-50f36d879cd0",
+      "notes": null,
+      "stat_name": "Agility",
+      "updated_at": "2026-10-27T19:24:00.063799400+00:00",
+      "value": 14
+    },
+    {
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.070029100+00:00",
+      "id": "f729dfcc-3a98-4ad3-9aa0-dab8c4f09a97",
+      "notes": null,
+      "stat_name": "Agility",
+      "updated_at": "2026-10-27T19:24:00.070029100+00:00",
+      "value": 17
+    },
+    {
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.066354+00:00",
+      "id": "07c3e5ab-9fd3-4f92-8473-5e93cbae2563",
+      "notes": null,
+      "stat_name": "Insight",
+      "updated_at": "2026-10-27T19:24:00.066354+00:00",
+      "value": 12
+    },
+    {
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.072801900+00:00",
+      "id": "c353999d-7301-4b44-9a84-b18c8c2bd5d8",
+      "notes": null,
+      "stat_name": "Insight",
+      "updated_at": "2026-10-27T19:24:00.072801900+00:00",
+      "value": 16
+    },
+    {
+      "character_id": "ffa5e48f-1c58-4a6b-b96a-6fade30e786c",
+      "created_at": "2026-10-27T19:24:00.061140900+00:00",
+      "id": "63ce77d3-3092-4426-a7c9-805ee1adf441",
+      "notes": null,
+      "stat_name": "Strength",
+      "updated_at": "2026-10-27T19:24:00.061140900+00:00",
+      "value": 18
+    },
+    {
+      "character_id": "8a7968df-a96e-4377-9b56-17f5ade48271",
+      "created_at": "2026-10-27T19:24:00.075323500+00:00",
+      "id": "988c1d3b-ca9d-4289-87e6-9121733dc3f2",
+      "notes": null,
+      "stat_name": "Strength",
+      "updated_at": "2026-10-27T19:24:00.075323500+00:00",
+      "value": 9
+    }
+  ],
+  "trash": [
+    {
+      "deleted_at": "2026-10-27T19:24:00.274710300+00:00",
+      "id": "ea482db8-ffed-4430-80e4-44bef970a2c3",
+      "kind": "node",
+      "label": "Cut: the toll bell",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    },
+    {
+      "deleted_at": "2026-10-27T19:24:00.270871700+00:00",
+      "id": "755c16ab-bfb1-46ef-a86e-7cc32491149a",
+      "kind": "character",
+      "label": "Wren Ashgrove",
+      "story_id": "e270ad32-6bd4-4c79-a0f3-5555dc46583e"
+    }
+  ],
+  "trash_retention": null,
+  "trash_stories": [
+    {
+      "deleted_at": "2026-10-27T19:24:00.279986+00:00",
+      "id": "43f1b1d1-867a-4b1a-925a-adac8898c082",
+      "kind": "story",
+      "label": "Scratch: gate variants",
+      "story_id": "43f1b1d1-867a-4b1a-925a-adac8898c082"
+    }
+  ]
+}
