@@ -70,7 +70,6 @@ function baseProps(
     characters: [],
     selectedCharacterId: null,
     setSelectedCharacterId: vi.fn(),
-    setEditingProgress: vi.fn(),
     newCharacterName: '',
     setNewCharacterName: vi.fn(),
     newCharacterDescription: '',

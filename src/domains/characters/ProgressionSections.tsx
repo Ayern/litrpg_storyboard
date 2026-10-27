@@ -1,7 +1,8 @@
-import React from 'react';
+import { useEffect, useState } from 'react';
 import type { ChapterNode } from '../narrative/chapters';
 import { StatChangeRows } from '../progression/StatChangeRows';
 import type { LevelStatChangeDraft } from '../progression/drafts';
+import { blankStatChange, statChangesFromMilestone } from '../progression/drafts';
 import { milestoneStatChanges, statChangeText } from '../progression/helpers';
 import type { ProgressionFocus } from '../progression/types';
 import type {
@@ -18,162 +19,254 @@ import type { CharacterSkillEvent } from '../skills/types';
 //
 // They are one group because they share one question: what changed, and where in
 // the reading order did it change. The milestones and the income feed the power
-// curve above this sheet, and each of the three writes its own audited row, so
-// the drafts stay in the app with the handlers that save them and arrive here as
-// props - a save is still one audited action, and an undo still reverses it.
+// curve above this sheet.
 //
-// What it reads: the selected character, the milestones and income already
-// filtered to that character and sorted in reading order, and the skill events
-// that hang off a milestone, so a level can say which skill it moved.
+// The form state lives here: the level and XP fields, the milestone rows with the
+// stat changes a level carried, and the income rows. Every field stays the text
+// the author typed, because the app is the one that decides what a whole level, a
+// total or a stat change is - and each write answers whether the row was written,
+// so a refused row keeps its editor rather than throwing the typing away.
+//
+// A warning on another tab opens the exact row it names, so this panel watches
+// the focus it is handed and opens that milestone. Moving to another character
+// closes the level form, because it holds that character's numbers rather than a
+// row's.
+
+// What the level form hands the app. The numbers stay as typed; the app is the
+// one that decides what a level, an experience total and a target are.
+export interface ProgressDraft {
+  level: string;
+  xp: string;
+  target: string;
+  rank: string;
+}
+
+// One level-up, as the milestone form holds it. XP is optional, and a level can
+// carry as many stat changes as the story needs.
+export interface MilestoneDraft {
+  level: string;
+  chapterId: string;
+  isDebuff: boolean;
+  xp: string;
+  statChanges: LevelStatChangeDraft[];
+}
+
+// One chapter's XP income, as the ledger's form holds it.
+export interface XpEntryDraft {
+  chapterId: string;
+  xp: string;
+}
 
 export interface ProgressionSectionsProps {
-  // The selected character, and the numbers the app works out from it.
+  // The selected character and the numbers the app works out from it.
   character: Character | null;
+  characterId: string | null;
   shownLevel: number;
   shownXp: number;
   shownTarget: number | null;
   progressPercent: number;
 
-  // The level and XP editor.
-  editingProgress: boolean;
-  setEditingProgress: (editing: boolean) => void;
-  progressLevelDraft: string;
-  setProgressLevelDraft: (level: string) => void;
-  progressXpDraft: string;
-  setProgressXpDraft: (xp: string) => void;
-  progressTargetDraft: string;
-  setProgressTargetDraft: (target: string) => void;
-  progressRankDraft: string;
-  setProgressRankDraft: (rank: string) => void;
-  saveProgress: () => Promise<void>;
-  levelUpCharacter: () => Promise<void>;
-  startProgressEdit: () => void;
+  // The chapters a milestone or an income row can name, in reading order.
+  chapters: ChapterNode[];
 
-  // The chapters a milestone or an XP entry can name, in reading order.
-  chapterChoices: ChapterNode[];
-
-  // Level milestones.
   milestones: CharacterLevelMilestone[];
-  focus: ProgressionFocus | null;
+  xpEntries: CharacterProgress[];
   skillEvents: CharacterSkillEvent[];
   skills: CharacterSkill[];
+  // The stat names a milestone's rows can pick from.
   statNameOptions: string[];
-  editingMilestoneId: string | null;
-  setEditingMilestoneId: (milestoneId: string | null) => void;
-  milestoneLevelDraft: string;
-  setMilestoneLevelDraft: (level: string) => void;
-  milestoneChapterDraft: string;
-  setMilestoneChapterDraft: (chapterId: string) => void;
-  milestoneDebuffDraft: boolean;
-  setMilestoneDebuffDraft: (debuff: boolean) => void;
-  milestoneXpDraft: string;
-  setMilestoneXpDraft: (xp: string) => void;
-  milestoneStatChangesDraft: LevelStatChangeDraft[];
-  setMilestoneStatChangesDraft: React.Dispatch<
-    React.SetStateAction<LevelStatChangeDraft[]>
-  >;
-  startMilestoneEdit: (milestone: CharacterLevelMilestone) => void;
-  saveMilestone: (milestone: CharacterLevelMilestone) => Promise<void>;
-  removeMilestone: (milestone: CharacterLevelMilestone) => Promise<void>;
-  newMilestoneLevel: string;
-  setNewMilestoneLevel: (level: string) => void;
-  newMilestoneChapter: string;
-  setNewMilestoneChapter: (chapterId: string) => void;
-  newMilestoneDebuff: boolean;
-  setNewMilestoneDebuff: (debuff: boolean) => void;
-  newMilestoneXp: string;
-  setNewMilestoneXp: (xp: string) => void;
-  newMilestoneStatChanges: LevelStatChangeDraft[];
-  setNewMilestoneStatChanges: React.Dispatch<
-    React.SetStateAction<LevelStatChangeDraft[]>
-  >;
-  addMilestone: () => Promise<void>;
+  focus: ProgressionFocus | null;
 
-  // XP by chapter.
-  xpEntries: CharacterProgress[];
-  editingXpEntryId: string | null;
-  setEditingXpEntryId: (entryId: string | null) => void;
-  xpEntryChapterDraft: string;
-  setXpEntryChapterDraft: (chapterId: string) => void;
-  xpEntryXpDraft: string;
-  setXpEntryXpDraft: (xp: string) => void;
-  startXpEntryEdit: (entry: CharacterProgress) => void;
-  saveXpEntry: (entry: CharacterProgress) => Promise<void>;
-  removeXpEntry: (entry: CharacterProgress) => Promise<void>;
-  newXpEntryChapter: string;
-  setNewXpEntryChapter: (chapterId: string) => void;
-  newXpEntryXp: string;
-  setNewXpEntryXp: (xp: string) => void;
-  addXpEntry: () => Promise<void>;
+  onError: (message: string | null) => void;
+  onSaveProgress: (draft: ProgressDraft) => Promise<boolean>;
+  onLevelUp: () => Promise<void>;
+  onCreateMilestone: (draft: MilestoneDraft) => Promise<boolean>;
+  onSaveMilestone: (
+    milestone: CharacterLevelMilestone,
+    draft: MilestoneDraft
+  ) => Promise<boolean>;
+  onDeleteMilestone: (milestone: CharacterLevelMilestone) => Promise<boolean>;
+  onCreateXpEntry: (draft: XpEntryDraft) => Promise<boolean>;
+  onSaveXpEntry: (
+    entry: CharacterProgress,
+    draft: XpEntryDraft
+  ) => Promise<boolean>;
+  onDeleteXpEntry: (entry: CharacterProgress) => Promise<boolean>;
 }
 
 export function ProgressionSections({
   character,
+  characterId,
   shownLevel,
   shownXp,
   shownTarget,
   progressPercent,
-  editingProgress,
-  setEditingProgress,
-  progressLevelDraft,
-  setProgressLevelDraft,
-  progressXpDraft,
-  setProgressXpDraft,
-  progressTargetDraft,
-  setProgressTargetDraft,
-  progressRankDraft,
-  setProgressRankDraft,
-  saveProgress,
-  levelUpCharacter,
-  startProgressEdit,
-  chapterChoices,
+  chapters,
   milestones,
-  focus,
+  xpEntries,
   skillEvents,
   skills,
   statNameOptions,
-  editingMilestoneId,
-  setEditingMilestoneId,
-  milestoneLevelDraft,
-  setMilestoneLevelDraft,
-  milestoneChapterDraft,
-  setMilestoneChapterDraft,
-  milestoneDebuffDraft,
-  setMilestoneDebuffDraft,
-  milestoneXpDraft,
-  setMilestoneXpDraft,
-  milestoneStatChangesDraft,
-  setMilestoneStatChangesDraft,
-  startMilestoneEdit,
-  saveMilestone,
-  removeMilestone,
-  newMilestoneLevel,
-  setNewMilestoneLevel,
-  newMilestoneChapter,
-  setNewMilestoneChapter,
-  newMilestoneDebuff,
-  setNewMilestoneDebuff,
-  newMilestoneXp,
-  setNewMilestoneXp,
-  newMilestoneStatChanges,
-  setNewMilestoneStatChanges,
-  addMilestone,
-  xpEntries,
-  editingXpEntryId,
-  setEditingXpEntryId,
-  xpEntryChapterDraft,
-  setXpEntryChapterDraft,
-  xpEntryXpDraft,
-  setXpEntryXpDraft,
-  startXpEntryEdit,
-  saveXpEntry,
-  removeXpEntry,
-  newXpEntryChapter,
-  setNewXpEntryChapter,
-  newXpEntryXp,
-  setNewXpEntryXp,
-  addXpEntry,
+  focus,
+  onError,
+  onSaveProgress,
+  onLevelUp,
+  onCreateMilestone,
+  onSaveMilestone,
+  onDeleteMilestone,
+  onCreateXpEntry,
+  onSaveXpEntry,
+  onDeleteXpEntry,
 }: ProgressionSectionsProps) {
+  const [editingProgress, setEditingProgress] = useState(false);
+  const [progressLevelDraft, setProgressLevelDraft] = useState('1');
+  const [progressXpDraft, setProgressXpDraft] = useState('0');
+  const [progressTargetDraft, setProgressTargetDraft] = useState('');
+  const [progressRankDraft, setProgressRankDraft] = useState('');
+
+  const [editingMilestoneId, setEditingMilestoneId] = useState<string | null>(null);
+  const [milestoneLevelDraft, setMilestoneLevelDraft] = useState('1');
+  const [milestoneChapterDraft, setMilestoneChapterDraft] = useState('');
+  const [milestoneDebuffDraft, setMilestoneDebuffDraft] = useState(false);
+  const [milestoneXpDraft, setMilestoneXpDraft] = useState('');
+  const [milestoneStatChangesDraft, setMilestoneStatChangesDraft] = useState<
+    LevelStatChangeDraft[]
+  >([]);
+
+  const [newMilestoneLevel, setNewMilestoneLevel] = useState('1');
+  const [newMilestoneChapter, setNewMilestoneChapter] = useState('');
+  const [newMilestoneDebuff, setNewMilestoneDebuff] = useState(false);
+  const [newMilestoneXp, setNewMilestoneXp] = useState('');
+  const [newMilestoneStatChanges, setNewMilestoneStatChanges] = useState<
+    LevelStatChangeDraft[]
+  >([blankStatChange()]);
+
+  const [editingXpEntryId, setEditingXpEntryId] = useState<string | null>(null);
+  const [xpEntryChapterDraft, setXpEntryChapterDraft] = useState('');
+  const [xpEntryXpDraft, setXpEntryXpDraft] = useState('');
+
+  const [newXpEntryChapter, setNewXpEntryChapter] = useState('');
+  const [newXpEntryXp, setNewXpEntryXp] = useState('');
+
+  // The progression form opens with the stored numbers, so a save can change one
+  // field without having to retype the others.
+  const startProgressEdit = () => {
+    if (!character) return;
+
+    setProgressLevelDraft(String(shownLevel));
+    setProgressXpDraft(String(shownXp));
+    setProgressTargetDraft(shownTarget ? String(shownTarget) : '');
+    setProgressRankDraft(character.rank ?? '');
+    onError(null);
+    setEditingProgress(true);
+  };
+
+  const saveProgress = async () => {
+    const saved = await onSaveProgress({
+      level: progressLevelDraft,
+      xp: progressXpDraft,
+      target: progressTargetDraft,
+      rank: progressRankDraft,
+    });
+
+    if (saved) setEditingProgress(false);
+  };
+
+  // The level form holds the selected character's numbers rather than a row's, so
+  // moving to somebody else closes it: whoever is selected next starts from their
+  // own record.
+  useEffect(() => {
+    setEditingProgress(false);
+  }, [characterId]);
+
+  const startMilestoneEdit = (milestone: CharacterLevelMilestone) => {
+    setEditingMilestoneId(milestone.id);
+    setMilestoneLevelDraft(String(milestone.level));
+    setMilestoneChapterDraft(milestone.chapter_id ?? '');
+    setMilestoneDebuffDraft(milestone.is_debuff);
+    setMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
+    setMilestoneStatChangesDraft(statChangesFromMilestone(milestone));
+  };
+
+  // A warning opens the milestone it names; the highlight simply timing out
+  // leaves the editor alone.
+  useEffect(() => {
+    if (!focus) return;
+
+    const milestone = milestones.find(entry => entry.id === focus.id);
+
+    if (focus.kind === 'level' && milestone) startMilestoneEdit(milestone);
+    // Only a new focus reopens a row: the list changing under an open editor must
+    // not put the saved values back over what is being typed.
+  }, [focus]);
+
+  const saveMilestone = async (milestone: CharacterLevelMilestone) => {
+    const saved = await onSaveMilestone(milestone, {
+      level: milestoneLevelDraft,
+      chapterId: milestoneChapterDraft,
+      isDebuff: milestoneDebuffDraft,
+      xp: milestoneXpDraft,
+      statChanges: milestoneStatChangesDraft,
+    });
+
+    if (saved) setEditingMilestoneId(null);
+  };
+
+  const addMilestone = async () => {
+    const saved = await onCreateMilestone({
+      level: newMilestoneLevel,
+      chapterId: newMilestoneChapter,
+      isDebuff: newMilestoneDebuff,
+      xp: newMilestoneXp,
+      statChanges: newMilestoneStatChanges,
+    });
+
+    if (!saved) return;
+
+    // The next milestone usually follows the one just recorded, so the level is
+    // kept as the number that was written rather than as it was typed.
+    setNewMilestoneLevel(String(Number(newMilestoneLevel)));
+    setNewMilestoneChapter('');
+    setNewMilestoneDebuff(false);
+    setNewMilestoneXp('');
+    setNewMilestoneStatChanges([blankStatChange()]);
+  };
+
+  const removeMilestone = async (milestone: CharacterLevelMilestone) => {
+    if (await onDeleteMilestone(milestone)) setEditingMilestoneId(null);
+  };
+
+  const startXpEntryEdit = (entry: CharacterProgress) => {
+    setEditingXpEntryId(entry.id);
+    setXpEntryChapterDraft(entry.chapter_id);
+    setXpEntryXpDraft(String(entry.xp_earned));
+  };
+
+  const saveXpEntry = async (entry: CharacterProgress) => {
+    const saved = await onSaveXpEntry(entry, {
+      chapterId: xpEntryChapterDraft,
+      xp: xpEntryXpDraft,
+    });
+
+    if (saved) setEditingXpEntryId(null);
+  };
+
+  const addXpEntry = async () => {
+    const saved = await onCreateXpEntry({
+      chapterId: newXpEntryChapter,
+      xp: newXpEntryXp,
+    });
+
+    if (!saved) return;
+
+    setNewXpEntryChapter('');
+    setNewXpEntryXp('');
+  };
+
+  const removeXpEntry = async (entry: CharacterProgress) => {
+    if (await onDeleteXpEntry(entry)) setEditingXpEntryId(null);
+  };
+
   return (
     <>
       <section className="progress-section" aria-label="Progression">
@@ -289,7 +382,7 @@ export function ProgressionSections({
           <div className="progress-actions">
             <button
               title="Add one level, recorded as a level-up in the audit log"
-              onClick={levelUpCharacter}
+              onClick={onLevelUp}
             >
               Level up
             </button>
@@ -317,7 +410,7 @@ export function ProgressionSections({
           )}
 
           {milestones.map(milestone => {
-            const chapter = chapterChoices.find(
+            const chapter = chapters.find(
               choice => choice.id === milestone.chapter_id
             );
             const focused =
@@ -352,14 +445,14 @@ export function ProgressionSections({
                     >
                       <option value="">No chapter</option>
                       {milestoneChapterDraft &&
-                        !chapterChoices.some(
+                        !chapters.some(
                           choice => choice.id === milestoneChapterDraft
                         ) && (
                           <option value={milestoneChapterDraft}>
                             Chapter in the trash
                           </option>
                         )}
-                      {chapterChoices.map(choice => (
+                      {chapters.map(choice => (
                         <option key={choice.id} value={choice.id}>
                           {choice.data.label}
                         </option>
@@ -483,7 +576,7 @@ export function ProgressionSections({
             onChange={(e) => setNewMilestoneChapter(e.target.value)}
           >
             <option value="">No chapter</option>
-            {chapterChoices.map(choice => (
+            {chapters.map(choice => (
               <option key={choice.id} value={choice.id}>
                 {choice.data.label}
               </option>
@@ -538,7 +631,7 @@ export function ProgressionSections({
           )}
 
           {xpEntries.map(entry => {
-            const chapter = chapterChoices.find(
+            const chapter = chapters.find(
               choice => choice.id === entry.chapter_id
             );
             const chapterLabel = chapter
@@ -560,14 +653,14 @@ export function ProgressionSections({
                     >
                       <option value="">Choose chapter</option>
                       {xpEntryChapterDraft &&
-                        !chapterChoices.some(
+                        !chapters.some(
                           choice => choice.id === xpEntryChapterDraft
                         ) && (
                           <option value={xpEntryChapterDraft}>
                             Chapter in the trash
                           </option>
                         )}
-                      {chapterChoices.map(choice => (
+                      {chapters.map(choice => (
                         <option key={choice.id} value={choice.id}>
                           {choice.data.label}
                         </option>
@@ -637,7 +730,7 @@ export function ProgressionSections({
             onChange={e => setNewXpEntryChapter(e.target.value)}
           >
             <option value="">Choose chapter</option>
-            {chapterChoices.map(choice => (
+            {chapters.map(choice => (
               <option key={choice.id} value={choice.id}>
                 {choice.data.label}
               </option>

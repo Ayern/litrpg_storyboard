@@ -52,7 +52,6 @@ export interface CharacterSheetPanelProps {
   characters: Character[];
   selectedCharacterId: string | null;
   setSelectedCharacterId: (characterId: string) => void;
-  setEditingProgress: (editing: boolean) => void;
   newCharacterName: string;
   setNewCharacterName: (name: string) => void;
   newCharacterDescription: string;
@@ -104,7 +103,6 @@ export function CharacterSheetPanel({
   characters,
   selectedCharacterId,
   setSelectedCharacterId,
-  setEditingProgress,
   newCharacterName,
   setNewCharacterName,
   newCharacterDescription,
@@ -388,10 +386,10 @@ export function CharacterSheetPanel({
                   selectedCharacterId === character.id ? 'active' : ''
                 }`}
                 title={`Show ${character.name}'s sheet`}
-                onClick={() => {
-                  setSelectedCharacterId(character.id);
-                  setEditingProgress(false);
-                }}
+                // The sheet's own panels hold their forms, and each closes its
+                // editor when the character it was opened for is no longer the
+                // one selected, so the rail only has to choose.
+                onClick={() => setSelectedCharacterId(character.id)}
               >
                 <span className="character-name">{character.name}</span>
                 <span className="character-level">

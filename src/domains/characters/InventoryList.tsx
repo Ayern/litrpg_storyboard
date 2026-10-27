@@ -1,99 +1,126 @@
+import { useState } from 'react';
 import type { Node } from 'reactflow';
 import { formatCount } from '../../lib/format';
 import type { NodeData } from '../canvas/types';
 import type { ChapterNode } from '../narrative/chapters';
 import type { InventoryItem } from '../inventory/types';
 
-// The sheet's inventory: a ledger, not a game engine. A row is a name, a
-// rarity, how many the character carries, what it does, where it was found and,
-// if it is gone, where it was lost. The card column is what puts the row on an
-// item card on the board, so the two views name the same item.
+// The sheet's inventory: a ledger, not a game engine. A row is a name, a rarity,
+// how many the character carries, what it does, where it was found and, if it is
+// gone, where it was lost. The card column is what puts the row on an item card
+// on the board, so the two views name the same item.
 //
-// Everything the rows read arrives as a prop, including the chapter and card
-// labels they look up by id - a chapter or a card in the trash is shown as such
-// rather than silently dropped. The drafts and the writes they feed stay in the
-// app, so an add, a save and a delete keep their single audited step.
+// The form state lives here: the open row with its seven fields, and the seven
+// that add a row. They stay strings while they are being typed, so a half-typed
+// quantity is never reworded underneath the author; the app parses and validates
+// them, because the same write is made from the board when an item comes back,
+// and answers whether the row was written.
+//
+// A chapter or a card in the trash is named as such rather than silently dropped,
+// so a row whose link outlived its card still says where it pointed.
+
+// What the two item forms hand the app. The quantity is still the text the author
+// typed; the app is the one that decides what a whole number is.
+export interface InventoryDraft {
+  name: string;
+  rarity: string;
+  quantity: string;
+  effect: string;
+  chapterId: string;
+  lostChapterId: string;
+  nodeId: string;
+}
 
 export interface InventoryListProps {
   items: InventoryItem[];
   // The chapters and the item cards a row can point at.
   chapters: ChapterNode[];
   cards: Node<NodeData>[];
-  editingItemId: string | null;
-  setEditingItemId: (itemId: string | null) => void;
-  itemNameDraft: string;
-  setItemNameDraft: (name: string) => void;
-  itemRarityDraft: string;
-  setItemRarityDraft: (rarity: string) => void;
-  itemQuantityDraft: string;
-  setItemQuantityDraft: (quantity: string) => void;
-  itemEffectDraft: string;
-  setItemEffectDraft: (effect: string) => void;
-  itemChapterDraft: string;
-  setItemChapterDraft: (chapterId: string) => void;
-  itemLostChapterDraft: string;
-  setItemLostChapterDraft: (chapterId: string) => void;
-  itemNodeDraft: string;
-  setItemNodeDraft: (nodeId: string) => void;
-  startItemEdit: (item: InventoryItem) => void;
-  saveItem: (item: InventoryItem) => Promise<void>;
-  removeItem: (item: InventoryItem) => Promise<void>;
-  newItemName: string;
-  setNewItemName: (name: string) => void;
-  newItemRarity: string;
-  setNewItemRarity: (rarity: string) => void;
-  newItemQuantity: string;
-  setNewItemQuantity: (quantity: string) => void;
-  newItemEffect: string;
-  setNewItemEffect: (effect: string) => void;
-  newItemChapterId: string;
-  setNewItemChapterId: (chapterId: string) => void;
-  newItemLostChapterId: string;
-  setNewItemLostChapterId: (chapterId: string) => void;
-  newItemNodeId: string;
-  setNewItemNodeId: (nodeId: string) => void;
-  addItem: () => Promise<void>;
+  onCreate: (draft: InventoryDraft) => Promise<boolean>;
+  onSave: (item: InventoryItem, draft: InventoryDraft) => Promise<boolean>;
+  onDelete: (item: InventoryItem) => Promise<boolean>;
 }
 
 export function InventoryList({
   items,
   chapters,
   cards,
-  editingItemId,
-  setEditingItemId,
-  itemNameDraft,
-  setItemNameDraft,
-  itemRarityDraft,
-  setItemRarityDraft,
-  itemQuantityDraft,
-  setItemQuantityDraft,
-  itemEffectDraft,
-  setItemEffectDraft,
-  itemChapterDraft,
-  setItemChapterDraft,
-  itemLostChapterDraft,
-  setItemLostChapterDraft,
-  itemNodeDraft,
-  setItemNodeDraft,
-  startItemEdit,
-  saveItem,
-  removeItem,
-  newItemName,
-  setNewItemName,
-  newItemRarity,
-  setNewItemRarity,
-  newItemQuantity,
-  setNewItemQuantity,
-  newItemEffect,
-  setNewItemEffect,
-  newItemChapterId,
-  setNewItemChapterId,
-  newItemLostChapterId,
-  setNewItemLostChapterId,
-  newItemNodeId,
-  setNewItemNodeId,
-  addItem,
+  onCreate,
+  onSave,
+  onDelete,
 }: InventoryListProps) {
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemNameDraft, setItemNameDraft] = useState('');
+  const [itemRarityDraft, setItemRarityDraft] = useState('');
+  const [itemQuantityDraft, setItemQuantityDraft] = useState('1');
+  const [itemEffectDraft, setItemEffectDraft] = useState('');
+  const [itemChapterDraft, setItemChapterDraft] = useState('');
+  const [itemLostChapterDraft, setItemLostChapterDraft] = useState('');
+  const [itemNodeDraft, setItemNodeDraft] = useState('');
+
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemRarity, setNewItemRarity] = useState('');
+  const [newItemQuantity, setNewItemQuantity] = useState('1');
+  const [newItemEffect, setNewItemEffect] = useState('');
+  const [newItemChapterId, setNewItemChapterId] = useState('');
+  const [newItemLostChapterId, setNewItemLostChapterId] = useState('');
+  const [newItemNodeId, setNewItemNodeId] = useState('');
+
+  const startItemEdit = (item: InventoryItem) => {
+    setEditingItemId(item.id);
+    setItemNameDraft(item.name);
+    setItemRarityDraft(item.rarity ?? '');
+    setItemQuantityDraft(String(item.quantity));
+    setItemEffectDraft(item.effect ?? '');
+    setItemChapterDraft(item.chapter_id ?? '');
+    setItemLostChapterDraft(item.lost_chapter_id ?? '');
+    setItemNodeDraft(item.node_id ?? '');
+  };
+
+  const saveItem = async (item: InventoryItem) => {
+    const saved = await onSave(item, {
+      name: itemNameDraft,
+      rarity: itemRarityDraft,
+      quantity: itemQuantityDraft,
+      effect: itemEffectDraft,
+      chapterId: itemChapterDraft,
+      lostChapterId: itemLostChapterDraft,
+      nodeId: itemNodeDraft,
+    });
+
+    // A refused row keeps its editor open, so the name or the quantity that was
+    // wrong is still in front of the author.
+    if (saved) setEditingItemId(null);
+  };
+
+  const addItem = async () => {
+    if (!newItemName.trim()) return;
+
+    const saved = await onCreate({
+      name: newItemName,
+      rarity: newItemRarity,
+      quantity: newItemQuantity,
+      effect: newItemEffect,
+      chapterId: newItemChapterId,
+      lostChapterId: newItemLostChapterId,
+      nodeId: newItemNodeId,
+    });
+
+    if (!saved) return;
+
+    setNewItemName('');
+    setNewItemRarity('');
+    setNewItemQuantity('1');
+    setNewItemEffect('');
+    setNewItemChapterId('');
+    setNewItemLostChapterId('');
+    setNewItemNodeId('');
+  };
+
+  const removeItem = async (item: InventoryItem) => {
+    if (await onDelete(item)) setEditingItemId(null);
+  };
+
   return (
     <div className="inventory-section">
       <h4 className="character-section-heading">Inventory</h4>

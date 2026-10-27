@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { Node } from 'reactflow';
 import type { NodeData } from '../canvas/types';
 import type { ChapterNode } from '../narrative/chapters';
@@ -9,10 +10,24 @@ import type { FactionStanding } from '../shared/types';
 // the board, so the row names it by its label and a card in the trash is named as
 // such rather than dropped.
 //
-// The standing form can also make the faction card it needs, without leaving the
-// sheet: the quick-add field hands a name to the app, which creates the card and
-// reports the new id back here so it is the one selected. The drafts and the
-// writes they feed stay in the app, so a standing is still one audited row.
+// The form state lives here: the open row with its five fields, the four that add
+// a row and the name of a faction the form can make on the spot. Creating that
+// card is the app's job - it writes the canvas record and hands the new id back,
+// so the standing and the card it names are one audited step each - while a
+// standing is written through the app for the same reason.
+//
+// A warning opens the exact row it names, so this panel watches the focus it is
+// handed. A highlight timing out is not a reason to close anything.
+
+// What the two standing forms hand the app. The faction and the chapters are ids,
+// or empty where the form has not chosen one; the app decides what is required.
+export interface StandingDraft {
+  factionId: string;
+  standing: string;
+  sinceChapterId: string;
+  untilChapterId: string;
+  note: string;
+}
 
 export interface StandingListProps {
   standings: FactionStanding[];
@@ -22,33 +37,9 @@ export interface StandingListProps {
   chapterLabelById: Map<string, string>;
   focus: ProgressionFocus | null;
 
-  editingStandingId: string | null;
-  setEditingStandingId: (standingId: string | null) => void;
-  standingFactionDraft: string;
-  setStandingFactionDraft: (factionId: string) => void;
-  standingTextDraft: string;
-  setStandingTextDraft: (standing: string) => void;
-  standingChapterDraft: string;
-  setStandingChapterDraft: (chapterId: string) => void;
-  standingUntilChapterDraft: string;
-  setStandingUntilChapterDraft: (chapterId: string) => void;
-  standingNoteDraft: string;
-  setStandingNoteDraft: (note: string) => void;
-  startStandingEdit: (standing: FactionStanding) => void;
-  saveStanding: (standing: FactionStanding) => Promise<void>;
-  removeStanding: (standing: FactionStanding) => Promise<void>;
-
-  newStandingFactionId: string;
-  setNewStandingFactionId: (factionId: string) => void;
-  newStandingFactionName: string;
-  setNewStandingFactionName: (name: string) => void;
-  newStandingText: string;
-  setNewStandingText: (standing: string) => void;
-  newStandingChapterId: string;
-  setNewStandingChapterId: (chapterId: string) => void;
-  newStandingNote: string;
-  setNewStandingNote: (note: string) => void;
-  addStanding: () => Promise<void>;
+  onCreate: (draft: StandingDraft) => Promise<boolean>;
+  onSave: (standing: FactionStanding, draft: StandingDraft) => Promise<boolean>;
+  onDelete: (standing: FactionStanding) => Promise<boolean>;
 
   // Makes a faction card on the board and hands its id back, so the form can
   // name a faction the story does not have yet.
@@ -66,35 +57,83 @@ export function StandingList({
   chapters,
   chapterLabelById,
   focus,
-  editingStandingId,
-  setEditingStandingId,
-  standingFactionDraft,
-  setStandingFactionDraft,
-  standingTextDraft,
-  setStandingTextDraft,
-  standingChapterDraft,
-  setStandingChapterDraft,
-  standingUntilChapterDraft,
-  setStandingUntilChapterDraft,
-  standingNoteDraft,
-  setStandingNoteDraft,
-  startStandingEdit,
-  saveStanding,
-  removeStanding,
-  newStandingFactionId,
-  setNewStandingFactionId,
-  newStandingFactionName,
-  setNewStandingFactionName,
-  newStandingText,
-  setNewStandingText,
-  newStandingChapterId,
-  setNewStandingChapterId,
-  newStandingNote,
-  setNewStandingNote,
-  addStanding,
+  onCreate,
+  onSave,
+  onDelete,
   createFaction,
   onError,
 }: StandingListProps) {
+  const [editingStandingId, setEditingStandingId] = useState<string | null>(null);
+  const [standingFactionDraft, setStandingFactionDraft] = useState('');
+  const [standingTextDraft, setStandingTextDraft] = useState('');
+  const [standingChapterDraft, setStandingChapterDraft] = useState('');
+  const [standingUntilChapterDraft, setStandingUntilChapterDraft] = useState('');
+  const [standingNoteDraft, setStandingNoteDraft] = useState('');
+
+  const [newStandingFactionId, setNewStandingFactionId] = useState('');
+  const [newStandingFactionName, setNewStandingFactionName] = useState('');
+  const [newStandingText, setNewStandingText] = useState('');
+  const [newStandingChapterId, setNewStandingChapterId] = useState('');
+  const [newStandingNote, setNewStandingNote] = useState('');
+
+  const startStandingEdit = (standing: FactionStanding) => {
+    setEditingStandingId(standing.id);
+    setStandingFactionDraft(standing.faction_node_id ?? '');
+    setStandingTextDraft(standing.standing);
+    setStandingChapterDraft(standing.since_chapter_id ?? '');
+    setStandingUntilChapterDraft(standing.until_chapter_id ?? '');
+    setStandingNoteDraft(standing.note ?? '');
+  };
+
+  // A focus naming a row here opens it; a focus naming a row elsewhere on the
+  // sheet closes what is open, because the author has moved on to that row.
+  useEffect(() => {
+    if (!focus) return;
+
+    const standing = standings.find(entry => entry.id === focus.id);
+
+    if (focus.kind === 'faction-standing' && standing) {
+      startStandingEdit(standing);
+      return;
+    }
+
+    if (focus.kind !== 'faction-standing') setEditingStandingId(null);
+    // Only a new focus reopens a row: the list changing under an open editor must
+    // not put the saved values back over what is being typed.
+  }, [focus]);
+
+  const saveStanding = async (standing: FactionStanding) => {
+    const saved = await onSave(standing, {
+      factionId: standingFactionDraft,
+      standing: standingTextDraft,
+      sinceChapterId: standingChapterDraft,
+      untilChapterId: standingUntilChapterDraft,
+      note: standingNoteDraft,
+    });
+
+    if (saved) setEditingStandingId(null);
+  };
+
+  const addStanding = async () => {
+    const saved = await onCreate({
+      factionId: newStandingFactionId,
+      standing: newStandingText,
+      sinceChapterId: newStandingChapterId,
+      untilChapterId: '',
+      note: newStandingNote,
+    });
+
+    if (!saved) return;
+
+    setNewStandingText('');
+    setNewStandingChapterId('');
+    setNewStandingNote('');
+  };
+
+  const removeStanding = async (standing: FactionStanding) => {
+    if (await onDelete(standing)) setEditingStandingId(null);
+  };
+
   return (
     <div className="standings-section">
       <h4 className="character-section-heading">Faction standings</h4>

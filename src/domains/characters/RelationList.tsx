@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { SuggestionInput } from '../../components/SuggestionInput';
 import type { ChapterNode } from '../narrative/chapters';
 import type { ProgressionFocus } from '../progression/types';
@@ -10,9 +11,22 @@ import type { Character, CharacterRelation } from '../shared/types';
 //
 // The kind is a suggestion list, not a vocabulary: the field keeps any word the
 // author types. Drawing an edge between two cards on the board writes one of
-// these rows, so the open row, the drafts behind it and the writes they feed stay
-// in the app - deleting the row still takes its canvas connection with it in one
-// undoable step.
+// these rows, so the write itself stays in the app - deleting the row there takes
+// its canvas connection with it in one undoable step - while the form state lives
+// here: the open row, its four fields, and the four that add a row.
+//
+// A warning or a line on the relations map opens the exact row it names, so this
+// panel watches the focus it is handed and opens the editor for it. The highlight
+// timing out is not a reason to close anything.
+
+// What the two relation forms hand the app. The chapters are ids, or empty for a
+// bond that has no chapter recorded; the app decides what that means.
+export interface RelationDraft {
+  kind: string;
+  sinceChapterId: string;
+  untilChapterId: string;
+  note: string;
+}
 
 export interface RelationListProps {
   relations: CharacterRelation[];
@@ -26,29 +40,9 @@ export interface RelationListProps {
   kindSuggestions: readonly string[];
   focus: ProgressionFocus | null;
 
-  editingRelationId: string | null;
-  setEditingRelationId: (relationId: string | null) => void;
-  relationKindDraft: string;
-  setRelationKindDraft: (kind: string) => void;
-  relationChapterDraft: string;
-  setRelationChapterDraft: (chapterId: string) => void;
-  relationUntilChapterDraft: string;
-  setRelationUntilChapterDraft: (chapterId: string) => void;
-  relationNoteDraft: string;
-  setRelationNoteDraft: (note: string) => void;
-  startRelationEdit: (relation: CharacterRelation) => void;
-  saveRelation: (relation: CharacterRelation) => Promise<void>;
-  removeRelation: (relation: CharacterRelation) => Promise<void>;
-
-  newRelationKind: string;
-  setNewRelationKind: (kind: string) => void;
-  newRelationToId: string;
-  setNewRelationToId: (characterId: string) => void;
-  newRelationChapterId: string;
-  setNewRelationChapterId: (chapterId: string) => void;
-  newRelationNote: string;
-  setNewRelationNote: (note: string) => void;
-  addRelation: () => Promise<void>;
+  onCreate: (otherId: string, draft: RelationDraft) => Promise<boolean>;
+  onSave: (relation: CharacterRelation, draft: RelationDraft) => Promise<boolean>;
+  onDelete: (relation: CharacterRelation) => Promise<boolean>;
 }
 
 export function RelationList({
@@ -60,29 +54,79 @@ export function RelationList({
   characters,
   kindSuggestions,
   focus,
-  editingRelationId,
-  setEditingRelationId,
-  relationKindDraft,
-  setRelationKindDraft,
-  relationChapterDraft,
-  setRelationChapterDraft,
-  relationUntilChapterDraft,
-  setRelationUntilChapterDraft,
-  relationNoteDraft,
-  setRelationNoteDraft,
-  startRelationEdit,
-  saveRelation,
-  removeRelation,
-  newRelationKind,
-  setNewRelationKind,
-  newRelationToId,
-  setNewRelationToId,
-  newRelationChapterId,
-  setNewRelationChapterId,
-  newRelationNote,
-  setNewRelationNote,
-  addRelation,
+  onCreate,
+  onSave,
+  onDelete,
 }: RelationListProps) {
+  const [editingRelationId, setEditingRelationId] = useState<string | null>(null);
+  const [relationKindDraft, setRelationKindDraft] = useState('');
+  const [relationChapterDraft, setRelationChapterDraft] = useState('');
+  const [relationUntilChapterDraft, setRelationUntilChapterDraft] = useState('');
+  const [relationNoteDraft, setRelationNoteDraft] = useState('');
+
+  const [newRelationKind, setNewRelationKind] = useState(kindSuggestions[0] ?? '');
+  const [newRelationToId, setNewRelationToId] = useState('');
+  const [newRelationChapterId, setNewRelationChapterId] = useState('');
+  const [newRelationNote, setNewRelationNote] = useState('');
+
+  const startRelationEdit = (relation: CharacterRelation) => {
+    setEditingRelationId(relation.id);
+    setRelationKindDraft(relation.kind);
+    setRelationChapterDraft(relation.since_chapter_id ?? '');
+    setRelationUntilChapterDraft(relation.until_chapter_id ?? '');
+    setRelationNoteDraft(relation.note ?? '');
+  };
+
+  // A focus naming a row here opens it; a focus naming a row somewhere else on the
+  // sheet closes what is open, because the author has moved on to that row. The
+  // highlight timing out leaves the editor alone.
+  useEffect(() => {
+    if (!focus) return;
+
+    const relation = relations.find(entry => entry.id === focus.id);
+
+    if (focus.kind === 'relation' && relation) {
+      startRelationEdit(relation);
+      return;
+    }
+
+    if (focus.kind !== 'relation') setEditingRelationId(null);
+    // Only a new focus reopens a row: the list changing under an open editor must
+    // not put the saved values back over what is being typed.
+  }, [focus]);
+
+  const saveRelation = async (relation: CharacterRelation) => {
+    const saved = await onSave(relation, {
+      kind: relationKindDraft,
+      sinceChapterId: relationChapterDraft,
+      untilChapterId: relationUntilChapterDraft,
+      note: relationNoteDraft,
+    });
+
+    if (saved) setEditingRelationId(null);
+  };
+
+  const addRelation = async () => {
+    if (!newRelationToId || !newRelationKind.trim()) return;
+
+    const saved = await onCreate(newRelationToId, {
+      kind: newRelationKind,
+      sinceChapterId: newRelationChapterId,
+      untilChapterId: '',
+      note: newRelationNote,
+    });
+
+    if (!saved) return;
+
+    setNewRelationToId('');
+    setNewRelationChapterId('');
+    setNewRelationNote('');
+  };
+
+  const removeRelation = async (relation: CharacterRelation) => {
+    if (await onDelete(relation)) setEditingRelationId(null);
+  };
+
   return (
     <div className="relations-section">
       <h4 className="character-section-heading">Relations</h4>

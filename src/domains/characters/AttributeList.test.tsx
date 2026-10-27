@@ -6,11 +6,11 @@ import { AttributeList } from './AttributeList';
 import type { AttributeListProps } from './AttributeList';
 import type { CharacterAttribute } from './types';
 
-// The attribute rows are the one part of the sheet with no test of their own:
-// adding, changing and deleting an attribute is only ever reached through the
-// canvas command mocks in other suites. They are a pure view - every answer and
-// every write arrives as a prop - so they are rendered directly and the writes
-// are asserted rather than the state behind them.
+// The attribute rows are a pure view around their own form state: the rows and
+// the callbacks arrive as props, and everything the author types stays in here
+// until a write answers whether it happened. These tests render the panel
+// directly and hold it to both halves - the drafts it keeps and the writes it
+// asks the app for - without a sheet, a story or a database.
 
 function attribute(id: string, name: string, value: string): CharacterAttribute {
   return {
@@ -28,18 +28,10 @@ function baseProps(
 ): AttributeListProps {
   return {
     attributes: [],
-    editingAttributeId: null,
-    setEditingAttributeId: vi.fn(),
-    attributeValueDraft: '',
-    setAttributeValueDraft: vi.fn(),
-    startAttributeEdit: vi.fn(),
-    saveAttribute: vi.fn(async () => {}),
-    removeAttribute: vi.fn(async () => {}),
-    newAttributeName: '',
-    setNewAttributeName: vi.fn(),
-    newAttributeValue: '',
-    setNewAttributeValue: vi.fn(),
-    addAttribute: vi.fn(async () => {}),
+    onError: vi.fn(),
+    onCreate: vi.fn(async () => true),
+    onSave: vi.fn(async () => true),
+    onDelete: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -53,112 +45,119 @@ describe('the attribute rows', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows each name with its value, and asks to open one for editing', async () => {
+  it('shows each name with its value, and opens one for editing with its value', async () => {
     const user = userEvent.setup();
     const aura = attribute('a-1', 'Aura', 'Frost');
-    const startAttributeEdit = vi.fn();
 
-    render(
-      <AttributeList
-        {...baseProps({ attributes: [aura], startAttributeEdit })}
-      />
-    );
+    render(<AttributeList {...baseProps({ attributes: [aura] })} />);
 
     expect(screen.getByText('Aura')).toBeInTheDocument();
     expect(screen.getByText('Frost')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
 
-    expect(startAttributeEdit).toHaveBeenCalledWith(aura);
+    expect(screen.getByDisplayValue('Frost')).toBeInTheDocument();
   });
 
-  it('edits the open row against its draft and saves it', async () => {
+  it('saves the value it was typed, and closes the row once the app says so', async () => {
     const user = userEvent.setup();
     const aura = attribute('a-1', 'Aura', 'Frost');
-    const setAttributeValueDraft = vi.fn();
-    const saveAttribute = vi.fn(async () => {});
-    const setEditingAttributeId = vi.fn();
+    const onSave = vi.fn(async () => true);
 
     render(
-      <AttributeList
-        {...baseProps({
-          attributes: [aura],
-          editingAttributeId: 'a-1',
-          attributeValueDraft: 'Frost',
-          setAttributeValueDraft,
-          saveAttribute,
-          setEditingAttributeId,
-        })}
-      />
+      <AttributeList {...baseProps({ attributes: [aura], onSave })} />
     );
 
-    await user.type(screen.getByDisplayValue('Frost'), '!');
-    expect(setAttributeValueDraft).toHaveBeenCalled();
-
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByDisplayValue('Frost');
+    await user.clear(field);
+    await user.type(field, 'Ember');
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(saveAttribute).toHaveBeenCalledWith(aura);
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(setEditingAttributeId).toHaveBeenCalledWith(null);
+    expect(onSave).toHaveBeenCalledWith(aura, 'Ember');
+    expect(screen.queryByDisplayValue('Ember')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+
+  it('will not save a blank value, and keeps the row open when a save is refused', async () => {
+    const user = userEvent.setup();
+    const aura = attribute('a-1', 'Aura', 'Frost');
+    const onSave = vi.fn(async () => false);
+    const onError = vi.fn();
+
+    render(
+      <AttributeList {...baseProps({ attributes: [aura], onSave, onError })} />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.clear(screen.getByDisplayValue('Frost'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      'An attribute needs a value — delete it to remove it.'
+    );
+
+    await user.type(screen.getByRole('button', { name: 'Cancel' }), '{esc}');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByDisplayValue('Frost');
+    await user.clear(field);
+    await user.type(field, 'Ember');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave).toHaveBeenCalledWith(aura, 'Ember');
+    expect(screen.getByDisplayValue('Ember')).toBeInTheDocument();
   });
 
   it('asks to delete the row it names', async () => {
     const user = userEvent.setup();
     const aura = attribute('a-1', 'Aura', 'Frost');
-    const removeAttribute = vi.fn(async () => {});
+    const onDelete = vi.fn(async () => true);
 
-    render(
-      <AttributeList {...baseProps({ attributes: [aura], removeAttribute })} />
-    );
+    render(<AttributeList {...baseProps({ attributes: [aura], onDelete })} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    expect(removeAttribute).toHaveBeenCalledWith(aura);
+    expect(onDelete).toHaveBeenCalledWith(aura);
   });
 
-  it('holds the add back until a name and a value are both typed', async () => {
+  it('holds the add back until a name and a value are both typed, then clears both', async () => {
     const user = userEvent.setup();
-    const setNewAttributeName = vi.fn();
-    const setNewAttributeValue = vi.fn();
-    const addAttribute = vi.fn(async () => {});
+    const onCreate = vi.fn(async () => true);
 
-    const { rerender } = render(
-      <AttributeList
-        {...baseProps({ setNewAttributeName, setNewAttributeValue, addAttribute })}
-      />
-    );
+    render(<AttributeList {...baseProps({ onCreate })} />);
 
-    expect(screen.getByRole('button', { name: 'Add attribute' })).toBeDisabled();
+    const add = screen.getByRole('button', { name: 'Add attribute' });
+    expect(add).toBeDisabled();
 
     await user.type(screen.getByPlaceholderText('Attribute (Class)'), 'Class');
-    expect(setNewAttributeName).toHaveBeenCalled();
+    expect(add).toBeDisabled();
 
-    // The name alone is not enough: an attribute needs a value too.
-    rerender(
-      <AttributeList
-        {...baseProps({
-          newAttributeName: 'Class',
-          setNewAttributeName,
-          setNewAttributeValue,
-          addAttribute,
-        })}
-      />
-    );
+    await user.type(screen.getByPlaceholderText('Value (Rogue)'), 'Rogue');
+    await user.click(add);
+
+    expect(onCreate).toHaveBeenCalledWith('Class', 'Rogue');
+    expect(screen.getByPlaceholderText('Attribute (Class)')).toHaveValue('');
+    expect(screen.getByPlaceholderText('Value (Rogue)')).toHaveValue('');
+  });
+
+  it('treats a whitespace value as no value, and keeps what was typed when the app says no', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => false);
+
+    render(<AttributeList {...baseProps({ onCreate })} />);
+
+    await user.type(screen.getByPlaceholderText('Attribute (Class)'), 'Class');
+    await user.type(screen.getByPlaceholderText('Value (Rogue)'), '   ');
+
     expect(screen.getByRole('button', { name: 'Add attribute' })).toBeDisabled();
 
-    rerender(
-      <AttributeList
-        {...baseProps({
-          newAttributeName: 'Class',
-          newAttributeValue: 'Rogue',
-          setNewAttributeName,
-          setNewAttributeValue,
-          addAttribute,
-        })}
-      />
-    );
+    await user.clear(screen.getByPlaceholderText('Value (Rogue)'));
+    await user.type(screen.getByPlaceholderText('Value (Rogue)'), 'Rogue');
     await user.click(screen.getByRole('button', { name: 'Add attribute' }));
 
-    expect(addAttribute).toHaveBeenCalled();
+    expect(onCreate).toHaveBeenCalledWith('Class', 'Rogue');
+    expect(screen.getByPlaceholderText('Attribute (Class)')).toHaveValue('Class');
+    expect(screen.getByPlaceholderText('Value (Rogue)')).toHaveValue('Rogue');
   });
 });

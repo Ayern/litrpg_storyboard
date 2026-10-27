@@ -53,8 +53,11 @@ import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { AttributeList } from './domains/characters/AttributeList';
 import { CurrencyList } from './domains/characters/CurrencyList';
 import { InventoryList } from './domains/characters/InventoryList';
+import type { InventoryDraft } from './domains/characters/InventoryList';
 import { RelationList } from './domains/characters/RelationList';
+import type { RelationDraft } from './domains/characters/RelationList';
 import { StandingList } from './domains/characters/StandingList';
+import type { StandingDraft } from './domains/characters/StandingList';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { AuditPanel } from './domains/audit/AuditPanel';
 import { CharacterSheetPanel } from './domains/characters/CharacterSheetPanel';
@@ -78,10 +81,11 @@ import type {
   CharacterChapterState,
 } from './domains/narrative/types';
 import { ProgressionSections } from './domains/characters/ProgressionSections';
-import {
-  blankStatChange,
-  statChangesFromMilestone,
-} from './domains/progression/drafts';
+import type {
+  MilestoneDraft,
+  ProgressDraft,
+  XpEntryDraft,
+} from './domains/characters/ProgressionSections';
 import type { LevelStatChangeDraft } from './domains/progression/drafts';
 import {
   milestoneLabel,
@@ -970,7 +974,6 @@ function App() {
   // Quests are read with the rest of the story, because chapter cards, the
   // ledger and the continuity checks all read the same copy.
   const [storyQuests, setStoryQuests] = useState<Quest[]>([]);
-  const [newStandingFactionName, setNewStandingFactionName] = useState('');
   // The quest a chapter badge just opened, lit briefly so the eye can find it,
   // and which click opened it so a second click on the same badge still counts.
   const [questFocus, setQuestFocus] = useState<{
@@ -1004,82 +1007,13 @@ function App() {
   const storyInventoryRef = useRef<InventoryItem[]>([]);
   const [characterCurrency, setCharacterCurrency] = useState<CharacterCurrency[]>([]);
 
-  // The relations form, and the one row open for editing at a time. A relation's
-  // other end is fixed once made: changing who it joins means a different bond,
-  // so it is deleted and recorded again rather than silently rewritten.
-  const [newRelationKind, setNewRelationKind] = useState('ally');
-  const [newRelationToId, setNewRelationToId] = useState('');
-  const [newRelationChapterId, setNewRelationChapterId] = useState('');
-  const [newRelationNote, setNewRelationNote] = useState('');
-  const [editingRelationId, setEditingRelationId] = useState<string | null>(null);
-  const [relationKindDraft, setRelationKindDraft] = useState('');
-  const [relationChapterDraft, setRelationChapterDraft] = useState('');
-  const [relationUntilChapterDraft, setRelationUntilChapterDraft] = useState('');
-  const [relationNoteDraft, setRelationNoteDraft] = useState('');
 
-  // The faction standing form, one row open at a time like the rest.
-  const [newStandingFactionId, setNewStandingFactionId] = useState('');
-  const [newStandingText, setNewStandingText] = useState('');
-  const [newStandingChapterId, setNewStandingChapterId] = useState('');
-  const [newStandingNote, setNewStandingNote] = useState('');
-  const [editingStandingId, setEditingStandingId] = useState<string | null>(null);
-  const [standingFactionDraft, setStandingFactionDraft] = useState('');
-  const [standingTextDraft, setStandingTextDraft] = useState('');
-  const [standingChapterDraft, setStandingChapterDraft] = useState('');
-  const [standingUntilChapterDraft, setStandingUntilChapterDraft] = useState('');
-  const [standingNoteDraft, setStandingNoteDraft] = useState('');
-
-  // The item form, one row open at a time like skills. Quantities are kept as
-  // typed text so a field can be cleared while it is being changed.
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemRarity, setNewItemRarity] = useState('');
-  const [newItemQuantity, setNewItemQuantity] = useState('1');
-  const [newItemEffect, setNewItemEffect] = useState('');
-  const [newItemChapterId, setNewItemChapterId] = useState('');
-  const [newItemLostChapterId, setNewItemLostChapterId] = useState('');
-  const [newItemNodeId, setNewItemNodeId] = useState('');
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [itemNameDraft, setItemNameDraft] = useState('');
-  const [itemRarityDraft, setItemRarityDraft] = useState('');
-  const [itemQuantityDraft, setItemQuantityDraft] = useState('1');
-  const [itemEffectDraft, setItemEffectDraft] = useState('');
-  const [itemChapterDraft, setItemChapterDraft] = useState('');
-  const [itemLostChapterDraft, setItemLostChapterDraft] = useState('');
-  const [itemNodeDraft, setItemNodeDraft] = useState('');
   const [returningItemId, setReturningItemId] = useState<string | null>(null);
   // What Mark returned just did, so the board can offer the correction back
   // before the notice fades.
   const [returnedNotice, setReturnedNotice] = useState<{ itemName: string } | null>(null);
 
-  const [newCurrencyName, setNewCurrencyName] = useState('');
-  const [newCurrencyAmount, setNewCurrencyAmount] = useState('0');
-  const [editingCurrencyId, setEditingCurrencyId] = useState<string | null>(null);
-  const [currencyNameDraft, setCurrencyNameDraft] = useState('');
-  const [currencyAmountDraft, setCurrencyAmountDraft] = useState('0');
 
-  // The level milestone form, one row open at a time. XP is optional, and a
-  // level-up can award as many stat changes as the story needs.
-  const [editingLevelMilestoneId, setEditingLevelMilestoneId] = useState<string | null>(null);
-  const [levelMilestoneLevelDraft, setLevelMilestoneLevelDraft] = useState('1');
-  const [levelMilestoneChapterDraft, setLevelMilestoneChapterDraft] = useState('');
-  const [levelMilestoneDebuffDraft, setLevelMilestoneDebuffDraft] = useState(false);
-  const [levelMilestoneXpDraft, setLevelMilestoneXpDraft] = useState('');
-  const [levelMilestoneStatChangesDraft, setLevelMilestoneStatChangesDraft] = useState<
-    LevelStatChangeDraft[]
-  >([]);
-  const [newLevelMilestoneLevel, setNewLevelMilestoneLevel] = useState('1');
-  const [newLevelMilestoneChapter, setNewLevelMilestoneChapter] = useState('');
-  const [newLevelMilestoneDebuff, setNewLevelMilestoneDebuff] = useState(false);
-  const [newLevelMilestoneXp, setNewLevelMilestoneXp] = useState('');
-  const [newLevelMilestoneStatChanges, setNewLevelMilestoneStatChanges] = useState<
-    LevelStatChangeDraft[]
-  >([blankStatChange()]);
-  // The XP-by-chapter ledger, one row open at a time like the milestone form.
-  const [editingXpEntryId, setEditingXpEntryId] = useState<string | null>(null);
-  const [xpEntryChapterDraft, setXpEntryChapterDraft] = useState('');
-  const [xpEntryXpDraft, setXpEntryXpDraft] = useState('');
-  const [newXpEntryChapter, setNewXpEntryChapter] = useState('');
-  const [newXpEntryXp, setNewXpEntryXp] = useState('');
   const [chartMetric, setChartMetric] = useState<ProgressionMetric>('level');
   const [chartStatName, setChartStatName] = useState('');
   const [focusedProgression, setFocusedProgression] =
@@ -1155,10 +1089,6 @@ function App() {
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
-  const [newAttributeName, setNewAttributeName] = useState('');
-  const [newAttributeValue, setNewAttributeValue] = useState('');
-  const [editingAttributeId, setEditingAttributeId] = useState<string | null>(null);
-  const [attributeValueDraft, setAttributeValueDraft] = useState('');
   const [characterError, setCharacterError] = useState<string | null>(null);
 
   const [newCharacterName, setNewCharacterName] = useState('');
@@ -1176,12 +1106,6 @@ function App() {
   const [characterDescriptionDraft, setCharacterDescriptionDraft] = useState('');
   const [confirmDeleteCharacter, setConfirmDeleteCharacter] = useState(false);
 
-  // The progression form, open one character at a time.
-  const [editingProgress, setEditingProgress] = useState(false);
-  const [progressLevelDraft, setProgressLevelDraft] = useState('1');
-  const [progressXpDraft, setProgressXpDraft] = useState('0');
-  const [progressTargetDraft, setProgressTargetDraft] = useState('');
-  const [progressRankDraft, setProgressRankDraft] = useState('');
 
   const [trash, setTrash] = useState<DeletedItem[]>([]);
   const [deletedStories, setDeletedStories] = useState<DeletedItem[]>([]);
@@ -3480,7 +3404,6 @@ function App() {
       // A warning or a map edge opens the entry on the sheet, not the map.
       setCharacterView('sheet');
       setSelectedCharacterId(characterId);
-      setEditingProgress(false);
       setCharacterError(null);
 
       if (progressionFocusTimer.current != null) {
@@ -3502,9 +3425,10 @@ function App() {
       }
 
       // A progression warning names the exact entry that contradicts the story.
-      // Opening its editor puts the fix in front of the author instead of making
-      // them find the row by hand.
-      let focusId =
+      // The sheet's panels hold the rows, so the app hands them the focus and the
+      // panel that owns the row opens its editor: the fix starts in front of the
+      // author rather than making them find the row by hand.
+      const focusId =
         target.kind === 'level'
           ? target.milestoneId
           : target.kind === 'skill-event'
@@ -3514,57 +3438,6 @@ function App() {
               : target.kind === 'faction-standing'
                 ? target.standingId
                 : target.skillId;
-
-      if (target.kind === 'relation') {
-        const relation = storyRelations.find(entry => entry.id === target.relationId);
-
-        setEditingLevelMilestoneId(null);
-        setEditingStandingId(null);
-
-        if (relation) {
-          setEditingRelationId(relation.id);
-          setRelationKindDraft(relation.kind);
-          setRelationChapterDraft(relation.since_chapter_id ?? '');
-          setRelationUntilChapterDraft(relation.until_chapter_id ?? '');
-          setRelationNoteDraft(relation.note ?? '');
-        }
-      } else if (target.kind === 'faction-standing') {
-        const standing = storyFactionStandings.find(
-          entry => entry.id === target.standingId
-        );
-
-        setEditingLevelMilestoneId(null);
-        setEditingRelationId(null);
-
-        if (standing) {
-          setEditingStandingId(standing.id);
-          setStandingFactionDraft(standing.faction_node_id ?? '');
-          setStandingTextDraft(standing.standing);
-          setStandingChapterDraft(standing.since_chapter_id ?? '');
-          setStandingUntilChapterDraft(standing.until_chapter_id ?? '');
-          setStandingNoteDraft(standing.note ?? '');
-        }
-      } else if (target.kind === 'level') {
-        const milestone = storyLevelMilestones.find(entry => entry.id === target.milestoneId);
-
-        if (milestone) {
-          setEditingLevelMilestoneId(milestone.id);
-          setLevelMilestoneLevelDraft(String(milestone.level));
-          setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
-          setLevelMilestoneDebuffDraft(milestone.is_debuff);
-          setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
-          setLevelMilestoneStatChangesDraft(statChangesFromMilestone(milestone));
-        }
-      } else if (target.kind === 'skill-event') {
-        const event = storySkillEvents.find(entry => entry.id === target.eventId);
-        focusId = target.eventId;
-
-        if (event) setEditingLevelMilestoneId(null);
-      } else {
-        const skill = storySkills.find(entry => entry.id === target.skillId);
-
-        if (skill) setEditingLevelMilestoneId(null);
-      }
 
       setFocusedProgression({ kind: target.kind, id: focusId });
       progressionFocusTimer.current = window.setTimeout(() => {
@@ -3580,7 +3453,7 @@ function App() {
           ?.scrollIntoView?.({ block: 'nearest' });
       }, 0);
     },
-    [storyLevelMilestones, storySkillEvents, storySkills, storyRelations, storyFactionStandings]
+    []
   );
 
   // Continuity is advisory: nothing here blocks a save. It names what looks
@@ -5909,20 +5782,11 @@ function App() {
     }
   };
 
-  const startAttributeEdit = (attribute: CharacterAttribute) => {
-    setEditingAttributeId(attribute.id);
-    setAttributeValueDraft(attribute.value);
-  };
-
-  const saveAttribute = async (attribute: CharacterAttribute) => {
-    if (!selectedCharacterId) return;
-
-    const value = attributeValueDraft.trim();
-
-    if (!value) {
-      setCharacterError('An attribute needs a value — delete it to remove it.');
-      return;
-    }
+  const saveAttribute = async (
+    attribute: CharacterAttribute,
+    value: string
+  ): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
     setCharacterError(null);
 
@@ -5939,22 +5803,16 @@ function App() {
           a.attr_name.localeCompare(b.attr_name)
         )
       );
-      setEditingAttributeId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save attribute:', e);
       setCharacterError(`Could not save attribute: ${String(e)}`);
+      return false;
     }
   };
 
-  const addAttribute = async () => {
-    if (!selectedCharacterId || !newAttributeName.trim()) return;
-
-    const value = newAttributeValue.trim();
-
-    if (!value) {
-      setCharacterError('An attribute needs a value.');
-      return;
-    }
+  const addAttribute = async (name: string, value: string): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
     setCharacterError(null);
 
@@ -5962,7 +5820,7 @@ function App() {
       // Setting a name that already exists updates it, like stats do.
       const saved: CharacterAttribute = await charactersApi.setCharacterAttribute(
         selectedCharacterId,
-        newAttributeName.trim(),
+        name,
         value,
         actor
       );
@@ -5972,24 +5830,27 @@ function App() {
           a.attr_name.localeCompare(b.attr_name)
         )
       );
-      setNewAttributeName('');
-      setNewAttributeValue('');
+      return true;
     } catch (e) {
       console.error('Failed to add attribute:', e);
       setCharacterError(`Could not add attribute: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeAttribute = async (attribute: CharacterAttribute) => {
+  const removeAttribute = async (
+    attribute: CharacterAttribute
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
       await charactersApi.deleteCharacterAttribute(attribute.id, actor);
       setCharacterAttributes(prev => prev.filter(other => other.id !== attribute.id));
-      setEditingAttributeId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete attribute:', e);
       setCharacterError(`Could not delete attribute: ${String(e)}`);
+      return false;
     }
   };
 
@@ -6629,19 +6490,22 @@ function App() {
     }
   };
 
-  const addRelation = async () => {
-    if (!selectedCharacterId) return;
+  const addRelation = async (
+    otherId: string,
+    draft: RelationDraft
+  ): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
-    const kind = newRelationKind.trim();
+    const kind = draft.kind.trim();
 
     if (!kind) {
       setCharacterError('A relation needs a kind.');
-      return;
+      return false;
     }
 
-    if (!newRelationToId) {
+    if (!otherId) {
       setCharacterError('Choose the cast member the relation joins.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -6649,46 +6513,39 @@ function App() {
     try {
       const saved: CharacterRelation = await relationsApi.addRelation(
         selectedCharacterId,
-        newRelationToId,
+        otherId,
         kind,
-        newRelationNote.trim() || null,
-        newRelationChapterId || null,
+        draft.note.trim() || null,
+        draft.sinceChapterId || null,
         null,
         actor
       );
 
       applyRelation(saved);
-      setNewRelationToId('');
-      setNewRelationChapterId('');
-      setNewRelationNote('');
+      return true;
     } catch (e) {
       console.error('Failed to add a relation:', e);
       setCharacterError(`Could not add the relation: ${String(e)}`);
+      return false;
     }
   };
 
-  const startRelationEdit = (relation: CharacterRelation) => {
-    setCharacterError(null);
-    setEditingRelationId(relation.id);
-    setRelationKindDraft(relation.kind);
-    setRelationChapterDraft(relation.since_chapter_id ?? '');
-    setRelationUntilChapterDraft(relation.until_chapter_id ?? '');
-    setRelationNoteDraft(relation.note ?? '');
-  };
-
-  const saveRelation = async (relation: CharacterRelation) => {
-    const kind = relationKindDraft.trim();
+  const saveRelation = async (
+    relation: CharacterRelation,
+    draft: RelationDraft
+  ): Promise<boolean> => {
+    const kind = draft.kind.trim();
 
     if (!kind) {
       setCharacterError('A relation needs a kind.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
 
-    const note = relationNoteDraft.trim() || null;
-    const sinceChapterId = relationChapterDraft || null;
-    const untilChapterId = relationUntilChapterDraft || null;
+    const note = draft.note.trim() || null;
+    const sinceChapterId = draft.sinceChapterId || null;
+    const untilChapterId = draft.untilChapterId || null;
 
     // The connection that drew this bond carries its verb on the line and in
     // its data. The sheet and that line move together, so deleting either one
@@ -6762,7 +6619,6 @@ function App() {
     try {
       await writeRelation({ kind, note, sinceChapterId, untilChapterId });
       if (edgeNeedsWrite) await writeEdge(nextEdgeLabel, kind);
-      setEditingRelationId(null);
 
       const fromName =
         characters.find(character => character.id === relation.from_character_id)?.name ??
@@ -6790,13 +6646,18 @@ function App() {
           if (edgeNeedsWrite) await writeEdge(nextEdgeLabel, kind);
         },
       });
+
+      return true;
     } catch (e) {
       console.error('Failed to save a relation:', e);
       setCharacterError(`Could not save the relation: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeRelation = async (relation: CharacterRelation) => {
+  const removeRelation = async (
+    relation: CharacterRelation
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     // The canvas connection that drew this relation. A bond can be recorded on
@@ -6821,8 +6682,6 @@ function App() {
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
         if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
       }
-
-      if (editingRelationId === relation.id) setEditingRelationId(null);
 
       let currentRelationId = relation.id;
 
@@ -6862,9 +6721,12 @@ function App() {
           }
         },
       });
+
+      return true;
     } catch (e) {
       console.error('Failed to delete a relation:', e);
       setCharacterError(`Could not delete the relation: ${String(e)}`);
+      return false;
     }
   };
 
@@ -6879,24 +6741,26 @@ function App() {
     );
   }, []);
 
-  const addStanding = async () => {
-    if (!selectedCharacterId) return;
+  // The two standing forms hand over what was chosen; the app decides what a
+  // standing needs and answers whether the row was written.
+  const addStanding = async (draft: StandingDraft): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
-    const standing = newStandingText.trim();
+    const standing = draft.standing.trim();
 
-    if (!newStandingFactionId) {
+    if (!draft.factionId) {
       setCharacterError('Choose the faction this standing belongs to.');
-      return;
+      return false;
     }
 
     if (!standing) {
       setCharacterError('A faction standing needs a word for it.');
-      return;
+      return false;
     }
 
-    if (!newStandingChapterId) {
+    if (!draft.sinceChapterId) {
       setCharacterError('A faction standing needs the chapter it began in.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -6904,50 +6768,42 @@ function App() {
     try {
       const saved: FactionStanding = await relationsApi.addFactionStanding(
         selectedCharacterId,
-        newStandingFactionId,
+        draft.factionId,
         standing,
-        newStandingNote.trim() || null,
-        newStandingChapterId,
+        draft.note.trim() || null,
+        draft.sinceChapterId,
         null,
         actor
       );
 
       applyStanding(saved);
-      setNewStandingText('');
-      setNewStandingChapterId('');
-      setNewStandingNote('');
+      return true;
     } catch (e) {
       console.error('Failed to add a faction standing:', e);
       setCharacterError(`Could not add the faction standing: ${String(e)}`);
+      return false;
     }
   };
 
-  const startStandingEdit = (standing: FactionStanding) => {
-    setCharacterError(null);
-    setEditingStandingId(standing.id);
-    setStandingFactionDraft(standing.faction_node_id ?? '');
-    setStandingTextDraft(standing.standing);
-    setStandingChapterDraft(standing.since_chapter_id ?? '');
-    setStandingUntilChapterDraft(standing.until_chapter_id ?? '');
-    setStandingNoteDraft(standing.note ?? '');
-  };
+  const saveStanding = async (
+    standing: FactionStanding,
+    draft: StandingDraft
+  ): Promise<boolean> => {
+    const text = draft.standing.trim();
 
-  const saveStanding = async (standing: FactionStanding) => {
-    const text = standingTextDraft.trim();
-
-    if (!standingFactionDraft) {
+    if (!draft.factionId) {
       setCharacterError('Choose the faction this standing belongs to.');
-      return;
+      return false;
     }
 
     if (!text) {
       setCharacterError('A faction standing needs a word for it.');
-      return;
+      return false;
     }
 
-    if (!standingChapterDraft) {
+    if (!draft.sinceChapterId) {
       setCharacterError('A faction standing needs the chapter it began in.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -6955,23 +6811,26 @@ function App() {
     try {
       const saved: FactionStanding = await relationsApi.updateFactionStanding(
         standing.id,
-        standingFactionDraft,
+        draft.factionId,
         text,
-        standingNoteDraft.trim() || null,
-        standingChapterDraft,
-        standingUntilChapterDraft || null,
+        draft.note.trim() || null,
+        draft.sinceChapterId,
+        draft.untilChapterId || null,
         actor
       );
 
       applyStanding(saved);
-      setEditingStandingId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save a faction standing:', e);
       setCharacterError(`Could not save the faction standing: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeStanding = async (standing: FactionStanding) => {
+  const removeStanding = async (
+    standing: FactionStanding
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
@@ -6979,10 +6838,11 @@ function App() {
       setStoryFactionStandings(previous =>
         previous.filter(other => other.id !== standing.id)
       );
-      if (editingStandingId === standing.id) setEditingStandingId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete a faction standing:', e);
       setCharacterError(`Could not delete the faction standing: ${String(e)}`);
+      return false;
     }
   };
 
@@ -7071,29 +6931,26 @@ function App() {
     return changes;
   };
 
-  const startLevelMilestoneEdit = (milestone: CharacterLevelMilestone) => {
-    setCharacterError(null);
-    setEditingLevelMilestoneId(milestone.id);
-    setLevelMilestoneLevelDraft(String(milestone.level));
-    setLevelMilestoneChapterDraft(milestone.chapter_id ?? '');
-    setLevelMilestoneDebuffDraft(milestone.is_debuff);
-    setLevelMilestoneXpDraft(milestone.xp == null ? '' : String(milestone.xp));
-    setLevelMilestoneStatChangesDraft(statChangesFromMilestone(milestone));
-  };
+  // The level forms hand over what is in their fields; the app decides what a
+  // level, a total and a stat change are, and answers whether the row was
+  // written. A refused row keeps its editor, so the milestone's rule stays in
+  // front of the author.
+  const saveLevelMilestone = async (
+    milestone: CharacterLevelMilestone,
+    draft: MilestoneDraft
+  ): Promise<boolean> => {
+    const level = Number(draft.level);
 
-  const saveLevelMilestone = async (milestone: CharacterLevelMilestone) => {
-    const level = Number(levelMilestoneLevelDraft);
-
-    if (!/^\d+$/.test(levelMilestoneLevelDraft.trim()) || level < 1) {
+    if (!/^\d+$/.test(draft.level.trim()) || level < 1) {
       setCharacterError('A level milestone needs a whole-number level of 1 or more.');
-      return;
+      return false;
     }
 
-    const xp = levelMilestoneXpFromDraft(levelMilestoneXpDraft);
-    if (xp === 'invalid') return;
+    const xp = levelMilestoneXpFromDraft(draft.xp);
+    if (xp === 'invalid') return false;
 
-    const statChanges = statChangesFromDrafts(levelMilestoneStatChangesDraft);
-    if (!statChanges) return;
+    const statChanges = statChangesFromDrafts(draft.statChanges);
+    if (!statChanges) return false;
 
     setCharacterError(null);
 
@@ -7101,36 +6958,37 @@ function App() {
       const saved: CharacterLevelMilestone = await progressionApi.updateLevelMilestone(
         milestone.id,
         level,
-        levelMilestoneChapterDraft || null,
-        levelMilestoneDebuffDraft,
+        draft.chapterId || null,
+        draft.isDebuff,
         xp,
         statChanges,
         actor
       );
 
       applyLevelMilestone(saved);
-      setEditingLevelMilestoneId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save a level milestone:', e);
       setCharacterError(`Could not save the level milestone: ${String(e)}`);
+      return false;
     }
   };
 
-  const addLevelMilestone = async () => {
-    if (!selectedCharacterId) return;
+  const addLevelMilestone = async (draft: MilestoneDraft): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
-    const level = Number(newLevelMilestoneLevel);
+    const level = Number(draft.level);
 
-    if (!/^\d+$/.test(newLevelMilestoneLevel.trim()) || level < 1) {
+    if (!/^\d+$/.test(draft.level.trim()) || level < 1) {
       setCharacterError('A level milestone needs a whole-number level of 1 or more.');
-      return;
+      return false;
     }
 
-    const xp = levelMilestoneXpFromDraft(newLevelMilestoneXp);
-    if (xp === 'invalid') return;
+    const xp = levelMilestoneXpFromDraft(draft.xp);
+    if (xp === 'invalid') return false;
 
-    const statChanges = statChangesFromDrafts(newLevelMilestoneStatChanges);
-    if (!statChanges) return;
+    const statChanges = statChangesFromDrafts(draft.statChanges);
+    if (!statChanges) return false;
 
     setCharacterError(null);
 
@@ -7138,26 +6996,25 @@ function App() {
       const saved: CharacterLevelMilestone = await progressionApi.addLevelMilestone(
         selectedCharacterId,
         level,
-        newLevelMilestoneChapter || null,
-        newLevelMilestoneDebuff,
+        draft.chapterId || null,
+        draft.isDebuff,
         xp,
         statChanges,
         actor
       );
 
       applyLevelMilestone(saved);
-      setNewLevelMilestoneLevel(String(level));
-      setNewLevelMilestoneChapter('');
-      setNewLevelMilestoneDebuff(false);
-      setNewLevelMilestoneXp('');
-      setNewLevelMilestoneStatChanges([blankStatChange()]);
+      return true;
     } catch (e) {
       console.error('Failed to add a level milestone:', e);
       setCharacterError(`Could not add the level milestone: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeLevelMilestone = async (milestone: CharacterLevelMilestone) => {
+  const removeLevelMilestone = async (
+    milestone: CharacterLevelMilestone
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
@@ -7172,10 +7029,11 @@ function App() {
           event.milestone_id === milestone.id ? { ...event, milestone_id: null } : event
         )
       );
-      if (editingLevelMilestoneId === milestone.id) setEditingLevelMilestoneId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete a level milestone:', e);
       setCharacterError(`Could not delete the level milestone: ${String(e)}`);
+      return false;
     }
   };
 
@@ -7197,71 +7055,68 @@ function App() {
     ]);
   };
 
-  const startXpEntryEdit = (entry: CharacterProgress) => {
-    setCharacterError(null);
-    setEditingXpEntryId(entry.id);
-    setXpEntryChapterDraft(entry.chapter_id);
-    setXpEntryXpDraft(String(entry.xp_earned));
-  };
-
-  const saveXpEntry = async (entry: CharacterProgress) => {
-    if (!xpEntryChapterDraft) {
+  const saveXpEntry = async (
+    entry: CharacterProgress,
+    draft: XpEntryDraft
+  ): Promise<boolean> => {
+    if (!draft.chapterId) {
       setCharacterError('XP earned needs a chapter.');
-      return;
+      return false;
     }
 
-    const xpEarned = xpEntryAmount(xpEntryXpDraft);
-    if (xpEarned === null) return;
+    const xpEarned = xpEntryAmount(draft.xp);
+    if (xpEarned === null) return false;
 
     setCharacterError(null);
 
     try {
       const saved: CharacterProgress = await progressionApi.updateCharacterProgress(
         entry.id,
-        xpEntryChapterDraft,
+        draft.chapterId,
         xpEarned,
         actor
       );
 
       applyXpEntry(saved);
-      setEditingXpEntryId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save XP income:', e);
       setCharacterError(`Could not save XP earned: ${String(e)}`);
+      return false;
     }
   };
 
-  const addXpEntry = async () => {
-    if (!selectedCharacterId) return;
+  const addXpEntry = async (draft: XpEntryDraft): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
 
-    if (!newXpEntryChapter) {
+    if (!draft.chapterId) {
       setCharacterError('XP earned needs a chapter.');
-      return;
+      return false;
     }
 
-    const xpEarned = xpEntryAmount(newXpEntryXp);
-    if (xpEarned === null) return;
+    const xpEarned = xpEntryAmount(draft.xp);
+    if (xpEarned === null) return false;
 
     setCharacterError(null);
 
     try {
       const saved: CharacterProgress = await progressionApi.addCharacterProgress(
         selectedCharacterId,
-        newXpEntryChapter,
+        draft.chapterId,
         xpEarned,
         actor
       );
 
       applyXpEntry(saved);
-      setNewXpEntryChapter('');
-      setNewXpEntryXp('');
+      return true;
     } catch (e) {
       console.error('Failed to add XP income:', e);
       setCharacterError(`Could not add XP earned: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeXpEntry = async (entry: CharacterProgress) => {
+  const removeXpEntry = async (entry: CharacterProgress): Promise<boolean> => {
     setCharacterError(null);
 
     try {
@@ -7269,10 +7124,11 @@ function App() {
       setStoryCharacterProgress(previous =>
         previous.filter(other => other.id !== entry.id)
       );
-      if (editingXpEntryId === entry.id) setEditingXpEntryId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete XP income:', e);
       setCharacterError(`Could not delete XP earned: ${String(e)}`);
+      return false;
     }
   };
 
@@ -7311,106 +7167,117 @@ function App() {
     return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
   };
 
-  const startItemEdit = (item: InventoryItem) => {
-    setCharacterError(null);
-    setEditingItemId(item.id);
-    setItemNameDraft(item.name);
-    setItemRarityDraft(item.rarity ?? '');
-    setItemQuantityDraft(String(item.quantity));
-    setItemEffectDraft(item.effect ?? '');
-    setItemChapterDraft(item.chapter_id ?? '');
-    setItemLostChapterDraft(item.lost_chapter_id ?? '');
-    setItemNodeDraft(item.node_id ?? '');
-  };
-
-  const saveItem = async (item: InventoryItem) => {
-    const name = itemNameDraft.trim();
+  // The two item forms hand over what was typed; the app decides what a name, a
+  // quantity and a link are, and answers whether the row was written.
+  const itemFields = (draft: InventoryDraft): {
+    name: string;
+    rarity: string | null;
+    quantity: number;
+    effect: string | null;
+    chapterId: string | null;
+    lostChapterId: string | null;
+    nodeId: string | null;
+  } | null => {
+    const name = draft.name.trim();
 
     if (!name) {
       setCharacterError('An item needs a name — delete it to remove it.');
-      return;
+      return null;
     }
 
-    const quantity = parseCount(itemQuantityDraft);
+    const quantity = parseCount(draft.quantity);
 
     if (quantity === null) {
       setCharacterError('An item needs a whole-number quantity, zero or more.');
-      return;
+      return null;
     }
+
+    return {
+      name,
+      rarity: draft.rarity.trim() || null,
+      quantity,
+      effect: draft.effect.trim() || null,
+      chapterId: draft.chapterId || null,
+      lostChapterId: draft.lostChapterId || null,
+      nodeId: draft.nodeId || null,
+    };
+  };
+
+  const saveItem = async (
+    item: InventoryItem,
+    draft: InventoryDraft
+  ): Promise<boolean> => {
+    const fields = itemFields(draft);
+
+    if (!fields) return false;
 
     setCharacterError(null);
 
     try {
       const updated: InventoryItem = await inventoryApi.updateInventoryItem(
         item.id,
-        name,
-        itemRarityDraft.trim() || null,
-        quantity,
-        itemEffectDraft.trim() || null,
-        itemChapterDraft || null,
-        itemLostChapterDraft || null,
-        itemNodeDraft || null,
+        fields.name,
+        fields.rarity,
+        fields.quantity,
+        fields.effect,
+        fields.chapterId,
+        fields.lostChapterId,
+        fields.nodeId,
         actor
       );
 
       applyInventoryItem(updated);
-      setEditingItemId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save item:', e);
       setCharacterError(`Could not save item: ${String(e)}`);
+      return false;
     }
   };
 
-  const addItem = async () => {
-    if (!selectedCharacterId || !newItemName.trim()) return;
+  const addItem = async (draft: InventoryDraft): Promise<boolean> => {
+    if (!selectedCharacterId || !draft.name.trim()) return false;
 
-    const quantity = parseCount(newItemQuantity);
+    const fields = itemFields(draft);
 
-    if (quantity === null) {
-      setCharacterError('An item needs a whole-number quantity, zero or more.');
-      return;
-    }
+    if (!fields) return false;
 
     setCharacterError(null);
 
     try {
       const saved: InventoryItem = await inventoryApi.addInventoryItem(
         selectedCharacterId,
-        newItemName.trim(),
-        newItemRarity.trim() || null,
-        quantity,
-        newItemEffect.trim() || null,
-        newItemChapterId || null,
-        newItemLostChapterId || null,
-        newItemNodeId || null,
+        fields.name,
+        fields.rarity,
+        fields.quantity,
+        fields.effect,
+        fields.chapterId,
+        fields.lostChapterId,
+        fields.nodeId,
         actor
       );
 
       applyInventoryItem(saved);
-      setNewItemName('');
-      setNewItemRarity('');
-      setNewItemQuantity('1');
-      setNewItemEffect('');
-      setNewItemChapterId('');
-      setNewItemLostChapterId('');
-      setNewItemNodeId('');
+      return true;
     } catch (e) {
       console.error('Failed to add item:', e);
       setCharacterError(`Could not add item: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeItem = async (item: InventoryItem) => {
+  const removeItem = async (item: InventoryItem): Promise<boolean> => {
     setCharacterError(null);
 
     try {
       await inventoryApi.deleteInventoryItem(item.id, actor);
       setCharacterInventory(prev => prev.filter(other => other.id !== item.id));
       setStoryInventory(prev => prev.filter(other => other.id !== item.id));
-      setEditingItemId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete item:', e);
       setCharacterError(`Could not delete item: ${String(e)}`);
+      return false;
     }
   };
 
@@ -7488,26 +7355,23 @@ function App() {
     setCharacterCurrency(ordered);
   };
 
-  const startCurrencyEdit = (currency: CharacterCurrency) => {
-    setCharacterError(null);
-    setEditingCurrencyId(currency.id);
-    setCurrencyNameDraft(currency.name);
-    setCurrencyAmountDraft(String(currency.amount));
-  };
-
-  const saveCurrency = async (currency: CharacterCurrency) => {
-    const name = currencyNameDraft.trim();
+  const saveCurrency = async (
+    currency: CharacterCurrency,
+    nameText: string,
+    amountText: string
+  ): Promise<boolean> => {
+    const name = nameText.trim();
 
     if (!name) {
       setCharacterError('A currency needs a name — delete it to remove it.');
-      return;
+      return false;
     }
 
-    const amount = parseCount(currencyAmountDraft);
+    const amount = parseCount(amountText);
 
     if (amount === null) {
       setCharacterError('A currency amount must be a whole number, zero or more.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -7521,21 +7385,25 @@ function App() {
       );
 
       applyCurrency(updated);
-      setEditingCurrencyId(null);
+      return true;
     } catch (e) {
       console.error('Failed to save currency:', e);
       setCharacterError(`Could not save currency: ${String(e)}`);
+      return false;
     }
   };
 
-  const addCurrency = async () => {
-    if (!selectedCharacterId || !newCurrencyName.trim()) return;
+  const addCurrency = async (
+    nameText: string,
+    amountText: string
+  ): Promise<boolean> => {
+    if (!selectedCharacterId || !nameText.trim()) return false;
 
-    const amount = parseCount(newCurrencyAmount);
+    const amount = parseCount(amountText);
 
     if (amount === null) {
       setCharacterError('A currency amount must be a whole number, zero or more.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -7543,30 +7411,33 @@ function App() {
     try {
       const saved: CharacterCurrency = await inventoryApi.addCurrency(
         selectedCharacterId,
-        newCurrencyName.trim(),
+        nameText.trim(),
         amount,
         actor
       );
 
       applyCurrency(saved);
-      setNewCurrencyName('');
-      setNewCurrencyAmount('0');
+      return true;
     } catch (e) {
       console.error('Failed to add currency:', e);
       setCharacterError(`Could not add currency: ${String(e)}`);
+      return false;
     }
   };
 
-  const removeCurrency = async (currency: CharacterCurrency) => {
+  const removeCurrency = async (
+    currency: CharacterCurrency
+  ): Promise<boolean> => {
     setCharacterError(null);
 
     try {
       await inventoryApi.deleteCurrency(currency.id, actor);
       setCharacterCurrency(prev => prev.filter(other => other.id !== currency.id));
-      setEditingCurrencyId(null);
+      return true;
     } catch (e) {
       console.error('Failed to delete currency:', e);
       setCharacterError(`Could not delete currency: ${String(e)}`);
+      return false;
     }
   };
 
@@ -9315,37 +9186,26 @@ function App() {
 
   // The progression form opens with the stored numbers, so a save can change one
   // field without having to retype the others.
-  const startProgressEdit = () => {
-    if (!selectedCharacter) return;
+  const saveProgress = async (draft: ProgressDraft): Promise<boolean> => {
+    if (!selectedCharacter) return false;
 
-    setProgressLevelDraft(String(shownLevel));
-    setProgressXpDraft(String(shownXp));
-    setProgressTargetDraft(shownTarget ? String(shownTarget) : '');
-    setProgressRankDraft(selectedCharacter.rank ?? '');
-    setCharacterError(null);
-    setEditingProgress(true);
-  };
-
-  const saveProgress = async () => {
-    if (!selectedCharacter) return;
-
-    const level = Number(progressLevelDraft);
-    const xp = Number(progressXpDraft);
-    const target = progressTargetDraft.trim() === '' ? null : Number(progressTargetDraft);
+    const level = Number(draft.level);
+    const xp = Number(draft.xp);
+    const target = draft.target.trim() === '' ? null : Number(draft.target);
 
     if (!Number.isInteger(level) || level < 1) {
       setCharacterError('A level is a whole number, 1 or more.');
-      return;
+      return false;
     }
 
     if (!Number.isInteger(xp) || xp < 0) {
       setCharacterError('Experience is a whole number, 0 or more.');
-      return;
+      return false;
     }
 
     if (target !== null && (!Number.isInteger(target) || target < 1)) {
       setCharacterError('XP to next is a whole number above 0, or blank.');
-      return;
+      return false;
     }
 
     setCharacterError(null);
@@ -9355,16 +9215,17 @@ function App() {
         selectedCharacter.id,
         level,
         xp,
-        progressRankDraft.trim() || null,
+        draft.rank.trim() || null,
         target,
         actor
       );
 
       applyCharacterRow(updated);
-      setEditingProgress(false);
+      return true;
     } catch (e) {
       console.error('Failed to save progression:', e);
       setCharacterError(`Could not save progression: ${String(e)}`);
+      return false;
     }
   };
 
@@ -10878,7 +10739,6 @@ function App() {
             characters={characters}
             selectedCharacterId={selectedCharacterId}
             setSelectedCharacterId={setSelectedCharacterId}
-            setEditingProgress={setEditingProgress}
             newCharacterName={newCharacterName}
             setNewCharacterName={setNewCharacterName}
             newCharacterDescription={newCharacterDescription}
@@ -10899,86 +10759,35 @@ function App() {
           >
             <ProgressionSections
               character={selectedCharacter}
+              characterId={selectedCharacterId}
               shownLevel={shownLevel}
               shownXp={shownXp}
               shownTarget={shownTarget}
               progressPercent={progressPercent}
-              editingProgress={editingProgress}
-              setEditingProgress={setEditingProgress}
-              progressLevelDraft={progressLevelDraft}
-              setProgressLevelDraft={setProgressLevelDraft}
-              progressXpDraft={progressXpDraft}
-              setProgressXpDraft={setProgressXpDraft}
-              progressTargetDraft={progressTargetDraft}
-              setProgressTargetDraft={setProgressTargetDraft}
-              progressRankDraft={progressRankDraft}
-              setProgressRankDraft={setProgressRankDraft}
-              saveProgress={saveProgress}
-              levelUpCharacter={levelUpCharacter}
-              startProgressEdit={startProgressEdit}
-              chapterChoices={chapterChoices}
+              chapters={chapterChoices}
               milestones={selectedLevelMilestones}
-              focus={focusedProgression}
-              skillEvents={storySkillEvents}
-              skills={storySkills}
-              statNameOptions={statNameOptions}
-              editingMilestoneId={editingLevelMilestoneId}
-              setEditingMilestoneId={setEditingLevelMilestoneId}
-              milestoneLevelDraft={levelMilestoneLevelDraft}
-              setMilestoneLevelDraft={setLevelMilestoneLevelDraft}
-              milestoneChapterDraft={levelMilestoneChapterDraft}
-              setMilestoneChapterDraft={setLevelMilestoneChapterDraft}
-              milestoneDebuffDraft={levelMilestoneDebuffDraft}
-              setMilestoneDebuffDraft={setLevelMilestoneDebuffDraft}
-              milestoneXpDraft={levelMilestoneXpDraft}
-              setMilestoneXpDraft={setLevelMilestoneXpDraft}
-              milestoneStatChangesDraft={levelMilestoneStatChangesDraft}
-              setMilestoneStatChangesDraft={setLevelMilestoneStatChangesDraft}
-              startMilestoneEdit={startLevelMilestoneEdit}
-              saveMilestone={saveLevelMilestone}
-              removeMilestone={removeLevelMilestone}
-              newMilestoneLevel={newLevelMilestoneLevel}
-              setNewMilestoneLevel={setNewLevelMilestoneLevel}
-              newMilestoneChapter={newLevelMilestoneChapter}
-              setNewMilestoneChapter={setNewLevelMilestoneChapter}
-              newMilestoneDebuff={newLevelMilestoneDebuff}
-              setNewMilestoneDebuff={setNewLevelMilestoneDebuff}
-              newMilestoneXp={newLevelMilestoneXp}
-              setNewMilestoneXp={setNewLevelMilestoneXp}
-              newMilestoneStatChanges={newLevelMilestoneStatChanges}
-              setNewMilestoneStatChanges={setNewLevelMilestoneStatChanges}
-              addMilestone={addLevelMilestone}
               xpEntries={selectedXpEntries}
-              editingXpEntryId={editingXpEntryId}
-              setEditingXpEntryId={setEditingXpEntryId}
-              xpEntryChapterDraft={xpEntryChapterDraft}
-              setXpEntryChapterDraft={setXpEntryChapterDraft}
-              xpEntryXpDraft={xpEntryXpDraft}
-              setXpEntryXpDraft={setXpEntryXpDraft}
-              startXpEntryEdit={startXpEntryEdit}
-              saveXpEntry={saveXpEntry}
-              removeXpEntry={removeXpEntry}
-              newXpEntryChapter={newXpEntryChapter}
-              setNewXpEntryChapter={setNewXpEntryChapter}
-              newXpEntryXp={newXpEntryXp}
-              setNewXpEntryXp={setNewXpEntryXp}
-              addXpEntry={addXpEntry}
+              skills={storySkills}
+              skillEvents={storySkillEvents}
+              statNameOptions={statNameOptions}
+              focus={focusedProgression}
+              onError={setCharacterError}
+              onSaveProgress={saveProgress}
+              onLevelUp={levelUpCharacter}
+              onCreateMilestone={addLevelMilestone}
+              onSaveMilestone={saveLevelMilestone}
+              onDeleteMilestone={removeLevelMilestone}
+              onCreateXpEntry={addXpEntry}
+              onSaveXpEntry={saveXpEntry}
+              onDeleteXpEntry={removeXpEntry}
             />
 
             <AttributeList
               attributes={characterAttributes}
-              editingAttributeId={editingAttributeId}
-              setEditingAttributeId={setEditingAttributeId}
-              attributeValueDraft={attributeValueDraft}
-              setAttributeValueDraft={setAttributeValueDraft}
-              startAttributeEdit={startAttributeEdit}
-              saveAttribute={saveAttribute}
-              removeAttribute={removeAttribute}
-              newAttributeName={newAttributeName}
-              setNewAttributeName={setNewAttributeName}
-              newAttributeValue={newAttributeValue}
-              setNewAttributeValue={setNewAttributeValue}
-              addAttribute={addAttribute}
+              onError={setCharacterError}
+              onCreate={addAttribute}
+              onSave={saveAttribute}
+              onDelete={removeAttribute}
             />
 
             {/* Skills are rows of their own: a rank and an effect are
@@ -11010,58 +10819,16 @@ function App() {
               items={characterInventory}
               chapters={chapterChoices}
               cards={itemCardChoices}
-              editingItemId={editingItemId}
-              setEditingItemId={setEditingItemId}
-              itemNameDraft={itemNameDraft}
-              setItemNameDraft={setItemNameDraft}
-              itemRarityDraft={itemRarityDraft}
-              setItemRarityDraft={setItemRarityDraft}
-              itemQuantityDraft={itemQuantityDraft}
-              setItemQuantityDraft={setItemQuantityDraft}
-              itemEffectDraft={itemEffectDraft}
-              setItemEffectDraft={setItemEffectDraft}
-              itemChapterDraft={itemChapterDraft}
-              setItemChapterDraft={setItemChapterDraft}
-              itemLostChapterDraft={itemLostChapterDraft}
-              setItemLostChapterDraft={setItemLostChapterDraft}
-              itemNodeDraft={itemNodeDraft}
-              setItemNodeDraft={setItemNodeDraft}
-              startItemEdit={startItemEdit}
-              saveItem={saveItem}
-              removeItem={removeItem}
-              newItemName={newItemName}
-              setNewItemName={setNewItemName}
-              newItemRarity={newItemRarity}
-              setNewItemRarity={setNewItemRarity}
-              newItemQuantity={newItemQuantity}
-              setNewItemQuantity={setNewItemQuantity}
-              newItemEffect={newItemEffect}
-              setNewItemEffect={setNewItemEffect}
-              newItemChapterId={newItemChapterId}
-              setNewItemChapterId={setNewItemChapterId}
-              newItemLostChapterId={newItemLostChapterId}
-              setNewItemLostChapterId={setNewItemLostChapterId}
-              newItemNodeId={newItemNodeId}
-              setNewItemNodeId={setNewItemNodeId}
-              addItem={addItem}
+              onCreate={addItem}
+              onSave={saveItem}
+              onDelete={removeItem}
             />
 
             <CurrencyList
               currencies={characterCurrency}
-              editingCurrencyId={editingCurrencyId}
-              setEditingCurrencyId={setEditingCurrencyId}
-              currencyNameDraft={currencyNameDraft}
-              setCurrencyNameDraft={setCurrencyNameDraft}
-              currencyAmountDraft={currencyAmountDraft}
-              setCurrencyAmountDraft={setCurrencyAmountDraft}
-              startCurrencyEdit={startCurrencyEdit}
-              saveCurrency={saveCurrency}
-              removeCurrency={removeCurrency}
-              newCurrencyName={newCurrencyName}
-              setNewCurrencyName={setNewCurrencyName}
-              newCurrencyAmount={newCurrencyAmount}
-              setNewCurrencyAmount={setNewCurrencyAmount}
-              addCurrency={addCurrency}
+              onCreate={addCurrency}
+              onSave={saveCurrency}
+              onDelete={removeCurrency}
             />
 
             <RelationList
@@ -11073,28 +10840,9 @@ function App() {
               characters={characters}
               kindSuggestions={relationKindSuggestions}
               focus={focusedProgression}
-              editingRelationId={editingRelationId}
-              setEditingRelationId={setEditingRelationId}
-              relationKindDraft={relationKindDraft}
-              setRelationKindDraft={setRelationKindDraft}
-              relationChapterDraft={relationChapterDraft}
-              setRelationChapterDraft={setRelationChapterDraft}
-              relationUntilChapterDraft={relationUntilChapterDraft}
-              setRelationUntilChapterDraft={setRelationUntilChapterDraft}
-              relationNoteDraft={relationNoteDraft}
-              setRelationNoteDraft={setRelationNoteDraft}
-              startRelationEdit={startRelationEdit}
-              saveRelation={saveRelation}
-              removeRelation={removeRelation}
-              newRelationKind={newRelationKind}
-              setNewRelationKind={setNewRelationKind}
-              newRelationToId={newRelationToId}
-              setNewRelationToId={setNewRelationToId}
-              newRelationChapterId={newRelationChapterId}
-              setNewRelationChapterId={setNewRelationChapterId}
-              newRelationNote={newRelationNote}
-              setNewRelationNote={setNewRelationNote}
-              addRelation={addRelation}
+              onCreate={addRelation}
+              onSave={saveRelation}
+              onDelete={removeRelation}
             />
 
             <StandingList
@@ -11103,32 +10851,9 @@ function App() {
               chapters={chapterChoices}
               chapterLabelById={chapterLabelById}
               focus={focusedProgression}
-              editingStandingId={editingStandingId}
-              setEditingStandingId={setEditingStandingId}
-              standingFactionDraft={standingFactionDraft}
-              setStandingFactionDraft={setStandingFactionDraft}
-              standingTextDraft={standingTextDraft}
-              setStandingTextDraft={setStandingTextDraft}
-              standingChapterDraft={standingChapterDraft}
-              setStandingChapterDraft={setStandingChapterDraft}
-              standingUntilChapterDraft={standingUntilChapterDraft}
-              setStandingUntilChapterDraft={setStandingUntilChapterDraft}
-              standingNoteDraft={standingNoteDraft}
-              setStandingNoteDraft={setStandingNoteDraft}
-              startStandingEdit={startStandingEdit}
-              saveStanding={saveStanding}
-              removeStanding={removeStanding}
-              newStandingFactionId={newStandingFactionId}
-              setNewStandingFactionId={setNewStandingFactionId}
-              newStandingFactionName={newStandingFactionName}
-              setNewStandingFactionName={setNewStandingFactionName}
-              newStandingText={newStandingText}
-              setNewStandingText={setNewStandingText}
-              newStandingChapterId={newStandingChapterId}
-              setNewStandingChapterId={setNewStandingChapterId}
-              newStandingNote={newStandingNote}
-              setNewStandingNote={setNewStandingNote}
-              addStanding={addStanding}
+              onCreate={addStanding}
+              onSave={saveStanding}
+              onDelete={removeStanding}
               createFaction={createFactionCard}
               onError={setCharacterError}
             />

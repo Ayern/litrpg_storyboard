@@ -1039,7 +1039,21 @@ describe('items on the board', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Characters' }));
-    expect(screen.getByLabelText('Item name')).toHaveValue('Iron Sword (draft)');
+
+    // The sheet's forms belong to the tab, so leaving it closed the row and what
+    // was typed went with it. The record is where the next visit starts, which is
+    // what the row shows here: the name the undo restored, and the loss with it.
+    expect(screen.queryByLabelText('Item name')).not.toBeInTheDocument();
+    expect(itemRow('Iron Sword').getByText('Lost in Chapter Two')).toBeInTheDocument();
+
+    await user.click(itemRow('Iron Sword').getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByLabelText('Item name'));
+    await user.type(screen.getByLabelText('Item name'), ' (draft)');
+    await user.selectOptions(screen.getByLabelText('Item chapter acquired'), 'n2');
+    await user.selectOptions(screen.getByLabelText('Item card'), 'n6');
+    // The row opens on the record now, so the loss the undo brought back has to
+    // be cleared on purpose rather than never having been typed in the first place.
+    await user.selectOptions(screen.getByLabelText('Item chapter lost'), '');
     await user.click(screen.getByRole('button', { name: 'Save item' }));
 
     expect(lastCall('update_inventory_item')).toMatchObject({

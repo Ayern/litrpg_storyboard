@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { CharacterAttribute } from './types';
 
 // The sheet's attribute rows: Class, Title, Aura, Affinity. An attribute is a
@@ -5,41 +6,71 @@ import type { CharacterAttribute } from './types';
 // name that already exists updates it - which is why the creator's hint says so
 // rather than refusing the save.
 //
-// Rows are edited one at a time through a single draft: the open row's id and
-// the value being typed. Both stay in the app beside the writes they feed, so an
-// add, an update and a delete are each still one audited action.
+// The form state lives here: the open row with the value being typed, and the
+// two fields that add a row. Every write is handed back to the app, which owns
+// the audit step, because a story's attributes are read by the level-up form and
+// the canvas as well as by this sheet. A write answers whether it happened, so a
+// refused save leaves the field open where the author left it.
 
 export interface AttributeListProps {
   attributes: CharacterAttribute[];
-  editingAttributeId: string | null;
-  setEditingAttributeId: (attributeId: string | null) => void;
-  attributeValueDraft: string;
-  setAttributeValueDraft: (value: string) => void;
-  startAttributeEdit: (attribute: CharacterAttribute) => void;
-  saveAttribute: (attribute: CharacterAttribute) => Promise<void>;
-  removeAttribute: (attribute: CharacterAttribute) => Promise<void>;
-  newAttributeName: string;
-  setNewAttributeName: (name: string) => void;
-  newAttributeValue: string;
-  setNewAttributeValue: (value: string) => void;
-  addAttribute: () => Promise<void>;
+  onError: (message: string | null) => void;
+  onCreate: (name: string, value: string) => Promise<boolean>;
+  onSave: (attribute: CharacterAttribute, value: string) => Promise<boolean>;
+  onDelete: (attribute: CharacterAttribute) => Promise<boolean>;
 }
 
 export function AttributeList({
   attributes,
-  editingAttributeId,
-  setEditingAttributeId,
-  attributeValueDraft,
-  setAttributeValueDraft,
-  startAttributeEdit,
-  saveAttribute,
-  removeAttribute,
-  newAttributeName,
-  setNewAttributeName,
-  newAttributeValue,
-  setNewAttributeValue,
-  addAttribute,
+  onError,
+  onCreate,
+  onSave,
+  onDelete,
 }: AttributeListProps) {
+  const [editingAttributeId, setEditingAttributeId] = useState<string | null>(null);
+  const [attributeValueDraft, setAttributeValueDraft] = useState('');
+  const [newAttributeName, setNewAttributeName] = useState('');
+  const [newAttributeValue, setNewAttributeValue] = useState('');
+
+  const startAttributeEdit = (attribute: CharacterAttribute) => {
+    setEditingAttributeId(attribute.id);
+    setAttributeValueDraft(attribute.value);
+  };
+
+  // The value is the one field this sheet will not save empty: an attribute with
+  // no value is not an attribute, and deleting it is how it goes away.
+  const saveAttribute = async (attribute: CharacterAttribute) => {
+    const value = attributeValueDraft.trim();
+
+    if (!value) {
+      onError('An attribute needs a value — delete it to remove it.');
+      return;
+    }
+
+    if (await onSave(attribute, value)) setEditingAttributeId(null);
+  };
+
+  const addAttribute = async () => {
+    const name = newAttributeName.trim();
+    const value = newAttributeValue.trim();
+
+    if (!name) return;
+
+    if (!value) {
+      onError('An attribute needs a value.');
+      return;
+    }
+
+    if (!(await onCreate(name, value))) return;
+
+    setNewAttributeName('');
+    setNewAttributeValue('');
+  };
+
+  const removeAttribute = async (attribute: CharacterAttribute) => {
+    if (await onDelete(attribute)) setEditingAttributeId(null);
+  };
+
   return (
     <div className="attribute-section">
       <h4 className="character-section-heading">Attributes</h4>
