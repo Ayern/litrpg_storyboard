@@ -859,7 +859,15 @@ page that arrives late, and what it says when a filter matches nothing.
   save that happened; the Graph tab works out for itself only
   which holders the selected skill card already has and which cast members could
   still learn it, because that list is shown nowhere else, and takes the drafts,
-  the board, its handlers and the cast member's numbers as props; and the
+  the board, its handlers and the cast member's numbers as props, while which
+  card or connection is open and the text its fields hold are kept by the canvas
+  domain's `useCanvasDrafts`: the hook holds the label and notes per card, the
+  half-written text remembered for the cards visited this session, and the rule
+  that an open editor follows the stored row unless it holds typing the author
+  has not saved, and it takes the board in so it can answer whether those fields
+  have moved away from it. Opening a card, closing it, discarding a draft and
+  the dirty flags all live there, so a save writes through the ordinary commands
+  and then hands the row it wrote back to the editor; and the
   history domain is a hook rather than a tab, because what it holds belongs to
   the session rather than to a view: `useHistory` keeps the last few actions
   with a command for each direction, the cap on them, the counts the toolbar

@@ -83,7 +83,9 @@ export interface GraphTabProps {
 
   // The connection editor.
   selectedEdgeId: string | null;
-  setSelectedEdgeId: React.Dispatch<React.SetStateAction<string | null>>;
+  // Closes the connection editor. Nothing here opens one: picking a line is the
+  // board's own event, and picking a card opens its drawer instead.
+  closeEdge: () => void;
   selectedEdge: Edge<EdgeData> | null;
   edgeLabelDraft: string;
   setEdgeLabelDraft: React.Dispatch<React.SetStateAction<string>>;
@@ -187,7 +189,7 @@ export function GraphTab({
   nodeUnderPointer,
   dropCastMember,
   selectedEdgeId,
-  setSelectedEdgeId,
+  closeEdge,
   selectedEdge,
   edgeLabelDraft,
   setEdgeLabelDraft,
@@ -490,7 +492,7 @@ export function GraphTab({
                       onChange={e => setEdgeLabelDraft(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === 'Enter') saveEdge();
-                        if (e.key === 'Escape') setSelectedEdgeId(null);
+                        if (e.key === 'Escape') closeEdge();
                       }}
                     />
                     <input
@@ -501,7 +503,7 @@ export function GraphTab({
                       onChange={e => setEdgeRelationDraft(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === 'Enter') saveEdge();
-                        if (e.key === 'Escape') setSelectedEdgeId(null);
+                        if (e.key === 'Escape') closeEdge();
                       }}
                     />
                     <datalist id="edge-relation-types">
@@ -532,7 +534,7 @@ export function GraphTab({
                       </button>
                       <button
                         title="Close without saving (Esc)"
-                        onClick={() => setSelectedEdgeId(null)}
+                        onClick={() => closeEdge()}
                       >
                         Close
                       </button>

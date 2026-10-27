@@ -66,6 +66,7 @@ import { TrashPanel } from './domains/trash/TrashPanel';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
+import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
@@ -824,16 +825,48 @@ function App() {
   // Closing the window is the last way to lose a draft, so it asks too.
   const [quitPrompt, setQuitPrompt] = useState(false);
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [nodeLabelDraft, setNodeLabelDraft] = useState('');
-  const [nodeContentDraft, setNodeContentDraft] = useState('');
-
-  // Unsaved label and notes, per node, for this session. Closing or switching
-  // away no longer has to discard them: reopening the node offers the text back.
-  const nodeDraftsRef = useRef<Record<string, { label: string; content: string }>>({});
-  // Whether the drawer has been asked what to do with an unsaved edit.
-  const [closePrompt, setClosePrompt] = useState(false);
-  const [nodeEditError, setNodeEditError] = useState<string | null>(null);
+  // Which card or connection is open, the label and notes its fields hold, and
+  // the half-written text remembered for the cards visited this session live in
+  // the canvas domain. The board says whether those fields hold something
+  // unsaved, so it goes in and the answers come back out.
+  const {
+    selectedNode,
+    selectedEdge,
+    selectedNodeId,
+    selectedEdgeId,
+    nodeLabelDraft,
+    setNodeLabelDraft,
+    nodeContentDraft,
+    setNodeContentDraft,
+    nodeEditError,
+    setNodeEditError,
+    closePrompt,
+    setClosePrompt,
+    renameOffer,
+    setRenameOffer,
+    edgeLabelDraft,
+    setEdgeLabelDraft,
+    edgeRelationDraft,
+    setEdgeRelationDraft,
+    edgeEditError,
+    setEdgeEditError,
+    nodeDirty,
+    edgeDirty,
+    openNode,
+    openEdge,
+    closeNode,
+    dismissNode,
+    discardNode,
+    closeEdge,
+    closeEditors,
+    cardsRemoved,
+    edgesRemoved,
+    rememberNodeDraft,
+    rememberLabelWritten,
+    forgetNodeDraft,
+    forgetRememberedDrafts,
+    followStoredRows,
+  } = useCanvasDrafts({ nodes, edges });
 
   // The inspector keeps its own copy of the matched cast member's numbers, so
   // editing from the canvas never depends on what the Characters tab has
@@ -852,19 +885,6 @@ function App() {
   const [skillHolderChapterId, setSkillHolderChapterId] = useState('');
   const [skillHolderError, setSkillHolderError] = useState<string | null>(null);
   const [savingSkillHolder, setSavingSkillHolder] = useState(false);
-  // A relink can leave a node named after the person it no longer points at.
-  // The label is the author's, so this offers the rename instead of taking it.
-  const [renameOffer, setRenameOffer] = useState<{
-    nodeId: string;
-    from: string;
-    to: string;
-  } | null>(null);
-
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
-  const [edgeRelationDraft, setEdgeRelationDraft] = useState('');
-  const [edgeEditError, setEdgeEditError] = useState<string | null>(null);
-
   const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
@@ -1007,11 +1027,6 @@ function App() {
   // Nodes React Flow is removing right now, so their connections are not
   // recorded as a separate deletion.
   const removedNodeIdsRef = useRef<Set<string>>(new Set());
-  // Read by the refresh after an undo, which runs outside a render.
-  const selectedNodeIdRef = useRef<string | null>(null);
-  const selectedEdgeIdRef = useRef<string | null>(null);
-  const nodeIsDirtyRef = useRef(false);
-  const edgeIsDirtyRef = useRef(false);
   // React Flow's instance, for turning a drop's screen point into canvas space.
   const flowRef = useRef<any>(null);
 
@@ -1140,9 +1155,8 @@ function App() {
       // quest is the app's.
       setQuestFocus(null);
 
-      // A node or connection from the previous story is no longer on the canvas.
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
+      // A card or a line from the previous story is no longer on the canvas.
+      closeEditors();
     } catch (e) {
       console.error('Failed to load story graph:', e);
     }
@@ -1162,23 +1176,11 @@ function App() {
       setNodes(dbNodes.map(toFlowNode));
       setEdges(dbEdges.map(toFlowEdge));
 
-      if (selectedNodeIdRef.current && !nodeIsDirtyRef.current) {
-        const fresh = dbNodes.find(row => row.id === selectedNodeIdRef.current);
-        if (fresh) {
-          setNodeLabelDraft(fresh.label);
-          setNodeContentDraft(fresh.content ?? '');
-        }
-      }
-
-      if (selectedEdgeIdRef.current && !edgeIsDirtyRef.current) {
-        const fresh = dbEdges.find(row => row.id === selectedEdgeIdRef.current);
-        if (fresh) {
-          setEdgeLabelDraft(fresh.label ?? '');
-          setEdgeRelationDraft(fresh.relation_type ?? '');
-        }
-      }
+      // An open editor follows what the row now says, unless it holds typing the
+      // author has not saved; undo does not touch unsaved text.
+      followStoredRows({ nodes: dbNodes, edges: dbEdges });
     },
-    [setNodes, setEdges]
+    [setNodes, setEdges, followStoredRows]
   );
 
   // This session's undo and redo stacks live in the history domain. What a walk
@@ -1446,11 +1448,6 @@ function App() {
     const timer = setTimeout(() => setRestoreNotice(null), 8000);
     return () => clearTimeout(timer);
   }, [restoreNotice]);
-
-  useEffect(() => {
-    selectedNodeIdRef.current = selectedNodeId;
-    selectedEdgeIdRef.current = selectedEdgeId;
-  }, [selectedNodeId, selectedEdgeId]);
 
   // A story's board is kept for searching only while that story is closed. The
   // moment it is opened the screen becomes the truth, and when it is left the
@@ -1834,7 +1831,7 @@ function App() {
       setNodes([]);
       setEdges([]);
       setChapterNotes([]);
-      setSelectedNodeId(null);
+      closeEditors();
     } catch (e) {
       console.error('Failed to create story:', e);
     }
@@ -4119,34 +4116,6 @@ function App() {
     return id && nodes.some(node => node.id === id) ? id : null;
   };
 
-  const rememberNodeDraft = (id: string, draft: { label: string; content: string }) => {
-    nodeDraftsRef.current = { ...nodeDraftsRef.current, [id]: draft };
-  };
-
-  const forgetNodeDraft = (id: string) => {
-    if (!nodeDraftsRef.current[id]) return;
-
-    const next = { ...nodeDraftsRef.current };
-    delete next[id];
-    nodeDraftsRef.current = next;
-  };
-
-  // Opening a node is the same gesture whether it was just created or relinked,
-  // and it is where a half-written draft comes back.
-  const openNodeInspector = useCallback(
-    (node: { id: string; label: string; content?: string | null }) => {
-      const draft = nodeDraftsRef.current[node.id];
-
-      setSelectedEdgeId(null);
-      setNodeEditError(null);
-      setSelectedNodeId(node.id);
-      setNodeLabelDraft(draft?.label ?? node.label);
-      setNodeContentDraft(draft?.content ?? node.content ?? '');
-      setClosePrompt(false);
-    },
-    []
-  );
-
   const closeCanvasSearch = () => {
     setSearchOpen(false);
     setSearchTerm('');
@@ -4252,8 +4221,7 @@ function App() {
     }
 
     if (result.kind === 'note') {
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
+      closeEditors();
 
       if (result.chapterId) openChapterNotes(result.chapterId, result.targetId);
       return;
@@ -4261,7 +4229,7 @@ function App() {
 
     if (result.kind === 'node') {
       setRenameOffer(null);
-      openNodeInspector({
+      openNode({
         id: result.targetId,
         label: result.label,
         content: result.content,
@@ -4272,10 +4240,11 @@ function App() {
 
     // A connection opens in its editor rather than only moving the view, so the
     // palette can be used to change a link as well as to look at it.
-    setSelectedNodeId(null);
-    setSelectedEdgeId(result.targetId);
-    setEdgeLabelDraft(result.edgeLabel);
-    setEdgeRelationDraft(result.edgeRelation);
+    openEdge({
+      id: result.targetId,
+      label: result.edgeLabel,
+      relationType: result.edgeRelation,
+    });
     panCanvas(result.x, result.y);
   };
 
@@ -4306,7 +4275,7 @@ function App() {
       // Already pointing at this member, so the drop changes nothing; opening it
       // still tells the person the card landed.
       if (target.data.characterId === character.id) {
-        openNodeInspector({
+        openNode({
           id: target.id,
           label: target.data.label,
           content: target.data.content,
@@ -4344,7 +4313,7 @@ function App() {
           character.id
         );
 
-        openNodeInspector({
+        openNode({
           id: target.id,
           label: target.data.label,
           content: target.data.content,
@@ -4400,7 +4369,7 @@ function App() {
 
       // Opening it is what makes the drop feel finished: the numbers are in the
       // inspector, and the link can be changed without hunting for the node.
-      openNodeInspector({
+      openNode({
         id: created.id,
         label: created.label,
         content: created.content,
@@ -4543,7 +4512,7 @@ function App() {
             data: { createdBy: actor, label: 'cast', relationType: 'cast' },
           };
 
-          setSelectedEdgeId(null);
+          closeEdge();
           setEdges(eds => addEdge(newEdge, eds));
 
           let currentCastId = member.id;
@@ -4667,7 +4636,7 @@ function App() {
               throw e;
             }
 
-            setSelectedEdgeId(null);
+            closeEdge();
             setEdges(eds =>
               addEdge(
                 {
@@ -4733,7 +4702,7 @@ function App() {
           },
         };
 
-        setSelectedEdgeId(null);
+        closeEdge();
 
         setEdges(eds => addEdge(newEdge, eds));
 
@@ -4884,9 +4853,7 @@ function App() {
       // The edges going with these nodes are restored by the node restore, so
       // they must not become a step of their own.
       removedNodeIdsRef.current = removedIds;
-      setSelectedNodeId(current => (current && removedIds.has(current) ? null : current));
-      // Connections attached to those nodes go with them, so close that editor.
-      setSelectedEdgeId(null);
+      cardsRemoved(removedIds);
       // A chapter comes back without its connections, so the undo says how many
       // of them went to the trash with it. Counted while the board still has
       // them, and only for chapter ends: those are the ones the restore leaves.
@@ -4945,7 +4912,7 @@ function App() {
       setActionError(null);
 
       const removedIds = new Set(deleted.map(edge => edge.id));
-      setSelectedEdgeId(current => (current && removedIds.has(current) ? null : current));
+      edgesRemoved(removedIds);
 
       // Connections torn down by a node deletion are already part of that step.
       const ownDeletes = deleted.filter(
@@ -5631,10 +5598,10 @@ function App() {
         )
       );
 
-      if (selectedNodeIdRef.current === saved.node_id && !nodeIsDirtyRef.current) {
-        setNodeLabelDraft(saved.name);
-        setNodeContentDraft(saved.effect ?? '');
-      }
+      followStoredRows({
+        nodes: [{ id: saved.node_id, label: saved.name, content: saved.effect ?? null }],
+        edges: [],
+      });
     }
   };
 
@@ -5810,7 +5777,7 @@ function App() {
       if (matchingEdge) {
         await canvasApi.deleteEdge(matchingEdge.id, actor);
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
-        if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
+        if (selectedEdgeId === matchingEdge.id) closeEdge();
       }
 
       // The row is deleted for good, so a redo writes it again and remembers the
@@ -6333,10 +6300,16 @@ function App() {
 
       // An inspector left open on this connection follows the saved verb,
       // unless it holds typing the author has not saved.
-      if (selectedEdgeIdRef.current === matchingEdge.id && !edgeIsDirtyRef.current) {
-        setEdgeLabelDraft(updated.label ?? '');
-        setEdgeRelationDraft(updated.relation_type ?? '');
-      }
+      followStoredRows({
+        nodes: [],
+        edges: [
+          {
+            id: matchingEdge.id,
+            label: updated.label ?? null,
+            relation_type: updated.relation_type ?? null,
+          },
+        ],
+      });
     };
 
     try {
@@ -6403,7 +6376,7 @@ function App() {
       if (matchingEdge) {
         await canvasApi.deleteEdge(matchingEdge.id, actor);
         setEdges(previous => previous.filter(edge => edge.id !== matchingEdge.id));
-        if (selectedEdgeId === matchingEdge.id) setSelectedEdgeId(null);
+        if (selectedEdgeId === matchingEdge.id) closeEdge();
       }
 
       let currentRelationId = relation.id;
@@ -7343,12 +7316,11 @@ function App() {
       await storiesApi.restoreBackup(file.file_name);
 
       forgetHistory();
-      nodeDraftsRef.current = {};
+      forgetRememberedDrafts();
       otherStoryIndexRef.current = {};
       setOtherStoryIndex({});
 
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
+      closeEditors();
       setSelectedCharacterId(null);
       setClosePrompt(false);
       setNodes([]);
@@ -7373,24 +7345,27 @@ function App() {
     }
   };
 
-  // Only one editor is open at a time: picking a node closes the connection
+  // Only one editor is open at a time: picking a card closes the connection
   // editor, because both occupy the same corner of the canvas.
   const selectNode = useCallback(
     (_event: React.MouseEvent, node: Node<NodeData>) => {
-      openNodeInspector({ id: node.id, label: node.data.label, content: node.data.content });
+      openNode({ id: node.id, label: node.data.label, content: node.data.content });
       setRenameOffer(null);
     },
-    [openNodeInspector]
+    [openNode]
   );
 
-  const selectEdge = useCallback((_event: React.MouseEvent, edge: Edge<EdgeData>) => {
-    setEdgeEditError(null);
-    setSelectedNodeId(null);
-    setSelectedEdgeId(edge.id);
-    setEdgeLabelDraft(edge.data?.label ?? '');
-    setEdgeRelationDraft(edge.data?.relationType ?? '');
-    setRenameOffer(null);
-  }, []);
+  const selectEdge = useCallback(
+    (_event: React.MouseEvent, edge: Edge<EdgeData>) => {
+      openEdge({
+        id: edge.id,
+        label: edge.data?.label ?? null,
+        relationType: edge.data?.relationType ?? null,
+      });
+      setRenameOffer(null);
+    },
+    [openEdge]
+  );
 
   const saveNode = async (closeAfter = false) => {
     if (!selectedNodeId) return;
@@ -7419,8 +7394,7 @@ function App() {
       setNodeLabelDraft(label);
       setNodeContentDraft(content ?? '');
       if (closeAfter) {
-        setClosePrompt(false);
-        setSelectedNodeId(null);
+        dismissNode();
       }
       return;
     }
@@ -7497,8 +7471,7 @@ function App() {
       setRenameOffer(null);
 
       if (closeAfter) {
-        setClosePrompt(false);
-        setSelectedNodeId(null);
+        dismissNode();
       }
     } catch (e) {
       // The draft stays, so a refused save leaves the text where it was.
@@ -7592,10 +7565,16 @@ function App() {
         )
       );
 
-      if (selectedEdgeIdRef.current === updated.id && !edgeIsDirtyRef.current) {
-        setEdgeLabelDraft(updated.label ?? '');
-        setEdgeRelationDraft(updated.relation_type ?? '');
-      }
+      followStoredRows({
+        nodes: [],
+        edges: [
+          {
+            id: updated.id,
+            label: updated.label ?? null,
+            relation_type: updated.relation_type ?? null,
+          },
+        ],
+      });
     };
 
     const writeRelationKind = async (kind: string) => {
@@ -7781,8 +7760,7 @@ function App() {
         setNodeLabelDraft(updated.label);
 
         // The label is saved now; notes typed but not saved must survive it.
-        const draft = nodeDraftsRef.current[node.id];
-        if (draft) rememberNodeDraft(node.id, { label: updated.label, content: draft.content });
+        rememberLabelWritten(node.id, updated.label);
       }
       setRenameOffer(null);
     } catch (e) {
@@ -8816,40 +8794,6 @@ function App() {
     [storyCharacterProgress, selectedCharacterId, chapterSeqById]
   );
 
-  const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
-
-  // A new card starts with an empty holder form, not the previous card's
-  // half-filled one.
-  useEffect(() => {
-    setSkillHolderCharacterId('');
-    setSkillHolderRank('');
-    setSkillHolderChapterId('');
-    setSkillHolderError(null);
-  }, [selectedNodeId]);
-
-  // What the drawer's fields hold against what the node still says. A restored
-  // draft counts as unsaved, because it has not been written anywhere.
-  const nodeIsDirty =
-    selectedNode !== null &&
-    (nodeLabelDraft !== selectedNode.data.label ||
-      nodeContentDraft.trim() !== (selectedNode.data.content ?? ''));
-
-  const closeNodeInspector = () => {
-    if (nodeIsDirty) {
-      setClosePrompt(true);
-      return;
-    }
-
-    setClosePrompt(false);
-    setSelectedNodeId(null);
-  };
-
-  const discardNodeDraft = () => {
-    if (selectedNodeId) forgetNodeDraft(selectedNodeId);
-    setClosePrompt(false);
-    setSelectedNodeId(null);
-  };
-
   // What the sheet shows for the selected character.
   const shownLevel = selectedCharacter?.level ?? 1;
   const shownXp = selectedCharacter?.xp ?? 0;
@@ -8928,22 +8872,6 @@ function App() {
       setCharacterError(`Could not level up: ${String(e)}`);
     }
   };
-
-  const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
-
-  const edgeIsDirty =
-    selectedEdge !== null &&
-    ((edgeLabelDraft.trim() || null) !== (selectedEdge.data?.label ?? null) ||
-      (edgeRelationDraft.trim() || null) !== (selectedEdge.data?.relationType ?? null));
-
-  // Read when the board is refreshed after an undo, which runs outside a render.
-  useEffect(() => {
-    nodeIsDirtyRef.current = nodeIsDirty;
-  }, [nodeIsDirty]);
-
-  useEffect(() => {
-    edgeIsDirtyRef.current = edgeIsDirty;
-  }, [edgeIsDirty]);
 
   // The node's stored link, resolved against the live cast. A link to a cast
   // member that is not in the list is one in the trash; nothing is guessed from
@@ -9561,7 +9489,7 @@ function App() {
             nodeUnderPointer={nodeUnderPointer}
             dropCastMember={dropCastMember}
             selectedEdgeId={selectedEdgeId}
-            setSelectedEdgeId={setSelectedEdgeId}
+            closeEdge={closeEdge}
             selectedEdge={selectedEdge}
             edgeLabelDraft={edgeLabelDraft}
             setEdgeLabelDraft={setEdgeLabelDraft}
@@ -9571,8 +9499,8 @@ function App() {
             edgeEditError={edgeEditError}
             selectedNode={selectedNode}
             selectedNodeId={selectedNodeId}
-            nodeIsDirty={nodeIsDirty}
-            closeNodeInspector={closeNodeInspector}
+            nodeIsDirty={nodeDirty}
+            closeNodeInspector={closeNode}
             nodeLabelDraft={nodeLabelDraft}
             setNodeLabelDraft={setNodeLabelDraft}
             nodeContentDraft={nodeContentDraft}
@@ -9585,7 +9513,7 @@ function App() {
             saveNode={saveNode}
             closePrompt={closePrompt}
             setClosePrompt={setClosePrompt}
-            discardNodeDraft={discardNodeDraft}
+            discardNodeDraft={discardNode}
             changeNodeCharacter={changeNodeCharacter}
             skills={storySkills}
             skillHolderCharacterId={skillHolderCharacterId}

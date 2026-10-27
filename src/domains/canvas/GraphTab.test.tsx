@@ -153,7 +153,7 @@ function canvasSpies() {
     setDropTargetNodeId: vi.fn(),
     nodeUnderPointer: vi.fn(() => null),
     dropCastMember: vi.fn(),
-    setSelectedEdgeId: vi.fn(),
+    closeEdge: vi.fn(),
     saveEdge: vi.fn(),
     closeNodeInspector: vi.fn(),
     rememberNodeDraft: vi.fn(),
@@ -240,7 +240,7 @@ function props(spies: Spies, start: Start = {}, overrides: Partial<GraphTabProps
     dropCastMember: spies.dropCastMember,
 
     selectedEdgeId: null,
-    setSelectedEdgeId: spies.setSelectedEdgeId,
+    closeEdge: spies.closeEdge,
     selectedEdge: null,
     edgeLabelDraft: start.edgeLabelDraft ?? '',
     setEdgeLabelDraft: vi.fn(),
@@ -792,7 +792,7 @@ describe('the graph tab', () => {
 
       await user.type(screen.getByPlaceholderText('Relation type (optional)'), '{Escape}');
 
-      expect(spies.setSelectedEdgeId).toHaveBeenCalledWith(null);
+      expect(spies.closeEdge).toHaveBeenCalledTimes(1);
       expect(spies.saveEdge).not.toHaveBeenCalled();
     });
 
