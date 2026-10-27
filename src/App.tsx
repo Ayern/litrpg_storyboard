@@ -44,7 +44,6 @@ import * as relationsApi from './domains/relations/api';
 import * as skillsApi from './domains/skills/api';
 import * as storiesApi from './domains/stories/api';
 import * as trashApi from './domains/trash/api';
-import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { AttributeList } from './domains/characters/AttributeList';
 import { CurrencyList } from './domains/characters/CurrencyList';
 import { InventoryList } from './domains/characters/InventoryList';
@@ -56,6 +55,10 @@ import type { StandingDraft } from './domains/characters/StandingList';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { AuditPanel } from './domains/audit/AuditPanel';
 import { CharacterSheetPanel } from './domains/characters/CharacterSheetPanel';
+import {
+  CharacterRelationsView,
+  CharacterSkillsView,
+} from './domains/characters/CharacterViews';
 import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
 import { questsByChapter } from './domains/quests/ledger';
@@ -93,10 +96,8 @@ import type {
   ProgressionMetric,
 } from './domains/progression/types';
 import type { Quest, QuestWarning } from './domains/quests/types';
-import { RelationsMap } from './domains/relations/RelationsMap';
 import { SkillsSection } from './domains/skills/SkillsSection';
 import type { SkillDraft, SkillEventDraft } from './domains/skills/SkillsSection';
-import { SkillTreeView } from './domains/skills/SkillTreeView';
 import type { CharacterSkillEvent, SkillEvolutionInput } from './domains/skills/types';
 import type {
   ChapterContinuityFlag,
@@ -9971,62 +9972,46 @@ function App() {
         )}
 
         {selectedTab === 'characters' && characterView === 'relations' && (
-          <div className="tab-content">
-            <CharacterViewToggle view="relations" onChange={setCharacterView} />
-            {!currentStory ? (
-              <div className="empty-state">Load a story to map its cast</div>
-            ) : (
-              <RelationsMap
-                characters={characters}
-                relations={storyRelations}
-                standings={storyFactionStandings}
-                factions={factionCardChoices.map(node => ({
-                  id: node.id,
-                  label: node.data.label,
-                }))}
-                onOpenRelation={relation =>
-                  openCharacterSheet(relation.from_character_id, {
-                    kind: 'relation',
-                    relationId: relation.id,
-                  })
-                }
-                onOpenStanding={standing =>
-                  openCharacterSheet(standing.character_id, {
-                    kind: 'faction-standing',
-                    standingId: standing.id,
-                  })
-                }
-              />
-            )}
-          </div>
+          <CharacterRelationsView
+            story={currentStory}
+            onViewChange={setCharacterView}
+            characters={characters}
+            relations={storyRelations}
+            standings={storyFactionStandings}
+            factionCards={factionCardChoices}
+            onOpenRelation={relation =>
+              openCharacterSheet(relation.from_character_id, {
+                kind: 'relation',
+                relationId: relation.id,
+              })
+            }
+            onOpenStanding={standing =>
+              openCharacterSheet(standing.character_id, {
+                kind: 'faction-standing',
+                standingId: standing.id,
+              })
+            }
+          />
         )}
 
         {selectedTab === 'characters' && characterView === 'skills' && (
-          <div className="tab-content">
-            <CharacterViewToggle view="skills" onChange={setCharacterView} />
-            {!currentStory ? (
-              <div className="empty-state">Load a story to see how its skills evolved</div>
-            ) : (
-              <SkillTreeView
-                skills={storySkills}
-                characters={characters}
-                evolutions={storySkillEvolutions}
-                chapters={chapterChoices.map(node => ({
-                  id: node.id,
-                  label: node.data.label,
-                }))}
-                error={skillEvolutionError}
-                onCreate={addSkillEvolutionLink}
-                onDelete={removeSkillEvolutionLink}
-                onOpenSkill={skill =>
-                  openCharacterSheet(skill.character_id, {
-                    kind: 'skill',
-                    skillId: skill.id,
-                  })
-                }
-              />
-            )}
-          </div>
+          <CharacterSkillsView
+            story={currentStory}
+            onViewChange={setCharacterView}
+            skills={storySkills}
+            characters={characters}
+            evolutions={storySkillEvolutions}
+            chapterNodes={chapterChoices}
+            error={skillEvolutionError}
+            onCreate={addSkillEvolutionLink}
+            onDelete={removeSkillEvolutionLink}
+            onOpenSkill={skill =>
+              openCharacterSheet(skill.character_id, {
+                kind: 'skill',
+                skillId: skill.id,
+              })
+            }
+          />
         )}
 
         {selectedTab === 'characters' && characterView === 'sheet' && (

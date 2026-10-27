@@ -834,7 +834,8 @@ page that arrives late, and what it says when a filter matches nothing.
   relations map, skill tree and the sheet's skill section, the Chapters tab with
   its cast and note panels and the chapter logic behind it, the Quests tab with
   the ledger behind it, the Characters tab's shell with the power curve and cast
-  rail above its sheets, and `src/lib/` for small formatting helpers. Where a
+  rail above its sheets plus the wrappers that switch to the relations map and
+  the skill tree, and `src/lib/` for small formatting helpers. Where a
   tab reads state nothing else uses, its domain module keeps it: the audit tab
   holds its own history window, filter and revert notices, and is handed the
   story, the current user and a way to reload the rest of the app; the skill
