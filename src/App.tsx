@@ -16,8 +16,6 @@ import {
 import type { Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 // Every database command goes through one of these, so the command string and
 // the row it answers with are named in one place instead of at each call site.
 import * as auditApi from './domains/audit/api';
@@ -62,11 +60,13 @@ import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
 import { useHistory } from './domains/history/useHistory';
 import { TrashPanel } from './domains/trash/TrashPanel';
+import { BackupsDialog } from './domains/stories/BackupsDialog';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
+import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
@@ -120,9 +120,9 @@ import type {
   SkillEvolution,
   SkillHolder,
 } from './domains/shared/types';
-import type { BackupInfo, Story } from './domains/stories/types';
+import type { Story } from './domains/stories/types';
 import type { DeletedItem } from './domains/trash/types';
-import { formatCount, formatWhen } from './lib/format';
+import { formatCount } from './lib/format';
 // Re-exported where the guide test has always imported it from.
 export { placeTooltip };
 
@@ -638,12 +638,6 @@ function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[
 // replace sample data rather than a story the author has made their own.
 const DEMO_STORY_TITLE = 'The Ember Ledger (Demo)';
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [currentStory, setCurrentStory] = useState<Story | null>(null);
@@ -912,12 +906,6 @@ function App() {
   const [skillHolderChapterId, setSkillHolderChapterId] = useState('');
   const [skillHolderError, setSkillHolderError] = useState<string | null>(null);
   const [savingSkillHolder, setSavingSkillHolder] = useState(false);
-  const [renamingStoryId, setRenamingStoryId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
-  const [exportStatus, setExportStatus] = useState<string | null>(null);
-  const [copyNotice, setCopyNotice] = useState<string | null>(null);
-  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -1077,17 +1065,6 @@ function App() {
   // Restoring a copy of the database replaces every row the trash lists, so the
   // tab is told to read both lists again even when the open story did not change.
   const [trashReloadToken, setTrashReloadToken] = useState(0);
-
-  // The launch copies beside the database, and the dialog that lists them.
-  const [backupsOpen, setBackupsOpen] = useState(false);
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-  const [backupsLoading, setBackupsLoading] = useState(false);
-  const [backupsError, setBackupsError] = useState<string | null>(null);
-  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
-  const [restoringFile, setRestoringFile] = useState<string | null>(null);
-  // Kept apart from the undo notice: loading a story clears that one, and this
-  // one is written just as the restored story is being loaded.
-  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
   // Initialize DB and load stories
   useEffect(() => {
@@ -1262,6 +1239,109 @@ function App() {
     [currentStory, actor, noteRolledBack]
   );
 
+  // The story shelf's own state — which row is being renamed or is a click away
+  // from the trash, the notices the import and export round trips leave, and the
+  // backups dialog — lives in the stories domain. The list and the open story are
+  // read by the palette and the first-story load too, so they stay here, and
+  // what each action did comes back through these rather than through a setter.
+  const {
+    renamingStoryId,
+    renameValue,
+    setRenameValue,
+    startRename,
+    cancelRename,
+    commitRename,
+    confirmDeleteStoryId,
+    askDeleteStory,
+    cancelDeleteStory,
+    removeStory,
+    storyNotice,
+    announceStory,
+    dismissStoryNotice,
+    exportStatus,
+    copyNotice,
+    importStory,
+    exportStory,
+    exportStoryBible,
+    copyStoryBible,
+    backupsOpen,
+    openBackups,
+    closeBackups,
+    backups,
+    backupsLoading,
+    backupsError,
+    confirmRestore,
+    askRestore,
+    cancelRestore,
+    restoringFile,
+    restoreBackup,
+    restoreNotice,
+  } = useStoryShelf({
+    stories,
+    currentStory,
+    actor,
+    // The sidebar is ordered by most recently touched, matching the query, and
+    // the open story wears the new name in the header.
+    onStoryRenamed: updated => {
+      setStories(previous =>
+        [updated, ...previous.filter(other => other.id !== updated.id)].sort((a, b) =>
+          b.updated_at.localeCompare(a.updated_at)
+        )
+      );
+      setCurrentStory(previous =>
+        previous && previous.id === updated.id ? updated : previous
+      );
+    },
+    // Deleting the open story leaves the board on somebody else's, or empties it
+    // when that was the last one.
+    onStoryDeleted: (story, remaining) => {
+      setStories(remaining);
+
+      if (currentStory?.id !== story.id) return;
+
+      if (remaining.length > 0) {
+        void loadStory(remaining[0]);
+        return;
+      }
+
+      setCurrentStory(null);
+      setNodes([]);
+      setEdges([]);
+      clearNotes();
+    },
+    onStoryImported: imported => {
+      setStories(previous => [
+        imported,
+        ...previous.filter(other => other.id !== imported.id),
+      ]);
+      setCurrentStory(imported);
+      setSelectedTab('graph');
+    },
+    // Restoring replaces the file under the whole app: everything read from the
+    // old one is dropped, and the session's undo history goes with it, because
+    // it describes rows that no longer exist.
+    onDatabaseRestored: restored => {
+      forgetHistory();
+      forgetRememberedDrafts();
+      otherStoryIndexRef.current = {};
+      setOtherStoryIndex({});
+
+      closeEditors();
+      setSelectedCharacterId(null);
+      setClosePrompt(false);
+      setNodes([]);
+      setEdges([]);
+      clearNotes();
+      setCharacters([]);
+      setCastStats({});
+      setTrashReloadToken(previous => previous + 1);
+
+      setCurrentStory(null);
+      setStories(restored);
+    },
+    onError: setActionError,
+  });
+
   // Putting the card away is a decision about this machine, not about the
   // story, so it is remembered rather than shown again on the next launch.
   const dismissWelcome = useCallback(() => {
@@ -1401,24 +1481,6 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undoLast, redoLast, shortcutsOpen, guideOpen, backupsOpen, quitPrompt]);
 
-  // The backups dialog is modal: Escape closes it, but not while a restore is
-  // already running.
-  useEffect(() => {
-    if (!backupsOpen) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || restoringFile) return;
-
-      event.preventDefault();
-      setBackupsOpen(false);
-      setConfirmRestore(null);
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [backupsOpen, restoringFile]);
-
   // Escape closes the guide, the same way it closes the shortcut list it sits
   // beside in the header.
   useEffect(() => {
@@ -1463,13 +1525,6 @@ function App() {
     const timer = setTimeout(() => setReturnedNotice(null), 10000);
     return () => clearTimeout(timer);
   }, [returnedNotice]);
-
-  useEffect(() => {
-    if (!restoreNotice) return;
-
-    const timer = setTimeout(() => setRestoreNotice(null), 8000);
-    return () => clearTimeout(timer);
-  }, [restoreNotice]);
 
   // A story's board is kept for searching only while that story is closed. The
   // moment it is opened the screen becomes the truth, and when it is left the
@@ -1591,20 +1646,6 @@ function App() {
       console.warn('Could not persist the current user name:', e);
     }
   }, [currentUser]);
-
-  // A stale "exported to ..." note is worse than none, so let it expire.
-  useEffect(() => {
-    if (!exportStatus) return;
-    const timer = setTimeout(() => setExportStatus(null), 8000);
-    return () => clearTimeout(timer);
-  }, [exportStatus]);
-
-  // A copied outline is a smaller event than a file, so its note is shorter.
-  useEffect(() => {
-    if (!copyNotice) return;
-    const timer = setTimeout(() => setCopyNotice(null), 5000);
-    return () => clearTimeout(timer);
-  }, [copyNotice]);
 
   // Characters are refreshed whenever the tab is opened or the story changes.
   useEffect(() => {
@@ -1800,7 +1841,7 @@ function App() {
       setStories(previous => [story, ...previous.filter(other => other.id !== story.id)]);
       setSelectedTab('graph');
       await loadStory(story);
-      setImportStatus(`Loaded "${story.title}"`);
+      announceStory(`Loaded "${story.title}"`);
     } catch (e) {
       console.error('Failed to create the demo story:', e);
       setActionError(`Could not create the demo story: ${String(e)}`);
@@ -1828,7 +1869,7 @@ function App() {
       abandonNoteDrafts();
 
       await loadStory(story);
-      setImportStatus(`Rebuilt "${story.title}" with its original sample data`);
+      announceStory(`Rebuilt "${story.title}" with its original sample data`);
     } catch (e) {
       console.error('Failed to reset the demo story:', e);
       setActionError(`Could not reset the demo story: ${String(e)}`);
@@ -4858,64 +4899,6 @@ function App() {
     }
   };
 
-  const startRename = (story: Story) => {
-    setActionError(null);
-    setConfirmDeleteStoryId(null);
-    setRenamingStoryId(story.id);
-    setRenameValue(story.title);
-  };
-
-  const commitRename = useCallback(
-    async (story: Story) => {
-      setRenamingStoryId(null);
-
-      const title = renameValue.trim();
-      if (!title || title === story.title) return;
-
-      try {
-        const updated: Story = await storiesApi.updateStory(story.id, title, actor);
-
-        // The sidebar is ordered by most recently touched, matching the query.
-        setStories(prev =>
-          [updated, ...prev.filter(other => other.id !== updated.id)].sort((a, b) =>
-            b.updated_at.localeCompare(a.updated_at)
-          )
-        );
-        setCurrentStory(prev => (prev && prev.id === updated.id ? updated : prev));
-      } catch (e) {
-        console.error('Failed to rename story:', e);
-        setActionError(`Could not rename story: ${String(e)}`);
-      }
-    },
-    [renameValue, actor]
-  );
-
-  const removeStory = async (story: Story) => {
-    setConfirmDeleteStoryId(null);
-    setActionError(null);
-
-    try {
-      await storiesApi.deleteStory(story.id, actor);
-
-      const remaining = stories.filter(other => other.id !== story.id);
-      setStories(remaining);
-
-      if (currentStory?.id === story.id) {
-        if (remaining.length > 0) {
-          await loadStory(remaining[0]);
-        } else {
-          setCurrentStory(null);
-          setNodes([]);
-          setEdges([]);
-          clearNotes();
-        }
-      }
-    } catch (e) {
-      console.error('Failed to delete story:', e);
-      setActionError(`Could not delete story: ${String(e)}`);
-    }
-  };
-
   const createCharacter = async () => {
     if (!currentStory || !newCharacterName.trim()) return;
     setCharacterError(null);
@@ -6771,139 +6754,6 @@ function App() {
     }
   };
 
-  const importStory = async () => {
-    setActionError(null);
-    setImportStatus(null);
-
-    try {
-      const selected = await openFileDialog({
-        multiple: false,
-        directory: false,
-        filters: [{ name: 'Story export', extensions: ['json'] }],
-      });
-
-      // The dialog returns null when it is dismissed, which is not an error.
-      if (typeof selected !== 'string') return;
-
-      const imported: Story = await storiesApi.importStoryJson(selected, actor);
-
-      setStories(prev => [
-        imported,
-        ...prev.filter(other => other.id !== imported.id),
-      ]);
-      setCurrentStory(imported);
-      setSelectedTab('graph');
-      setImportStatus(`Imported "${imported.title}"`);
-    } catch (e) {
-      console.error('Failed to import story:', e);
-      setActionError(`Could not import that file: ${String(e)}`);
-    }
-  };
-
-  const exportStory = async () => {
-    if (!currentStory) return;
-    setActionError(null);
-    setExportStatus(null);
-
-    try {
-      const path: string = await storiesApi.exportStoryJson(currentStory.id);
-      setExportStatus(path);
-    } catch (e) {
-      console.error('Failed to export story:', e);
-      setActionError(`Could not export story: ${String(e)}`);
-    }
-  };
-
-  // The hand-off for drafting elsewhere: Markdown, not a snapshot of the app.
-  const exportStoryBible = async () => {
-    if (!currentStory) return;
-    setActionError(null);
-    setExportStatus(null);
-
-    try {
-      const path: string = await storiesApi.exportStoryMarkdown(currentStory.id);
-      setExportStatus(path);
-    } catch (e) {
-      console.error('Failed to write the story bible:', e);
-      setActionError(`Could not write the story bible: ${String(e)}`);
-    }
-  };
-
-  // The same text the file holds, so copying and saving cannot say different
-  // things; the Markdown is read from the database rather than the last file.
-  const copyStoryBible = async () => {
-    if (!currentStory) return;
-    setActionError(null);
-    setCopyNotice(null);
-
-    try {
-      const markdown: string = await storiesApi.storyBibleMarkdown(currentStory.id);
-
-      await writeText(markdown);
-      setCopyNotice('Story bible copied to the clipboard');
-    } catch (e) {
-      console.error('Failed to copy the story bible:', e);
-      setActionError(`Could not copy the story bible: ${String(e)}`);
-    }
-  };
-
-  const openBackups = async () => {
-    setBackupsOpen(true);
-    setConfirmRestore(null);
-    setBackupsError(null);
-    setBackupsLoading(true);
-
-    try {
-      const list = await storiesApi.listBackups();
-      setBackups(list);
-    } catch (e) {
-      console.error('Failed to list backups:', e);
-      setBackupsError(`Could not read the backups: ${String(e)}`);
-    } finally {
-      setBackupsLoading(false);
-    }
-  };
-
-  // Restoring replaces the file under the whole app. Everything read from the old
-  // one is dropped and read again, and the session's undo history goes with it,
-  // because it describes rows that no longer exist.
-  const restoreBackup = async (file: BackupInfo) => {
-    setRestoringFile(file.file_name);
-    setBackupsError(null);
-
-    try {
-      await storiesApi.restoreBackup(file.file_name);
-
-      forgetHistory();
-      forgetRememberedDrafts();
-      otherStoryIndexRef.current = {};
-      setOtherStoryIndex({});
-
-      closeEditors();
-      setSelectedCharacterId(null);
-      setClosePrompt(false);
-      setNodes([]);
-      setEdges([]);
-      clearNotes();
-      setCharacters([]);
-      setCastStats({});
-      setTrashReloadToken(previous => previous + 1);
-
-      const restored: Story[] = await storiesApi.getAllStories();
-      setCurrentStory(null);
-      setStories(restored);
-
-      setConfirmRestore(null);
-      setBackupsOpen(false);
-      setRestoreNotice(`Restored the copy from ${formatWhen(file.created_at)}`);
-    } catch (e) {
-      console.error('Failed to restore a backup:', e);
-      setBackupsError(`Could not restore that copy: ${String(e)}`);
-    } finally {
-      setRestoringFile(null);
-    }
-  };
-
   // Only one editor is open at a time: picking a card closes the connection
   // editor, because both occupy the same corner of the canvas.
   const selectNode = useCallback(
@@ -8720,7 +8570,7 @@ function App() {
                     onBlur={() => commitRename(story)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') commitRename(story);
-                      if (e.key === 'Escape') setRenamingStoryId(null);
+                      if (e.key === 'Escape') cancelRename();
                     }}
                     onClick={(e) => e.stopPropagation()}
                   />
@@ -8750,7 +8600,7 @@ function App() {
                             title="Keep this story"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setConfirmDeleteStoryId(null);
+                              cancelDeleteStory();
                             }}
                           >
                             Cancel
@@ -8771,7 +8621,7 @@ function App() {
                             title="Delete story"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setConfirmDeleteStoryId(story.id);
+                              askDeleteStory(story.id);
                             }}
                           >
                             Delete
@@ -8994,13 +8844,13 @@ function App() {
           </div>
         )}
 
-        {importStatus && (
-          <div className="status-strip" title={importStatus}>
-            {importStatus}
+        {storyNotice && (
+          <div className="status-strip" title={storyNotice}>
+            {storyNotice}
             <button
               className="status-dismiss"
               title="Hide this message"
-              onClick={() => setImportStatus(null)}
+              onClick={dismissStoryNotice}
             >
               Dismiss
             </button>
@@ -9664,99 +9514,17 @@ function App() {
       )}
 
       {backupsOpen && (
-        <div
-          className="shortcuts-backdrop"
-          role="presentation"
-          onClick={() => !restoringFile && setBackupsOpen(false)}
-        >
-          <div
-            className="backups"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Backups"
-            onClick={event => event.stopPropagation()}
-          >
-            <div className="shortcuts-head">
-              <h2>Backups</h2>
-              <button
-                className="shortcuts-close"
-                aria-label="Close backups"
-                title="Close this dialog (Esc)"
-                onClick={() => setBackupsOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-
-            <p className="shortcuts-intro">
-              A copy of the whole database is written each time the app starts, and the
-              newest ten are kept. Restoring one replaces every story in this window;
-              the state it replaces is copied first, so a restore can be walked back
-              from this same list.
-            </p>
-
-            {backupsLoading && <p className="backups-empty">Reading the backups…</p>}
-
-            {backupsError && (
-              <div className="backups-error" role="alert">
-                {backupsError}
-              </div>
-            )}
-
-            {!backupsLoading && !backupsError && backups.length === 0 && (
-              <p className="backups-empty">
-                No copies yet. One is written each time the app starts.
-              </p>
-            )}
-
-            {backups.length > 0 && (
-              <ul className="backup-list" aria-label="Database backups">
-                {backups.map(backup => (
-                  <li key={backup.file_name} className="backup-item">
-                    <div className="backup-when">
-                      {formatWhen(backup.created_at)}
-                      <span className="backup-meta">
-                        {formatBytes(backup.size_bytes)} · {backup.file_name}
-                      </span>
-                    </div>
-
-                    {confirmRestore === backup.file_name ? (
-                      <div className="backup-confirm">
-                        <span>Replace everything with this copy?</span>
-                        <button
-                          title="Replace the database with this copy; a copy of what is here now is taken first"
-                          onClick={() => void restoreBackup(backup)}
-                          disabled={restoringFile !== null}
-                        >
-                          {restoringFile === backup.file_name
-                            ? 'Restoring…'
-                            : 'Restore this copy'}
-                        </button>
-                        <button
-                          title="Keep the current data"
-                          onClick={() => setConfirmRestore(null)}
-                          disabled={restoringFile !== null}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        title={`Replace the database with the copy from ${formatWhen(
-                          backup.created_at
-                        )}`}
-                        onClick={() => setConfirmRestore(backup.file_name)}
-                        disabled={restoringFile !== null}
-                      >
-                        Restore
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
+        <BackupsDialog
+          backups={backups}
+          loading={backupsLoading}
+          error={backupsError}
+          confirmRestore={confirmRestore}
+          restoringFile={restoringFile}
+          onAskRestore={askRestore}
+          onCancelRestore={cancelRestore}
+          onRestore={backup => void restoreBackup(backup)}
+          onClose={closeBackups}
+        />
       )}
       {characterConnection && (
         <div

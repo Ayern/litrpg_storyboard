@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Three are done.
+searching ten thousand lines. Four are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -502,8 +502,16 @@ searching ten thousand lines. Three are done.
   another chapter replaces them, the notes panel with a question of its own, and
   the cast picker: the notes rows move in, the cast rows go back out. Direct
   suite of 31.
+- **`domains/stories/useStoryShelf.ts`** — the sidebar's rename field and the
+  delete question asked in its row, the import, export and copy notices with
+  their own fades, and the backups dialog: which copy is asked about, the one
+  being restored, and the rule that keeps every close path shut while the file
+  underneath the app is half replaced. A restore hands back the stories the
+  restored file holds, so the board, the notes, the cast and the undo history are
+  dropped from the one place that owns them. The dialog's markup moved with it
+  into `BackupsDialog.tsx`. Direct suite of 32.
 
-Both follow one shape, and every later hook should too:
+Each follows one shape, and every later hook should too:
 
 - **The rows come in.** A hook that has to measure a draft against a stored row
   takes the rows as an argument rather than reading the database.
@@ -521,28 +529,24 @@ These are the blocks of state still in `App.tsx`, with the handlers that go with
 them. The order is by how much each one would take out of the file, so it is a
 real order rather than a tidy one:
 
-1. **`domains/stories/useStoryShelf`** — the sidebar's rename, delete and confirm
-   state, the import and export notices and the backups dialog: 13 declarations
-   and their handlers. **L**
-2. **`domains/search/useSearchPalette`** — the open flag, the term, the kind
+1. **`domains/search/useSearchPalette`** — the open flag, the term, the kind
    filter, the cursor and the other-stories index, with the result memo they
    feed. **M**
-3. **`domains/progression/useProgressionChart`** — the stat chosen for the
+2. **`domains/progression/useProgressionChart`** — the stat chosen for the
    chart, the hidden cast, the chapter-state read and the series built from
    them. **M**
-4. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
+3. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
    attributes, one row open at a time, and the four writes that go through the
    same commands the sheet uses. **M**
-5. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
+4. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
    the sheet: the new-stat form, one row open at a time, and the rows
    themselves. **S–M**
-6. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+5. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
    holder is added with, and its reset when another card is opened. **S**
 
-**The story shelf is the one big cut left.** It is the sidebar's own state, so
-it is drafts for the most part, but it also carries the import and export round
-trips and the backup restore — the one action that replaces the whole database —
-so it wants its own suite written before it moves.
+**The search palette is the next cut.** It is the last block that is only
+drafts and a memo, and once it is out the two loads are the only thing left in
+front of the board itself.
 
 ### What stays in `App.tsx`
 
@@ -552,8 +556,8 @@ so it wants its own suite written before it moves.
 - **The two loads.** `loadStory` and `reloadStory` are the pair every write ends
   with. Taking the board's half of them into a `useStoryBoard` is the biggest
   remaining cut and the riskiest, because the canvas writes, the undo refresh and
-  the sheet all read the same rows. It comes after the story shelf, once the
-  drafts that read those rows are out.
+  the sheet all read the same rows. The story shelf's drafts are out, so what is
+  left in front of it is the board itself.
 - **The writes themselves.** A handler that runs a command, records a history
   step and writes an audit entry belongs beside the history hook, not inside a
   drafts hook.
