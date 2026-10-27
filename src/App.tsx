@@ -53,6 +53,7 @@ import { CharacterViewToggle } from './components/CharacterViewToggle';
 import { HelpTip, placeTooltip } from './components/HelpTip';
 import { SuggestionInput } from './components/SuggestionInput';
 import { AuditPanel } from './domains/audit/AuditPanel';
+import { CharacterSheetPanel } from './domains/characters/CharacterSheetPanel';
 import { ChaptersPanel } from './domains/narrative/ChaptersPanel';
 import { QuestLedgerPanel } from './domains/quests/QuestLedgerPanel';
 import { questsByChapter } from './domains/quests/ledger';
@@ -72,7 +73,6 @@ import type {
   ChapterCastState,
   CharacterChapterState,
 } from './domains/narrative/types';
-import { ProgressionChart } from './domains/progression/ProgressionChart';
 import {
   milestoneLabel,
   milestoneStatChanges,
@@ -10947,688 +10947,238 @@ function App() {
         )}
 
         {selectedTab === 'characters' && characterView === 'sheet' && (
-          <div className="tab-content">
-            <CharacterViewToggle view="sheet" onChange={setCharacterView} />
-            {!currentStory ? (
-              <div className="empty-state">Load a story to manage characters</div>
-            ) : (
-              <>
-                <section className="progression-chart-panel" aria-label="Progression chart">
-                  <div className="progression-chart-head">
-                    <div>
-                      <h3 className="progression-chart-title">Power curve</h3>
-                      <div className="progression-chart-caption">
-                        {chartMetric === 'level'
-                          ? 'Level milestones by chapter in reading order.'
-                          : chartMetric === 'xp'
-                            ? 'Total XP recorded at each level milestone by chapter.'
-                            : chartMetric === 'earned'
-                              ? 'XP earned in each chapter, shown as one bar per character.'
-                              : chartStatName
-                                ? `${chartStatName} snapshots recorded at each level milestone.`
-                                : 'Choose a numeric stat to plot.'}
-                      </div>
-                    </div>
+          <CharacterSheetPanel
+            story={currentStory}
+            onViewChange={setCharacterView}
+            characterError={characterError}
+            chapterNodes={chapterNodes}
+            chartMetric={chartMetric}
+            setChartMetric={setChartMetric}
+            chartStatName={chartStatName}
+            setChartStatName={setChartStatName}
+            statNameOptions={statNameOptions}
+            chartSeries={chartSeries}
+            chartMetricSeries={chartMetricSeries}
+            visibleChartSeries={visibleChartSeries}
+            chartMilestoneSeries={chartMilestoneSeries}
+            hiddenChartCharacterIds={hiddenChartCharacterIds}
+            toggleChartCharacter={toggleChartCharacter}
+            chartStateChapterId={chartStateChapterId}
+            setChartStateChapterId={setChartStateChapterId}
+            chartStateChapters={chartStateChapters}
+            chartStateChapter={chartStateChapter}
+            chartStateLoading={chartStateLoading}
+            chartStateError={chartStateError}
+            chartStateById={chartStateById}
+            visibleComparisonSeries={visibleComparisonSeries}
+            characters={characters}
+            selectedCharacterId={selectedCharacterId}
+            setSelectedCharacterId={setSelectedCharacterId}
+            setEditingProgress={setEditingProgress}
+            newCharacterName={newCharacterName}
+            setNewCharacterName={setNewCharacterName}
+            newCharacterDescription={newCharacterDescription}
+            setNewCharacterDescription={setNewCharacterDescription}
+            createCharacter={createCharacter}
+            selectedCharacter={selectedCharacter}
+            editingCharacter={editingCharacter}
+            setEditingCharacter={setEditingCharacter}
+            characterNameDraft={characterNameDraft}
+            setCharacterNameDraft={setCharacterNameDraft}
+            characterDescriptionDraft={characterDescriptionDraft}
+            setCharacterDescriptionDraft={setCharacterDescriptionDraft}
+            saveCharacter={saveCharacter}
+            startCharacterEdit={startCharacterEdit}
+            confirmDeleteCharacter={confirmDeleteCharacter}
+            setConfirmDeleteCharacter={setConfirmDeleteCharacter}
+            removeCharacter={removeCharacter}
+          >
+            <section className="progress-section" aria-label="Progression">
+              <div className="progress-head">
+                <h4 className="character-section-heading">Progression</h4>
+                <span className="progress-rank">
+                  {selectedCharacter?.rank || 'Unranked'}
+                </span>
+              </div>
 
-                    {chartMetricSeries.length > 0 && (
-                      <div
-                        className="progression-legend"
-                        role="group"
-                        aria-label="Compare characters"
-                      >
-                        {chartMetricSeries.map(series => {
-                          const shown = !hiddenChartCharacterIds.includes(
-                            series.characterId
-                          );
+              <div className="progress-stats">
+                <div className="progress-stat">
+                  <span className="progress-stat-label">Level</span>
+                  <span className="progress-stat-value">{shownLevel}</span>
+                </div>
+                <div className="progress-stat">
+                  <span className="progress-stat-label">Experience</span>
+                  <span className="progress-stat-value">
+                    {shownTarget ? `${shownXp} / ${shownTarget}` : shownXp}
+                  </span>
+                </div>
+              </div>
 
-                          return (
-                            <button
-                              key={series.characterId}
-                              className={`progression-legend-button ${
-                                shown ? 'active' : ''
-                              }`}
-                              aria-pressed={shown}
-                              title={`${shown ? 'Hide' : 'Show'} ${series.name}'s ${
-                                chartMetric === 'earned' ? 'XP bars' : 'line'
-                              }`}
-                              onClick={() => toggleChartCharacter(series.characterId)}
-                            >
-                              <span
-                                className="progression-legend-swatch"
-                                style={{ backgroundColor: series.color }}
-                                aria-hidden="true"
-                              />
-                              {series.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-label="Progress to the next level"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progressPercent}
+              >
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
 
-                  <div className="progression-chart-controls">
-                    <span className="progression-chart-controls-label">Y-axis</span>
-                    <div
-                      className="progression-metric-toggle"
-                      role="group"
-                      aria-label="Chart metric"
-                    >
-                      {(
-                        [
-                          ['level', 'Level'],
-                          ['xp', 'Total XP'],
-                          ['earned', 'XP earned'],
-                          ['stat', 'Stats'],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          className={`progression-metric-button ${
-                            chartMetric === value ? 'active' : ''
-                          }`}
-                          aria-pressed={chartMetric === value}
-                          onClick={() => setChartMetric(value)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+              <div className="progress-caption">
+                {shownTarget
+                  ? `${Math.max(0, shownTarget - shownXp)} XP to level ${shownLevel + 1}`
+                  : 'No target set — edit progression to show a bar.'}
+              </div>
 
-                    {chartMetric === 'stat' &&
-                      (statNameOptions.length > 0 ? (
-                        <label className="progression-stat-picker">
-                          <span>Stat</span>
-                          <select
-                            aria-label="Stat to plot"
-                            value={chartStatName}
-                            onChange={e => setChartStatName(e.target.value)}
-                          >
-                            {statNameOptions.map(name => (
-                              <option key={name} value={name}>
-                                {name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : (
-                        <span className="progression-chart-controls-note">
-                          No numeric stats yet.
-                        </span>
-                      ))}
-                  </div>
-
-                  {chapterNodes.length === 0 ? (
-                    <div className="empty">
-                      Add a chapter before plotting a power curve.
-                    </div>
-                  ) : chartSeries.length === 0 ? (
-                    <div className="empty">
-                      No progression recorded yet — add a level milestone or XP earned on a
-                      character's sheet.
-                    </div>
-                  ) : chartMetricSeries.length === 0 ? (
-                    <div className="empty">
-                      {chartMetric === 'level'
-                        ? 'No level milestones yet — record one on a character\'s sheet.'
-                        : chartMetric === 'xp'
-                          ? 'No XP recorded on a level milestone yet — add total XP on a character\'s sheet.'
-                          : chartMetric === 'earned'
-                            ? 'No XP earned by chapter yet — record it on a character\'s sheet.'
-                            : chartStatName
-                              ? `No ${chartStatName} snapshots yet — record one on a level milestone.`
-                              : 'No numeric stats yet — add a stat on a character\'s sheet first.'}
-                    </div>
-                  ) : visibleChartSeries.length === 0 ? (
-                    <div className="empty">
-                      {chartMetric === 'level'
-                        ? 'Choose a character above to show a level line.'
-                        : chartMetric === 'earned'
-                          ? 'Choose a character above to show its XP bars.'
-                          : 'Choose a character above to show a line.'}
-                    </div>
-                  ) : (
-                    <ProgressionChart
-                      chapters={chapterNodes}
-                      series={visibleChartSeries}
-                      metric={chartMetric}
-                      statName={chartStatName}
-                    />
-                  )}
-
-                  {chartMilestoneSeries.length > 0 && chartStateChapters.length > 0 && (
-                    <div className="progression-chapter-state">
-                      <label className="progression-state-picker">
-                        <span>As of chapter</span>
-                        <select
-                          aria-label="Chapter state"
-                          title="Read each selected character's level and skills at this chapter"
-                          value={chartStateChapterId}
-                          onChange={(e) => setChartStateChapterId(e.target.value)}
-                        >
-                          {chartStateChapters.map(chapter => (
-                            <option key={chapter.id} value={chapter.id}>
-                              {`Ch. ${chapter.data.chapterSeq} — ${chapter.data.label}`}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      {visibleComparisonSeries.length === 0 ? (
-                        <div className="progression-state-note">
-                          Choose a character to read a chapter state.
-                        </div>
-                      ) : chartStateLoading ? (
-                        <div className="progression-state-note" role="status">
-                          Reading chapter state…
-                        </div>
-                      ) : chartStateError ? (
-                        <div className="audit-error">
-                          Could not read chapter state: {chartStateError}
-                        </div>
-                      ) : (
-                        <ul
-                          className="progression-state-list"
-                          aria-label={`Character state at ${
-                            chartStateChapter?.data.label ?? 'chapter'
-                          }`}
-                        >
-                          {visibleComparisonSeries.map(series => {
-                            const state = chartStateById.get(series.characterId);
-                            const skills = state?.skills ?? [];
-
-                            return (
-                              <li
-                                key={series.characterId}
-                                data-state-character={series.characterId}
-                              >
-                                <span
-                                  className="progression-legend-swatch"
-                                  style={{ backgroundColor: series.color }}
-                                  aria-hidden="true"
-                                />
-                                <span className="progression-state-name">
-                                  {series.name}
-                                </span>
-                                <span className="progression-state-level">
-                                  {state?.level != null
-                                    ? `Level ${state.level}${
-                                        state.level_is_penalty ? ' (penalty)' : ''
-                                      }`
-                                    : 'No level recorded'}
-                                </span>
-                                <span className="progression-state-skills">
-                                  {skills.length === 0
-                                    ? 'No active skills'
-                                    : skills
-                                        .map(skill =>
-                                          skill.rank
-                                            ? `${skill.name} (${skill.rank})`
-                                            : skill.name
-                                        )
-                                        .join(' · ')}
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </section>
-
-                <div className="characters-layout">
-                <div className="character-list">
-                  <div className="character-creator">
+              {editingProgress ? (
+                <div className="progress-form">
+                  <label>
+                    Level
                     <input
-                      placeholder="Character name"
-                      value={newCharacterName}
-                      onChange={(e) => setNewCharacterName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && createCharacter()}
+                      type="number"
+                      min={1}
+                      autoFocus
+                      value={progressLevelDraft}
+                      onChange={(e) => setProgressLevelDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveProgress();
+                        if (e.key === 'Escape') setEditingProgress(false);
+                      }}
                     />
+                  </label>
+                  <label>
+                    Experience
                     <input
-                      placeholder="Description (optional)"
-                      value={newCharacterDescription}
-                      onChange={(e) => setNewCharacterDescription(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && createCharacter()}
+                      type="number"
+                      min={0}
+                      value={progressXpDraft}
+                      onChange={(e) => setProgressXpDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveProgress();
+                        if (e.key === 'Escape') setEditingProgress(false);
+                      }}
                     />
+                  </label>
+                  <label>
+                    XP to next
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="None"
+                      value={progressTargetDraft}
+                      onChange={(e) => setProgressTargetDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveProgress();
+                        if (e.key === 'Escape') setEditingProgress(false);
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Rank
+                    <input
+                      placeholder="Unranked"
+                      value={progressRankDraft}
+                      onChange={(e) => setProgressRankDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveProgress();
+                        if (e.key === 'Escape') setEditingProgress(false);
+                      }}
+                    />
+                  </label>
+                  <div className="progress-actions">
                     <button
-                      title="Add this character to the story's cast"
-                      onClick={createCharacter}
-                      disabled={!newCharacterName.trim()}
+                      title="Save level, experience, rank and the next-level target"
+                      onClick={saveProgress}
                     >
-                      Add character
+                      Save
+                    </button>
+                    <button
+                      title="Leave the progression as it was"
+                      onClick={() => setEditingProgress(false)}
+                    >
+                      Cancel
                     </button>
                   </div>
-
-                  {characters.length === 0 && <div className="empty">No characters yet</div>}
-
-                  {characters.map(character => (
-                    <div
-                      key={character.id}
-                      data-character-id={character.id}
-                      className={`character-item ${
-                        selectedCharacterId === character.id ? 'active' : ''
-                      }`}
-                      title={`Show ${character.name}'s sheet`}
-                      onClick={() => {
-                        setSelectedCharacterId(character.id);
-                        setEditingProgress(false);
-                      }}
-                    >
-                      <span className="character-name">{character.name}</span>
-                      <span className="character-level">
-                        Level {character.level ?? 1}
-                        {character.rank ? ` · ${character.rank}` : ''}
-                      </span>
-                      {character.description && (
-                        <span className="character-description">{character.description}</span>
-                      )}
-                    </div>
-                  ))}
                 </div>
+              ) : (
+                <div className="progress-actions">
+                  <button
+                    title="Add one level, recorded as a level-up in the audit log"
+                    onClick={levelUpCharacter}
+                  >
+                    Level up
+                  </button>
+                  <button
+                    title="Type the level, experience, rank and XP target directly"
+                    onClick={startProgressEdit}
+                  >
+                    Edit progression
+                  </button>
+                </div>
+              )}
+            </section>
 
-                <div className="character-detail">
-                  {characterError && <div className="audit-error">{characterError}</div>}
+            {/* A milestone is where a level was reached, not the level
+                the sheet shows now. It is what continuity compares in
+                reading order, and a deliberate drop can say so. */}
+            <section className="level-section" aria-label="Level milestones">
+              <h4 className="character-section-heading">Level milestones</h4>
 
-                  {!selectedCharacterId ? (
-                    <div className="empty">Select or create a character</div>
-                  ) : (
-                    <>
-                      <div className="character-header">
-                        {editingCharacter ? (
-                          <div className="character-editor">
-                            <input
-                              className="character-name-input"
-                              autoFocus
-                              value={characterNameDraft}
-                              onChange={(e) => setCharacterNameDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveCharacter();
-                                if (e.key === 'Escape') setEditingCharacter(false);
-                              }}
-                            />
-                            <input
-                              placeholder="Description (optional)"
-                              value={characterDescriptionDraft}
-                              onChange={(e) => setCharacterDescriptionDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveCharacter();
-                                if (e.key === 'Escape') setEditingCharacter(false);
-                              }}
-                            />
-                            <button
-                              title="Save this character's name and description"
-                              onClick={saveCharacter}
-                              disabled={!characterNameDraft.trim()}
-                            >
-                              Save
-                            </button>
-                            <button
-                              title="Discard the edit"
-                              onClick={() => setEditingCharacter(false)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="character-title">
-                              <h3 className="character-heading">
-                                {selectedCharacter?.name ?? 'Character'}
-                              </h3>
-                              {selectedCharacter?.description && (
-                                <div className="character-subheading">
-                                  {selectedCharacter.description}
-                                </div>
-                              )}
-                            </div>
-                            <div className="character-actions">
-                              {confirmDeleteCharacter ? (
-                                <>
-                                  <button
-                                    className="danger"
-                                    title="Move this character to the trash; linked nodes keep their links"
-                                    onClick={removeCharacter}
-                                  >
-                                    Delete
-                                  </button>
-                                  <button
-                                    title="Keep this character"
-                                    onClick={() => setConfirmDeleteCharacter(false)}
-                                  >
-                                    Cancel
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button
-                                    title="Change this character's name or description"
-                                    onClick={startCharacterEdit}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    title="Delete character"
-                                    onClick={() => setConfirmDeleteCharacter(true)}
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
+              <div className="level-list">
+                {selectedLevelMilestones.length === 0 && (
+                  <div className="empty">
+                    No level milestones yet — record where a level was reached.
+                  </div>
+                )}
 
-                      <section className="progress-section" aria-label="Progression">
-                        <div className="progress-head">
-                          <h4 className="character-section-heading">Progression</h4>
-                          <span className="progress-rank">
-                            {selectedCharacter?.rank || 'Unranked'}
-                          </span>
-                        </div>
+                {selectedLevelMilestones.map(milestone => {
+                  const chapter = chapterChoices.find(
+                    choice => choice.id === milestone.chapter_id
+                  );
+                  const focused =
+                    focusedProgression?.kind === 'level' &&
+                    focusedProgression.id === milestone.id;
 
-                        <div className="progress-stats">
-                          <div className="progress-stat">
-                            <span className="progress-stat-label">Level</span>
-                            <span className="progress-stat-value">{shownLevel}</span>
-                          </div>
-                          <div className="progress-stat">
-                            <span className="progress-stat-label">Experience</span>
-                            <span className="progress-stat-value">
-                              {shownTarget ? `${shownXp} / ${shownTarget}` : shownXp}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div
-                          className="progress-bar"
-                          role="progressbar"
-                          aria-label="Progress to the next level"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={progressPercent}
-                        >
-                          <div
-                            className="progress-bar-fill"
-                            style={{ width: `${progressPercent}%` }}
-                          />
-                        </div>
-
-                        <div className="progress-caption">
-                          {shownTarget
-                            ? `${Math.max(0, shownTarget - shownXp)} XP to level ${shownLevel + 1}`
-                            : 'No target set — edit progression to show a bar.'}
-                        </div>
-
-                        {editingProgress ? (
-                          <div className="progress-form">
-                            <label>
-                              Level
-                              <input
-                                type="number"
-                                min={1}
-                                autoFocus
-                                value={progressLevelDraft}
-                                onChange={(e) => setProgressLevelDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveProgress();
-                                  if (e.key === 'Escape') setEditingProgress(false);
-                                }}
-                              />
-                            </label>
-                            <label>
-                              Experience
-                              <input
-                                type="number"
-                                min={0}
-                                value={progressXpDraft}
-                                onChange={(e) => setProgressXpDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveProgress();
-                                  if (e.key === 'Escape') setEditingProgress(false);
-                                }}
-                              />
-                            </label>
-                            <label>
-                              XP to next
-                              <input
-                                type="number"
-                                min={1}
-                                placeholder="None"
-                                value={progressTargetDraft}
-                                onChange={(e) => setProgressTargetDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveProgress();
-                                  if (e.key === 'Escape') setEditingProgress(false);
-                                }}
-                              />
-                            </label>
-                            <label>
-                              Rank
-                              <input
-                                placeholder="Unranked"
-                                value={progressRankDraft}
-                                onChange={(e) => setProgressRankDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveProgress();
-                                  if (e.key === 'Escape') setEditingProgress(false);
-                                }}
-                              />
-                            </label>
-                            <div className="progress-actions">
-                              <button
-                                title="Save level, experience, rank and the next-level target"
-                                onClick={saveProgress}
-                              >
-                                Save
-                              </button>
-                              <button
-                                title="Leave the progression as it was"
-                                onClick={() => setEditingProgress(false)}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="progress-actions">
-                            <button
-                              title="Add one level, recorded as a level-up in the audit log"
-                              onClick={levelUpCharacter}
-                            >
-                              Level up
-                            </button>
-                            <button
-                              title="Type the level, experience, rank and XP target directly"
-                              onClick={startProgressEdit}
-                            >
-                              Edit progression
-                            </button>
-                          </div>
-                        )}
-                      </section>
-
-                      {/* A milestone is where a level was reached, not the level
-                          the sheet shows now. It is what continuity compares in
-                          reading order, and a deliberate drop can say so. */}
-                      <section className="level-section" aria-label="Level milestones">
-                        <h4 className="character-section-heading">Level milestones</h4>
-
-                        <div className="level-list">
-                          {selectedLevelMilestones.length === 0 && (
-                            <div className="empty">
-                              No level milestones yet — record where a level was reached.
-                            </div>
-                          )}
-
-                          {selectedLevelMilestones.map(milestone => {
-                            const chapter = chapterChoices.find(
-                              choice => choice.id === milestone.chapter_id
-                            );
-                            const focused =
-                              focusedProgression?.kind === 'level' &&
-                              focusedProgression.id === milestone.id;
-
-                            return (
-                              <div
-                                key={milestone.id}
-                                className={`level-row${focused ? ' progression-row-focused' : ''}`}
-                                data-progression={`level-${milestone.id}`}
-                              >
-                                {editingLevelMilestoneId === milestone.id ? (
-                                  <div className="level-editor">
-                                    <input
-                                      aria-label="Milestone level"
-                                      type="number"
-                                      min={1}
-                                      step={1}
-                                      autoFocus
-                                      value={levelMilestoneLevelDraft}
-                                      onChange={(e) => setLevelMilestoneLevelDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveLevelMilestone(milestone);
-                                        if (e.key === 'Escape') setEditingLevelMilestoneId(null);
-                                      }}
-                                    />
-                                    <select
-                                      aria-label="Milestone chapter"
-                                      title="The chapter where this level was reached"
-                                      value={levelMilestoneChapterDraft}
-                                      onChange={(e) => setLevelMilestoneChapterDraft(e.target.value)}
-                                    >
-                                      <option value="">No chapter</option>
-                                      {levelMilestoneChapterDraft &&
-                                        !chapterChoices.some(
-                                          choice => choice.id === levelMilestoneChapterDraft
-                                        ) && (
-                                          <option value={levelMilestoneChapterDraft}>
-                                            Chapter in the trash
-                                          </option>
-                                        )}
-                                      {chapterChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <label className="level-penalty-field">
-                                      <input
-                                        aria-label="Level drop is a penalty"
-                                        type="checkbox"
-                                        checked={levelMilestoneDebuffDraft}
-                                        onChange={(e) => setLevelMilestoneDebuffDraft(e.target.checked)}
-                                      />
-                                      Penalty
-                                    </label>
-                                    <label className="level-metric-field">
-                                      Total XP
-                                      <input
-                                        aria-label="Milestone total XP"
-                                        type="number"
-                                        min={0}
-                                        step={1}
-                                        placeholder="Optional"
-                                        value={levelMilestoneXpDraft}
-                                        onChange={e => setLevelMilestoneXpDraft(e.target.value)}
-                                      />
-                                    </label>
-                                    {renderStatChangeRows(
-                                      levelMilestoneStatChangesDraft,
-                                      setLevelMilestoneStatChangesDraft,
-                                      'Milestone'
-                                    )}
-                                    <div className="level-actions">
-                                      <button
-                                        title={`Save this level ${milestone.level} milestone`}
-                                        onClick={() => saveLevelMilestone(milestone)}
-                                      >
-                                        Save milestone
-                                      </button>
-                                      <button
-                                        title="Leave the milestone as it was"
-                                        onClick={() => setEditingLevelMilestoneId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="level-summary">
-                                      <span className="level-value">Level {milestone.level}</span>
-                                      <span className="level-chapter">
-                                        {chapter
-                                          ? `Reached in ${chapter.data.label}`
-                                          : milestone.chapter_id
-                                            ? 'Chapter in the trash'
-                                            : 'No chapter recorded'}
-                                      </span>
-                                      {milestone.is_debuff && (
-                                        <span className="level-penalty">Penalty</span>
-                                      )}
-                                      {milestone.xp != null && (
-                                        <span className="level-xp">XP {milestone.xp}</span>
-                                      )}
-                                      {milestoneStatChanges(milestone).map(change => (
-                                        <span className="level-stat" key={change.id}>
-                                          {statChangeText(change)}
-                                        </span>
-                                      ))}
-                                      {storySkillEvents
-                                        .filter(event => event.milestone_id === milestone.id)
-                                        .map(event => {
-                                          const skill = storySkills.find(
-                                            entry => entry.id === event.skill_id
-                                          );
-
-                                          return (
-                                            <span
-                                              className="level-stat level-skill-change"
-                                              key={event.id}
-                                            >
-                                              {skill?.name ?? 'Skill'} · {event.kind}
-                                              {event.rank ? ` ${event.rank}` : ''}
-                                            </span>
-                                          );
-                                        })}
-                                    </div>
-                                    <button
-                                      title={`Change the level and chapter of the level ${milestone.level} milestone`}
-                                      onClick={() => startLevelMilestoneEdit(milestone)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete the level ${milestone.level} milestone`}
-                                      onClick={() => removeLevelMilestone(milestone)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="level-creator">
+                  return (
+                    <div
+                      key={milestone.id}
+                      className={`level-row${focused ? ' progression-row-focused' : ''}`}
+                      data-progression={`level-${milestone.id}`}
+                    >
+                      {editingLevelMilestoneId === milestone.id ? (
+                        <div className="level-editor">
                           <input
-                            aria-label="New milestone level"
+                            aria-label="Milestone level"
                             type="number"
                             min={1}
                             step={1}
-                            value={newLevelMilestoneLevel}
-                            onChange={(e) => setNewLevelMilestoneLevel(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addLevelMilestone()}
+                            autoFocus
+                            value={levelMilestoneLevelDraft}
+                            onChange={(e) => setLevelMilestoneLevelDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveLevelMilestone(milestone);
+                              if (e.key === 'Escape') setEditingLevelMilestoneId(null);
+                            }}
                           />
                           <select
-                            aria-label="New milestone chapter"
+                            aria-label="Milestone chapter"
                             title="The chapter where this level was reached"
-                            value={newLevelMilestoneChapter}
-                            onChange={(e) => setNewLevelMilestoneChapter(e.target.value)}
+                            value={levelMilestoneChapterDraft}
+                            onChange={(e) => setLevelMilestoneChapterDraft(e.target.value)}
                           >
                             <option value="">No chapter</option>
+                            {levelMilestoneChapterDraft &&
+                              !chapterChoices.some(
+                                choice => choice.id === levelMilestoneChapterDraft
+                              ) && (
+                                <option value={levelMilestoneChapterDraft}>
+                                  Chapter in the trash
+                                </option>
+                              )}
                             {chapterChoices.map(choice => (
                               <option key={choice.id} value={choice.id}>
                                 {choice.data.label}
@@ -11637,156 +11187,206 @@ function App() {
                           </select>
                           <label className="level-penalty-field">
                             <input
-                              aria-label="New milestone is a penalty"
+                              aria-label="Level drop is a penalty"
                               type="checkbox"
-                              checked={newLevelMilestoneDebuff}
-                              onChange={(e) => setNewLevelMilestoneDebuff(e.target.checked)}
+                              checked={levelMilestoneDebuffDraft}
+                              onChange={(e) => setLevelMilestoneDebuffDraft(e.target.checked)}
                             />
                             Penalty
                           </label>
                           <label className="level-metric-field">
                             Total XP
                             <input
-                              aria-label="New milestone total XP"
+                              aria-label="Milestone total XP"
                               type="number"
                               min={0}
                               step={1}
                               placeholder="Optional"
-                              value={newLevelMilestoneXp}
-                              onChange={e => setNewLevelMilestoneXp(e.target.value)}
+                              value={levelMilestoneXpDraft}
+                              onChange={e => setLevelMilestoneXpDraft(e.target.value)}
                             />
                           </label>
                           {renderStatChangeRows(
-                            newLevelMilestoneStatChanges,
-                            setNewLevelMilestoneStatChanges,
-                            'New milestone'
+                            levelMilestoneStatChangesDraft,
+                            setLevelMilestoneStatChangesDraft,
+                            'Milestone'
                           )}
+                          <div className="level-actions">
+                            <button
+                              title={`Save this level ${milestone.level} milestone`}
+                              onClick={() => saveLevelMilestone(milestone)}
+                            >
+                              Save milestone
+                            </button>
+                            <button
+                              title="Leave the milestone as it was"
+                              onClick={() => setEditingLevelMilestoneId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="level-summary">
+                            <span className="level-value">Level {milestone.level}</span>
+                            <span className="level-chapter">
+                              {chapter
+                                ? `Reached in ${chapter.data.label}`
+                                : milestone.chapter_id
+                                  ? 'Chapter in the trash'
+                                  : 'No chapter recorded'}
+                            </span>
+                            {milestone.is_debuff && (
+                              <span className="level-penalty">Penalty</span>
+                            )}
+                            {milestone.xp != null && (
+                              <span className="level-xp">XP {milestone.xp}</span>
+                            )}
+                            {milestoneStatChanges(milestone).map(change => (
+                              <span className="level-stat" key={change.id}>
+                                {statChangeText(change)}
+                              </span>
+                            ))}
+                            {storySkillEvents
+                              .filter(event => event.milestone_id === milestone.id)
+                              .map(event => {
+                                const skill = storySkills.find(
+                                  entry => entry.id === event.skill_id
+                                );
+
+                                return (
+                                  <span
+                                    className="level-stat level-skill-change"
+                                    key={event.id}
+                                  >
+                                    {skill?.name ?? 'Skill'} · {event.kind}
+                                    {event.rank ? ` ${event.rank}` : ''}
+                                  </span>
+                                );
+                              })}
+                          </div>
                           <button
-                            title="Record this level in the selected character's timeline"
-                            onClick={addLevelMilestone}
+                            title={`Change the level and chapter of the level ${milestone.level} milestone`}
+                            onClick={() => startLevelMilestoneEdit(milestone)}
                           >
-                            Add milestone
+                            Edit
                           </button>
-                        </div>
-                      </section>
+                          <button
+                            title={`Delete the level ${milestone.level} milestone`}
+                            onClick={() => removeLevelMilestone(milestone)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
-                      {/* Income is what a chapter paid out, kept separate from the
-                          running total on a milestone so the chart can show either. */}
-                      <section className="xp-ledger-section" aria-label="XP by chapter">
-                        <h4 className="character-section-heading">XP by chapter</h4>
+              <div className="level-creator">
+                <input
+                  aria-label="New milestone level"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={newLevelMilestoneLevel}
+                  onChange={(e) => setNewLevelMilestoneLevel(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addLevelMilestone()}
+                />
+                <select
+                  aria-label="New milestone chapter"
+                  title="The chapter where this level was reached"
+                  value={newLevelMilestoneChapter}
+                  onChange={(e) => setNewLevelMilestoneChapter(e.target.value)}
+                >
+                  <option value="">No chapter</option>
+                  {chapterChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.data.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="level-penalty-field">
+                  <input
+                    aria-label="New milestone is a penalty"
+                    type="checkbox"
+                    checked={newLevelMilestoneDebuff}
+                    onChange={(e) => setNewLevelMilestoneDebuff(e.target.checked)}
+                  />
+                  Penalty
+                </label>
+                <label className="level-metric-field">
+                  Total XP
+                  <input
+                    aria-label="New milestone total XP"
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="Optional"
+                    value={newLevelMilestoneXp}
+                    onChange={e => setNewLevelMilestoneXp(e.target.value)}
+                  />
+                </label>
+                {renderStatChangeRows(
+                  newLevelMilestoneStatChanges,
+                  setNewLevelMilestoneStatChanges,
+                  'New milestone'
+                )}
+                <button
+                  title="Record this level in the selected character's timeline"
+                  onClick={addLevelMilestone}
+                >
+                  Add milestone
+                </button>
+              </div>
+            </section>
 
-                        <div className="xp-ledger-list">
-                          {selectedXpEntries.length === 0 && (
-                            <div className="empty">
-                              No XP earned by chapter yet — record what a chapter paid out.
-                            </div>
-                          )}
+            {/* Income is what a chapter paid out, kept separate from the
+                running total on a milestone so the chart can show either. */}
+            <section className="xp-ledger-section" aria-label="XP by chapter">
+              <h4 className="character-section-heading">XP by chapter</h4>
 
-                          {selectedXpEntries.map(entry => {
-                            const chapter = chapterChoices.find(
-                              choice => choice.id === entry.chapter_id
-                            );
-                            const chapterLabel = chapter
-                              ? chapter.data.label
-                              : 'Chapter in the trash';
+              <div className="xp-ledger-list">
+                {selectedXpEntries.length === 0 && (
+                  <div className="empty">
+                    No XP earned by chapter yet — record what a chapter paid out.
+                  </div>
+                )}
 
-                            return (
-                              <div
-                                key={entry.id}
-                                className="xp-ledger-row"
-                                data-xp-entry={entry.id}
-                              >
-                                {editingXpEntryId === entry.id ? (
-                                  <div className="level-editor">
-                                    <select
-                                      aria-label="XP entry chapter"
-                                      value={xpEntryChapterDraft}
-                                      onChange={e =>
-                                        setXpEntryChapterDraft(e.target.value)
-                                      }
-                                    >
-                                      <option value="">Choose chapter</option>
-                                      {xpEntryChapterDraft &&
-                                        !chapterChoices.some(
-                                          choice => choice.id === xpEntryChapterDraft
-                                        ) && (
-                                          <option value={xpEntryChapterDraft}>
-                                            Chapter in the trash
-                                          </option>
-                                        )}
-                                      {chapterChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <label className="level-metric-field">
-                                      XP earned
-                                      <input
-                                        aria-label="XP entry earned XP"
-                                        type="number"
-                                        min={0}
-                                        step={1}
-                                        value={xpEntryXpDraft}
-                                        onChange={e => setXpEntryXpDraft(e.target.value)}
-                                        onKeyDown={e => {
-                                          if (e.key === 'Enter') saveXpEntry(entry);
-                                          if (e.key === 'Escape')
-                                            setEditingXpEntryId(null);
-                                        }}
-                                      />
-                                    </label>
-                                    <div className="level-actions">
-                                      <button
-                                        title={`Save the XP earned in ${chapterLabel}`}
-                                        onClick={() => saveXpEntry(entry)}
-                                      >
-                                        Save XP
-                                      </button>
-                                      <button
-                                        title="Leave the XP entry as it was"
-                                        onClick={() => setEditingXpEntryId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="xp-ledger-summary">
-                                      <span className="xp-ledger-chapter">
-                                        {chapterLabel}
-                                      </span>
-                                      <span className="level-xp">
-                                        {entry.xp_earned} XP earned
-                                      </span>
-                                    </div>
-                                    <button
-                                      title={`Change the XP earned in ${chapterLabel}`}
-                                      onClick={() => startXpEntryEdit(entry)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete the XP earned in ${chapterLabel}`}
-                                      onClick={() => removeXpEntry(entry)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                {selectedXpEntries.map(entry => {
+                  const chapter = chapterChoices.find(
+                    choice => choice.id === entry.chapter_id
+                  );
+                  const chapterLabel = chapter
+                    ? chapter.data.label
+                    : 'Chapter in the trash';
 
-                        <div className="level-creator xp-ledger-creator">
+                  return (
+                    <div
+                      key={entry.id}
+                      className="xp-ledger-row"
+                      data-xp-entry={entry.id}
+                    >
+                      {editingXpEntryId === entry.id ? (
+                        <div className="level-editor">
                           <select
-                            aria-label="New XP entry chapter"
-                            value={newXpEntryChapter}
-                            onChange={e => setNewXpEntryChapter(e.target.value)}
+                            aria-label="XP entry chapter"
+                            value={xpEntryChapterDraft}
+                            onChange={e =>
+                              setXpEntryChapterDraft(e.target.value)
+                            }
                           >
                             <option value="">Choose chapter</option>
+                            {xpEntryChapterDraft &&
+                              !chapterChoices.some(
+                                choice => choice.id === xpEntryChapterDraft
+                              ) && (
+                                <option value={xpEntryChapterDraft}>
+                                  Chapter in the trash
+                                </option>
+                              )}
                             {chapterChoices.map(choice => (
                               <option key={choice.id} value={choice.id}>
                                 {choice.data.label}
@@ -11796,372 +11396,291 @@ function App() {
                           <label className="level-metric-field">
                             XP earned
                             <input
-                              aria-label="New XP entry earned XP"
+                              aria-label="XP entry earned XP"
                               type="number"
                               min={0}
                               step={1}
-                              value={newXpEntryXp}
-                              onChange={e => setNewXpEntryXp(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && addXpEntry()}
+                              value={xpEntryXpDraft}
+                              onChange={e => setXpEntryXpDraft(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveXpEntry(entry);
+                                if (e.key === 'Escape')
+                                  setEditingXpEntryId(null);
+                              }}
                             />
                           </label>
+                          <div className="level-actions">
+                            <button
+                              title={`Save the XP earned in ${chapterLabel}`}
+                              onClick={() => saveXpEntry(entry)}
+                            >
+                              Save XP
+                            </button>
+                            <button
+                              title="Leave the XP entry as it was"
+                              onClick={() => setEditingXpEntryId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="xp-ledger-summary">
+                            <span className="xp-ledger-chapter">
+                              {chapterLabel}
+                            </span>
+                            <span className="level-xp">
+                              {entry.xp_earned} XP earned
+                            </span>
+                          </div>
                           <button
-                            title="Record the XP this chapter paid out"
-                            onClick={addXpEntry}
+                            title={`Change the XP earned in ${chapterLabel}`}
+                            onClick={() => startXpEntryEdit(entry)}
                           >
-                            Add XP
+                            Edit
                           </button>
-                        </div>
-                      </section>
-
-                      <div className="attribute-section">
-                        <h4 className="character-section-heading">Attributes</h4>
-
-                        <div className="attribute-list">
-                          {characterAttributes.length === 0 && (
-                            <div className="empty">
-                              No attributes yet — Class, Title, Aura, Affinity.
-                            </div>
-                          )}
-
-                          {characterAttributes.map(attribute => (
-                            <div key={attribute.id} className="attribute-row">
-                              <span className="attribute-name">{attribute.attr_name}</span>
-
-                              {editingAttributeId === attribute.id ? (
-                                <>
-                                  <input
-                                    className="attribute-value-input"
-                                    autoFocus
-                                    value={attributeValueDraft}
-                                    onChange={(e) => setAttributeValueDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveAttribute(attribute);
-                                      if (e.key === 'Escape') setEditingAttributeId(null);
-                                    }}
-                                  />
-                                  <button
-                                    title={`Save this new ${attribute.attr_name} value`}
-                                    onClick={() => saveAttribute(attribute)}
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    title="Leave the value as it was"
-                                    onClick={() => setEditingAttributeId(null)}
-                                  >
-                                    Cancel
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="attribute-value">{attribute.value}</span>
-                                  <button
-                                    title={`Change this ${attribute.attr_name} value`}
-                                    onClick={() => startAttributeEdit(attribute)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    title={`Delete ${attribute.attr_name}`}
-                                    onClick={() => removeAttribute(attribute)}
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="attribute-creator">
-                          <input
-                            placeholder="Attribute (Class)"
-                            value={newAttributeName}
-                            onChange={(e) => setNewAttributeName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
-                          />
-                          <input
-                            className="attribute-value-input"
-                            placeholder="Value (Rogue)"
-                            value={newAttributeValue}
-                            onChange={(e) => setNewAttributeValue(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
-                          />
                           <button
-                            title="Add this attribute, or update it if the name already exists"
-                            onClick={addAttribute}
-                            disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
+                            title={`Delete the XP earned in ${chapterLabel}`}
+                            onClick={() => removeXpEntry(entry)}
                           >
-                            Add attribute
+                            Delete
                           </button>
-                        </div>
-                      </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
-                      {/* Skills are rows of their own: a rank and an effect are
-                          the author's words, and the chapter is where it was
-                          learned. A skill card can name its holders too. */}
-                      {/* The skill rows, their events and the creator form
-                          live in the skills domain; the writes they ask for
-                          stay here, where the canvas, the card and the audit
-                          log are. */}
-                      <SkillsSection
-                        skills={characterSkills}
-                        storySkills={storySkills}
-                        events={storySkillEvents}
-                        evolutions={storySkillEvolutions}
-                        chapters={skillChapterOptions}
-                        cards={skillCardOptions}
-                        milestones={selectedLevelMilestones}
-                        chapterSeqById={chapterSeqById}
-                        focus={focusedProgression}
-                        onError={setCharacterError}
-                        onCreate={addSkill}
-                        onSave={saveSkill}
-                        onDelete={removeSkill}
-                        onSaveEvent={saveSkillEvent}
-                        onDeleteEvent={removeSkillEvent}
-                      />
+              <div className="level-creator xp-ledger-creator">
+                <select
+                  aria-label="New XP entry chapter"
+                  value={newXpEntryChapter}
+                  onChange={e => setNewXpEntryChapter(e.target.value)}
+                >
+                  <option value="">Choose chapter</option>
+                  {chapterChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.data.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="level-metric-field">
+                  XP earned
+                  <input
+                    aria-label="New XP entry earned XP"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={newXpEntryXp}
+                    onChange={e => setNewXpEntryXp(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addXpEntry()}
+                  />
+                </label>
+                <button
+                  title="Record the XP this chapter paid out"
+                  onClick={addXpEntry}
+                >
+                  Add XP
+                </button>
+              </div>
+            </section>
 
-                      {/* Inventory is a ledger, not a game engine: a name, a
-                          rarity, how many, what it does and where it was found. */}
-                      <div className="inventory-section">
-                        <h4 className="character-section-heading">Inventory</h4>
+            <div className="attribute-section">
+              <h4 className="character-section-heading">Attributes</h4>
 
-                        <div className="inventory-list">
-                          {characterInventory.length === 0 && (
-                            <div className="empty">
-                              No items yet — add one below.
-                            </div>
-                          )}
+              <div className="attribute-list">
+                {characterAttributes.length === 0 && (
+                  <div className="empty">
+                    No attributes yet — Class, Title, Aura, Affinity.
+                  </div>
+                )}
 
-                          {characterInventory.map(item => {
-                            const chapter = chapterChoices.find(
-                              choice => choice.id === item.chapter_id
-                            );
-                            const card = itemCardChoices.find(
-                              choice => choice.id === item.node_id
-                            );
-                            const lostChapter = chapterChoices.find(
-                              choice => choice.id === item.lost_chapter_id
-                            );
+                {characterAttributes.map(attribute => (
+                  <div key={attribute.id} className="attribute-row">
+                    <span className="attribute-name">{attribute.attr_name}</span>
 
-                            return (
-                              <div key={item.id} className="inventory-row">
-                                {editingItemId === item.id ? (
-                                  <div className="inventory-editor">
-                                    <input
-                                      aria-label="Item name"
-                                      autoFocus
-                                      value={itemNameDraft}
-                                      onChange={(e) => setItemNameDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveItem(item);
-                                        if (e.key === 'Escape') setEditingItemId(null);
-                                      }}
-                                    />
-                                    <input
-                                      aria-label="Item rarity"
-                                      placeholder="Rarity (optional)"
-                                      value={itemRarityDraft}
-                                      onChange={(e) => setItemRarityDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveItem(item);
-                                        if (e.key === 'Escape') setEditingItemId(null);
-                                      }}
-                                    />
-                                    <input
-                                      aria-label="Item quantity"
-                                      type="number"
-                                      min={0}
-                                      step={1}
-                                      title="How many of this item the character carries"
-                                      value={itemQuantityDraft}
-                                      onChange={(e) => setItemQuantityDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveItem(item);
-                                        if (e.key === 'Escape') setEditingItemId(null);
-                                      }}
-                                    />
-                                    <input
-                                      aria-label="Item effect"
-                                      placeholder="Effect (optional)"
-                                      value={itemEffectDraft}
-                                      onChange={(e) => setItemEffectDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveItem(item);
-                                        if (e.key === 'Escape') setEditingItemId(null);
-                                      }}
-                                    />
-                                    <select
-                                      aria-label="Item chapter acquired"
-                                      title="The chapter this item was acquired in"
-                                      value={itemChapterDraft}
-                                      onChange={(e) => setItemChapterDraft(e.target.value)}
-                                    >
-                                      <option value="">No chapter</option>
-                                      {itemChapterDraft &&
-                                        !chapterChoices.some(
-                                          choice => choice.id === itemChapterDraft
-                                        ) && (
-                                          <option value={itemChapterDraft}>
-                                            Chapter in the trash
-                                          </option>
-                                        )}
-                                      {chapterChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      aria-label="Item chapter lost"
-                                      title="The chapter this item was lost in"
-                                      value={itemLostChapterDraft}
-                                      onChange={(e) => setItemLostChapterDraft(e.target.value)}
-                                    >
-                                      <option value="">Not lost</option>
-                                      {itemLostChapterDraft &&
-                                        !chapterChoices.some(
-                                          choice => choice.id === itemLostChapterDraft
-                                        ) && (
-                                          <option value={itemLostChapterDraft}>
-                                            Chapter in the trash
-                                          </option>
-                                        )}
-                                      {chapterChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      aria-label="Item card"
-                                      title="The item card this row belongs to"
-                                      value={itemNodeDraft}
-                                      onChange={(e) => setItemNodeDraft(e.target.value)}
-                                    >
-                                      <option value="">No card</option>
-                                      {itemNodeDraft &&
-                                        !itemCardChoices.some(
-                                          choice => choice.id === itemNodeDraft
-                                        ) && (
-                                          <option value={itemNodeDraft}>
-                                            Card in the trash
-                                          </option>
-                                        )}
-                                      {itemCardChoices.map(choice => (
-                                        <option key={choice.id} value={choice.id}>
-                                          {choice.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <div className="inventory-actions">
-                                      <button
-                                        title={`Save this ${item.name}`}
-                                        onClick={() => saveItem(item)}
-                                      >
-                                        Save item
-                                      </button>
-                                      <button
-                                        title="Leave the item as it was"
-                                        onClick={() => setEditingItemId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="inventory-summary">
-                                      <span className="inventory-name">{item.name}</span>
-                                      <span className="inventory-quantity">
-                                        ×{formatCount(item.quantity)}
-                                      </span>
-                                      {item.rarity && (
-                                        <span className="inventory-rarity">{item.rarity}</span>
-                                      )}
-                                      {item.effect && (
-                                        <span className="inventory-effect">{item.effect}</span>
-                                      )}
-                                      <span className="inventory-chapter">
-                                        {chapter
-                                          ? `Found in ${chapter.data.label}`
-                                          : item.chapter_id
-                                            ? 'Chapter in the trash'
-                                            : 'Chapter not recorded'}
-                                      </span>
-                                      {item.lost_chapter_id && (
-                                        <span className="inventory-lost">
-                                          {lostChapter
-                                            ? `Lost in ${lostChapter.data.label}`
-                                            : 'Lost in a chapter in the trash'}
-                                        </span>
-                                      )}
-                                      {card && (
-                                        <span className="inventory-card-link">
-                                          Card: {card.data.label}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <button
-                                      title={`Change ${item.name}'s rarity, quantity, effect or chapter`}
-                                      onClick={() => startItemEdit(item)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete ${item.name}`}
-                                      onClick={() => removeItem(item)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                    {editingAttributeId === attribute.id ? (
+                      <>
+                        <input
+                          className="attribute-value-input"
+                          autoFocus
+                          value={attributeValueDraft}
+                          onChange={(e) => setAttributeValueDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveAttribute(attribute);
+                            if (e.key === 'Escape') setEditingAttributeId(null);
+                          }}
+                        />
+                        <button
+                          title={`Save this new ${attribute.attr_name} value`}
+                          onClick={() => saveAttribute(attribute)}
+                        >
+                          Save
+                        </button>
+                        <button
+                          title="Leave the value as it was"
+                          onClick={() => setEditingAttributeId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="attribute-value">{attribute.value}</span>
+                        <button
+                          title={`Change this ${attribute.attr_name} value`}
+                          onClick={() => startAttributeEdit(attribute)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          title={`Delete ${attribute.attr_name}`}
+                          onClick={() => removeAttribute(attribute)}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
 
-                        <div className="inventory-creator">
+              <div className="attribute-creator">
+                <input
+                  placeholder="Attribute (Class)"
+                  value={newAttributeName}
+                  onChange={(e) => setNewAttributeName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
+                />
+                <input
+                  className="attribute-value-input"
+                  placeholder="Value (Rogue)"
+                  value={newAttributeValue}
+                  onChange={(e) => setNewAttributeValue(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addAttribute()}
+                />
+                <button
+                  title="Add this attribute, or update it if the name already exists"
+                  onClick={addAttribute}
+                  disabled={!newAttributeName.trim() || !newAttributeValue.trim()}
+                >
+                  Add attribute
+                </button>
+              </div>
+            </div>
+
+            {/* Skills are rows of their own: a rank and an effect are
+                the author's words, and the chapter is where it was
+                learned. A skill card can name its holders too. */}
+            {/* The skill rows, their events and the creator form
+                live in the skills domain; the writes they ask for
+                stay here, where the canvas, the card and the audit
+                log are. */}
+            <SkillsSection
+              skills={characterSkills}
+              storySkills={storySkills}
+              events={storySkillEvents}
+              evolutions={storySkillEvolutions}
+              chapters={skillChapterOptions}
+              cards={skillCardOptions}
+              milestones={selectedLevelMilestones}
+              chapterSeqById={chapterSeqById}
+              focus={focusedProgression}
+              onError={setCharacterError}
+              onCreate={addSkill}
+              onSave={saveSkill}
+              onDelete={removeSkill}
+              onSaveEvent={saveSkillEvent}
+              onDeleteEvent={removeSkillEvent}
+            />
+
+            {/* Inventory is a ledger, not a game engine: a name, a
+                rarity, how many, what it does and where it was found. */}
+            <div className="inventory-section">
+              <h4 className="character-section-heading">Inventory</h4>
+
+              <div className="inventory-list">
+                {characterInventory.length === 0 && (
+                  <div className="empty">
+                    No items yet — add one below.
+                  </div>
+                )}
+
+                {characterInventory.map(item => {
+                  const chapter = chapterChoices.find(
+                    choice => choice.id === item.chapter_id
+                  );
+                  const card = itemCardChoices.find(
+                    choice => choice.id === item.node_id
+                  );
+                  const lostChapter = chapterChoices.find(
+                    choice => choice.id === item.lost_chapter_id
+                  );
+
+                  return (
+                    <div key={item.id} className="inventory-row">
+                      {editingItemId === item.id ? (
+                        <div className="inventory-editor">
                           <input
-                            aria-label="New item name"
-                            placeholder="Item"
-                            value={newItemName}
-                            onChange={(e) => setNewItemName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                            aria-label="Item name"
+                            autoFocus
+                            value={itemNameDraft}
+                            onChange={(e) => setItemNameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveItem(item);
+                              if (e.key === 'Escape') setEditingItemId(null);
+                            }}
                           />
                           <input
-                            aria-label="New item rarity"
-                            placeholder="Rarity"
-                            value={newItemRarity}
-                            onChange={(e) => setNewItemRarity(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                            aria-label="Item rarity"
+                            placeholder="Rarity (optional)"
+                            value={itemRarityDraft}
+                            onChange={(e) => setItemRarityDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveItem(item);
+                              if (e.key === 'Escape') setEditingItemId(null);
+                            }}
                           />
                           <input
-                            aria-label="New item quantity"
+                            aria-label="Item quantity"
                             type="number"
                             min={0}
                             step={1}
                             title="How many of this item the character carries"
-                            value={newItemQuantity}
-                            onChange={(e) => setNewItemQuantity(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                            value={itemQuantityDraft}
+                            onChange={(e) => setItemQuantityDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveItem(item);
+                              if (e.key === 'Escape') setEditingItemId(null);
+                            }}
                           />
                           <input
-                            aria-label="New item effect"
-                            placeholder="Effect"
-                            value={newItemEffect}
-                            onChange={(e) => setNewItemEffect(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                            aria-label="Item effect"
+                            placeholder="Effect (optional)"
+                            value={itemEffectDraft}
+                            onChange={(e) => setItemEffectDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveItem(item);
+                              if (e.key === 'Escape') setEditingItemId(null);
+                            }}
                           />
                           <select
-                            aria-label="New item chapter"
+                            aria-label="Item chapter acquired"
                             title="The chapter this item was acquired in"
-                            value={newItemChapterId}
-                            onChange={(e) => setNewItemChapterId(e.target.value)}
+                            value={itemChapterDraft}
+                            onChange={(e) => setItemChapterDraft(e.target.value)}
                           >
                             <option value="">No chapter</option>
+                            {itemChapterDraft &&
+                              !chapterChoices.some(
+                                choice => choice.id === itemChapterDraft
+                              ) && (
+                                <option value={itemChapterDraft}>
+                                  Chapter in the trash
+                                </option>
+                              )}
                             {chapterChoices.map(choice => (
                               <option key={choice.id} value={choice.id}>
                                 {choice.data.label}
@@ -12169,12 +11688,20 @@ function App() {
                             ))}
                           </select>
                           <select
-                            aria-label="New item lost chapter"
+                            aria-label="Item chapter lost"
                             title="The chapter this item was lost in"
-                            value={newItemLostChapterId}
-                            onChange={(e) => setNewItemLostChapterId(e.target.value)}
+                            value={itemLostChapterDraft}
+                            onChange={(e) => setItemLostChapterDraft(e.target.value)}
                           >
                             <option value="">Not lost</option>
+                            {itemLostChapterDraft &&
+                              !chapterChoices.some(
+                                choice => choice.id === itemLostChapterDraft
+                              ) && (
+                                <option value={itemLostChapterDraft}>
+                                  Chapter in the trash
+                                </option>
+                              )}
                             {chapterChoices.map(choice => (
                               <option key={choice.id} value={choice.id}>
                                 {choice.data.label}
@@ -12182,309 +11709,339 @@ function App() {
                             ))}
                           </select>
                           <select
-                            aria-label="New item card"
+                            aria-label="Item card"
                             title="The item card this row belongs to"
-                            value={newItemNodeId}
-                            onChange={(e) => setNewItemNodeId(e.target.value)}
+                            value={itemNodeDraft}
+                            onChange={(e) => setItemNodeDraft(e.target.value)}
                           >
                             <option value="">No card</option>
+                            {itemNodeDraft &&
+                              !itemCardChoices.some(
+                                choice => choice.id === itemNodeDraft
+                              ) && (
+                                <option value={itemNodeDraft}>
+                                  Card in the trash
+                                </option>
+                              )}
                             {itemCardChoices.map(choice => (
                               <option key={choice.id} value={choice.id}>
                                 {choice.data.label}
                               </option>
                             ))}
                           </select>
+                          <div className="inventory-actions">
+                            <button
+                              title={`Save this ${item.name}`}
+                              onClick={() => saveItem(item)}
+                            >
+                              Save item
+                            </button>
+                            <button
+                              title="Leave the item as it was"
+                              onClick={() => setEditingItemId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="inventory-summary">
+                            <span className="inventory-name">{item.name}</span>
+                            <span className="inventory-quantity">
+                              ×{formatCount(item.quantity)}
+                            </span>
+                            {item.rarity && (
+                              <span className="inventory-rarity">{item.rarity}</span>
+                            )}
+                            {item.effect && (
+                              <span className="inventory-effect">{item.effect}</span>
+                            )}
+                            <span className="inventory-chapter">
+                              {chapter
+                                ? `Found in ${chapter.data.label}`
+                                : item.chapter_id
+                                  ? 'Chapter in the trash'
+                                  : 'Chapter not recorded'}
+                            </span>
+                            {item.lost_chapter_id && (
+                              <span className="inventory-lost">
+                                {lostChapter
+                                  ? `Lost in ${lostChapter.data.label}`
+                                  : 'Lost in a chapter in the trash'}
+                              </span>
+                            )}
+                            {card && (
+                              <span className="inventory-card-link">
+                                Card: {card.data.label}
+                              </span>
+                            )}
+                          </div>
                           <button
-                            title="Add this item to the selected character"
-                            onClick={addItem}
-                            disabled={!newItemName.trim()}
+                            title={`Change ${item.name}'s rarity, quantity, effect or chapter`}
+                            onClick={() => startItemEdit(item)}
                           >
-                            Add item
+                            Edit
+                          </button>
+                          <button
+                            title={`Delete ${item.name}`}
+                            onClick={() => removeItem(item)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="inventory-creator">
+                <input
+                  aria-label="New item name"
+                  placeholder="Item"
+                  value={newItemName}
+                  onChange={(e) => setNewItemName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                />
+                <input
+                  aria-label="New item rarity"
+                  placeholder="Rarity"
+                  value={newItemRarity}
+                  onChange={(e) => setNewItemRarity(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                />
+                <input
+                  aria-label="New item quantity"
+                  type="number"
+                  min={0}
+                  step={1}
+                  title="How many of this item the character carries"
+                  value={newItemQuantity}
+                  onChange={(e) => setNewItemQuantity(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                />
+                <input
+                  aria-label="New item effect"
+                  placeholder="Effect"
+                  value={newItemEffect}
+                  onChange={(e) => setNewItemEffect(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                />
+                <select
+                  aria-label="New item chapter"
+                  title="The chapter this item was acquired in"
+                  value={newItemChapterId}
+                  onChange={(e) => setNewItemChapterId(e.target.value)}
+                >
+                  <option value="">No chapter</option>
+                  {chapterChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.data.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="New item lost chapter"
+                  title="The chapter this item was lost in"
+                  value={newItemLostChapterId}
+                  onChange={(e) => setNewItemLostChapterId(e.target.value)}
+                >
+                  <option value="">Not lost</option>
+                  {chapterChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.data.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="New item card"
+                  title="The item card this row belongs to"
+                  value={newItemNodeId}
+                  onChange={(e) => setNewItemNodeId(e.target.value)}
+                >
+                  <option value="">No card</option>
+                  {itemCardChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.data.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  title="Add this item to the selected character"
+                  onClick={addItem}
+                  disabled={!newItemName.trim()}
+                >
+                  Add item
+                </button>
+              </div>
+            </div>
+
+            {/* Currency is a named amount per character. Nothing adds
+                up across names: gold and mana crystals stay separate. */}
+            <div className="currency-section">
+              <h4 className="character-section-heading">Currency</h4>
+
+              <div className="currency-list">
+                {characterCurrency.length === 0 && (
+                  <div className="empty">
+                    No currency yet — add one below.
+                  </div>
+                )}
+
+                {characterCurrency.map(currency => (
+                  <div key={currency.id} className="currency-row">
+                    {editingCurrencyId === currency.id ? (
+                      <div className="currency-editor">
+                        <input
+                          aria-label="Currency name"
+                          autoFocus
+                          value={currencyNameDraft}
+                          onChange={(e) => setCurrencyNameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveCurrency(currency);
+                            if (e.key === 'Escape') setEditingCurrencyId(null);
+                          }}
+                        />
+                        <input
+                          aria-label="Currency amount"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={currencyAmountDraft}
+                          onChange={(e) => setCurrencyAmountDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveCurrency(currency);
+                            if (e.key === 'Escape') setEditingCurrencyId(null);
+                          }}
+                        />
+                        <div className="currency-actions">
+                          <button
+                            title={`Save this ${currency.name} amount`}
+                            onClick={() => saveCurrency(currency)}
+                          >
+                            Save currency
+                          </button>
+                          <button
+                            title="Leave the amount as it was"
+                            onClick={() => setEditingCurrencyId(null)}
+                          >
+                            Cancel
                           </button>
                         </div>
                       </div>
-
-                      {/* Currency is a named amount per character. Nothing adds
-                          up across names: gold and mana crystals stay separate. */}
-                      <div className="currency-section">
-                        <h4 className="character-section-heading">Currency</h4>
-
-                        <div className="currency-list">
-                          {characterCurrency.length === 0 && (
-                            <div className="empty">
-                              No currency yet — add one below.
-                            </div>
-                          )}
-
-                          {characterCurrency.map(currency => (
-                            <div key={currency.id} className="currency-row">
-                              {editingCurrencyId === currency.id ? (
-                                <div className="currency-editor">
-                                  <input
-                                    aria-label="Currency name"
-                                    autoFocus
-                                    value={currencyNameDraft}
-                                    onChange={(e) => setCurrencyNameDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveCurrency(currency);
-                                      if (e.key === 'Escape') setEditingCurrencyId(null);
-                                    }}
-                                  />
-                                  <input
-                                    aria-label="Currency amount"
-                                    type="number"
-                                    min={0}
-                                    step={1}
-                                    value={currencyAmountDraft}
-                                    onChange={(e) => setCurrencyAmountDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveCurrency(currency);
-                                      if (e.key === 'Escape') setEditingCurrencyId(null);
-                                    }}
-                                  />
-                                  <div className="currency-actions">
-                                    <button
-                                      title={`Save this ${currency.name} amount`}
-                                      onClick={() => saveCurrency(currency)}
-                                    >
-                                      Save currency
-                                    </button>
-                                    <button
-                                      title="Leave the amount as it was"
-                                      onClick={() => setEditingCurrencyId(null)}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="currency-summary">
-                                    <span className="currency-amount">
-                                      {formatCount(currency.amount)}
-                                    </span>
-                                    <span className="currency-name">{currency.name}</span>
-                                  </div>
-                                  <button
-                                    title={`Change the amount of ${currency.name}`}
-                                    onClick={() => startCurrencyEdit(currency)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    title={`Delete ${currency.name}`}
-                                    onClick={() => removeCurrency(currency)}
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          ))}
+                    ) : (
+                      <>
+                        <div className="currency-summary">
+                          <span className="currency-amount">
+                            {formatCount(currency.amount)}
+                          </span>
+                          <span className="currency-name">{currency.name}</span>
                         </div>
+                        <button
+                          title={`Change the amount of ${currency.name}`}
+                          onClick={() => startCurrencyEdit(currency)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          title={`Delete ${currency.name}`}
+                          onClick={() => removeCurrency(currency)}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
 
-                        <div className="currency-creator">
-                          <input
-                            aria-label="New currency name"
-                            placeholder="Currency (Gold)"
-                            value={newCurrencyName}
-                            onChange={(e) => setNewCurrencyName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
-                          />
-                          <input
-                            aria-label="New currency amount"
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={newCurrencyAmount}
-                            onChange={(e) => setNewCurrencyAmount(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
-                          />
-                          <button
-                            title="Add this currency to the selected character"
-                            onClick={addCurrency}
-                            disabled={!newCurrencyName.trim()}
-                          >
-                            Add currency
-                          </button>
-                        </div>
-                      </div>
+              <div className="currency-creator">
+                <input
+                  aria-label="New currency name"
+                  placeholder="Currency (Gold)"
+                  value={newCurrencyName}
+                  onChange={(e) => setNewCurrencyName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
+                />
+                <input
+                  aria-label="New currency amount"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={newCurrencyAmount}
+                  onChange={(e) => setNewCurrencyAmount(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addCurrency()}
+                />
+                <button
+                  title="Add this currency to the selected character"
+                  onClick={addCurrency}
+                  disabled={!newCurrencyName.trim()}
+                >
+                  Add currency
+                </button>
+              </div>
+            </div>
 
-                      {/* Relations join two cast members, so they live on the
-                          sheet beside the skills and items rather than on a card. */}
-                      <div className="relations-section">
-                        <h4 className="character-section-heading">Relations</h4>
+            {/* Relations join two cast members, so they live on the
+                sheet beside the skills and items rather than on a card. */}
+            <div className="relations-section">
+              <h4 className="character-section-heading">Relations</h4>
 
-                        <div className="relation-list">
-                          {selectedRelations.length === 0 && (
-                            <div className="empty">
-                              No relations yet — a bond with another cast member is
-                              recorded below.
-                            </div>
-                          )}
+              <div className="relation-list">
+                {selectedRelations.length === 0 && (
+                  <div className="empty">
+                    No relations yet — a bond with another cast member is
+                    recorded below.
+                  </div>
+                )}
 
-                          {selectedRelations.map(relation => {
-                            const otherId =
-                              relation.from_character_id === selectedCharacterId
-                                ? relation.to_character_id
-                                : relation.from_character_id;
-                            const otherName =
-                              characterNameById.get(otherId) ??
-                              'a cast member in the trash';
-                            const sinceLabel = relation.since_chapter_id
-                              ? chapterLabelById.get(relation.since_chapter_id) ??
-                                'a chapter in the trash'
-                              : null;
-                            const untilLabel = relation.until_chapter_id
-                              ? chapterLabelById.get(relation.until_chapter_id) ??
-                                'a chapter in the trash'
-                              : null;
-                            const focused =
-                              focusedProgression?.kind === 'relation' &&
-                              focusedProgression.id === relation.id;
+                {selectedRelations.map(relation => {
+                  const otherId =
+                    relation.from_character_id === selectedCharacterId
+                      ? relation.to_character_id
+                      : relation.from_character_id;
+                  const otherName =
+                    characterNameById.get(otherId) ??
+                    'a cast member in the trash';
+                  const sinceLabel = relation.since_chapter_id
+                    ? chapterLabelById.get(relation.since_chapter_id) ??
+                      'a chapter in the trash'
+                    : null;
+                  const untilLabel = relation.until_chapter_id
+                    ? chapterLabelById.get(relation.until_chapter_id) ??
+                      'a chapter in the trash'
+                    : null;
+                  const focused =
+                    focusedProgression?.kind === 'relation' &&
+                    focusedProgression.id === relation.id;
 
-                            return (
-                              <div
-                                key={relation.id}
-                                data-progression={`relation-${relation.id}`}
-                                className={`relation-row${
-                                  focused ? ' progression-row-focused' : ''
-                                }`}
-                              >
-                                {editingRelationId === relation.id ? (
-                                  <div className="relation-editor">
-                                    <SuggestionInput
-                                      label="Relation kind"
-                                      title="Ally, rival, mentor, family and owes are only suggestions"
-                                      autoFocus
-                                      value={relationKindDraft}
-                                      suggestions={relationKindSuggestions}
-                                      onChange={setRelationKindDraft}
-                                      onEnter={() => void saveRelation(relation)}
-                                      onEscape={() => setEditingRelationId(null)}
-                                    />
-                                    <span className="relation-other">{otherName}</span>
-                                    <select
-                                      aria-label="Relation since chapter"
-                                      title="The chapter this bond began in"
-                                      value={relationChapterDraft}
-                                      onChange={(e) => setRelationChapterDraft(e.target.value)}
-                                    >
-                                      <option value="">No chapter recorded</option>
-                                      {chapterChoices.map(node => (
-                                        <option key={node.id} value={node.id}>
-                                          {node.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      aria-label="Relation until chapter"
-                                      title="The chapter this bond ended in, if it did"
-                                      value={relationUntilChapterDraft}
-                                      onChange={(e) =>
-                                        setRelationUntilChapterDraft(e.target.value)
-                                      }
-                                    >
-                                      <option value="">Still current</option>
-                                      {chapterChoices.map(node => (
-                                        <option key={node.id} value={node.id}>
-                                          {node.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <input
-                                      aria-label="Relation note"
-                                      placeholder="Note"
-                                      value={relationNoteDraft}
-                                      onChange={(e) => setRelationNoteDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') void saveRelation(relation);
-                                        if (e.key === 'Escape') setEditingRelationId(null);
-                                      }}
-                                    />
-                                    <div className="relation-actions">
-                                      <button
-                                        title={`Save this ${relation.kind} relation`}
-                                        onClick={() => void saveRelation(relation)}
-                                      >
-                                        Save relation
-                                      </button>
-                                      <button
-                                        title="Leave the relation as it was"
-                                        onClick={() => setEditingRelationId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="relation-summary">
-                                      <span className="relation-kind">
-                                        {relation.kind}
-                                      </span>
-                                      <span className="relation-other">{otherName}</span>
-                                      <span className="relation-when">
-                                        {sinceLabel
-                                          ? `since ${sinceLabel}`
-                                          : 'no chapter recorded'}
-                                        {untilLabel ? ` – ${untilLabel}` : ''}
-                                      </span>
-                                    </div>
-                                    {relation.note && (
-                                      <span className="relation-note">
-                                        {relation.note}
-                                      </span>
-                                    )}
-                                    <button
-                                      title={`Change this ${relation.kind} relation`}
-                                      onClick={() => startRelationEdit(relation)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete this ${relation.kind} relation`}
-                                      onClick={() => void removeRelation(relation)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="relation-creator">
+                  return (
+                    <div
+                      key={relation.id}
+                      data-progression={`relation-${relation.id}`}
+                      className={`relation-row${
+                        focused ? ' progression-row-focused' : ''
+                      }`}
+                    >
+                      {editingRelationId === relation.id ? (
+                        <div className="relation-editor">
                           <SuggestionInput
-                            label="New relation kind"
+                            label="Relation kind"
                             title="Ally, rival, mentor, family and owes are only suggestions"
-                            placeholder="Kind (ally)"
-                            value={newRelationKind}
+                            autoFocus
+                            value={relationKindDraft}
                             suggestions={relationKindSuggestions}
-                            onChange={setNewRelationKind}
-                            onEnter={() => void addRelation()}
+                            onChange={setRelationKindDraft}
+                            onEnter={() => void saveRelation(relation)}
+                            onEscape={() => setEditingRelationId(null)}
                           />
+                          <span className="relation-other">{otherName}</span>
                           <select
-                            aria-label="New relation with"
-                            title="The other cast member in this relation"
-                            value={newRelationToId}
-                            onChange={(e) => setNewRelationToId(e.target.value)}
-                          >
-                            <option value="">Choose cast…</option>
-                            {characters
-                              .filter(character => character.id !== selectedCharacterId)
-                              .map(character => (
-                                <option key={character.id} value={character.id}>
-                                  {character.name}
-                                </option>
-                              ))}
-                          </select>
-                          <select
-                            aria-label="New relation since chapter"
+                            aria-label="Relation since chapter"
                             title="The chapter this bond began in"
-                            value={newRelationChapterId}
-                            onChange={(e) => setNewRelationChapterId(e.target.value)}
+                            value={relationChapterDraft}
+                            onChange={(e) => setRelationChapterDraft(e.target.value)}
                           >
                             <option value="">No chapter recorded</option>
                             {chapterChoices.map(node => (
@@ -12493,193 +12050,189 @@ function App() {
                               </option>
                             ))}
                           </select>
-                          <input
-                            aria-label="New relation note"
-                            placeholder="Note"
-                            value={newRelationNote}
-                            onChange={(e) => setNewRelationNote(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && void addRelation()}
-                          />
-                          <button
-                            title="Record this relation on the character's sheet"
-                            onClick={() => void addRelation()}
-                            disabled={!newRelationToId || !newRelationKind.trim()}
-                          >
-                            Add relation
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* A faction is a card, so the standing names it by its
-                          label and keeps the arc it began in. */}
-                      <div className="standings-section">
-                        <h4 className="character-section-heading">
-                          Faction standings
-                        </h4>
-
-                        <div className="standing-list">
-                          {selectedStandings.length === 0 && (
-                            <div className="empty">
-                              No faction standings yet — record one below.
-                            </div>
-                          )}
-
-                          {selectedStandings.map(standing => {
-                            const factionName =
-                              (standing.faction_node_id
-                                ? factionCardChoices.find(
-                                    node => node.id === standing.faction_node_id
-                                  )?.data.label
-                                : null) ?? 'a faction no longer on the board';
-                            const sinceLabel = standing.since_chapter_id
-                              ? chapterLabelById.get(standing.since_chapter_id) ??
-                                'a chapter in the trash'
-                              : null;
-                            const untilLabel = standing.until_chapter_id
-                              ? chapterLabelById.get(standing.until_chapter_id) ??
-                                'a chapter in the trash'
-                              : null;
-                            const focused =
-                              focusedProgression?.kind === 'faction-standing' &&
-                              focusedProgression.id === standing.id;
-
-                            return (
-                              <div
-                                key={standing.id}
-                                data-progression={`faction-standing-${standing.id}`}
-                                className={`standing-row${
-                                  focused ? ' progression-row-focused' : ''
-                                }`}
-                              >
-                                {editingStandingId === standing.id ? (
-                                  <div className="standing-editor">
-                                    <select
-                                      aria-label="Standing faction"
-                                      title="The faction card this standing belongs to"
-                                      value={standingFactionDraft}
-                                      onChange={(e) =>
-                                        setStandingFactionDraft(e.target.value)
-                                      }
-                                    >
-                                      <option value="">Choose faction…</option>
-                                      {factionCardChoices.map(node => (
-                                        <option key={node.id} value={node.id}>
-                                          {node.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <input
-                                      aria-label="Standing role"
-                                      placeholder="Standing (Member)"
-                                      autoFocus
-                                      value={standingTextDraft}
-                                      onChange={(e) => setStandingTextDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') void saveStanding(standing);
-                                        if (e.key === 'Escape') setEditingStandingId(null);
-                                      }}
-                                    />
-                                    <select
-                                      aria-label="Standing since chapter"
-                                      title="The chapter this standing began in"
-                                      value={standingChapterDraft}
-                                      onChange={(e) =>
-                                        setStandingChapterDraft(e.target.value)
-                                      }
-                                    >
-                                      <option value="">Choose chapter…</option>
-                                      {chapterChoices.map(node => (
-                                        <option key={node.id} value={node.id}>
-                                          {node.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      aria-label="Standing until chapter"
-                                      title="The chapter this standing ended in, if it did"
-                                      value={standingUntilChapterDraft}
-                                      onChange={(e) =>
-                                        setStandingUntilChapterDraft(e.target.value)
-                                      }
-                                    >
-                                      <option value="">Still standing</option>
-                                      {chapterChoices.map(node => (
-                                        <option key={node.id} value={node.id}>
-                                          {node.data.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <input
-                                      aria-label="Standing note"
-                                      placeholder="Note"
-                                      value={standingNoteDraft}
-                                      onChange={(e) => setStandingNoteDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') void saveStanding(standing);
-                                        if (e.key === 'Escape') setEditingStandingId(null);
-                                      }}
-                                    />
-                                    <div className="standing-actions">
-                                      <button
-                                        title="Save this faction standing"
-                                        onClick={() => void saveStanding(standing)}
-                                      >
-                                        Save standing
-                                      </button>
-                                      <button
-                                        title="Leave the standing as it was"
-                                        onClick={() => setEditingStandingId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="standing-summary">
-                                      <span className="standing-faction">
-                                        {factionName}
-                                      </span>
-                                      <span className="standing-role">
-                                        {standing.standing}
-                                      </span>
-                                      <span className="standing-when">
-                                        {sinceLabel
-                                          ? `since ${sinceLabel}`
-                                          : 'no chapter recorded'}
-                                        {untilLabel ? ` – ${untilLabel}` : ''}
-                                      </span>
-                                    </div>
-                                    {standing.note && (
-                                      <span className="standing-note">
-                                        {standing.note}
-                                      </span>
-                                    )}
-                                    <button
-                                      title={`Change this ${standing.standing} standing`}
-                                      onClick={() => startStandingEdit(standing)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      title={`Delete this ${standing.standing} standing`}
-                                      onClick={() => void removeStanding(standing)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="standing-creator">
                           <select
-                            aria-label="New standing faction"
+                            aria-label="Relation until chapter"
+                            title="The chapter this bond ended in, if it did"
+                            value={relationUntilChapterDraft}
+                            onChange={(e) =>
+                              setRelationUntilChapterDraft(e.target.value)
+                            }
+                          >
+                            <option value="">Still current</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label="Relation note"
+                            placeholder="Note"
+                            value={relationNoteDraft}
+                            onChange={(e) => setRelationNoteDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void saveRelation(relation);
+                              if (e.key === 'Escape') setEditingRelationId(null);
+                            }}
+                          />
+                          <div className="relation-actions">
+                            <button
+                              title={`Save this ${relation.kind} relation`}
+                              onClick={() => void saveRelation(relation)}
+                            >
+                              Save relation
+                            </button>
+                            <button
+                              title="Leave the relation as it was"
+                              onClick={() => setEditingRelationId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="relation-summary">
+                            <span className="relation-kind">
+                              {relation.kind}
+                            </span>
+                            <span className="relation-other">{otherName}</span>
+                            <span className="relation-when">
+                              {sinceLabel
+                                ? `since ${sinceLabel}`
+                                : 'no chapter recorded'}
+                              {untilLabel ? ` – ${untilLabel}` : ''}
+                            </span>
+                          </div>
+                          {relation.note && (
+                            <span className="relation-note">
+                              {relation.note}
+                            </span>
+                          )}
+                          <button
+                            title={`Change this ${relation.kind} relation`}
+                            onClick={() => startRelationEdit(relation)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            title={`Delete this ${relation.kind} relation`}
+                            onClick={() => void removeRelation(relation)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="relation-creator">
+                <SuggestionInput
+                  label="New relation kind"
+                  title="Ally, rival, mentor, family and owes are only suggestions"
+                  placeholder="Kind (ally)"
+                  value={newRelationKind}
+                  suggestions={relationKindSuggestions}
+                  onChange={setNewRelationKind}
+                  onEnter={() => void addRelation()}
+                />
+                <select
+                  aria-label="New relation with"
+                  title="The other cast member in this relation"
+                  value={newRelationToId}
+                  onChange={(e) => setNewRelationToId(e.target.value)}
+                >
+                  <option value="">Choose cast…</option>
+                  {characters
+                    .filter(character => character.id !== selectedCharacterId)
+                    .map(character => (
+                      <option key={character.id} value={character.id}>
+                        {character.name}
+                      </option>
+                    ))}
+                </select>
+                <select
+                  aria-label="New relation since chapter"
+                  title="The chapter this bond began in"
+                  value={newRelationChapterId}
+                  onChange={(e) => setNewRelationChapterId(e.target.value)}
+                >
+                  <option value="">No chapter recorded</option>
+                  {chapterChoices.map(node => (
+                    <option key={node.id} value={node.id}>
+                      {node.data.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  aria-label="New relation note"
+                  placeholder="Note"
+                  value={newRelationNote}
+                  onChange={(e) => setNewRelationNote(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void addRelation()}
+                />
+                <button
+                  title="Record this relation on the character's sheet"
+                  onClick={() => void addRelation()}
+                  disabled={!newRelationToId || !newRelationKind.trim()}
+                >
+                  Add relation
+                </button>
+              </div>
+            </div>
+
+            {/* A faction is a card, so the standing names it by its
+                label and keeps the arc it began in. */}
+            <div className="standings-section">
+              <h4 className="character-section-heading">
+                Faction standings
+              </h4>
+
+              <div className="standing-list">
+                {selectedStandings.length === 0 && (
+                  <div className="empty">
+                    No faction standings yet — record one below.
+                  </div>
+                )}
+
+                {selectedStandings.map(standing => {
+                  const factionName =
+                    (standing.faction_node_id
+                      ? factionCardChoices.find(
+                          node => node.id === standing.faction_node_id
+                        )?.data.label
+                      : null) ?? 'a faction no longer on the board';
+                  const sinceLabel = standing.since_chapter_id
+                    ? chapterLabelById.get(standing.since_chapter_id) ??
+                      'a chapter in the trash'
+                    : null;
+                  const untilLabel = standing.until_chapter_id
+                    ? chapterLabelById.get(standing.until_chapter_id) ??
+                      'a chapter in the trash'
+                    : null;
+                  const focused =
+                    focusedProgression?.kind === 'faction-standing' &&
+                    focusedProgression.id === standing.id;
+
+                  return (
+                    <div
+                      key={standing.id}
+                      data-progression={`faction-standing-${standing.id}`}
+                      className={`standing-row${
+                        focused ? ' progression-row-focused' : ''
+                      }`}
+                    >
+                      {editingStandingId === standing.id ? (
+                        <div className="standing-editor">
+                          <select
+                            aria-label="Standing faction"
                             title="The faction card this standing belongs to"
-                            value={newStandingFactionId}
-                            onChange={(e) => setNewStandingFactionId(e.target.value)}
+                            value={standingFactionDraft}
+                            onChange={(e) =>
+                              setStandingFactionDraft(e.target.value)
+                            }
                           >
                             <option value="">Choose faction…</option>
                             {factionCardChoices.map(node => (
@@ -12688,57 +12241,24 @@ function App() {
                               </option>
                             ))}
                           </select>
-                          <span className="faction-quick-add">
-                            <input
-                              aria-label="New standing faction name"
-                              title="Make a faction card and record this standing in it"
-                              placeholder="New faction…"
-                              value={newStandingFactionName}
-                              onChange={event =>
-                                setNewStandingFactionName(event.target.value)
-                              }
-                              onKeyDown={event => {
-                                if (event.key !== 'Enter') return;
-                                event.preventDefault();
-                                void createFactionCard(
-                                  newStandingFactionName,
-                                  id => {
-                                    setNewStandingFactionId(id);
-                                    setNewStandingFactionName('');
-                                  },
-                                  setCharacterError
-                                );
-                              }}
-                            />
-                            <button
-                              type="button"
-                              title="Create this faction card and choose it"
-                              disabled={!newStandingFactionName.trim()}
-                              onClick={() =>
-                                void createFactionCard(
-                                  newStandingFactionName,
-                                  id => {
-                                    setNewStandingFactionId(id);
-                                    setNewStandingFactionName('');
-                                  },
-                                  setCharacterError
-                                )
-                              }
-                            >
-                              Add faction
-                            </button>
-                          </span>
                           <input
-                            aria-label="New standing role"
+                            aria-label="Standing role"
                             placeholder="Standing (Member)"
-                            value={newStandingText}
-                            onChange={(e) => setNewStandingText(e.target.value)}
+                            autoFocus
+                            value={standingTextDraft}
+                            onChange={(e) => setStandingTextDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void saveStanding(standing);
+                              if (e.key === 'Escape') setEditingStandingId(null);
+                            }}
                           />
                           <select
-                            aria-label="New standing since chapter"
+                            aria-label="Standing since chapter"
                             title="The chapter this standing began in"
-                            value={newStandingChapterId}
-                            onChange={(e) => setNewStandingChapterId(e.target.value)}
+                            value={standingChapterDraft}
+                            onChange={(e) =>
+                              setStandingChapterDraft(e.target.value)
+                            }
                           >
                             <option value="">Choose chapter…</option>
                             {chapterChoices.map(node => (
@@ -12747,118 +12267,265 @@ function App() {
                               </option>
                             ))}
                           </select>
-                          <input
-                            aria-label="New standing note"
-                            placeholder="Note"
-                            value={newStandingNote}
-                            onChange={(e) => setNewStandingNote(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && void addStanding()}
-                          />
-                          <button
-                            title="Record this faction standing on the character's sheet"
-                            onClick={() => void addStanding()}
-                            disabled={
-                              !newStandingFactionId ||
-                              !newStandingText.trim() ||
-                              !newStandingChapterId
+                          <select
+                            aria-label="Standing until chapter"
+                            title="The chapter this standing ended in, if it did"
+                            value={standingUntilChapterDraft}
+                            onChange={(e) =>
+                              setStandingUntilChapterDraft(e.target.value)
                             }
                           >
-                            Add standing
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="stat-list">
-                        {characterStats.length === 0 && (
-                          <div className="empty">No stats yet — add one below.</div>
-                        )}
-
-                        {characterStats.map(stat => (
-                          <div key={stat.id} className="stat-row">
-                            <span className="stat-name">{stat.stat_name}</span>
-
-                            {editingStatId === stat.id ? (
-                              <>
-                                <input
-                                  className="stat-value-input"
-                                  type="number"
-                                  autoFocus
-                                  value={statValueDraft}
-                                  onChange={(e) => setStatValueDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') saveStat(stat);
-                                    if (e.key === 'Escape') setEditingStatId(null);
-                                  }}
-                                />
-                                <input
-                                  className="stat-notes-input"
-                                  placeholder="Notes (optional)"
-                                  value={statNotesDraft}
-                                  onChange={(e) => setStatNotesDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') saveStat(stat);
-                                    if (e.key === 'Escape') setEditingStatId(null);
-                                  }}
-                                />
-                                <button
-                                  title={`Save this new ${stat.stat_name} value and notes`}
-                                  onClick={() => saveStat(stat)}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  title="Leave the value as it was"
-                                  onClick={() => setEditingStatId(null)}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <span className="stat-value">{stat.value}</span>
-                                {stat.notes && <span className="stat-notes">{stat.notes}</span>}
-                                <button
-                                  title={`Change this ${stat.stat_name} value or notes`}
-                                  onClick={() => startStatEdit(stat)}
-                                >
-                                  Edit
-                                </button>
-                              </>
-                            )}
+                            <option value="">Still standing</option>
+                            {chapterChoices.map(node => (
+                              <option key={node.id} value={node.id}>
+                                {node.data.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label="Standing note"
+                            placeholder="Note"
+                            value={standingNoteDraft}
+                            onChange={(e) => setStandingNoteDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void saveStanding(standing);
+                              if (e.key === 'Escape') setEditingStandingId(null);
+                            }}
+                          />
+                          <div className="standing-actions">
+                            <button
+                              title="Save this faction standing"
+                              onClick={() => void saveStanding(standing)}
+                            >
+                              Save standing
+                            </button>
+                            <button
+                              title="Leave the standing as it was"
+                              onClick={() => setEditingStandingId(null)}
+                            >
+                              Cancel
+                            </button>
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="standing-summary">
+                            <span className="standing-faction">
+                              {factionName}
+                            </span>
+                            <span className="standing-role">
+                              {standing.standing}
+                            </span>
+                            <span className="standing-when">
+                              {sinceLabel
+                                ? `since ${sinceLabel}`
+                                : 'no chapter recorded'}
+                              {untilLabel ? ` – ${untilLabel}` : ''}
+                            </span>
+                          </div>
+                          {standing.note && (
+                            <span className="standing-note">
+                              {standing.note}
+                            </span>
+                          )}
+                          <button
+                            title={`Change this ${standing.standing} standing`}
+                            onClick={() => startStandingEdit(standing)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            title={`Delete this ${standing.standing} standing`}
+                            onClick={() => void removeStanding(standing)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
-                      <div className="stat-creator">
-                        <input
-                          placeholder="Stat name"
-                          value={newStatName}
-                          onChange={(e) => setNewStatName(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && addStat()}
-                        />
-                        <input
-                          className="stat-value-input"
-                          type="number"
-                          placeholder="0"
-                          value={newStatValue}
-                          onChange={(e) => setNewStatValue(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && addStat()}
-                        />
-                        <button
-                          title="Add this stat, or update it if the name already exists"
-                          onClick={addStat}
-                          disabled={!newStatName.trim()}
-                        >
-                          Add stat
-                        </button>
-                      </div>
+              <div className="standing-creator">
+                <select
+                  aria-label="New standing faction"
+                  title="The faction card this standing belongs to"
+                  value={newStandingFactionId}
+                  onChange={(e) => setNewStandingFactionId(e.target.value)}
+                >
+                  <option value="">Choose faction…</option>
+                  {factionCardChoices.map(node => (
+                    <option key={node.id} value={node.id}>
+                      {node.data.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="faction-quick-add">
+                  <input
+                    aria-label="New standing faction name"
+                    title="Make a faction card and record this standing in it"
+                    placeholder="New faction…"
+                    value={newStandingFactionName}
+                    onChange={event =>
+                      setNewStandingFactionName(event.target.value)
+                    }
+                    onKeyDown={event => {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      void createFactionCard(
+                        newStandingFactionName,
+                        id => {
+                          setNewStandingFactionId(id);
+                          setNewStandingFactionName('');
+                        },
+                        setCharacterError
+                      );
+                    }}
+                  />
+                  <button
+                    type="button"
+                    title="Create this faction card and choose it"
+                    disabled={!newStandingFactionName.trim()}
+                    onClick={() =>
+                      void createFactionCard(
+                        newStandingFactionName,
+                        id => {
+                          setNewStandingFactionId(id);
+                          setNewStandingFactionName('');
+                        },
+                        setCharacterError
+                      )
+                    }
+                  >
+                    Add faction
+                  </button>
+                </span>
+                <input
+                  aria-label="New standing role"
+                  placeholder="Standing (Member)"
+                  value={newStandingText}
+                  onChange={(e) => setNewStandingText(e.target.value)}
+                />
+                <select
+                  aria-label="New standing since chapter"
+                  title="The chapter this standing began in"
+                  value={newStandingChapterId}
+                  onChange={(e) => setNewStandingChapterId(e.target.value)}
+                >
+                  <option value="">Choose chapter…</option>
+                  {chapterChoices.map(node => (
+                    <option key={node.id} value={node.id}>
+                      {node.data.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  aria-label="New standing note"
+                  placeholder="Note"
+                  value={newStandingNote}
+                  onChange={(e) => setNewStandingNote(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void addStanding()}
+                />
+                <button
+                  title="Record this faction standing on the character's sheet"
+                  onClick={() => void addStanding()}
+                  disabled={
+                    !newStandingFactionId ||
+                    !newStandingText.trim() ||
+                    !newStandingChapterId
+                  }
+                >
+                  Add standing
+                </button>
+              </div>
+            </div>
+
+            <div className="stat-list">
+              {characterStats.length === 0 && (
+                <div className="empty">No stats yet — add one below.</div>
+              )}
+
+              {characterStats.map(stat => (
+                <div key={stat.id} className="stat-row">
+                  <span className="stat-name">{stat.stat_name}</span>
+
+                  {editingStatId === stat.id ? (
+                    <>
+                      <input
+                        className="stat-value-input"
+                        type="number"
+                        autoFocus
+                        value={statValueDraft}
+                        onChange={(e) => setStatValueDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveStat(stat);
+                          if (e.key === 'Escape') setEditingStatId(null);
+                        }}
+                      />
+                      <input
+                        className="stat-notes-input"
+                        placeholder="Notes (optional)"
+                        value={statNotesDraft}
+                        onChange={(e) => setStatNotesDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveStat(stat);
+                          if (e.key === 'Escape') setEditingStatId(null);
+                        }}
+                      />
+                      <button
+                        title={`Save this new ${stat.stat_name} value and notes`}
+                        onClick={() => saveStat(stat)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        title="Leave the value as it was"
+                        onClick={() => setEditingStatId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="stat-value">{stat.value}</span>
+                      {stat.notes && <span className="stat-notes">{stat.notes}</span>}
+                      <button
+                        title={`Change this ${stat.stat_name} value or notes`}
+                        onClick={() => startStatEdit(stat)}
+                      >
+                        Edit
+                      </button>
                     </>
                   )}
                 </div>
-                </div>
-              </>
-            )}
-          </div>
+              ))}
+            </div>
+
+            <div className="stat-creator">
+              <input
+                placeholder="Stat name"
+                value={newStatName}
+                onChange={(e) => setNewStatName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addStat()}
+              />
+              <input
+                className="stat-value-input"
+                type="number"
+                placeholder="0"
+                value={newStatValue}
+                onChange={(e) => setNewStatValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addStat()}
+              />
+              <button
+                title="Add this stat, or update it if the name already exists"
+                onClick={addStat}
+                disabled={!newStatName.trim()}
+              >
+                Add stat
+              </button>
+            </div>
+          </CharacterSheetPanel>
         )}
 
         {selectedTab === 'quests' && (
