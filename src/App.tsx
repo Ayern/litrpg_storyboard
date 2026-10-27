@@ -65,6 +65,7 @@ import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
+import { useCanvasInspector } from './domains/canvas/useCanvasInspector';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
@@ -771,16 +772,6 @@ function App() {
     followStoredRows,
   } = useCanvasDrafts({ nodes, edges });
 
-  // The inspector keeps its own copy of the matched cast member's numbers, so
-  // editing from the canvas never depends on what the Characters tab has
-  // selected. One row at a time is open for editing, as on that tab.
-  const [inspectorStats, setInspectorStats] = useState<CharacterStat[]>([]);
-  const [inspectorAttributes, setInspectorAttributes] = useState<CharacterAttribute[]>([]);
-  const [inspectorStatId, setInspectorStatId] = useState<string | null>(null);
-  const [inspectorStatValue, setInspectorStatValue] = useState('');
-  const [inspectorAttrId, setInspectorAttrId] = useState<string | null>(null);
-  const [inspectorAttrValue, setInspectorAttrValue] = useState('');
-  const [inspectorError, setInspectorError] = useState<string | null>(null);
   // Adding a holder from a skill card copies the card's name and notes onto that
   // character's sheet; rank and chapter stay the holder's own facts.
   const [skillHolderCharacterId, setSkillHolderCharacterId] = useState('');
@@ -4722,6 +4713,35 @@ function App() {
     });
   };
 
+  // The linked cast member's own numbers, the row open for editing and the line
+  // an error is written on live in the canvas domain. It is called here because
+  // the handler that reaches the story-wide badges is what it is handed: a saved
+  // stat has to move the badge on every card, not only this panel.
+  const {
+    inspectorCharacter,
+    inspectorStats,
+    inspectorAttributes,
+    inspectorStatId,
+    setInspectorStatId,
+    inspectorStatValue,
+    setInspectorStatValue,
+    startInspectorStat,
+    saveInspectorStat,
+    inspectorAttrId,
+    setInspectorAttrId,
+    inspectorAttrValue,
+    setInspectorAttrValue,
+    startInspectorAttribute,
+    saveInspectorAttribute,
+    inspectorError,
+    reportInspectorError,
+  } = useCanvasInspector({
+    linkedCharacterId: selectedNode?.data.characterId ?? null,
+    characters,
+    rememberStat,
+    actor,
+  });
+
   const startStatEdit = (stat: CharacterStat) => {
     setEditingStatId(stat.id);
     setStatValueDraft(String(stat.value));
@@ -6820,7 +6840,7 @@ function App() {
 
     const previousId = selectedNode.data.characterId ?? null;
 
-    setInspectorError(null);
+    reportInspectorError(null);
     setRenameOffer(null);
 
     try {
@@ -6853,7 +6873,7 @@ function App() {
       );
     } catch (e) {
       console.error('Failed to link a cast member to a node:', e);
-      setInspectorError(`Could not link the cast member: ${String(e)}`);
+      reportInspectorError(`Could not link the cast member: ${String(e)}`);
     }
   };
 
@@ -6897,7 +6917,7 @@ function App() {
       return;
     }
 
-    setInspectorError(null);
+    reportInspectorError(null);
 
     try {
       const updated: any = await canvasApi.updateGraphNode(
@@ -6958,88 +6978,7 @@ function App() {
       setRenameOffer(null);
     } catch (e) {
       console.error('Failed to rename a relinked node:', e);
-      setInspectorError(`Could not rename the node: ${String(e)}`);
-    }
-  };
-
-  const startInspectorStat = (stat: CharacterStat) => {
-    setInspectorStatId(stat.id);
-    setInspectorStatValue(String(stat.value));
-    setInspectorError(null);
-  };
-
-  // Editing a stat from the canvas writes through the same command as the
-  // Characters tab, so the change is recorded exactly as if it were made there.
-  // The notes are passed back unchanged rather than being cleared.
-  const saveInspectorStat = async (stat: CharacterStat) => {
-    if (!inspectorCharacter) return;
-
-    const value = Number(inspectorStatValue);
-
-    if (!inspectorStatValue.trim() || !Number.isFinite(value)) {
-      setInspectorError('A stat value has to be a number.');
-      return;
-    }
-
-    try {
-      const updated: CharacterStat = await charactersApi.setCharacterStat(
-        inspectorCharacter.id,
-        stat.stat_name,
-        Math.trunc(value),
-        stat.notes,
-        actor
-      );
-
-      setInspectorStats(prev =>
-        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
-          a.stat_name.localeCompare(b.stat_name)
-        )
-      );
-      rememberStat(updated);
-      setInspectorStatId(null);
-      setInspectorError(null);
-    } catch (e) {
-      console.error('Failed to save a stat from the inspector:', e);
-      setInspectorError(`Could not save stat: ${String(e)}`);
-    }
-  };
-
-  const startInspectorAttribute = (attribute: CharacterAttribute) => {
-    setInspectorAttrId(attribute.id);
-    setInspectorAttrValue(attribute.value);
-    setInspectorError(null);
-  };
-
-  const saveInspectorAttribute = async (attribute: CharacterAttribute) => {
-    if (!inspectorCharacter) return;
-
-    const value = inspectorAttrValue.trim();
-
-    if (!value) {
-      setInspectorError(
-        'An attribute needs a value — delete it on the Characters tab to remove it.'
-      );
-      return;
-    }
-
-    try {
-      const updated: CharacterAttribute = await charactersApi.setCharacterAttribute(
-        inspectorCharacter.id,
-        attribute.attr_name,
-        value,
-        actor
-      );
-
-      setInspectorAttributes(prev =>
-        [...prev.filter(other => other.id !== updated.id), updated].sort((a, b) =>
-          a.attr_name.localeCompare(b.attr_name)
-        )
-      );
-      setInspectorAttrId(null);
-      setInspectorError(null);
-    } catch (e) {
-      console.error('Failed to save an attribute from the inspector:', e);
-      setInspectorError(`Could not save attribute: ${String(e)}`);
+      reportInspectorError(`Could not rename the node: ${String(e)}`);
     }
   };
 
@@ -7649,50 +7588,6 @@ function App() {
       setCharacterError(`Could not level up: ${String(e)}`);
     }
   };
-
-  // The node's stored link, resolved against the live cast. A link to a cast
-  // member that is not in the list is one in the trash; nothing is guessed from
-  // the node's label any more.
-  const inspectorCharacter =
-    selectedNode?.data.characterId
-      ? characters.find(character => character.id === selectedNode.data.characterId) ?? null
-      : null;
-
-  useEffect(() => {
-    if (!inspectorCharacter) {
-      setInspectorStats([]);
-      setInspectorAttributes([]);
-      setInspectorStatId(null);
-      setInspectorAttrId(null);
-      return;
-    }
-
-    const characterId = inspectorCharacter.id;
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const [stats, attributes] = await Promise.all([
-          charactersApi.getCharacterStats(characterId),
-          charactersApi.getCharacterAttributes(characterId),
-        ]);
-        if (cancelled) return;
-
-        setInspectorStats(stats);
-        setInspectorAttributes(attributes);
-        setInspectorError(null);
-      } catch (e) {
-        console.error('Failed to load the cast member for the inspector:', e);
-        if (!cancelled) setInspectorError(`Could not load the cast member: ${String(e)}`);
-      }
-    };
-
-    load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [inspectorCharacter]);
 
   // One palette, placed on two tabs: over the canvas and above the chapter list.
   // Only one tab renders at a time, so there is never a second copy of it.

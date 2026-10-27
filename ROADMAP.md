@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Six are done.
+searching ten thousand lines. Seven are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -525,6 +525,15 @@ searching ten thousand lines. Six are done.
   and the rule that nothing is asked while another tab is showing. The lines and
   the metric filter are pure, in `chart.ts`, so what a metric can plot is read
   without React. Direct suite of 27.
+- **`domains/canvas/useCanvasInspector.ts`** — the cast member the open card
+  names, that member's own stats and attributes, the one row of each list that
+  is open for editing, and the four writes, which run the same commands the
+  sheet runs, so a number changed from the canvas is recorded as if it had been
+  typed on the sheet. The cast arrives as an argument, so resolving the link is
+  all it does with the board; a saved stat goes back out through `rememberStat`,
+  because the badges are drawn from the story-wide read. The relink and the
+  rename report on the same line, so they are handed the hook's own reporter.
+  Direct suite of 31.
 
 Each follows one shape, and every later hook should too:
 
@@ -532,6 +541,9 @@ Each follows one shape, and every later hook should too:
   takes the rows as an argument rather than reading the database.
 - **Writes stay with the app.** A save still runs its command, its history step
   and its audit entry in `App.tsx`; the hook is handed the row that came back.
+  A plain field edit is the exception: the inspector's four writes run the
+  sheet's own commands, which write their audit entry themselves, and carry no
+  history step, so there is nothing outside the hook for them to keep in step.
 - **Outside work is a callback.** What a hook cannot own — the error line, the
   board reload, the audit entry — arrives as a named callback, never a bare
   setter.
@@ -544,18 +556,15 @@ These are the blocks of state still in `App.tsx`, with the handlers that go with
 them. The order is by how much each one would take out of the file, so it is a
 real order rather than a tidy one:
 
-1. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
-   attributes, one row open at a time, and the four writes that go through the
-   same commands the sheet uses. **M**
-2. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
+1. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
    the sheet: the new-stat form, one row open at a time, and the rows
    themselves. **S–M**
-3. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+2. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
    holder is added with, and its reset when another card is opened. **S**
 
-**The inspector and the sheet's stats are what is left of the drafts.** They are
-smaller than the six hooks already out, and once they are gone the two loads are
-the last thing standing in front of the board itself.
+**The sheet's stats and the skill-holder form are what is left of the drafts.**
+They are the smallest of the hooks, and once they are gone the two loads are the
+last thing standing in front of the board itself.
 
 ### What stays in `App.tsx`
 
