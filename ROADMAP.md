@@ -487,7 +487,7 @@ The tab panels came out of `App.tsx` one domain at a time. What is left there is
 mostly *state*: the drafts, prompts and notices of a single slice, spread from the
 top of the file to the bottom. Stage 4 moves each slice into a hook beside its
 domain, so a change to the canvas or the history opens one file instead of
-searching ten thousand lines. Five are done.
+searching ten thousand lines. Six are done.
 
 - **`domains/history/useHistory.ts`** — the session's undo and redo stacks, the
   50-step cap, the counts the toolbar draws, the undo notice and its own fade,
@@ -519,6 +519,12 @@ searching ten thousand lines. Five are done.
   the four reads of a closed board in `api.ts`. It also keeps the id of the story
   the window was showing, which is what the history writes a refused step
   against. Direct suite of 29.
+- **`domains/progression/useProgressionChart.ts`** — the metric a line is read in,
+  the stat it follows, the cast members hidden from the comparison, and the
+  chapter snapshot: which chapter it asks about, the answer keyed by cast member,
+  and the rule that nothing is asked while another tab is showing. The lines and
+  the metric filter are pure, in `chart.ts`, so what a metric can plot is read
+  without React. Direct suite of 27.
 
 Each follows one shape, and every later hook should too:
 
@@ -538,21 +544,18 @@ These are the blocks of state still in `App.tsx`, with the handlers that go with
 them. The order is by how much each one would take out of the file, so it is a
 real order rather than a tidy one:
 
-1. **`domains/progression/useProgressionChart`** — the stat chosen for the
-   chart, the hidden cast, the chapter-state read and the series built from
-   them. **M**
-2. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
+1. **`domains/canvas/useCanvasInspector`** — the linked cast member's stats and
    attributes, one row open at a time, and the four writes that go through the
    same commands the sheet uses. **M**
-3. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
+2. **`domains/characters/useSheetStats`** — the stat rows still drawn inline in
    the sheet: the new-stat form, one row open at a time, and the rows
    themselves. **S–M**
-4. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
+3. **`domains/canvas/useSkillHolderForm`** — the character, rank and chapter a
    holder is added with, and its reset when another card is opened. **S**
 
-**The chart, the inspector and the sheet's stats are what is left of the
-drafts.** They are smaller than the five hooks already out, and once they are
-gone the two loads are the last thing standing in front of the board itself.
+**The inspector and the sheet's stats are what is left of the drafts.** They are
+smaller than the six hooks already out, and once they are gone the two loads are
+the last thing standing in front of the board itself.
 
 ### What stays in `App.tsx`
 

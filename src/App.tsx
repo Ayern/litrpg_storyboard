@@ -68,6 +68,7 @@ import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
+import { useProgressionChart } from './domains/progression/useProgressionChart';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
@@ -78,11 +79,7 @@ import type {
   NodeType,
 } from './domains/canvas/types';
 import type { CharacterCurrency, InventoryItem } from './domains/inventory/types';
-import type {
-  ChapterCastMember,
-  ChapterCastState,
-  CharacterChapterState,
-} from './domains/narrative/types';
+import type { ChapterCastMember, ChapterCastState } from './domains/narrative/types';
 import { ProgressionSections } from './domains/characters/ProgressionSections';
 import type {
   MilestoneDraft,
@@ -90,15 +87,7 @@ import type {
   XpEntryDraft,
 } from './domains/characters/ProgressionSections';
 import type { LevelStatChangeDraft } from './domains/progression/drafts';
-import {
-  milestoneLabel,
-  milestoneStatChanges,
-} from './domains/progression/helpers';
-import type {
-  ProgressionChartSeries,
-  ProgressionFocus,
-  ProgressionMetric,
-} from './domains/progression/types';
+import type { ProgressionFocus } from './domains/progression/types';
 import type { Quest, QuestWarning } from './domains/quests/types';
 import { SkillsSection } from './domains/skills/SkillsSection';
 import type { SkillDraft, SkillEventDraft } from './domains/skills/SkillsSection';
@@ -226,19 +215,6 @@ interface PendingEdgeRemoval {
   skillChapterId?: string | null;
   skillNodeId?: string | null;
 }
-
-// Fixed, distinguishable line colours. A cast member keeps the same colour while
-// the chart is open, so hiding one line does not recolour the comparison.
-const PROGRESSION_CHART_COLORS = [
-  '#7ac47a',
-  '#7aa2f7',
-  '#e0af68',
-  '#f7768e',
-  '#bb9af7',
-  '#2ac3de',
-  '#9ece6a',
-  '#ff9e64',
-];
 
 // How many note cards hang under one chapter before the rest are counted.
 const NOTE_CARDS_SHOWN = 3;
@@ -869,15 +845,6 @@ function App() {
     []
   );
 
-  // The chart compares cast members, so a line is only hidden explicitly rather
-  // than being selected on first load. The chapter-state readout asks the
-  // database for the active level and skills rather than recalculating them.
-  const [hiddenChartCharacterIds, setHiddenChartCharacterIds] = useState<string[]>([]);
-  const [chartStateChapterId, setChartStateChapterId] = useState('');
-  const [chartChapterStates, setChartChapterStates] = useState<CharacterChapterState[]>([]);
-  const [chartStateLoading, setChartStateLoading] = useState(false);
-  const [chartStateError, setChartStateError] = useState<string | null>(null);
-
   const [characterInventory, setCharacterInventory] = useState<InventoryItem[]>([]);
   const [storyInventory, setStoryInventory] = useState<InventoryItem[]>([]);
   // Read by an undo step recorded before a later edit, so putting the lost
@@ -892,8 +859,6 @@ function App() {
   const [returnedNotice, setReturnedNotice] = useState<{ itemName: string } | null>(null);
 
 
-  const [chartMetric, setChartMetric] = useState<ProgressionMetric>('level');
-  const [chartStatName, setChartStatName] = useState('');
   const [focusedProgression, setFocusedProgression] =
     useState<ProgressionFocus | null>(null);
   const progressionFocusTimer = useRef<number | null>(null);
@@ -7537,199 +7502,41 @@ function App() {
     [chapterNodes]
   );
 
-  // A primary-stat line needs a name that either sits on a sheet now or was
-  // snapshotted on a milestone before the sheet changed.
-  const statNameOptions = useMemo(() => {
-    const names = new Set<string>();
-
-    for (const stats of Object.values(castStats)) {
-      for (const stat of stats) names.add(stat.stat_name);
-    }
-
-    for (const milestone of storyLevelMilestones) {
-      for (const change of milestoneStatChanges(milestone)) {
-        names.add(change.stat_name);
-      }
-    }
-
-    return [...names].sort((left, right) => left.localeCompare(right));
-  }, [castStats, storyLevelMilestones]);
-
-  useEffect(() => {
-    if (chartMetric !== 'stat') return;
-
-    setChartStatName(previous =>
-      previous && statNameOptions.includes(previous)
-        ? previous
-        : statNameOptions[0] ?? ''
-    );
-  }, [chartMetric, statNameOptions]);
-
-  // The chart reads the same story-wide milestone rows the continuity checks
-  // use. Only chapters that are on the board can place a point, so a milestone
-  // whose chapter is in the trash is left out rather than guessed at.
-  const chartSeries = useMemo<ProgressionChartSeries[]>(() => {
-    const chapterIds = new Set(chapterNodes.map(chapter => chapter.id));
-
-    return characters
-      .map((character, index) => ({
-        characterId: character.id,
-        name: character.name,
-        color: PROGRESSION_CHART_COLORS[index % PROGRESSION_CHART_COLORS.length],
-        milestones: storyLevelMilestones.filter(
-          milestone =>
-            milestone.character_id === character.id &&
-            milestone.chapter_id !== null &&
-            chapterIds.has(milestone.chapter_id)
-        ),
-        progress: storyCharacterProgress.filter(
-          entry =>
-            entry.character_id === character.id && chapterIds.has(entry.chapter_id)
-        ),
-      }))
-      .filter(series => series.milestones.length > 0 || series.progress.length > 0);
-  }, [characters, storyLevelMilestones, storyCharacterProgress, chapterNodes]);
-
-  const chartMilestoneSeries = useMemo(
-    () => chartSeries.filter(series => series.milestones.length > 0),
-    [chartSeries]
-  );
-
-  // Only a character with a recorded value can have a point in the chosen
-  // metric. Level is always present, XP and a stat snapshot are optional, and
-  // income comes from its own ledger rather than being inferred from totals.
-  const chartMetricSeries = useMemo(() => {
-    if (chartMetric === 'level') return chartMilestoneSeries;
-
-    if (chartMetric === 'xp') {
-      return chartMilestoneSeries.filter(series =>
-        series.milestones.some(milestone => milestone.xp != null)
-      );
-    }
-
-    if (chartMetric === 'earned') {
-      return chartSeries.filter(series => series.progress.length > 0);
-    }
-
-    if (!chartStatName) return [];
-
-    return chartMilestoneSeries.filter(series =>
-      series.milestones.some(milestone =>
-        milestoneStatChanges(milestone).some(
-          change => change.stat_name === chartStatName && change.value_after != null
-        )
-      )
-    );
-  }, [chartSeries, chartMilestoneSeries, chartMetric, chartStatName]);
-
-  const visibleComparisonSeries = useMemo(
-    () =>
-      chartMilestoneSeries.filter(
-        series => !hiddenChartCharacterIds.includes(series.characterId)
-      ),
-    [chartMilestoneSeries, hiddenChartCharacterIds]
-  );
-
-  const visibleChartSeries = useMemo(
-    () =>
-      chartMetricSeries.filter(
-        series => !hiddenChartCharacterIds.includes(series.characterId)
-      ),
-    [chartMetricSeries, hiddenChartCharacterIds]
-  );
-
-  // The chapter-state request is keyed by ids rather than by the series array.
-  // `useMemo` can hand back a fresh array when the board redraws; the ids are what
-  // actually change the question being asked of the database. It follows the
-  // comparison set, not the metric, so switching to XP does not hide a character
-  // from the "as of chapter" readout.
-  const visibleChartCharacterIds = visibleComparisonSeries
-    .map(series => series.characterId)
-    .join('|');
-
-  // A chapter without a reading-order number cannot anchor an "as of" query, so
-  // the readout offers only chapters the database can actually place.
-  const chartStateChapters = useMemo(
-    () => chapterNodes.filter(chapter => chapter.data.chapterSeq != null),
-    [chapterNodes]
-  );
-
-  const chartStateById = useMemo(
-    () => new Map(chartChapterStates.map(state => [state.character_id, state])),
-    [chartChapterStates]
-  );
-
-  const chartStateChapter =
-    chartStateChapters.find(chapter => chapter.id === chartStateChapterId) ?? null;
-
-  useEffect(() => {
-    if (selectedTab !== 'characters') return;
-
-    setChartStateChapterId(previous => {
-      if (previous && chartStateChapters.some(chapter => chapter.id === previous)) {
-        return previous;
-      }
-
-      return chartStateChapters[chartStateChapters.length - 1]?.id ?? '';
-    });
-  }, [selectedTab, chartStateChapters]);
-
-  useEffect(() => {
-    if (
-      selectedTab !== 'characters' ||
-      !currentStory ||
-      !chartStateChapterId ||
-      !visibleChartCharacterIds
-    ) {
-      setChartChapterStates(previous => (previous.length === 0 ? previous : []));
-      setChartStateLoading(false);
-      setChartStateError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setChartStateLoading(true);
-    setChartStateError(null);
-
-    Promise.all(
-      visibleChartCharacterIds.split('|').map(characterId =>
-        progressionApi.getCharacterStateAtChapter(characterId, chartStateChapterId)
-      )
-    )
-      .then(states => {
-        if (cancelled) return;
-        setChartChapterStates(
-          states.filter((state): state is CharacterChapterState => Boolean(state))
-        );
-      })
-      .catch(error => {
-        if (cancelled) return;
-        setChartChapterStates([]);
-        setChartStateError(String(error));
-      })
-      .finally(() => {
-        if (!cancelled) setChartStateLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    selectedTab,
-    currentStory,
+  // The chart's own state — the metric, the stat a line follows, the hidden
+  // comparison and the chapter snapshot — lives in the progression domain. The
+  // story's rows arrive as arguments because the chart and the sheets read the
+  // same ledgers; the sheet's jump target stays here, because it is about which
+  // row is open rather than about what is drawn.
+  const {
+    chartMetric,
+    setChartMetric,
+    chartStatName,
+    setChartStatName,
+    statNameOptions,
+    chartSeries,
+    chartMilestoneSeries,
+    chartMetricSeries,
+    visibleChartSeries,
+    visibleComparisonSeries,
+    hiddenChartCharacterIds,
+    toggleChartCharacter,
+    chartStateChapters,
+    chartStateChapter,
     chartStateChapterId,
-    visibleChartCharacterIds,
-    storyLevelMilestones,
-    storySkillEvents,
-  ]);
-
-  const toggleChartCharacter = (characterId: string) => {
-    setHiddenChartCharacterIds(previous =>
-      previous.includes(characterId)
-        ? previous.filter(id => id !== characterId)
-        : [...previous, characterId]
-    );
-  };
+    setChartStateChapterId,
+    chartStateById,
+    chartStateLoading,
+    chartStateError,
+  } = useProgressionChart({
+    characters,
+    milestones: storyLevelMilestones,
+    progress: storyCharacterProgress,
+    chapterNodes,
+    castStats,
+    active: selectedTab === 'characters',
+    storyId: currentStory?.id ?? null,
+    skillEvents: storySkillEvents,
+  });
 
   const selectedCharacter =
     characters.find(character => character.id === selectedCharacterId) ?? null;
