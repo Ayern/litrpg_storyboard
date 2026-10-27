@@ -544,7 +544,10 @@ example, `src-tauri/db/examples/screenshot_fixture.rs`, so every row has the sha
 the desktop build sends. The sample story is the app's prepared demo story plus the
 cards, bonds, quests, loot and trash the workflows needed.
 
-To regenerate either the story or the images, see
-[`tools/screenshots/README.md`](tools/screenshots/README.md). Nothing in
-`tools/` is part of the app: `npm run build`, `npm test` and the Tauri bundles do
-not read it.
+To regenerate the story and every picture above in one step, run
+`npm run screenshots`. The run shoots each anchor, then compares what it shot with
+the images this guide links and fails if the two lists differ, so the gallery
+cannot quietly drift from the app it documents.
+[`tools/screenshots/README.md`](tools/screenshots/README.md) has the detail.
+Nothing in `tools/` is part of the app: `npm run build`, `npm test` and the Tauri
+bundles do not read it.
