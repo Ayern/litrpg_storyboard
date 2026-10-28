@@ -391,6 +391,24 @@ beforeEach(() => {
       case 'delete_level_milestone':
         levels = levels.filter(level => level.id !== args.id);
         return null;
+      case 'set_character_stat': {
+        const existing = stats.find(
+          stat =>
+            stat.character_id === args.characterId &&
+            stat.stat_name === args.statName
+        );
+        const saved: StatRow = {
+          id: existing?.id ?? `stat-${stats.length + 1}`,
+          character_id: args.characterId,
+          stat_name: args.statName,
+          value: args.value,
+          notes: args.notes ?? null,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        stats = [...stats.filter(stat => stat.id !== saved.id), saved];
+        return { ...saved };
+      }
       case 'add_character_progress': {
         const saved: ProgressRow = {
           id: `progress-${progress.length + 1}`,
@@ -671,6 +689,224 @@ describe('level and skill continuity', () => {
     expect(continuityText(continuityPanel())).toContain(
       "Rook's “Fireball” is used in “Chapter Three” after it was sacrificed in “Chapter Two”."
     );
+  });
+});
+
+describe('a sheet against the values its level-ups recorded', () => {
+  it('accepts a sheet that matches the last value a level-up recorded', async () => {
+    await openChapters();
+
+    // The first milestone recorded Strength 10 and the sheet has moved on since;
+    // only the latest snapshot is the one the sheet has to agree with.
+    expect(levels[0].stat_changes?.[0].value_after).toBe(10);
+    expect(continuityText(continuityPanel())).not.toContain('on the sheet');
+  });
+
+  it('flags a sheet stat that disagrees with its last level-up', async () => {
+    stats[0].value = 13;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's Strength is 13 on the sheet, but the level-up in “Chapter Two” recorded 12."
+    );
+  });
+
+  it('compares against the last chapter, not the largest number', async () => {
+    // The earlier level-up never counts, even when it happens to match the sheet
+    // better: reading order decides which snapshot is the last one.
+    levels[0].stat_changes![0].value_after = 12;
+    levels[1].stat_changes![0].value_after = 11;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's Strength is 12 on the sheet, but the level-up in “Chapter Two” recorded 11."
+    );
+  });
+
+  it('flags a stat a level-up recorded that the sheet has dropped', async () => {
+    stats = stats.filter(stat => stat.stat_name !== 'Strength');
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's Strength was recorded as 12 in “Chapter Two”, but the sheet no longer has that stat."
+    );
+  });
+
+  it('reads a stat the author spaced or cased differently as the same row', async () => {
+    stats[0].stat_name = ' strength ';
+
+    await openChapters();
+
+    const line = continuityText(continuityPanel());
+    expect(line).not.toContain('on the sheet');
+    expect(line).not.toContain('no longer has');
+  });
+
+  it('holds two spellings of one stat as a single level-up snapshot', async () => {
+    // “strength” in the first chapter and “Strength” in the second are the one
+    // stat, so only the later snapshot is compared — not two warnings.
+    levels[0].stat_changes![0].stat_name = 'strength';
+
+    await openChapters();
+
+    const line = continuityText(continuityPanel());
+    expect(line).not.toContain('on the sheet');
+    expect(line).not.toContain('no longer has');
+  });
+
+  it('names the stat the author probably renamed instead of calling it lost', async () => {
+    stats[0].stat_name = 'STR';
+
+    await openChapters();
+
+    const panel = continuityPanel();
+    expect(continuityText(panel)).toContain(
+      "Rook's Strength was recorded as 12 in “Chapter Two”, but the sheet has “STR” — likely the same stat under another name."
+    );
+
+    // A guess is offered, never acted on: nothing is written over two names
+    // that might be one stat, so the row has no one-click fix.
+    expect(within(panel).queryByRole('button', { name: /^Set to/ })).toBeNull();
+    expect(lastCall('set_character_stat')).toBeUndefined();
+  });
+
+  it('names the row it probably meant on the chapter card too', async () => {
+    stats[0].stat_name = 'STR';
+
+    await openGraph();
+    const card = (
+      await screen.findByText('Chapter Two', { selector: '.graph-node-label' })
+    ).closest('.graph-node');
+
+    expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
+      "Rook's Strength may be “STR” on the sheet"
+    );
+  });
+
+  it('writes the row the sheet holds when the ledger spells it differently', async () => {
+    stats[0] = { ...stats[0], stat_name: 'strength', value: 13 };
+
+    const user = await openChapters();
+    const panel = continuityPanel();
+
+    expect(continuityText(panel)).toContain(
+      "Rook's strength is 13 on the sheet, but the level-up in “Chapter Two” recorded 12 as “Strength”."
+    );
+
+    await user.click(within(panel).getByRole('button', { name: 'Set to 12' }));
+
+    // A stat is written by name, so the fix names the row that already exists
+    // rather than adding a second one beside it.
+    await waitFor(() =>
+      expect(lastCall('set_character_stat')).toMatchObject({
+        statName: 'strength',
+        value: 12,
+      })
+    );
+    expect(stats).toHaveLength(2);
+    expect(stats.map(stat => stat.stat_name)).toContain('strength');
+  });
+
+  it('writes the level-up’s value onto the sheet in one click, with Undo', async () => {
+    stats[0].value = 13;
+
+    const user = await openChapters();
+    const panel = continuityPanel();
+
+    expect(continuityText(panel)).toContain(
+      "Rook's Strength is 13 on the sheet, but the level-up in “Chapter Two” recorded 12."
+    );
+
+    await user.click(
+      within(panel).getByRole('button', { name: 'Set to 12' })
+    );
+
+    // The correction is the sheet's own audited command, so the history says who
+    // changed the number.
+    await waitFor(() =>
+      expect(lastCall('set_character_stat')).toMatchObject({
+        characterId: 'char-1',
+        statName: 'Strength',
+        value: 12,
+        notes: null,
+        user: 'You',
+      })
+    );
+
+    expect(screen.getByText("Synced Rook's Strength to 12.")).toBeInTheDocument();
+    expect(continuityText(continuityPanel())).not.toContain('on the sheet');
+
+    await user.click(
+      screen.getByRole('button', { name: "Undo syncing Rook's Strength" })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('set_character_stat')).toMatchObject({
+        characterId: 'char-1',
+        statName: 'Strength',
+        value: 13,
+      })
+    );
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's Strength is 13 on the sheet"
+    );
+  });
+
+  it('offers the same fix from the chapter card', async () => {
+    stats[0].value = 13;
+
+    const user = await openGraph();
+    const card = (
+      await screen.findByText('Chapter Two', { selector: '.graph-node-label' })
+    ).closest('.graph-node');
+
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
+      "Rook's Strength is 13, ledger says 12"
+    );
+
+    await user.click(
+      within(card as HTMLElement).getByRole('button', {
+        name: 'Set to 12',
+      })
+    );
+
+    await waitFor(() =>
+      expect(lastCall('set_character_stat')).toMatchObject({
+        statName: 'Strength',
+        value: 12,
+      })
+    );
+    expect(screen.getByText("Synced Rook's Strength to 12.")).toBeInTheDocument();
+  });
+
+  it('shows the warning on the chapter card and opens the level-up to fix it', async () => {
+    stats[0].value = 13;
+
+    const user = await openGraph();
+    const card = (
+      await screen.findByText('Chapter Two', { selector: '.graph-node-label' })
+    ).closest('.graph-node');
+
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
+      "Rook's Strength is 13, ledger says 12"
+    );
+
+    await user.click(
+      within(card as HTMLElement).getByRole('button', { name: /Open Rook's sheet/ })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Characters' })).toHaveClass('active')
+    );
+    expect(document.querySelector('[data-character-id="char-1"]')).toHaveClass('active');
+    expect(
+      document.querySelector('[data-progression="level-milestone-2"]')
+    ).toHaveClass('progression-row-focused');
   });
 });
 

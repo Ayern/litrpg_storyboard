@@ -144,6 +144,28 @@ export interface CharacterChapterSkill {
   learned_chapter_seq: number;
 }
 
+// A stat as it stood in one chapter, read from the level-up that recorded it.
+// A stat with no value has not been given a number by the story yet; the name
+// still belongs on the sheet.
+export interface CharacterChapterStat {
+  stat_name: string;
+  value: number | null;
+  recorded_chapter_id: string | null;
+  recorded_chapter_seq: number | null;
+}
+
+// An item a character carried into a chapter: gained by then, not yet lost.
+// The quantity is the row's own, which the app does not date.
+export interface CharacterChapterItem {
+  item_id: string;
+  name: string;
+  quantity: number;
+  rarity: string | null;
+  effect: string | null;
+  acquired_chapter_id: string | null;
+  acquired_chapter_seq: number | null;
+}
+
 // A note kept with a chapter. It is stored as a node, but the row shows only
 // what a note needs: its text and the chapter it hangs under.
 export interface ChapterNote {
@@ -210,5 +232,9 @@ export interface ChapterContinuityFlag {
   // For an XP mismatch: what the ledger adds up to through this milestone's
   // chapter, so the panel can put that number on the milestone in one click.
   ledgerXp?: number;
+  // For a stat mismatch: the stat and the value its last level-up recorded, so
+  // the panel can put that number on the sheet in one click.
+  statName?: string;
+  statValue?: number;
   target: ProgressionTarget;
 }

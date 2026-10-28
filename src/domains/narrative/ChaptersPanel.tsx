@@ -116,6 +116,9 @@ export interface ChaptersPanelProps {
   revealChapter: (chapterId: string) => void;
   syncingXpMilestoneId: string | null;
   syncMilestoneXp: (flag: ChapterContinuityFlag) => Promise<void>;
+  // The row a stat sync is writing, and the write itself.
+  syncingStatKey: string | null;
+  syncSheetStat: (flag: ChapterContinuityFlag) => Promise<void>;
 }
 
 export function ChaptersPanel({
@@ -195,6 +198,8 @@ export function ChaptersPanel({
   revealChapter,
   syncingXpMilestoneId,
   syncMilestoneXp,
+  syncingStatKey,
+  syncSheetStat,
 }: ChaptersPanelProps) {
   // A chapter being dragged, and the row under the pointer with the side the
   // drop would land on. Both are cleared when the drag ends, however it ends.
@@ -798,7 +803,8 @@ export function ChaptersPanel({
                   cannot both be true: a skill learned before its parent, an
                   item lost before it was found, a level that goes down
                   without a penalty. They are advisory, and a sync writes the
-                  ledger’s number onto the milestone as one undoable change.
+                  ledger’s number onto the milestone — or a level-up’s number
+                  onto the sheet — as one undoable change.
                 </HelpTip>
               </div>
               <ul>
@@ -847,6 +853,27 @@ export function ChaptersPanel({
                             {syncingXpMilestoneId === flag.target.milestoneId
                               ? 'Syncing…'
                               : `Sync to ${formatCount(flag.ledgerXp)} XP`}
+                          </button>
+                        </div>
+                      )}
+                    {flag?.kind === 'stat-sheet-mismatch' &&
+                      flag.statName &&
+                      flag.statValue != null && (
+                        <div className="chapter-continuity-fix">
+                          <button
+                            type="button"
+                            className="chapter-continuity-sync"
+                            title={`Record the level-up's ${flag.statName} of ${flag.statValue} on the sheet`}
+                            disabled={
+                              syncingStatKey ===
+                              `${flag.characterId}::${flag.statName}`
+                            }
+                            onClick={() => void syncSheetStat(flag)}
+                          >
+                            {syncingStatKey ===
+                            `${flag.characterId}::${flag.statName}`
+                              ? 'Syncing…'
+                              : `Set to ${flag.statValue}`}
                           </button>
                         </div>
                       )}

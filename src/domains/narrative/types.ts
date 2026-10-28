@@ -1,6 +1,10 @@
 // Chapters, their cast and the snapshots the cards read.
 
-import type { CharacterChapterSkill } from '../shared/types';
+import type {
+  CharacterChapterItem,
+  CharacterChapterSkill,
+  CharacterChapterStat,
+} from '../shared/types';
 
 // What a character's sheet held at a chapter, read from the milestone and event
 // ledgers by the database rather than recalculated in the UI.
@@ -11,7 +15,15 @@ export interface CharacterChapterState {
   level: number | null;
   level_milestone_id: string | null;
   level_is_penalty: boolean;
+  // The chapter the level was recorded in, so a readout can say where the
+  // number came from as well as what it was.
+  level_chapter_id: string | null;
+  level_chapter_seq: number | null;
+  stats: CharacterChapterStat[];
   skills: CharacterChapterSkill[];
+  items: CharacterChapterItem[];
+  // Items with no chapter, which cannot be placed in the story.
+  undated_items: number;
 }
 
 // The compact form of that snapshot used by a chapter card. The database sends

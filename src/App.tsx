@@ -72,6 +72,8 @@ import { useSkillHolderForm } from './domains/canvas/useSkillHolderForm';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
+import { milestoneStatChanges } from './domains/progression/helpers';
+import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
@@ -795,6 +797,15 @@ function App() {
     xp: number;
   } | null>(null);
   const [syncingXpMilestoneId, setSyncingXpMilestoneId] = useState<string | null>(null);
+  // The same correction for a stat: the level-up's number written onto the
+  // sheet, offered back as one step with the value the sheet had before.
+  const [syncedStatNotice, setSyncedStatNotice] = useState<{
+    characterName: string;
+    statName: string;
+    value: number;
+  } | null>(null);
+  // The row being written, keyed by character and stat, so only its button waits.
+  const [syncingStatKey, setSyncingStatKey] = useState<string | null>(null);
   // Cast relations and faction standings are story-wide, like the progression
   // ledgers, so the map, the sheets and the continuity checks read one copy.
   const [storyRelations, setStoryRelations] = useState<CharacterRelation[]>([]);
@@ -848,6 +859,9 @@ function App() {
   // Every live cast member's stats, which is what the cards on the canvas show.
   // Kept here rather than fetched per card so one read covers the whole board.
   const [castStats, setCastStats] = useState<Record<string, CharacterStat[]>>({});
+  // Read by a stat sync's undo step, so putting an old value back does not also
+  // put the row's notes back from whenever the button was pressed.
+  const castStatsRef = useRef<Record<string, CharacterStat[]>>({});
   // The cast card being dragged, used to show the canvas as a drop target.
   const [draggingCastId, setDraggingCastId] = useState<string | null>(null);
   // The node the card is hovering over: dropping there relinks it rather than
@@ -1360,6 +1374,10 @@ function App() {
     storyLevelMilestonesRef.current = storyLevelMilestones;
   }, [storyLevelMilestones]);
 
+  useEffect(() => {
+    castStatsRef.current = castStats;
+  }, [castStats]);
+
   // The sync's Undo is a correction offered straight away; the toolbar and
   // shortcut keep the step after this prompt has gone.
   useEffect(() => {
@@ -1368,6 +1386,13 @@ function App() {
     const timer = setTimeout(() => setSyncedXpNotice(null), 10000);
     return () => clearTimeout(timer);
   }, [syncedXpNotice]);
+
+  useEffect(() => {
+    if (!syncedStatNotice) return;
+
+    const timer = setTimeout(() => setSyncedStatNotice(null), 10000);
+    return () => clearTimeout(timer);
+  }, [syncedStatNotice]);
 
   // Mark returned's Undo is a correction offered straight away; the toolbar and
   // shortcut keep the step after this prompt has gone.
@@ -2349,6 +2374,137 @@ function App() {
       }
     });
 
+    // A level-up records the value a stat reached. That snapshot is the number
+    // the story says the sheet had, so a sheet that reads differently has
+    // drifted from its own ledger: the value was edited on the sheet without a
+    // level-up, the stat was renamed, or it was dropped. Only the last snapshot
+    // for a stat counts, in reading order, because a later level-up supersedes
+    // an earlier one. A stat the sheet holds that no level-up has recorded is
+    // not a disagreement, only a number the story has not told yet.
+    const lastStatSnapshots = new Map<
+      string,
+      {
+        characterId: string;
+        statName: string;
+        milestone: CharacterLevelMilestone;
+        value: number;
+        chapter: (typeof chapterNodes)[number];
+        seq: number;
+      }
+    >();
+
+    for (const milestone of storyLevelMilestones) {
+      const chapter = milestone.chapter_id
+        ? chapterById.get(milestone.chapter_id)
+        : undefined;
+      const seq = seqOf(milestone.chapter_id);
+
+      if (!chapter || seq == null) continue;
+
+      for (const change of milestoneStatChanges(milestone)) {
+        if (change.value_after == null) continue;
+
+        // Case and spacing are the author's typing, not the stat's, so two
+        // level-ups that spelled it differently hold one snapshot and the later
+        // one still wins, rather than reading as two stats.
+        const key = `${milestone.character_id}::${statKey(change.stat_name)}`;
+        const previous = lastStatSnapshots.get(key);
+
+        // One chapter can hold two level-ups, and the later entry wins there
+        // too, so the warning and the sheet readout agree on which number is
+        // the last one recorded.
+        const outranked =
+          previous != null &&
+          (previous.seq > seq ||
+            (previous.seq === seq &&
+              (previous.milestone.created_at.localeCompare(milestone.created_at) > 0 ||
+                (previous.milestone.created_at === milestone.created_at &&
+                  previous.milestone.id.localeCompare(milestone.id) > 0))));
+
+        if (outranked) continue;
+
+        lastStatSnapshots.set(key, {
+          characterId: milestone.character_id,
+          statName: change.stat_name,
+          milestone,
+          value: change.value_after,
+          chapter,
+          seq,
+        });
+      }
+    }
+
+    lastStatSnapshots.forEach(snapshot => {
+      const { characterId, statName, milestone, value, chapter } = snapshot;
+      const owner = castNames.get(characterId);
+
+      // A character in the trash has no sheet left to open, so there is nothing
+      // to send the author to fix.
+      if (!owner) return;
+
+      const target: ProgressionTarget = { kind: 'level', milestoneId: milestone.id };
+      const sheetStats = castStats[characterId] ?? [];
+      // Spacing and case are not a disagreement, so the row is read loosely.
+      const sheet = findSheetStat(sheetStats, statName);
+
+      if (!sheet) {
+        // A name the sheet does not have is usually one the author spelled
+        // another way rather than a stat they lost, so the hint names the row
+        // that is probably the same one. Nothing is written on that guess: two
+        // names being one stat is the author's call.
+        const renamed = likelyRenamedStat(sheetStats, statName);
+        const parts: ContinuityPart[] = [
+          characterLink(characterId, owner, target),
+          `'s ${statName} was recorded as ${value} in `,
+          chapterLink(chapter.id, chapter.data.label, true),
+          renamed
+            ? `, but the sheet has “${renamed}” — likely the same stat under another name.`
+            : ', but the sheet no longer has that stat.',
+        ];
+
+        flags.push({
+          id: `stat-missing-${milestone.id}-${statKey(statName)}`,
+          kind: 'stat-missing-from-sheet',
+          chapterId: chapter.id,
+          characterId,
+          characterName: owner,
+          summary: renamed
+            ? `${owner}'s ${statName} may be “${renamed}” on the sheet`
+            : `${owner}'s ${statName} is recorded but not on the sheet`,
+          detail: continuityText(parts),
+          parts,
+          target,
+        });
+        return;
+      }
+
+      if (sheet.value === value) return;
+
+      // The sheet's own spelling is the row the fix writes, because a stat is
+      // written by name; the recorded spelling is named when it differs.
+      const spelling = sheet.stat_name === statName ? '' : ` as “${statName}”`;
+      const parts: ContinuityPart[] = [
+        characterLink(characterId, owner, target),
+        `'s ${sheet.stat_name} is ${sheet.value} on the sheet, but the level-up in `,
+        chapterLink(chapter.id, chapter.data.label, true),
+        ` recorded ${value}${spelling}.`,
+      ];
+
+      flags.push({
+        id: `stat-${milestone.id}-${statKey(statName)}`,
+        kind: 'stat-sheet-mismatch',
+        chapterId: chapter.id,
+        characterId,
+        characterName: owner,
+        statName: sheet.stat_name,
+        statValue: value,
+        summary: `${owner}'s ${sheet.stat_name} is ${sheet.value}, ledger says ${value}`,
+        detail: continuityText(parts),
+        parts,
+        target,
+      });
+    });
+
     // A relation or a standing can point at the trash, or describe an arc that
     // ends before it began. The same advisory pass names those, because they are
     // read from the same chapter order as the rest of progression.
@@ -2924,6 +3080,7 @@ function App() {
     storyRelations,
     storyFactionStandings,
     nodes,
+    castStats,
   ]);
 
   const progressFlagsByChapter = useMemo(() => {
@@ -4684,7 +4841,7 @@ function App() {
 
   // A saved stat has to reach the cards on the canvas too, whichever tab it was
   // edited from, or a badge would go on showing the number it replaced.
-  const rememberStat = (stat: CharacterStat) => {
+  const rememberStat = useCallback((stat: CharacterStat) => {
     setCastStats(previous => {
       const current = previous[stat.character_id] ?? [];
 
@@ -4695,7 +4852,7 @@ function App() {
         ),
       };
     });
-  };
+  }, []);
 
   // The linked cast member's own numbers, the row open for editing and the line
   // an error is written on live in the canvas domain. It is called here because
@@ -4728,14 +4885,17 @@ function App() {
 
   // A saved stat reaches both places at once: the sheet's own list, which the
   // stat read fills, and the story-wide map the canvas badges are drawn from.
-  const applyWrittenStat = (stat: CharacterStat) => {
-    setCharacterStats(previous =>
-      [...previous.filter(other => other.id !== stat.id), stat].sort((a, b) =>
-        a.stat_name.localeCompare(b.stat_name)
-      )
-    );
-    rememberStat(stat);
-  };
+  const applyWrittenStat = useCallback(
+    (stat: CharacterStat) => {
+      setCharacterStats(previous =>
+        [...previous.filter(other => other.id !== stat.id), stat].sort((a, b) =>
+          a.stat_name.localeCompare(b.stat_name)
+        )
+      );
+      rememberStat(stat);
+    },
+    [rememberStat]
+  );
 
   // The stat section's new-stat form, its one open row and its two writes live
   // in the characters domain. The rows stay here, where they are read for the
@@ -5339,6 +5499,73 @@ function App() {
       }
     },
     [actor, applyLevelMilestone, recordStep]
+  );
+
+  // A sheet and the last level-up can disagree on a number. Recording the
+  // level-up's value on the sheet goes through the same audited stat command the
+  // sheet's own editor runs, and the step keeps the value the sheet had before,
+  // so the correction comes back with one Undo.
+  const syncSheetStat = useCallback(
+    async (flag: ChapterContinuityFlag) => {
+      if (
+        flag.kind !== 'stat-sheet-mismatch' ||
+        !flag.statName ||
+        flag.statValue == null
+      ) {
+        return;
+      }
+
+      const characterId = flag.characterId;
+      const statName = flag.statName;
+      const recorded = flag.statValue;
+      const key = `${characterId}::${statName}`;
+      const sheetStat = findSheetStat(castStatsRef.current[characterId] ?? [], statName);
+
+      if (!sheetStat || sheetStat.value === recorded) return;
+
+      const previousValue = sheetStat.value;
+      setActionError(null);
+      setSyncingStatKey(key);
+
+      // Read the row when the step runs, so its notes — the only other field on
+      // a stat — are not put back from whenever the button was pressed.
+      const writeValue = (value: number) => async () => {
+        const current = findSheetStat(
+          castStatsRef.current[characterId] ?? [],
+          statName
+        );
+        const saved: CharacterStat = await charactersApi.setCharacterStat(
+          characterId,
+          statName,
+          value,
+          current?.notes ?? null,
+          actor
+        );
+
+        applyWrittenStat(saved);
+        return saved;
+      };
+
+      try {
+        await writeValue(recorded)();
+        recordStep({
+          label: `Match ${flag.characterName}'s ${statName} to the ledger`,
+          undo: writeValue(previousValue),
+          redo: writeValue(recorded),
+        });
+        setSyncedStatNotice({
+          characterName: flag.characterName,
+          statName,
+          value: recorded,
+        });
+      } catch (e) {
+        console.error('Failed to sync a sheet stat:', e);
+        setActionError(`Could not sync ${flag.characterName}'s ${statName}: ${String(e)}`);
+      } finally {
+        setSyncingStatKey(null);
+      }
+    },
+    [actor, applyWrittenStat, recordStep]
   );
 
   const applyRelation = useCallback((saved: CharacterRelation) => {
@@ -7085,6 +7312,8 @@ function App() {
                 returningItemId,
                 onSyncMilestoneXp: syncMilestoneXp,
                 syncingMilestoneXpId: syncingXpMilestoneId,
+                onSyncSheetStat: syncSheetStat,
+                syncingStatKey,
               }
             : {}),
         },
@@ -7112,6 +7341,8 @@ function App() {
     returningItemId,
     syncMilestoneXp,
     syncingXpMilestoneId,
+    syncSheetStat,
+    syncingStatKey,
   ]);
 
   // The chapter a skill was learned in, offered in reading order. Skill cards
@@ -8017,6 +8248,30 @@ function App() {
           </div>
         )}
 
+        {syncedStatNotice && (
+          <div className="status-strip returned-strip" role="status">
+            <span>
+              Synced {syncedStatNotice.characterName}'s {syncedStatNotice.statName} to{' '}
+              {syncedStatNotice.value}.
+            </span>
+            <button
+              className="status-undo"
+              title={`Put ${syncedStatNotice.characterName}'s ${syncedStatNotice.statName} back as it was`}
+              aria-label={`Undo syncing ${syncedStatNotice.characterName}'s ${syncedStatNotice.statName}`}
+              onClick={() => void undoLast()}
+            >
+              Undo
+            </button>
+            <button
+              className="status-dismiss"
+              title="Keep the synced value"
+              onClick={() => setSyncedStatNotice(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {exportStatus && (
           <div className="status-strip" title={exportStatus}>
             Exported to {exportStatus}
@@ -8213,6 +8468,8 @@ function App() {
               revealChapter={revealChapter}
               syncingXpMilestoneId={syncingXpMilestoneId}
               syncMilestoneXp={syncMilestoneXp}
+              syncingStatKey={syncingStatKey}
+              syncSheetStat={syncSheetStat}
             />
           </div>
         )}
@@ -8285,6 +8542,7 @@ function App() {
             chartStateError={chartStateError}
             chartStateById={chartStateById}
             visibleComparisonSeries={visibleComparisonSeries}
+            castStats={castStats}
             characters={characters}
             selectedCharacterId={selectedCharacterId}
             setSelectedCharacterId={setSelectedCharacterId}

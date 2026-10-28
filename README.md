@@ -288,6 +288,16 @@ before its skill was learned is ignored as a contradiction rather than used to
 rewrite later scenes. This is the same `character_state_at_chapter` query other
 screens can use to ask what a character had in any chapter.
 
+**Read sheet** on one of those rows opens the rest of that character's sheet as it
+stood then: every stat with the chapter whose level-up recorded it, the skills
+with the rank that applied, and each item gained by then that had not yet been
+lost. A stat that has moved since is shown with today's value beside it, and one
+that is not on the sheet now is marked rather than hidden. A stat the sheet holds but
+no level-up has snapshotted is listed with no value instead of a zero — a missing
+number is a gap in the ledger, not a real one. An item with no acquisition chapter
+has no place in the story and is counted apart, and quantities are the sheet's own
+because a count is not dated.
+
 **Chapter cast badges** — a chapter card on the Graph tab names everyone present
 in that chapter: the character it is linked to, the point-of-view character, and
 every cast member added with **Cast** on the Chapters tab. The picker is one
@@ -424,6 +434,24 @@ reached it, and a skill used or upgraded after it was sacrificed are flagged too
 So is a skill tree that contradicts the reading order: a child skill appearing
 before its parent was learned, a fusion placed before the parent reached the rank
 it required, or a link pointing at a skill in the trash.
+A stat is compared with the last value its level-ups recorded: the snapshot on the
+latest level-up in reading order is the number the story says the sheet had, so a
+sheet that reads differently is flagged with the chapter whose level-up set it, and
+so is a recorded stat the sheet has since dropped. Only the latest snapshot counts,
+and a stat the sheet holds that no level-up has recorded is left alone: the story
+has not given it a number yet. Names are compared without their case or their extra
+spaces, so `strength` typed in one level-up and `Strength` in the next are the one
+stat, and a sheet that spells it its own way is read as the same row rather than a
+lost one — the **Set to N** button then writes the row the sheet already holds,
+which is the name a stat is stored under. A name the sheet does not have at all is
+checked against the rows it does have, and when one is close enough to be the same
+stat renamed (`STR` for `Strength`, or a typo) the warning names it as the likely
+one instead of claiming the stat was dropped; that stays a hint, with no button,
+because two names being one stat is the author's decision. A mismatch carries a
+**Set to N** button, in the panel and on the chapter card, that writes the recorded
+value through the sheet's own stat command, so the history records who changed it;
+the correction is one undoable step, and the notice that follows offers **Undo** for
+a moment.
 XP income is compared with every total-XP milestone as well: the ledger through
 that chapter must add up to the recorded total, and both a shortfall and an excess
 are named with the difference. The same warning carries a **Sync to N XP** button,

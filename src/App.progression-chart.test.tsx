@@ -167,8 +167,69 @@ const nodeRow = (chapter: { id: string; label: string; seq: number }) => ({
   chapter_seq: chapter.seq,
 });
 
+interface StatRow {
+  id: string;
+  character_id: string;
+  stat_name: string;
+  value: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface InventoryRow {
+  id: string;
+  character_id: string;
+  name: string;
+  rarity: string | null;
+  quantity: number;
+  effect: string | null;
+  chapter_id: string | null;
+  lost_chapter_id: string | null;
+  node_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 let levels: LevelRow[] = [];
 let progress: ProgressRow[] = [];
+// The sheet's rows today, which the expanded readout compares against the
+// snapshot. The snapshot itself is worked out from the milestone and item
+// ledgers, the way the database works it out.
+let storyStats: Record<string, StatRow[]> = {};
+let storyInventory: InventoryRow[] = [];
+
+const stat = (characterId: string, name: string, value: number): StatRow => ({
+  id: `stat-${characterId}-${name}`,
+  character_id: characterId,
+  stat_name: name,
+  value,
+  notes: null,
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+});
+
+const item = (
+  id: string,
+  characterId: string,
+  name: string,
+  quantity: number,
+  rarity: string | null,
+  chapterId: string | null,
+  lostChapterId: string | null = null
+): InventoryRow => ({
+  id,
+  character_id: characterId,
+  name,
+  rarity,
+  quantity,
+  effect: null,
+  chapter_id: chapterId,
+  lost_chapter_id: lostChapterId,
+  node_id: null,
+  created_at: '2026-10-22T12:00:00Z',
+  updated_at: '2026-10-22T12:00:00Z',
+});
 
 const milestone = (
   id: string,
@@ -194,18 +255,88 @@ const milestone = (
 
 function stateAt(characterId: string, chapterId: string) {
   const chapter = chapters.find(entry => entry.id === chapterId)!;
+  const placeOf = (id: string | null) =>
+    chapters.find(entry => entry.id === id) ?? null;
   const prior = levels
     .filter(entry => entry.character_id === characterId)
     .filter(entry => {
-      const place = chapters.find(chapter => chapter.id === entry.chapter_id);
+      const place = placeOf(entry.chapter_id);
       return place != null && place.seq <= chapter.seq;
     })
     .sort((a, b) => {
-      const left = chapters.find(entry => entry.id === a.chapter_id)!.seq;
-      const right = chapters.find(entry => entry.id === b.chapter_id)!.seq;
+      const left = placeOf(a.chapter_id)!.seq;
+      const right = placeOf(b.chapter_id)!.seq;
       return left - right || a.created_at.localeCompare(b.created_at);
     });
   const latest = prior[prior.length - 1] ?? null;
+
+  // The last level-up that recorded a value for a stat is where it stood. The
+  // sheet's own names join the list with no value, the way the database answers.
+  const recorded = new Map<
+    string,
+    { value: number; chapterId: string; seq: number }
+  >();
+
+  for (const entry of prior) {
+    if (!entry.stat_name || entry.stat_points == null) continue;
+
+    recorded.set(entry.stat_name, {
+      value: entry.stat_points,
+      chapterId: entry.chapter_id as string,
+      seq: placeOf(entry.chapter_id)!.seq,
+    });
+  }
+
+  const names = [
+    ...new Set([
+      ...recorded.keys(),
+      ...(storyStats[characterId] ?? []).map(row => row.stat_name),
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
+
+  const stats = names.map(name => {
+    const hit = recorded.get(name);
+
+    return {
+      stat_name: name,
+      value: hit?.value ?? null,
+      recorded_chapter_id: hit?.chapterId ?? null,
+      recorded_chapter_seq: hit?.seq ?? null,
+    };
+  });
+
+  let undated = 0;
+  const items = [];
+
+  for (const row of storyInventory.filter(entry => entry.character_id === characterId)) {
+    const gained = placeOf(row.chapter_id);
+
+    if (!gained) {
+      undated += 1;
+      continue;
+    }
+
+    if (gained.seq > chapter.seq) continue;
+
+    const lost = placeOf(row.lost_chapter_id);
+    if (lost && lost.seq <= chapter.seq) continue;
+
+    items.push({
+      item_id: row.id,
+      name: row.name,
+      quantity: row.quantity,
+      rarity: row.rarity,
+      effect: row.effect,
+      acquired_chapter_id: gained.id,
+      acquired_chapter_seq: gained.seq,
+    });
+  }
+
+  items.sort(
+    (a, b) =>
+      (a.acquired_chapter_seq ?? 0) - (b.acquired_chapter_seq ?? 0) ||
+      a.name.localeCompare(b.name)
+  );
 
   return {
     character_id: characterId,
@@ -214,6 +345,9 @@ function stateAt(characterId: string, chapterId: string) {
     level: latest?.level ?? null,
     level_milestone_id: latest?.id ?? null,
     level_is_penalty: latest?.is_debuff ?? false,
+    level_chapter_id: latest?.chapter_id ?? null,
+    level_chapter_seq: latest ? placeOf(latest.chapter_id)?.seq ?? null : null,
+    stats,
     skills:
       characterId === 'char-1'
         ? [
@@ -227,6 +361,8 @@ function stateAt(characterId: string, chapterId: string) {
             },
           ]
         : [],
+    items,
+    undated_items: undated,
   };
 }
 
@@ -276,6 +412,17 @@ beforeEach(() => {
     },
   ];
 
+  storyStats = {
+    'char-1': [stat('char-1', 'Strength', 16)],
+    'char-2': [stat('char-2', 'Strength', 14)],
+  };
+  storyInventory = [
+    item('item-1', 'char-1', 'Iron Sword', 2, 'Rare', 'n1', 'n3'),
+    item('item-2', 'char-1', 'Ember Sigil', 1, null, 'n2'),
+    // No chapter, so no place in the story to show it in.
+    item('item-3', 'char-1', 'Cloak', 1, null, null),
+  ];
+
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, any>;
@@ -285,8 +432,9 @@ beforeEach(() => {
         return [story];
       case 'get_graph_nodes':
         return chapters.map(nodeRow);
-      case 'get_graph_edges':
       case 'get_story_character_stats':
+        return Object.values(storyStats).flat();
+      case 'get_graph_edges':
       case 'get_character_stats':
       case 'get_character_attributes':
       case 'get_character_skills':
@@ -539,5 +687,144 @@ describe('per-character progression chart', () => {
         call => call[0] === 'get_character_state_at_chapter'
       )
     ).toHaveLength(0);
+  });
+
+  it('opens a character\'s whole sheet as of the chosen chapter', async () => {
+    // Agility is on the sheet today but no level-up has recorded a value for it,
+    // and Strength has moved on since the chapter being read.
+    storyStats = {
+      'char-1': [stat('char-1', 'Strength', 18), stat('char-1', 'Agility', 12)],
+      'char-2': [stat('char-2', 'Strength', 14)],
+    };
+    const { user } = await openCharacters();
+
+    const last = await screen.findByLabelText('Character state at Chapter Three');
+    const rookRow = within(last).getByText('Rook').closest('li') as HTMLElement;
+    const toggle = within(rookRow).getByRole('button', { name: 'Read sheet' });
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-controls', 'chapter-snapshot-char-1');
+
+    const sheet = await screen.findByLabelText("Rook's sheet at Chapter Three");
+    expect(
+      within(sheet).getByText('Level 5 · recorded in Ch. 3')
+    ).toBeInTheDocument();
+
+    const strength = sheet.querySelector(
+      '[data-snapshot-stat="Strength"]'
+    ) as HTMLElement;
+    expect(within(strength).getByText('16')).toBeInTheDocument();
+    expect(within(strength).getByText('Ch. 3')).toBeInTheDocument();
+    expect(within(strength).getByText('now 18')).toBeInTheDocument();
+
+    const agility = sheet.querySelector(
+      '[data-snapshot-stat="Agility"]'
+    ) as HTMLElement;
+    expect(within(agility).getByText('—')).toBeInTheDocument();
+    expect(within(agility).getByText('no value yet')).toBeInTheDocument();
+    expect(within(agility).getByText('now 12')).toBeInTheDocument();
+
+    const fireball = sheet.querySelector(
+      '[data-snapshot-skill="Fireball"]'
+    ) as HTMLElement;
+    expect(within(fireball).getByText('Rank 2')).toBeInTheDocument();
+    expect(within(fireball).getByText('learned in Ch. 1')).toBeInTheDocument();
+    expect(within(fireball).getByText('3d6 fire')).toBeInTheDocument();
+
+    // The sigil was gained in the second chapter and the sword was lost in this
+    // one, so only the sigil is still carried at the end of it.
+    expect(sheet.querySelector('[data-snapshot-item="Ember Sigil"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-snapshot-item="Iron Sword"]')).toBeNull();
+    expect(
+      within(sheet).getByText(
+        'One more item has no chapter, so it cannot be placed in the story.'
+      )
+    ).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Chapter state'), 'n1');
+
+    const opening = await screen.findByLabelText("Rook's sheet at Chapter One");
+    const earlier = opening.querySelector(
+      '[data-snapshot-stat="Strength"]'
+    ) as HTMLElement;
+    expect(within(earlier).getByText('10')).toBeInTheDocument();
+    expect(within(earlier).getByText('Ch. 1')).toBeInTheDocument();
+    expect(within(opening).getByText('Fireball')).toBeInTheDocument();
+
+    const carried = opening.querySelector(
+      '[data-snapshot-item="Iron Sword"]'
+    ) as HTMLElement;
+    expect(within(carried).getByText('Iron Sword ×2')).toBeInTheDocument();
+    expect(within(carried).getByText('Rare')).toBeInTheDocument();
+    expect(within(carried).getByText('gained in Ch. 1')).toBeInTheDocument();
+    expect(opening.querySelector('[data-snapshot-item="Ember Sigil"]')).toBeNull();
+  });
+
+  it('collapses the whole sheet again from the same button', async () => {
+    const { user } = await openCharacters();
+
+    const last = await screen.findByLabelText('Character state at Chapter Three');
+    const rookRow = within(last).getByText('Rook').closest('li') as HTMLElement;
+
+    await user.click(within(rookRow).getByRole('button', { name: 'Read sheet' }));
+    expect(
+      await screen.findByLabelText("Rook's sheet at Chapter Three")
+    ).toBeInTheDocument();
+
+    await user.click(within(rookRow).getByRole('button', { name: 'Hide sheet' }));
+
+    expect(screen.queryByLabelText("Rook's sheet at Chapter Three")).toBeNull();
+    expect(within(rookRow).getByRole('button', { name: 'Read sheet' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+  });
+
+  it('says what a sheet held when the ledgers have nothing for it yet', async () => {
+    storyStats = {};
+    storyInventory = [];
+    const { user } = await openCharacters();
+
+    // Wren's first milestone lands in the second chapter, so the opening reads
+    // as a sheet the story has recorded nothing about yet.
+    await user.selectOptions(await screen.findByLabelText('Chapter state'), 'n1');
+
+    const last = await screen.findByLabelText('Character state at Chapter One');
+    const wrenRow = within(last).getByText('Wren').closest('li') as HTMLElement;
+
+    await user.click(within(wrenRow).getByRole('button', { name: 'Read sheet' }));
+
+    const sheet = await screen.findByLabelText("Wren's sheet at Chapter One");
+    expect(
+      within(sheet).getByText('No level recorded by this chapter')
+    ).toBeInTheDocument();
+    expect(within(sheet).getByText('No stats by this chapter.')).toBeInTheDocument();
+    expect(
+      within(sheet).getByText('No skills learned by this chapter.')
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).getByText('Nothing recorded as carried by this chapter.')
+    ).toBeInTheDocument();
+  });
+
+  it('marks a stat the sheet has since dropped instead of hiding it', async () => {
+    storyStats = {};
+    const { user } = await openCharacters();
+
+    const last = await screen.findByLabelText('Character state at Chapter Three');
+    const rookRow = within(last).getByText('Rook').closest('li') as HTMLElement;
+
+    await user.click(within(rookRow).getByRole('button', { name: 'Read sheet' }));
+
+    const sheet = await screen.findByLabelText("Rook's sheet at Chapter Three");
+    const strength = sheet.querySelector(
+      '[data-snapshot-stat="Strength"]'
+    ) as HTMLElement;
+
+    expect(within(strength).getByText('16')).toBeInTheDocument();
+    expect(within(strength).getByText('not on the sheet now')).toBeInTheDocument();
   });
 });

@@ -82,6 +82,10 @@ export type NodeData = {
   // Records the chapter ledger's sum on the milestone a warning names.
   onSyncMilestoneXp?: (flag: ChapterContinuityFlag) => void;
   syncingMilestoneXpId?: string | null;
+  // Records a level-up's stat value on the sheet a warning names. The key is
+  // the character and stat being written, so only that row shows a wait.
+  onSyncSheetStat?: (flag: ChapterContinuityFlag) => void;
+  syncingStatKey?: string | null;
 };
 
 // We'll use ReactFlow's internal types but cast our data. The last five are the

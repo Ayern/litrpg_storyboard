@@ -159,6 +159,8 @@ function baseProps(overrides: Partial<ChaptersPanelProps> = {}): ChaptersPanelPr
     revealChapter: vi.fn(),
     syncingXpMilestoneId: null,
     syncMilestoneXp: vi.fn(async () => {}),
+    syncingStatKey: null,
+    syncSheetStat: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -507,6 +509,42 @@ describe('ChaptersPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Sync to 1,200 XP' }));
 
     expect(syncMilestoneXp).toHaveBeenCalledWith(xpFlag);
+  });
+
+  it('puts a level-up’s stat value on the sheet in one click, and holds while it writes', async () => {
+    const user = userEvent.setup();
+    const syncSheetStat = vi.fn(async () => {});
+    const statFlag: ChapterContinuityFlag = {
+      ...xpFlag,
+      id: 'flag-stat',
+      kind: 'stat-sheet-mismatch',
+      summary: "Mira's Strength is 9, ledger says 12",
+      detail: "Mira's Strength is 9 on the sheet, but the level-up in One recorded 12.",
+      statName: 'Strength',
+      statValue: 12,
+      ledgerXp: undefined,
+    };
+    const lines = [{ parts: statFlag.parts, flag: statFlag }];
+
+    const { rerender } = render(
+      <ChaptersPanel {...baseProps({ continuityLines: lines, syncSheetStat })} />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Set to 12' }));
+
+    expect(syncSheetStat).toHaveBeenCalledWith(statFlag);
+
+    rerender(
+      <ChaptersPanel
+        {...baseProps({
+          continuityLines: lines,
+          syncSheetStat,
+          syncingStatKey: 'c-1::Strength',
+        })}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Syncing…' })).toBeDisabled();
   });
 
   it('holds the sync button while its own write is in flight', () => {

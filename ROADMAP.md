@@ -519,6 +519,12 @@ searching ten thousand lines. Nine are done.
   the four reads of a closed board in `api.ts`. It also keeps the id of the story
   the window was showing, which is what the history writes a refused step
   against. Direct suite of 29.
+- **`domains/progression/statNames.ts`** — how a stat name is compared when a sheet
+  is checked against the values its level-ups recorded: no case and no doubled or
+  outer spaces, an exact spelling preferred when the sheet holds both, and the row
+  that is probably the same stat renamed (an abbreviation or a typo), which is only
+  ever offered as a hint. Pure, so the rule is read without React. Direct suite of
+  10.
 - **`domains/progression/useProgressionChart.ts`** — the metric a line is read in,
   the stat it follows, the cast members hidden from the comparison, and the
   chapter snapshot: which chapter it asks about, the answer keyed by cast member,

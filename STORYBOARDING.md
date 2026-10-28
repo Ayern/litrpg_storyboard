@@ -184,7 +184,11 @@ between **Level**, **Total XP**, **XP earned** and any **Stats** you keep, and c
 a name in the legend to take somebody off the picture while you look at the rest.
 Under it, **As of chapter** answers the other question: pick a chapter and the panel
 says what each person's level was and which skills they still held at that point —
-without redrawing anything by hand.*
+without redrawing anything by hand. **Read sheet** on any of those rows opens the
+rest of that person's sheet as it stood then: their stats and the chapter that
+recorded each one (with today's number beside it when it has moved), the skills
+with the rank they had at the time, and what they were carrying. A stat with no
+recorded number yet shows a dash, not a zero.*
 
 ![The lower half of the same sheet](screenshots/character-sheet-detail.png)
 
@@ -212,9 +216,20 @@ What the numbers mean, and what they do not:
   `Homeland: Ashfall`.
 
 The Chapters tab compares milestones across the reading order, so a level that goes
-backwards without a penalty flag, a skill used before it was learned, or an XP total
+backwards without a penalty flag, a skill used before it was learned, a stat whose
+sheet value no longer matches the last level-up that recorded it, or an XP total
 that disagrees with the income rows shows up as a continuity warning with a link to
-the exact row to fix.
+the exact row to fix. When there is only one number to choose between, the warning
+also carries the fix itself: **Set to 12** writes the level-up's value onto the
+sheet, and **Sync to 1,400 XP** writes the ledger's sum onto the milestone. Either
+one is a single undoable step.
+
+Names are matched the way you would match them by eye: capitals and stray spaces do
+not matter, so `strength` in one level-up and `Strength` in the next are the same
+stat. If the sheet calls it something close — `STR`, or a misspelling — the warning
+says so: *but the sheet has “STR” — likely the same stat under another name*, rather
+than telling you it was dropped. Nothing is written on that guess, so rename or
+re-type it on the sheet yourself; the warning clears once the two agree.
 
 ## 6. Skills that travel between people
 

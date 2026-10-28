@@ -117,8 +117,13 @@ function chapterState(characterId: string, chapterId: string, level: number | nu
     level,
     level_milestone_id: null,
     level_is_penalty: false,
+    level_chapter_id: null,
+    level_chapter_seq: null,
+    stats: [],
     skills: [],
-  } as CharacterChapterState;
+    items: [],
+    undated_items: 0,
+  } satisfies CharacterChapterState;
 }
 
 const mira = character('ch-1', 'Mira');

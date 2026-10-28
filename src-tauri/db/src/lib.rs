@@ -838,19 +838,29 @@ impl Db {
         // A level-up awards more than one stat at a time, so each milestone below
         // carries every stat it changed. The skill upgrade is grouped with the
         // level-up it came with.
+        //
+        // The demo's two sheets are the authority on its numbers: every stat a
+        // character holds is recorded by a level-up, and the last value recorded
+        // for it is the one on the sheet today. A snapshot that disagreed with
+        // the sheet would be a continuity problem the demo invented rather than
+        // the one it deliberately ships with.
         for (character, level, xp, changes, chapter) in [
             (
                 &rook,
                 2,
                 600,
-                vec![stat_gain("Strength", 2, 15), stat_gain("Endurance", 1, 11)],
+                vec![
+                    stat_gain("Strength", 2, 15),
+                    stat_gain("Agility", 1, 12),
+                    stat_gain("Insight", 1, 10),
+                ],
                 &first,
             ),
             (
                 &rook,
                 3,
                 1500,
-                vec![stat_gain("Strength", 1, 16), stat_gain("Endurance", 1, 12)],
+                vec![stat_gain("Strength", 1, 16), stat_gain("Insight", 1, 11)],
                 &second,
             ),
             (
@@ -859,8 +869,8 @@ impl Db {
                 2400,
                 vec![
                     stat_gain("Strength", 2, 18),
-                    stat_gain("Agility", 1, 12),
-                    stat_gain("Endurance", 1, 13),
+                    stat_gain("Agility", 2, 14),
+                    stat_gain("Insight", 1, 12),
                 ],
                 &third,
             ),
@@ -868,23 +878,21 @@ impl Db {
                 &mira,
                 1,
                 200,
-                vec![stat_gain("Agility", 2, 13), stat_gain("Perception", 1, 12)],
+                vec![
+                    stat_gain("Agility", 2, 13),
+                    stat_gain("Insight", 1, 15),
+                    stat_gain("Strength", 1, 9),
+                ],
                 &first,
             ),
             (
                 &mira,
                 2,
                 800,
-                vec![stat_gain("Agility", 2, 15), stat_gain("Perception", 1, 13)],
+                vec![stat_gain("Agility", 2, 15), stat_gain("Insight", 1, 16)],
                 &second,
             ),
-            (
-                &mira,
-                3,
-                1500,
-                vec![stat_gain("Agility", 2, 17), stat_gain("Perception", 1, 14)],
-                &third,
-            ),
+            (&mira, 3, 1500, vec![stat_gain("Agility", 2, 17)], &third),
         ] {
             let milestone = self.add_level_milestone_with_changes(
                 character.id.clone(),
@@ -5381,7 +5389,7 @@ impl Db {
         let milestone = conn
             .query_row(
                 "SELECT m.id, m.character_id, m.level, m.chapter_id, m.is_debuff,
-                        m.xp, m.created_at, m.updated_at
+                        m.xp, m.created_at, m.updated_at, n.id, n.chapter_seq
                  FROM character_level_milestones m
                  JOIN nodes n ON n.id = m.chapter_id
                  WHERE m.character_id = ?1 AND n.deleted_at IS NULL
@@ -5390,18 +5398,27 @@ impl Db {
                  ORDER BY n.chapter_seq DESC, m.created_at DESC, m.id DESC
                  LIMIT 1",
                 params![character_id, chapter_seq],
-                level_milestone_row,
+                |row| {
+                    Ok((
+                        level_milestone_row(row)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, i64>(9)?,
+                    ))
+                },
             )
             .optional()?;
 
-        let (level, level_milestone_id, level_is_penalty) = match milestone {
-            Some(milestone) => (
-                Some(milestone.level),
-                Some(milestone.id),
-                milestone.is_debuff,
-            ),
-            None => (None, None, false),
-        };
+        let (level, level_milestone_id, level_is_penalty, level_chapter_id, level_chapter_seq) =
+            match milestone {
+                Some((milestone, recorded_chapter_id, recorded_chapter_seq)) => (
+                    Some(milestone.level),
+                    Some(milestone.id),
+                    milestone.is_debuff,
+                    Some(recorded_chapter_id),
+                    Some(recorded_chapter_seq),
+                ),
+                None => (None, None, false, None, None),
+            };
 
         // A skill is learned at a chapter, so only skills placed at or before this
         // one can be active. The chapter join is what makes "as of" honest: an
@@ -5503,6 +5520,159 @@ impl Db {
             });
         }
 
+        // A stat is dated by the level-up that changed it, because that snapshot
+        // is the only place the story keeps the number it had. The last value at
+        // or before this chapter is where the stat stood; a change that recorded
+        // only a gain does not erase the snapshot before it.
+        let mut stats: Vec<CharacterChapterStat> = Vec::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT sc.stat_name, sc.value_after, n.id, n.chapter_seq
+                 FROM character_level_stat_changes sc
+                 JOIN character_level_milestones m ON m.id = sc.milestone_id
+                 JOIN nodes n ON n.id = m.chapter_id
+                 WHERE m.character_id = ?1 AND n.deleted_at IS NULL
+                   AND n.node_type = 'chapter' AND n.chapter_seq IS NOT NULL
+                   AND n.chapter_seq <= ?2
+                 ORDER BY n.chapter_seq, sc.created_at, sc.id",
+            )?;
+
+            let rows = stmt.query_map(params![character_id, chapter_seq], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?;
+
+            for row in rows {
+                let (stat_name, value, recorded_chapter_id, recorded_chapter_seq) = row?;
+                let Some(value) = value else { continue };
+
+                stats.retain(|stat| stat.stat_name != stat_name);
+                stats.push(CharacterChapterStat {
+                    stat_name,
+                    value: Some(value),
+                    recorded_chapter_id: Some(recorded_chapter_id),
+                    recorded_chapter_seq: Some(recorded_chapter_seq),
+                });
+            }
+        }
+
+        // The sheet's own stat names join the readout, so a stat with no
+        // snapshot by this chapter is listed as unrecorded rather than silently
+        // missing from the sheet the reader asked for.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT s.stat_name FROM character_stats s
+                 JOIN characters c ON c.id = s.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE s.character_id = ?1 AND c.deleted_at IS NULL
+                   AND st.deleted_at IS NULL
+                 ORDER BY s.stat_name COLLATE NOCASE, s.id",
+            )?;
+
+            let rows = stmt.query_map(params![character_id], |row| row.get::<_, String>(0))?;
+
+            for row in rows {
+                let stat_name = row?;
+                if stats.iter().any(|stat| stat.stat_name == stat_name) {
+                    continue;
+                }
+
+                stats.push(CharacterChapterStat {
+                    stat_name,
+                    value: None,
+                    recorded_chapter_id: None,
+                    recorded_chapter_seq: None,
+                });
+            }
+        }
+
+        stats.sort_by(|left, right| {
+            left.stat_name
+                .to_lowercase()
+                .cmp(&right.stat_name.to_lowercase())
+                .then_with(|| left.stat_name.cmp(&right.stat_name))
+        });
+
+        // An item is placed by where it was gained and where it was lost, so the
+        // inventory is a window rather than a total. An item with no chapter has
+        // no place in the story to show it in, and is counted apart.
+        let mut items = Vec::new();
+        let mut undated_items = 0i64;
+        {
+            let mut stmt = conn.prepare(
+                "SELECT i.id, i.name, i.quantity, i.rarity, i.effect,
+                        ac.id, ac.chapter_seq, lc.chapter_seq
+                 FROM character_inventory i
+                 JOIN characters c ON c.id = i.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 LEFT JOIN nodes ac ON ac.id = i.chapter_id
+                      AND ac.deleted_at IS NULL AND ac.node_type = 'chapter'
+                      AND ac.chapter_seq IS NOT NULL
+                 LEFT JOIN nodes lc ON lc.id = i.lost_chapter_id
+                      AND lc.deleted_at IS NULL AND lc.node_type = 'chapter'
+                      AND lc.chapter_seq IS NOT NULL
+                 WHERE i.character_id = ?1 AND c.deleted_at IS NULL
+                   AND st.deleted_at IS NULL
+                 ORDER BY ac.chapter_seq, i.name COLLATE NOCASE, i.id",
+            )?;
+
+            let rows = stmt.query_map(params![character_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                ))
+            })?;
+
+            for row in rows {
+                let (
+                    item_id,
+                    name,
+                    quantity,
+                    rarity,
+                    effect,
+                    acquired_chapter_id,
+                    acquired_chapter_seq,
+                    lost_chapter_seq,
+                ) = row?;
+
+                let Some(acquired_chapter_seq) = acquired_chapter_seq else {
+                    undated_items += 1;
+                    continue;
+                };
+
+                if acquired_chapter_seq > chapter_seq {
+                    continue;
+                }
+
+                if lost_chapter_seq
+                    .map(|lost| lost <= chapter_seq)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                items.push(CharacterChapterItem {
+                    item_id,
+                    name,
+                    quantity,
+                    rarity,
+                    effect,
+                    acquired_chapter_id,
+                    acquired_chapter_seq: Some(acquired_chapter_seq),
+                });
+            }
+        }
+
         Ok(CharacterChapterState {
             character_id: character_id.to_string(),
             chapter_id: chapter_id.to_string(),
@@ -5510,7 +5680,12 @@ impl Db {
             level,
             level_milestone_id,
             level_is_penalty,
+            level_chapter_id,
+            level_chapter_seq,
+            stats,
             skills,
+            items,
+            undated_items,
         })
     }
 
@@ -11458,9 +11633,36 @@ pub struct CharacterChapterSkill {
     pub learned_chapter_seq: i64,
 }
 
+/// One stat as it stood in a chapter. The value is the last one a level-up
+/// recorded at or before it, and the chapter named beside it is where that
+/// number came from. A stat the sheet holds today but that no level-up has
+/// snapshotted yet keeps its name with no value, so the readout can say the
+/// story has not given it a number rather than guess at one.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterChapterStat {
+    pub stat_name: String,
+    pub value: Option<i64>,
+    pub recorded_chapter_id: Option<String>,
+    pub recorded_chapter_seq: Option<i64>,
+}
+
+/// One item a character carried into a chapter. The quantity is the row's own,
+/// which the app does not date; the chapter says where it was gained.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterChapterItem {
+    pub item_id: String,
+    pub name: String,
+    pub quantity: i64,
+    pub rarity: Option<String>,
+    pub effect: Option<String>,
+    pub acquired_chapter_id: Option<String>,
+    pub acquired_chapter_seq: Option<i64>,
+}
+
 /// What a character's sheet held at one chapter: the latest level milestone at
-/// or before it in reading order, and the skills learned by then that had not
-/// yet been sacrificed.
+/// or before it in reading order, the stats that milestone and its
+/// predecessors recorded, the skills learned by then that had not yet been
+/// sacrificed, and the items gained by then that had not yet been lost.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct CharacterChapterState {
     pub character_id: String,
@@ -11469,7 +11671,16 @@ pub struct CharacterChapterState {
     pub level: Option<i64>,
     pub level_milestone_id: Option<String>,
     pub level_is_penalty: bool,
+    /// The chapter the level milestone sits in, so the readout can say where
+    /// the number was recorded rather than only what it was.
+    pub level_chapter_id: Option<String>,
+    pub level_chapter_seq: Option<i64>,
+    pub stats: Vec<CharacterChapterStat>,
     pub skills: Vec<CharacterChapterSkill>,
+    pub items: Vec<CharacterChapterItem>,
+    /// Items with no acquisition chapter, which cannot be placed in the story.
+    /// Counted rather than listed, because every read would list them twice.
+    pub undated_items: i64,
 }
 
 /// The snapshot for one character assigned to one chapter, as the graph cards
@@ -14727,8 +14938,41 @@ mod tests {
             .stat_changes
             .iter()
             .any(|change| change.stat_name == "Agility"
-                && change.amount == Some(1)
-                && change.value_after == Some(12)));
+                && change.amount == Some(2)
+                && change.value_after == Some(14)));
+
+        // The demo's readings agree with its sheets: every stat a character
+        // holds was recorded by a level-up, the last value recorded is the one
+        // on the sheet, and no level-up awards a stat the sheet has lost. The
+        // guide reads sheets as of a chapter, so a demo that disagreed with
+        // itself would look like a bug in the readout.
+        for character in [&rook, &mira] {
+            let sheet = db.list_stats(&character.id).unwrap();
+            let read = db
+                .character_state_at_chapter(&character.id, &chapters[2].id)
+                .unwrap();
+
+            assert_eq!(sheet.len(), 3);
+            assert_eq!(read.stats.len(), sheet.len());
+
+            for stat in &sheet {
+                let recorded = read
+                    .stats
+                    .iter()
+                    .find(|entry| entry.stat_name == stat.stat_name)
+                    .unwrap_or_else(|| {
+                        panic!("{} has no recorded {}", character.name, stat.stat_name)
+                    });
+
+                assert_eq!(
+                    recorded.value,
+                    Some(stat.value),
+                    "{}'s {} disagrees with the sheet",
+                    character.name,
+                    stat.stat_name
+                );
+            }
+        }
 
         let upgrade = db
             .list_story_skill_events(&story.id)
@@ -22091,6 +22335,212 @@ mod tests {
         assert!(
             !end.skills.iter().any(|skill| skill.name == "Shield"),
             "a sacrificed skill is no longer active"
+        );
+    }
+
+    #[test]
+    fn a_chapter_state_reads_stats_from_the_last_level_that_recorded_them() {
+        let (db, story, character, one, _) = skill_story();
+        let two = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.add_level_milestone_with_changes(
+            character.id.clone(),
+            2,
+            Some(one.id.clone()),
+            false,
+            None,
+            vec![stat_gain("Strength", 2, 10), stat_gain("Agility", 1, 9)],
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_level_milestone_with_changes(
+            character.id.clone(),
+            3,
+            Some(two.id.clone()),
+            false,
+            None,
+            vec![stat_gain("Strength", 3, 13)],
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // The sheet also holds a stat no level-up has snapshotted yet, which the
+        // readout must name without inventing a number for it.
+        db.add_or_update_stat(character.id.clone(), "Mana".into(), 4, None, "Ada".into())
+            .unwrap();
+
+        let opening = db
+            .character_state_at_chapter(&character.id, &one.id)
+            .unwrap();
+        assert_eq!(opening.level, Some(2));
+        assert_eq!(opening.level_chapter_id.as_deref(), Some(one.id.as_str()));
+        assert_eq!(opening.level_chapter_seq, Some(1));
+        assert_eq!(opening.stats.len(), 3);
+        assert_eq!(
+            opening
+                .stats
+                .iter()
+                .map(|stat| stat.stat_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Agility", "Mana", "Strength"],
+            "the readout is ordered by name, as the sheet is"
+        );
+
+        let strength = opening
+            .stats
+            .iter()
+            .find(|stat| stat.stat_name == "Strength")
+            .unwrap();
+        assert_eq!(strength.value, Some(10));
+        assert_eq!(
+            strength.recorded_chapter_id.as_deref(),
+            Some(one.id.as_str())
+        );
+
+        let mana = opening
+            .stats
+            .iter()
+            .find(|stat| stat.stat_name == "Mana")
+            .unwrap();
+        assert_eq!(mana.value, None, "no level-up has given Mana a number");
+        assert_eq!(mana.recorded_chapter_id, None);
+
+        let second = db
+            .character_state_at_chapter(&character.id, &two.id)
+            .unwrap();
+        assert_eq!(second.level, Some(3));
+        assert_eq!(second.level_chapter_seq, Some(2));
+        assert_eq!(
+            second
+                .stats
+                .iter()
+                .find(|stat| stat.stat_name == "Strength")
+                .unwrap()
+                .value,
+            Some(13)
+        );
+        assert_eq!(
+            second
+                .stats
+                .iter()
+                .find(|stat| stat.stat_name == "Agility")
+                .unwrap()
+                .value,
+            Some(9),
+            "a stat the later level did not touch keeps the value it recorded"
+        );
+    }
+
+    #[test]
+    fn a_chapter_state_carries_only_the_items_gained_and_not_yet_lost() {
+        let (db, story, character, one, _) = inventory_story();
+        let two = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let three = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Three".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.add_inventory_item(
+            character.id.clone(),
+            "Iron Sword".into(),
+            Some("Rare".into()),
+            2,
+            Some("+1 damage".into()),
+            Some(one.id.clone()),
+            Some(three.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_inventory_item(
+            character.id.clone(),
+            "Ember Sigil".into(),
+            None,
+            1,
+            None,
+            Some(two.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_inventory_item(
+            character.id.clone(),
+            "Cloak".into(),
+            None,
+            1,
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let opening = db
+            .character_state_at_chapter(&character.id, &one.id)
+            .unwrap();
+        assert_eq!(opening.items.len(), 1, "only what was gained by then");
+        assert_eq!(opening.items[0].name, "Iron Sword");
+        assert_eq!(opening.items[0].quantity, 2);
+        assert_eq!(opening.items[0].rarity.as_deref(), Some("Rare"));
+        assert_eq!(
+            opening.items[0].acquired_chapter_seq,
+            Some(1),
+            "the chapter says when it was gained"
+        );
+        assert_eq!(
+            opening.undated_items, 1,
+            "an item with no chapter cannot be placed in the story"
+        );
+
+        let second = db
+            .character_state_at_chapter(&character.id, &two.id)
+            .unwrap();
+        assert_eq!(
+            second
+                .items
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Iron Sword", "Ember Sigil"],
+            "the inventory is listed in the order it was gained"
+        );
+
+        let end = db
+            .character_state_at_chapter(&character.id, &three.id)
+            .unwrap();
+        assert_eq!(end.items.len(), 1);
+        assert_eq!(
+            end.items[0].name, "Ember Sigil",
+            "a sword lost in this chapter is not carried at its end"
         );
     }
 

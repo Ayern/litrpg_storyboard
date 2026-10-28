@@ -143,6 +143,28 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 </span>
                 {flag.summary}
               </button>
+              {flag.kind === 'stat-sheet-mismatch' &&
+                flag.statName &&
+                flag.statValue != null && (
+                  <button
+                    type="button"
+                    className="graph-node-continuity-sync nodrag nopan"
+                    title={`Record the level-up's ${flag.statName} of ${flag.statValue} on ${flag.characterName}'s sheet`}
+                    disabled={
+                      data.syncingStatKey ===
+                      `${flag.characterId}::${flag.statName}`
+                    }
+                    onClick={event => {
+                      event.stopPropagation();
+                      data.onSyncSheetStat?.(flag);
+                    }}
+                  >
+                    {data.syncingStatKey ===
+                    `${flag.characterId}::${flag.statName}`
+                      ? 'Syncing…'
+                      : `Set to ${flag.statValue}`}
+                  </button>
+                )}
               {flag.kind === 'xp-income-mismatch' &&
                 flag.ledgerXp != null &&
                 flag.target.kind === 'level' && (

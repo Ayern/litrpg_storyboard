@@ -67,6 +67,7 @@ function baseProps(
     chartStateError: null,
     chartStateById: new Map(),
     visibleComparisonSeries: [],
+    castStats: {},
     characters: [],
     selectedCharacterId: null,
     setSelectedCharacterId: vi.fn(),

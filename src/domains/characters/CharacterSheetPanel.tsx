@@ -2,9 +2,10 @@ import React from 'react';
 import { CharacterViewToggle } from '../../components/CharacterViewToggle';
 import type { ChapterNode } from '../narrative/chapters';
 import type { CharacterChapterState } from '../narrative/types';
+import { ChapterSnapshot } from '../progression/ChapterSnapshot';
 import { ProgressionChart } from '../progression/ProgressionChart';
 import type { ProgressionChartSeries, ProgressionMetric } from '../progression/types';
-import type { Character } from '../shared/types';
+import type { Character, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 
 // The shell of the Characters tab: the switch between its three views, the story
@@ -47,6 +48,9 @@ export interface CharacterSheetPanelProps {
   chartStateError: string | null;
   chartStateById: Map<string, CharacterChapterState>;
   visibleComparisonSeries: ProgressionChartSeries[];
+  // The stats each sheet holds now, so the expanded readout can show what a
+  // number became rather than only what it was.
+  castStats: Record<string, CharacterStat[]>;
 
   // The cast rail, and the two fields that add to it.
   characters: Character[];
@@ -100,6 +104,7 @@ export function CharacterSheetPanel({
   chartStateError,
   chartStateById,
   visibleComparisonSeries,
+  castStats,
   characters,
   selectedCharacterId,
   setSelectedCharacterId,
@@ -122,6 +127,10 @@ export function CharacterSheetPanel({
   removeCharacter,
   children,
 }: CharacterSheetPanelProps) {
+  // Which cast member's whole sheet is open under the chapter readout. One at a
+  // time keeps the panel the height of a comparison rather than a stack.
+  const [openSnapshotId, setOpenSnapshotId] = React.useState<string | null>(null);
+
   return (
     <div className="tab-content">
       <CharacterViewToggle view="sheet" onChange={onViewChange} />
@@ -311,11 +320,17 @@ export function CharacterSheetPanel({
                     {visibleComparisonSeries.map(series => {
                       const state = chartStateById.get(series.characterId);
                       const skills = state?.skills ?? [];
+                      const open = openSnapshotId === series.characterId;
+                      const chapterLabel =
+                        chartStateChapter?.data.label ?? 'this chapter';
 
                       return (
                         <li
                           key={series.characterId}
                           data-state-character={series.characterId}
+                          className={`progression-state-item ${
+                            open ? 'open' : ''
+                          }`}
                         >
                           <span
                             className="progression-legend-swatch"
@@ -343,6 +358,37 @@ export function CharacterSheetPanel({
                                   )
                                   .join(' · ')}
                           </span>
+                          <button
+                            type="button"
+                            className="progression-state-open"
+                            aria-expanded={open}
+                            aria-controls={`chapter-snapshot-${series.characterId}`}
+                            disabled={!state}
+                            title={
+                              open
+                                ? `Close ${series.name}'s sheet at ${chapterLabel}`
+                                : `Read ${series.name}'s whole sheet — stats, skills and what they carried — as of ${chapterLabel}`
+                            }
+                            onClick={() =>
+                              setOpenSnapshotId(open ? null : series.characterId)
+                            }
+                          >
+                            {open ? 'Hide sheet' : 'Read sheet'}
+                          </button>
+
+                          {open && state && (
+                            <div
+                              id={`chapter-snapshot-${series.characterId}`}
+                              className="progression-state-detail"
+                            >
+                              <ChapterSnapshot
+                                state={state}
+                                characterName={series.name}
+                                chapterLabel={chapterLabel}
+                                stats={castStats[series.characterId] ?? []}
+                              />
+                            </div>
+                          )}
                         </li>
                       );
                     })}
