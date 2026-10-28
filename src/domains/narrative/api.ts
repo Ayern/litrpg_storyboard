@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { IndexedNode } from '../canvas/types';
-import type { ChapterCastMember, ChapterCastState } from './types';
+import type { ChapterCastMember, ChapterCastState, ChapterTask } from './types';
 
 // Chapters, the cast assigned to them and the notes hanging under them. A
 // chapter and a note are both stored as nodes, so the rows that come back are
@@ -71,4 +71,22 @@ export function addChapterCastMember(chapterId: string, characterId: string, act
 
 export function removeChapterCastMember(id: string, actor: string) {
   return invoke<void>('remove_chapter_cast_member', { id, user: actor });
+}
+
+// The scene checklist on a chapter card. One row per line, in the order it was
+// written, so a tick can be undone without the list rearranging itself.
+export function getStoryChapterTasks(storyId: string) {
+  return invoke<ChapterTask[]>('get_story_chapter_tasks', { storyId });
+}
+
+export function addChapterTask(chapterId: string, text: string, actor: string) {
+  return invoke<ChapterTask>('add_chapter_task', { chapterId, text, user: actor });
+}
+
+export function setChapterTaskDone(id: string, done: boolean, actor: string) {
+  return invoke<ChapterTask>('set_chapter_task_done', { id, done, user: actor });
+}
+
+export function deleteChapterTask(id: string, actor: string) {
+  return invoke<void>('delete_chapter_task', { id, user: actor });
 }

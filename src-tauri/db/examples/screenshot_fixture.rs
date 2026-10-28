@@ -118,6 +118,11 @@ fn main() {
     );
     put(
         &mut root,
+        "story_chapter_tasks",
+        &db.list_story_chapter_tasks(&story_id).unwrap(),
+    );
+    put(
+        &mut root,
         "chapter_cast_states",
         &db.list_chapter_cast_states(&story_id).unwrap(),
     );

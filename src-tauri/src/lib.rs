@@ -1,10 +1,10 @@
 use litrpg_db::{
-    AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
-    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterGrowthPoint, CharacterLevel,
-    CharacterProgress, CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db,
-    DeletedItem, Edge, FactionStanding, GrowthPointSpend, InventoryItem, LevelGrowthRule,
-    LevelGrowthStatInput, LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution,
-    SkillTree, Story, StoryExport,
+    AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, ChapterTask, Character,
+    CharacterAttribute, CharacterAward, CharacterChapterState, CharacterCurrency,
+    CharacterGrowthPoint, CharacterLevel, CharacterProgress, CharacterRelation, CharacterSkill,
+    CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge, FactionStanding, GrowthPointSpend,
+    InventoryItem, LevelGrowthRule, LevelGrowthStatInput, LevelStatChangeInput, Node, Quest,
+    QuestReward, SkillEvolution, SkillTree, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -773,6 +773,42 @@ fn remove_chapter_cast_member(
 }
 
 #[tauri::command]
+fn get_story_chapter_tasks(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<ChapterTask>, String> {
+    db.list_story_chapter_tasks(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_chapter_task(
+    db: tauri::State<'_, Db>,
+    chapter_id: String,
+    text: String,
+    user: String,
+) -> Result<ChapterTask, String> {
+    db.add_chapter_task(chapter_id, text, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_chapter_task_done(
+    db: tauri::State<'_, Db>,
+    id: String,
+    done: bool,
+    user: String,
+) -> Result<ChapterTask, String> {
+    db.set_chapter_task_done(&id, done, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_chapter_task(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_chapter_task(&id, user).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_skill_events(
     db: tauri::State<'_, Db>,
     skill_id: String,
@@ -1519,6 +1555,10 @@ pub fn run() {
             get_story_chapter_cast,
             add_chapter_cast_member,
             remove_chapter_cast_member,
+            get_story_chapter_tasks,
+            add_chapter_task,
+            set_chapter_task_done,
+            delete_chapter_task,
             get_skill_events,
             get_story_skill_events,
             add_skill_event,

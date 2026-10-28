@@ -1,3 +1,4 @@
+import type { ChapterTask } from '../narrative/types';
 import type {
   ChapterContinuityFlag,
   ChapterNote,
@@ -68,6 +69,19 @@ export type NodeData = {
   // level only when one was recorded.
   chapterCast?: ChapterCastBadge[];
   onOpenChapterCast?: (characterId: string) => void;
+  // Everybody the chapter could name, so its card can offer the cast and the
+  // point of view without opening a tab.
+  castChoices?: { id: string; name: string }[];
+  onSetChapterPov?: (pov: string | null) => void;
+  onAddChapterCast?: (characterId: string) => void;
+  onRemoveChapterCast?: (characterId: string) => void;
+  // The scene's checklist, written on the card. Each write is one undo step.
+  chapterTasks?: ChapterTask[];
+  onAddChapterObjective?: (text: string) => Promise<boolean>;
+  onToggleChapterObjective?: (task: ChapterTask) => void;
+  onRemoveChapterObjective?: (task: ChapterTask) => void;
+  // XP paid into this chapter without opening the sheet.
+  onQuickAward?: (characterId: string, amount: number) => Promise<boolean>;
   // The quests accepted or ended in this chapter, and where their badges lead.
   questBadges?: QuestBadge[];
   onOpenQuest?: (questId: string) => void;

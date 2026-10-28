@@ -36,6 +36,19 @@ export interface ChapterCastState {
   skills: CharacterChapterSkill[];
 }
 
+// One objective on a chapter card: a line the author ticks off as the scene is
+// written. `position` is the order the lines were written in, so ticking one
+// does not move it.
+export interface ChapterTask {
+  id: string;
+  chapter_id: string;
+  text: string;
+  done: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // One character the author added to a chapter's cast. The point of view is a
 // link on the node and joins this list in the scene; a chapter has no other
 // single-cast link.

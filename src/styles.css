@@ -4387,6 +4387,352 @@ body {
   color: #fca5a5;
 }
 
+/* A chapter is the board's anchor, so it is drawn as a workbench rather than a
+   sticky note: wide enough for its scene, its roster and its checklist, with
+   the small forms opening over the face instead of in a panel. */
+.graph-node.workbench {
+  position: relative;
+  width: 300px;
+  max-width: 300px;
+  gap: 3px;
+  padding: 8px 11px 10px;
+  background: #24222b;
+  border-color: #3d3752;
+  border-left-width: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.graph-node.workbench .graph-node-label {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.chapter-summary {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b6b2c4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chapter-summary-empty {
+  color: #77738a;
+  font-style: italic;
+}
+
+/* The small buttons that open the card's own forms: on the roster row and
+   under the checklist, where the thing they change is. */
+.chapter-face-open {
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding: 1px 7px;
+  border: 1px solid #4a4060;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.1);
+  color: #cdbcfc;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.chapter-face-open:hover,
+.chapter-face-open:focus-visible,
+.chapter-face-open.active {
+  border-color: #7c6aae;
+  background: rgba(167, 139, 250, 0.22);
+  color: #efe7ff;
+  outline: none;
+}
+
+/* The popover hangs inside the card, so opening it moves nothing on the board. */
+.chapter-popover {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 40px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 9px;
+  background: #17161c;
+  border: 1px solid #4a4060;
+  border-radius: 7px;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  color: #dcd8e8;
+}
+
+.chapter-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chapter-popover-row > span:first-child {
+  flex-shrink: 0;
+  width: 72px;
+  color: #a9a3bd;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.chapter-popover select,
+.chapter-popover input[type='number'],
+.chapter-popover input[type='text'],
+.chapter-objective-add input {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 3px 6px;
+  background: #22212a;
+  border: 1px solid #3c3a48;
+  border-radius: 5px;
+  color: #e8e8e8;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.chapter-popover select:focus,
+.chapter-popover input:focus,
+.chapter-objective-add input:focus {
+  outline: none;
+  border-color: #7c6aae;
+}
+
+.chapter-popover-cast {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 128px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chapter-popover-cast-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 0;
+  cursor: pointer;
+}
+
+.chapter-popover-cast-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-popover-empty,
+.chapter-popover-hint {
+  margin: 0;
+  color: #8f89a4;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.chapter-cast-tag {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(167, 139, 250, 0.2);
+  color: #cdbcfc;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* The scene checklist. A ticked line stays where it is, dimmed rather than
+   moved, so the author's order is the list's order. */
+.chapter-objectives {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #363246;
+}
+
+.chapter-objectives-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.chapter-objectives-title {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #a78bfa;
+}
+
+.chapter-objectives-count {
+  font-size: 9px;
+  color: #8f89a4;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-objectives-empty {
+  margin: 0;
+  color: #77738a;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.chapter-objectives-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapter-objective {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.chapter-objective-row {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.chapter-objective-row input {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+  accent-color: #a78bfa;
+}
+
+.chapter-objective-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chapter-objective.done .chapter-objective-text {
+  color: #7f7a92;
+  text-decoration: line-through;
+}
+
+.chapter-objective-remove {
+  flex-shrink: 0;
+  padding: 0 3px;
+  background: transparent;
+  border: 0;
+  color: #6f6a83;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.chapter-objective-remove:hover,
+.chapter-objective-remove:focus-visible {
+  color: #fca5a5;
+  outline: none;
+}
+
+.chapter-objective-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.chapter-objective-add input {
+  font-size: 10px;
+}
+
+.chapter-objective-add button {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  background: rgba(167, 139, 250, 0.16);
+  border: 1px solid #4a4060;
+  border-radius: 5px;
+  color: #cdbcfc;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.chapter-objective-add button:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.26);
+  color: #efe7ff;
+}
+
+.chapter-objective-add button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chapter-award {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 3px;
+}
+
+.chapter-award .chapter-face-open {
+  margin-top: 0;
+}
+
+.chapter-award-form {
+  top: auto;
+  bottom: 8px;
+}
+
+.chapter-award-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.chapter-award-actions button {
+  padding: 2px 9px;
+  background: rgba(122, 196, 122, 0.14);
+  border: 1px solid #3f5a3f;
+  border-radius: 5px;
+  color: #c6e3c6;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.chapter-award-actions button:last-child {
+  background: transparent;
+  border-color: #3c3a48;
+  color: #a9a3bd;
+}
+
+.chapter-award-actions button:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+
+.chapter-award-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chapter-award-error {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 10px;
+}
+
 /* A linked node carries its cast member's numbers, so the board answers "who is
    ahead" without opening the inspector. */
 .graph-node-cast {

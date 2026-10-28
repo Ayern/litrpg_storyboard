@@ -189,7 +189,7 @@ src/
 | Domain | Owns | Reads and writes through |
 | --- | --- | --- |
 | **canvas** | The board, the card, the cast rail, the connection editor, the inspector drawer, which card or line is open, the drafts typed into a drawer, and the skill card's holder form | `get_graph_nodes`, `get_graph_edges`, `create_graph_node`, `update_graph_node`, `set_node_character`, `create_graph_edge`, `update_graph_edge`, `delete_node`, `delete_edge`, `add_skill` (a holder) |
-| **narrative** | Chapters: reading order, arcs, POV, day and time, word counts, the cast on a chapter, the notes under it, and the continuity advisories the chapter cards raise | `set_chapter_order`, `set_chapter_details`, `get_story_chapter_cast`, `get_story_chapter_cast_states`, `add_chapter_cast_member`, `add_chapter_note`, `update_chapter_note` |
+| **narrative** | Chapters: reading order, arcs, POV, day and time, word counts, the cast on a chapter, its objective checklist, the notes under it, and the continuity advisories the chapter cards raise | `set_chapter_order`, `set_chapter_details`, `get_story_chapter_cast`, `get_story_chapter_cast_states`, `add_chapter_cast_member`, `get_story_chapter_tasks`, `add_chapter_task`, `set_chapter_task_done`, `add_chapter_note`, `update_chapter_note` |
 | **characters** | The sheet's sections — attributes, stats, items, currency, bonds, faction standings, level rows and XP by chapter — each keeping its own open row and draft fields | `get_character_stats`, `set_character_stat`, `get_character_attributes`, `get_character_inventory`, `get_character_currency`, `get_character_state_at_chapter` |
 | **skills** | The skill section on a sheet, what a level-up did to a skill (`used`, `upgraded`, `sacrificed`), and the evolution tree with its cycle guard | `add_skill`, `update_skill`, `delete_skill`, `add_skill_event`, `add_skill_evolution`, `get_story_skill_evolutions` |
 | **quests** | The ledger: quest drafts, reward drafts, the status filter, the apply notices, and the continuity warnings a payout raises | `get_story_quests`, `add_quest`, `update_quest`, `add_quest_reward`, `mark_quest_rewards_applied` |
@@ -239,14 +239,25 @@ her numbers without leaving the canvas.*
 
 ![The Graph tab with the sample story](screenshots/canvas-board.png)
 
-*The Graph tab. Three chapter cards along the top (each carrying its cast badges,
-the quests that touch it and its own continuity warnings), the cast rail on the
-left, character cards in the middle, skill cards and a faction card below. The
-lines the board is drawn around are solid and named: `next` between chapters,
-`rival` / `enemy` between two characters, `member` into a faction. A line that
-only repeats what a badge or a sheet already holds — a cast assignment, a skill
-hold — is the faint dashed thread with no verb, still clickable when the wiring
-itself is what you came to change.*
+*The Graph tab. Three chapter cards along the top, each a workbench: its summary,
+its roster with a level *as of that chapter*, its objective checklist, **Cast** and
+**+ XP**, then the quests that touch it and its own continuity warnings. The cast
+rail is on the left, character cards in the middle, skill cards and a faction card
+below. The lines the board is drawn around are solid and named: `next` between
+chapters, `rival` / `enemy` between two characters, `member` into a faction. A line
+that only repeats what a badge or a sheet already holds — a cast assignment, a
+skill hold — is the faint dashed thread with no verb, still clickable when the
+wiring itself is what you came to change.*
+
+Every write on that card face leaves through `App.tsx` and records one history
+step. **Cast** writes a `chapter_cast` row through `add_chapter_cast_member` (or
+takes one back with `remove_chapter_cast_member`), and the point of view is a
+column written with `set_chapter_details`. **Add** and the objective checkboxes
+write `chapter_tasks` rows with `add_chapter_task` / `set_chapter_task_done`.
+**+ XP** calls `add_character_award`, which pays into the chapter's income; the app
+then reads the cast, levels and stats back with `reloadProgressionNumbers`, so the
+badges on every other card follow in the same render. None of these are board-only
+facts: the same rows are what the Chapters tab and the sheet show.
 
 ### The easy route: drop a cast member on the board
 

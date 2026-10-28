@@ -20,7 +20,7 @@ change keeps, are in [ROADMAP.md](ROADMAP.md).
 ## Features
 
 **Stories** — create, rename and delete. The sidebar orders them by most recently
-touched.**Load demo story** builds a prepared three-chapter story with three cast members, stats, skills, relations and faction standings, chapter cast, level and stat milestones, and XP income rows. Its board is already drawn — the three chapter cards, cards for each cast member, an item card, a faction card, a quest card, two skill cards, and the connections between them — and its ledgers are filled: one finished quest with its four rewards, one still open, two chapter notes, an inventory and two currency rows. A cut cast member, a cut card and a scratch story wait in the trash, so restoring something can be tried without deleting anything of your own. Everything the guide documents is this story: the app builds it, and so do the pictures in [`GUIDE.md`](GUIDE.md). Its last chapter deliberately leaves Mira's ledger 100 XP short of her total, so the continuity warning and chapter-card badge can be tried without touching a real story. While it keeps its prepared title and the demo is
+touched.**Load demo story** builds a prepared three-chapter story with three cast members, stats, skills, relations and faction standings, chapter cast, chapter objectives, level and stat milestones, and XP income rows. Its board is already drawn — the three chapter cards, cards for each cast member, an item card, a faction card, a quest card, two skill cards, and the connections between them — and its ledgers are filled: one finished quest with its four rewards, one still open, two chapter notes, an inventory and two currency rows. A cut cast member, a cut card and a scratch story wait in the trash, so restoring something can be tried without deleting anything of your own. Everything the guide documents is this story: the app builds it, and so do the pictures in [`GUIDE.md`](GUIDE.md). Its last chapter deliberately leaves Mira's ledger 100 XP short of her total, so the continuity warning and chapter-card badge can be tried without touching a real story. While it keeps its prepared title and the demo is
 selected, **Reset demo story** replaces its chapters, cast, progression and
 history in place with a fresh copy of the sample data, so a walkthrough can be
 repeated without piling up demo stories. It is an ordinary story otherwise:
@@ -326,22 +326,36 @@ number is a gap in the ledger, not a real one. An item with no acquisition chapt
 has no place in the story and is counted apart, and quantities are the sheet's own
 because a count is not dated.
 
-**Chapter cast badges** — a chapter card on the Graph tab names everyone present
-in that chapter: the character it is linked to, the point-of-view character, and
-every cast member added with **Cast** on the Chapters tab. The picker is one
-checkbox per live cast member and marks the card's own links as **POV** and
-**Linked**, so a party can share a scene without replacing those two links. Each
-name gets a compact level badge from the same chapter snapshot, so
-"Rook (Lv 12)" is the level Rook had when the story reached that chapter, not the
-level on the sheet today. Hovering or focusing a badge lists that character's
-active skills and their ranks; clicking it opens the character sheet. A character
-with no milestone yet keeps the name badge without a level; a chapter with
-nobody assigned gets no badge row at all, and every present character gets a
-badge, wrapping as needed. The badges are `nodrag nopan` buttons, so opening
-one does not drag the card or pan the board. Every chapter's cast is read in one
-story-wide request rather than one request per card, and the request is repeated
-when the milestones, skills, links or explicit cast change. The explicit cast
-travels in the JSON export and an import; older files without the table still
+**Chapter workbench** — a chapter card on the Graph tab is drawn wider than the
+other cards, because planning a scene happens on it rather than in another tab.
+The face carries the chapter's own summary (the card's note), its roster, its
+checklist and a quick **+ XP** action. **Cast** opens a small popover on the card
+with the point of view as a select and one checkbox per live cast member, so the
+roster is changed where it is read. Every one of those writes is a named history
+step: **Undo** takes the line back off the card, reopens a ticked objective,
+removes an added name or reverses the award.
+
+**Chapter cast badges** — a chapter card names everyone present in that chapter:
+the point-of-view character and every cast member ticked as present, from the
+card's own **Cast** popover or from the same picker on the Chapters tab. There is
+no single linked character on a chapter: that link was folded into cast rows in
+schema v31, so the roster has one source. Each name gets a compact level badge
+from the chapter snapshot, so "Rook (Lv 12)" is the level Rook had when the story
+reached that chapter, not the level on the sheet today. Hovering or focusing a
+badge lists that character's active skills and their ranks; clicking it opens the
+character sheet as of that chapter. A character with no level yet keeps the name
+badge without one, and a chapter with nobody in it says so rather than hiding the
+roster. The badges are `nodrag nopan` buttons, so opening one does not drag the
+card or pan the board. Every chapter's cast is read in one story-wide request
+rather than one request per card, and the request is repeated when the milestones,
+skills, point of view or cast rows change.
+
+**Chapter objectives** — each chapter has a short checklist of lines it should
+hit, stored one row per line in `chapter_tasks` (schema v32) with a `done` flag and
+a `position`. The card lists them in the order they were written, ticks them in
+place and drops one with **×**; **Add** or `Enter` writes a new line. Rows hang off
+the chapter node, so a purged chapter takes its checklist with it, and they travel
+in the JSON export under `chapter_tasks` while older files without the table still
 import.
 
 **Skills** — a cast member's skills are rows of their own rather than attributes

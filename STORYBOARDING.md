@@ -132,6 +132,24 @@ the warnings are advice, and a story with none shows an empty panel.
 each, **Ctrl/Cmd+Enter** saves, the panel counts them on the button. Switching away
 or closing asks before a half-written note is dropped.
 
+The chapter card on the Graph tab is where the scene itself gets planned, so you
+can stay on the board:
+
+- The card shows the chapter's **summary** — the note written on the card — and
+  its **objectives**, a short checklist of what the scene has to hit. Type a line
+  and press `Enter` (or **Add**) to write one; tick it off as you write the scene;
+  **×** drops a line. Ticked lines stay where they are instead of jumping to the
+  bottom, and the counter at the top of the list says how many are done.
+- **Cast** on the card opens the roster right there: a **Point of view** choice and
+  a checkbox for everyone else in the scene. The POV is always present and its box
+  is locked, because the POV is not a cast row.
+- **+ XP** pays experience into that chapter for one character. The curve, the
+  level it buys and the stats that level hands out all follow from the one write,
+  so the badges on every card update immediately.
+- Every one of those clicks is one **Undo** step: the added line disappears, the
+  ticked line reopens, the name leaves the roster, the XP comes back off the
+  ledger.
+
 ![The board with chapter notes shown](screenshots/canvas-notes.png)
 
 ***Show notes** on the Graph toolbar pins the first three notes under their
@@ -159,9 +177,10 @@ Then say who is where:
   cast rail onto it) and that person joins the chapter's cast. The chapter card
   then names everyone present — its POV and everyone you added — with each one's
   level *as of that chapter*, not today.
-- **Cast** on a chapter row opens the whole list with a checkbox each, so a party
-  can share a scene without changing the chapter's POV. A chapter card has no
-  single linked character of its own: this list is the roster.
+- **Cast** on the chapter card, or on a Chapters row, opens the whole list with a
+  checkbox each, so a party can share a scene without changing the chapter's POV.
+  A chapter card has no single linked character of its own: this list is the
+  roster, and the point of view is the one name that is always in it.
 - **Connect two character cards** and the app asks what the bond is before
   recording anything.
 

@@ -39,6 +39,7 @@ const createStore = () => ({
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],
+  tasks: clone(fixture.story_chapter_tasks ?? []) as Row[],
   relations: clone(fixture.story_relations) as Row[],
   standings: clone(fixture.story_faction_standings) as Row[],
   quests: clone(fixture.story_quests) as Row[],
@@ -536,6 +537,7 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_chapter_notes: () => store.notes,
   get_story_chapter_cast: () => store.chapterCast,
   get_story_chapter_cast_states: () => chapterCastStates(),
+  get_story_chapter_tasks: () => store.tasks,
 
   get_story_relations: () => store.relations,
   get_story_faction_standings: () => store.standings,
@@ -811,6 +813,44 @@ const writes: Record<string, (args: Row) => unknown> = {
 
   remove_chapter_cast_member: args => {
     drop(store.chapterCast, args.id);
+    return null;
+  },
+
+  add_chapter_task: args => {
+    chapterOrThrow(args.chapterId);
+
+    const text = String(args.text ?? '').trim();
+    if (!text) throw new Error('an objective needs a line of text');
+
+    const timestamp = now();
+    const position = store.tasks
+      .filter(row => row.chapter_id === args.chapterId)
+      .reduce((next, row) => Math.max(next, Number(row.position) + 1), 0);
+    const row: Row = {
+      id: id('task'),
+      chapter_id: args.chapterId,
+      text,
+      done: false,
+      position,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    store.tasks.push(row);
+    return row;
+  },
+
+  set_chapter_task_done: args => {
+    const task = store.tasks.find(row => row.id === args.id);
+    if (!task) throw new Error('no such objective');
+
+    task.done = Boolean(args.done);
+    task.updated_at = now();
+    return task;
+  },
+
+  delete_chapter_task: args => {
+    drop(store.tasks, args.id);
     return null;
   },
 

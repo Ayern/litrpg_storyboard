@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 31;
+const SCHEMA_VERSION: i32 = 32;
 
 /// The step a level costs when nothing says otherwise: 100 XP between the first
 /// levels, which is the smallest curve an author is likely to want and the one a
@@ -821,6 +821,33 @@ impl Db {
         self.add_chapter_cast_member(first.id.clone(), mira.id.clone(), user.clone())?;
         self.add_chapter_cast_member(second.id.clone(), rook.id.clone(), user.clone())?;
         self.add_chapter_cast_member(third.id.clone(), mira.id.clone(), user.clone())?;
+
+        // The demo's scenes are planned on its chapter cards, so the pictures
+        // show a checklist with something already ticked off rather than four
+        // empty boards.
+        for (chapter, text, done) in [
+            (
+                &first,
+                "Rook reaches the Court with the summons still sealed",
+                true,
+            ),
+            (&first, "Mira lifts the ember from the toll gate", false),
+            (&first, "Vane writes the debt down in his own hand", false),
+            (
+                &second,
+                "Vane names his price without naming the debt",
+                true,
+            ),
+            (&second, "Rook's sigil answers before he does", false),
+            (&third, "Every flame in the room is paid at once", false),
+            (&third, "Mira takes the exit Rook cannot follow", false),
+        ] {
+            let task = self.add_chapter_task(chapter.id.clone(), text.into(), user.clone())?;
+
+            if done {
+                self.set_chapter_task_done(&task.id, true, user.clone())?;
+            }
+        }
 
         let ash_step = self.add_skill(
             rook.id.clone(),
@@ -6567,6 +6594,200 @@ impl Db {
         Ok(())
     }
 
+    /// Every objective on every live chapter, in reading order and then in the
+    /// order the author wrote them.
+    pub fn list_story_chapter_tasks(&self, story_id: &str) -> DbResult<Vec<ChapterTask>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT t.id, t.chapter_id, t.text, t.done, t.position, t.created_at, t.updated_at
+               FROM chapter_tasks t
+               JOIN nodes n ON n.id = t.chapter_id
+               JOIN stories st ON st.id = n.story_id
+              WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+                AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+              ORDER BY n.chapter_seq, t.position, t.created_at, t.id",
+        )?;
+        let rows = stmt.query_map(params![story_id], chapter_task_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Adds a line to a chapter's checklist. The chapter has to be a live chapter
+    /// of a live story, so an objective cannot hang off a card that is not one.
+    pub fn add_chapter_task(
+        &self,
+        chapter_id: String,
+        text: String,
+        user: String,
+    ) -> DbResult<ChapterTask> {
+        let trimmed = text.trim();
+
+        if trimmed.is_empty() {
+            return Err(DbError::Invalid(
+                "an objective needs a line of text".to_string(),
+            ));
+        }
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let story_id = tx
+            .query_row(
+                "SELECT n.story_id
+                   FROM nodes n
+                   JOIN stories st ON st.id = n.story_id
+                  WHERE n.id = ?1 AND n.node_type = 'chapter'
+                    AND n.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![&chapter_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                DbError::Invalid("an objective belongs to a live chapter".to_string())
+            })?;
+
+        let position: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM chapter_tasks WHERE chapter_id = ?1",
+            params![&chapter_id],
+            |row| row.get(0),
+        )?;
+        let timestamp = now();
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO chapter_tasks
+             (id, chapter_id, text, done, position, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?5)",
+            params![&id, &chapter_id, trimmed, position, &timestamp],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_task",
+                entity_id: &id,
+                action: "create",
+                field_changed: None,
+                old_value: None,
+                new_value: Some(trimmed.to_string()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(ChapterTask {
+            id,
+            chapter_id,
+            text: trimmed.to_string(),
+            done: false,
+            position,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    /// Ticks an objective off, or puts it back. Ticking it twice writes nothing
+    /// and records nothing, so a stray click is not a history entry.
+    pub fn set_chapter_task_done(
+        &self,
+        id: &str,
+        done: bool,
+        user: String,
+    ) -> DbResult<ChapterTask> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let (mut task, story_id) = tx
+            .query_row(
+                "SELECT t.id, t.chapter_id, t.text, t.done, t.position, t.created_at,
+                        t.updated_at, n.story_id
+                   FROM chapter_tasks t
+                   JOIN nodes n ON n.id = t.chapter_id
+                   JOIN stories st ON st.id = n.story_id
+                  WHERE t.id = ?1 AND n.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((chapter_task_row(row)?, row.get::<_, String>(7)?)),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("objective"))?;
+
+        if task.done == done {
+            return Ok(task);
+        }
+
+        let timestamp = now();
+
+        tx.execute(
+            "UPDATE chapter_tasks SET done = ?1, updated_at = ?2 WHERE id = ?3",
+            params![done, &timestamp, id],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_task",
+                entity_id: id,
+                action: "update",
+                field_changed: Some("done"),
+                old_value: Some(if task.done { "done" } else { "open" }.to_string()),
+                new_value: Some(if done { "done" } else { "open" }.to_string()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        task.done = done;
+        task.updated_at = timestamp;
+
+        Ok(task)
+    }
+
+    /// Removes an objective. The line itself is kept as the audit entry's old
+    /// value, so the history still says what was dropped.
+    pub fn delete_chapter_task(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT t.text, n.story_id
+                   FROM chapter_tasks t
+                   JOIN nodes n ON n.id = t.chapter_id
+                  WHERE t.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((text, story_id)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM chapter_tasks WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_task",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(text.clone()),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
     fn character_state_at_chapter_on(
         conn: &Connection,
         character_id: &str,
@@ -8947,6 +9168,21 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let chapter_tasks = {
+            let mut stmt = guard.prepare(
+                "SELECT t.id, t.chapter_id, t.text, t.done, t.position, t.created_at,
+                        t.updated_at
+                   FROM chapter_tasks t
+                   JOIN nodes n ON n.id = t.chapter_id
+                   JOIN stories st ON st.id = n.story_id
+                  WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+                    AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+                  ORDER BY n.chapter_seq, t.position, t.created_at, t.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], chapter_task_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let mut character_inventory = {
             let mut stmt = guard.prepare(
                 "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
@@ -9283,6 +9519,7 @@ impl Db {
             character_growth_points,
             character_awards,
             chapter_cast,
+            chapter_tasks,
             character_inventory,
             character_currency,
             character_relations,
@@ -11435,6 +11672,11 @@ impl Db {
             .iter()
             .map(|member| (member.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let chapter_tasks: HashMap<String, String> = export
+            .chapter_tasks
+            .iter()
+            .map(|task| (task.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let inventory: HashMap<String, String> = export
             .character_inventory
             .iter()
@@ -12207,6 +12449,25 @@ impl Db {
             )?;
         }
 
+        // A chapter's objectives come with the chapter they hang off, in the
+        // order they were written.
+        for task in &export.chapter_tasks {
+            tx.execute(
+                "INSERT INTO chapter_tasks
+                 (id, chapter_id, text, done, position, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &chapter_tasks[&task.id],
+                    &nodes[&task.chapter_id],
+                    &task.text,
+                    task.done,
+                    task.position,
+                    &task.created_at,
+                    &task.updated_at
+                ],
+            )?;
+        }
+
         // Relations and standings come after both the cast and the chapters they
         // name, because each link is a foreign key into the copy.
         for relation in &export.character_relations {
@@ -12620,6 +12881,7 @@ impl Db {
                 "level_growth_rule" => growth_rules.get(&entry.entity_id).cloned(),
                 "character_award" => awards.get(&entry.entity_id).cloned(),
                 "chapter_cast" => chapter_cast.get(&entry.entity_id).cloned(),
+                "chapter_task" => chapter_tasks.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
                 "character_currency" => currencies.get(&entry.entity_id).cloned(),
                 "node" => nodes.get(&entry.entity_id).cloned(),
@@ -13133,6 +13395,20 @@ pub struct ChapterCastMember {
     pub updated_at: String,
 }
 
+/// One objective on a chapter's card: a line the author ticks off as the scene
+/// is written. `position` is the order the lines were written in, not the order
+/// they were ticked, so the list does not rearrange itself under the pointer.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct ChapterTask {
+    pub id: String,
+    pub chapter_id: String,
+    pub text: String,
+    pub done: bool,
+    pub position: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// One change in a skill's life: a rank gained, a use in a chapter, or a
 /// sacrifice. The chapter is optional so an event can be recorded before its
 /// place in the reading order is known.
@@ -13546,6 +13822,10 @@ pub struct StoryExport {
     /// Absent from exports written before schema v16, so they default to empty.
     #[serde(default)]
     pub chapter_cast: Vec<ChapterCastMember>,
+    /// The objectives on each chapter card. Absent from exports written before
+    /// schema v32, so they default to empty.
+    #[serde(default)]
+    pub chapter_tasks: Vec<ChapterTask>,
     /// Absent from exports written before schema v13, so they default to empty.
     #[serde(default)]
     pub character_inventory: Vec<InventoryItem>,
@@ -13566,6 +13846,20 @@ pub struct StoryExport {
 }
 
 // ===== INTERNAL HELPERS =====
+
+/// One stored objective, in the order the columns are read everywhere it is
+/// selected: id, chapter, text, done, position, created_at, updated_at.
+fn chapter_task_row(row: &rusqlite::Row) -> SqliteResult<ChapterTask> {
+    Ok(ChapterTask {
+        id: row.get(0)?,
+        chapter_id: row.get(1)?,
+        text: row.get(2)?,
+        done: row.get(3)?,
+        position: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
 //
 // These take a `&Connection` (or a transaction, which derefs to one) rather than
 // reaching for the mutex. Locking happens once, in the public methods above.
@@ -16290,6 +16584,29 @@ WHERE node_type = 'chapter' AND character_id IS NOT NULL;
 
 "#;
 
+/// Schema v32: the objectives a chapter card ticks off.
+///
+/// A chapter's scene list is the author's own: a handful of lines they want the
+/// scene to hit, checked as it is written. The rows hang off the chapter node
+/// like its notes do, so a purged chapter takes them with it, and `position`
+/// keeps the order they were written in rather than the order they were ticked.
+const MIGRATION_032_CHAPTER_TASKS: &str = r#"
+CREATE TABLE IF NOT EXISTS chapter_tasks (
+    id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_tasks_chapter
+    ON chapter_tasks (chapter_id);
+
+"#;
+
 fn migrate(conn: &Connection) -> SqliteResult<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
@@ -16506,6 +16823,12 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         && table_exists(conn, "chapter_cast")?
     {
         conn.execute_batch(MIGRATION_031_CHAPTER_CAST_ROWS)?;
+    }
+
+    // v32 gives a chapter a checklist of its own. An older file simply has no
+    // objectives, so the table starts empty.
+    if version < 32 {
+        conn.execute_batch(MIGRATION_032_CHAPTER_TASKS)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -26655,6 +26978,122 @@ mod tests {
             .query_row("SELECT count(*) FROM chapter_cast", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0, "the foreign key cleans the rows up");
+    }
+
+    #[test]
+    fn chapter_tasks_keep_their_order_and_tick_without_reordering() {
+        let (db, story, _, chapter, _) = skill_story();
+
+        let first = db
+            .add_chapter_task(
+                chapter.id.clone(),
+                "Open on the toll gate".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+        let second = db
+            .add_chapter_task(
+                chapter.id.clone(),
+                "Vane names the price".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(first.position, 0, "the first line written comes first");
+        assert_eq!(second.position, 1);
+
+        let ticked = db
+            .set_chapter_task_done(&first.id, true, "Ada".into())
+            .unwrap();
+        assert!(ticked.done);
+
+        let tasks = db.list_story_chapter_tasks(&story.id).unwrap();
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Open on the toll gate", "Vane names the price"],
+            "ticking a line does not move it"
+        );
+        assert!(tasks[0].done);
+        assert!(!tasks[1].done);
+
+        // Ticking the same line on again is not a change worth a history entry.
+        db.set_chapter_task_done(&first.id, true, "Ada".into())
+            .unwrap();
+        let updates: i64 = db
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM audit_log
+                  WHERE entity_type = 'chapter_task' AND entity_id = ?1
+                    AND action = 'update'",
+                params![&first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(updates, 1);
+    }
+
+    #[test]
+    fn an_objective_needs_a_live_chapter_and_travels_with_an_export() {
+        let (source, story, _, chapter, card) = skill_story();
+
+        assert!(matches!(
+            source.add_chapter_task(chapter.id.clone(), "   ".into(), "Ada".into()),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(matches!(
+            source.add_chapter_task(card.id.clone(), "Not a chapter".into(), "Ada".into()),
+            Err(DbError::Invalid(_))
+        ));
+
+        let task = source
+            .add_chapter_task(
+                chapter.id.clone(),
+                "Rook reaches the Court".into(),
+                "Ada".into(),
+            )
+            .unwrap();
+        source
+            .set_chapter_task_done(&task.id, true, "Ada".into())
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.chapter_tasks.len(), 1);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let restored_chapters = target.list_nodes(&restored.id).unwrap();
+        let restored_tasks = target.list_story_chapter_tasks(&restored.id).unwrap();
+
+        assert_eq!(restored_tasks.len(), 1);
+        assert_eq!(restored_tasks[0].text, "Rook reaches the Court");
+        assert!(restored_tasks[0].done, "a ticked line stays ticked");
+        assert_ne!(restored_tasks[0].id, task.id, "the copy gets its own row");
+        assert!(
+            restored_chapters
+                .iter()
+                .any(|node| node.id == restored_tasks[0].chapter_id),
+            "the objective hangs off the copied chapter"
+        );
+
+        // A trashed chapter takes its checklist out of view, and a purge clears
+        // the rows themselves.
+        source.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(source
+            .list_story_chapter_tasks(&story.id)
+            .unwrap()
+            .is_empty());
+
+        source.purge_node(&chapter.id, "Ada".into()).unwrap();
+        let remaining: i64 = source
+            .conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM chapter_tasks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     #[test]

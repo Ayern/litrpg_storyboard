@@ -127,6 +127,13 @@ const cast = [
 // with the linked cast and POV, as the database does.
 let chapterCastRows: any[] = [];
 
+// The checklist rows a chapter card has written, and the awards it has paid.
+// The ids keep counting instead of reusing a freed number, so a rewritten line
+// is a different row — which is what makes the undo/redo test worth writing.
+let chapterTasks: any[] = [];
+let taskSeq = 0;
+let awards: any[] = [];
+
 const nodeRow = (
   id: string,
   label: string,
@@ -185,6 +192,9 @@ const chapterCastStates = [
 
 beforeEach(() => {
   chapterCastRows = [];
+  chapterTasks = [];
+  taskSeq = 0;
+  awards = [];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, any>;
@@ -216,6 +226,52 @@ beforeEach(() => {
         return args.storyId === story.id ? cast.map(entry => ({ ...entry })) : [];
       case 'get_story_chapter_cast':
         return chapterCastRows.map(row => ({ ...row }));
+      case 'get_story_chapter_tasks':
+        return chapterTasks.map(row => ({ ...row }));
+      case 'add_chapter_task': {
+        taskSeq += 1;
+        const row = {
+          id: `task-${taskSeq}`,
+          chapter_id: args.chapterId,
+          text: String(args.text),
+          done: false,
+          position: chapterTasks.length,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        chapterTasks = [...chapterTasks, row];
+        return row;
+      }
+      case 'set_chapter_task_done': {
+        chapterTasks = chapterTasks.map(row =>
+          row.id === args.id ? { ...row, done: Boolean(args.done) } : row
+        );
+        return chapterTasks.find(row => row.id === args.id) ?? null;
+      }
+      case 'delete_chapter_task':
+        chapterTasks = chapterTasks.filter(row => row.id !== args.id);
+        return null;
+      case 'get_story_character_awards':
+        return awards.map(row => ({ ...row }));
+      case 'add_character_award': {
+        const row = {
+          id: `award-${awards.length + 1}`,
+          character_id: args.characterId,
+          chapter_id: args.chapterId ?? null,
+          kind: args.kind,
+          stat_name: args.statName ?? null,
+          amount: Number(args.amount),
+          note: args.note ?? null,
+          created_by: 'Ada',
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        awards = [...awards, row];
+        return row;
+      }
+      case 'delete_character_award':
+        awards = awards.filter(row => row.id !== args.id);
+        return null;
       case 'get_story_chapter_cast_states':
         return [
           ...chapterCastStates,
@@ -347,12 +403,15 @@ describe('chapter card cast badges', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 
-    // A chapter with no cast has no roster and nothing to explain.
+    // A chapter with no cast still offers the roster on its face, so the dot
+    // stays: an empty card is exactly where the explanation is needed.
+    const empty = cardFor(container, 'n3');
     expect(
-      within(cardFor(container, 'n3')).queryByRole('button', {
+      within(empty).getByRole('button', {
         name: 'About the cast on a chapter card',
       })
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
+    expect(within(empty).getByText('Nobody in this scene yet')).toBeInTheDocument();
   });
 
   it('opens the character sheet from a badge', async () => {
@@ -458,6 +517,166 @@ describe('chapter card cast badges', () => {
           name: /Tess, No level recorded/i,
         })
       ).not.toBeInTheDocument();
+    });
+  });
+
+  // ---- the chapter card's own workbench ----------------------------------
+  //
+  // The card writes the same rows the panels do, and every one of those writes
+  // is one history step. These tests hold the card to that: the line appears on
+  // the face, and Undo takes it back off.
+
+  it('plans a scene from the card, and Undo takes the line back', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    const field = await within(card).findByRole('textbox', {
+      name: 'Add an objective to Chapter One',
+    });
+
+    await user.type(field, 'Open on the toll gate{Enter}');
+
+    await waitFor(() => {
+      expect(within(card).getByText('Open on the toll gate')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        within(card).queryByText('Open on the toll gate')
+      ).not.toBeInTheDocument();
+    });
+
+    // Redo writes a new row with a new id, and the next Undo still takes that
+    // row away rather than naming the one the redo replaced.
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() => {
+      expect(within(card).getByText('Open on the toll gate')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        within(card).queryByText('Open on the toll gate')
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('ticks a line off on the card, and Undo opens it again', async () => {
+    chapterTasks = [
+      {
+        id: 'task-1',
+        chapter_id: 'n1',
+        text: 'Vane names his price',
+        done: false,
+        position: 0,
+        created_at: '2026-10-22T12:00:00Z',
+        updated_at: '2026-10-22T12:00:00Z',
+      },
+    ];
+
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(
+      await within(card).findByRole('checkbox', {
+        name: 'Vane names his price — open',
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        within(card).getByRole('checkbox', {
+          name: 'Vane names his price — done',
+        })
+      ).toBeChecked();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        within(card).getByRole('checkbox', {
+          name: 'Vane names his price — open',
+        })
+      ).not.toBeChecked();
+    });
+  });
+
+  it('puts a name in the scene from the card, and Undo takes them out', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(await within(card).findByRole('button', { name: 'Cast' }));
+    await user.click(
+      within(card).getByRole('checkbox', {
+        name: 'Tess present in Chapter One',
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(
+          call => call[0] === 'add_chapter_cast_member'
+        )?.[1]
+      ).toMatchObject({ chapterId: 'n1', characterId: 'char-3' });
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(
+          call => call[0] === 'remove_chapter_cast_member'
+        )?.[1]
+      ).toMatchObject({ id: 'cast-char-3' });
+    });
+  });
+
+  it('pays XP into a chapter from the card, as one undoable step', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(await within(card).findByRole('button', { name: '+ XP' }));
+
+    // The point of view is the person the card pays by default.
+    expect(
+      within(card).getByRole('combobox', {
+        name: 'Who the XP is for in Chapter One',
+      })
+    ).toHaveValue('char-2');
+
+    await user.type(
+      within(card).getByRole('spinbutton', {
+        name: 'XP to award in Chapter One',
+      }),
+      '100'
+    );
+    await user.click(within(card).getByRole('button', { name: 'Award' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'add_character_award')?.[1]
+      ).toMatchObject({
+        characterId: 'char-2',
+        chapterId: 'n1',
+        kind: 'xp',
+        amount: 100,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'delete_character_award')?.[1]
+      ).toMatchObject({ id: 'award-1' });
     });
   });
 });

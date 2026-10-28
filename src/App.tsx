@@ -86,7 +86,11 @@ import type {
   NodeType,
 } from './domains/canvas/types';
 import type { CharacterCurrency, InventoryItem } from './domains/inventory/types';
-import type { ChapterCastMember, ChapterCastState } from './domains/narrative/types';
+import type {
+  ChapterCastMember,
+  ChapterCastState,
+  ChapterTask,
+} from './domains/narrative/types';
 import { ProgressionSections } from './domains/characters/ProgressionSections';
 import type {
   ProgressDraft,
@@ -641,6 +645,11 @@ function App() {
   // chapter adds one — so they stay here and the workspace is handed them.
   const [storyChapterCast, setStoryChapterCast] = useState<ChapterCastMember[]>([]);
 
+  // The objectives written on each chapter card, in the order they were written.
+  // The card ticks them off in place, so the list is the board's as well as the
+  // database's: a tick is one row and one history step, never a refetch.
+  const [storyChapterTasks, setStoryChapterTasks] = useState<ChapterTask[]>([]);
+
   // The live chapters, in reading order. The board says which cards are chapters
   // and the narrative domain says what order they read in; the tab, the cards
   // and the workspace below all work from this one list.
@@ -1017,6 +1026,7 @@ function App() {
         inventory,
         noteRows,
         chapterCast,
+        chapterTasks,
         relations,
         standings,
         quests,
@@ -1035,6 +1045,7 @@ function App() {
           inventoryApi.getStoryInventory(story.id),
           narrativeApi.getChapterNotes(story.id),
           narrativeApi.getStoryChapterCast(story.id),
+          narrativeApi.getStoryChapterTasks(story.id),
           relationsApi.getStoryRelations(story.id),
           relationsApi.getStoryFactionStandings(story.id),
           questsApi.getStoryQuests(story.id),
@@ -1052,6 +1063,7 @@ function App() {
       setStoryInventory(inventory ?? []);
       followLoadedNotes(noteRows ?? []);
       setStoryChapterCast(chapterCast ?? []);
+      setStoryChapterTasks(chapterTasks ?? []);
       setStoryRelations(relations ?? []);
       setStoryFactionStandings(standings ?? []);
       setStoryQuests(quests ?? []);
@@ -2148,6 +2160,34 @@ function App() {
   const chapterCastByChapter = useMemo(
     () => castBadgesByChapter(storyChapterCastStates, castNames),
     [storyChapterCastStates, castNames]
+  );
+
+  // Each card's checklist, in the order the lines were written. The database
+  // returns them that way already; grouping here only saves the card a filter.
+  const chapterTasksByChapter = useMemo(() => {
+    const byChapter = new Map<string, ChapterTask[]>();
+
+    for (const task of storyChapterTasks) {
+      const list = byChapter.get(task.chapter_id) ?? [];
+      list.push(task);
+      byChapter.set(task.chapter_id, list);
+    }
+
+    for (const list of byChapter.values()) {
+      list.sort(
+        (a, b) =>
+          a.position - b.position || a.created_at.localeCompare(b.created_at)
+      );
+    }
+
+    return byChapter;
+  }, [storyChapterTasks]);
+
+  // Everybody a chapter card can name, as the card needs them: an id and a
+  // name, not a whole sheet.
+  const castChoices = useMemo(
+    () => characters.map(character => ({ id: character.id, name: character.name })),
+    [characters]
   );
 
   // The chapters placed on the day, which is the reading order by other means.
@@ -3639,6 +3679,323 @@ function App() {
       setChapterError(`Could not save the chapter details: ${String(e)}`);
     } finally {
       setChapterBusy(false);
+    }
+  };
+
+  // ---- the chapter card's own workbench ----------------------------------
+  //
+  // A chapter card on the board is where the scene is planned, so the work that
+  // used to mean opening the Chapters tab happens on the card: writing the
+  // scene's objectives, ticking them off, naming the POV, putting somebody in
+  // the cast and paying out XP. Each write is the command the panels already
+  // use, and each records the step that reverses it, so a stray click on the
+  // board is one Ctrl+Z away like every other edit.
+
+  const addChapterObjective = async (
+    chapterId: string,
+    text: string
+  ): Promise<boolean> => {
+    const trimmed = text.trim();
+    if (!currentStory || !trimmed) return false;
+
+    try {
+      const created = await narrativeApi.addChapterTask(chapterId, trimmed, actor);
+      setStoryChapterTasks(previous => [...previous, created]);
+
+      // A rewritten line gets a new row, so the step remembers which row is
+      // live: undo after a redo takes the rewritten line away, not the first.
+      let liveId = created.id;
+
+      recordStep({
+        label: `Add the objective “${created.text}”`,
+        undo: async () => {
+          const removing = liveId;
+          await narrativeApi.deleteChapterTask(removing, actor);
+          setStoryChapterTasks(previous =>
+            previous.filter(task => task.id !== removing)
+          );
+        },
+        redo: async () => {
+          const again = await narrativeApi.addChapterTask(chapterId, trimmed, actor);
+          liveId = again.id;
+          setStoryChapterTasks(previous => [...previous, again]);
+        },
+      });
+
+      return true;
+    } catch (e) {
+      console.error('Failed to add an objective:', e);
+      setActionError(`Could not add the objective: ${String(e)}`);
+      return false;
+    }
+  };
+
+  const toggleChapterObjective = async (task: ChapterTask) => {
+    const write = (done: boolean) =>
+      narrativeApi.setChapterTaskDone(task.id, done, actor).then(saved => {
+        setStoryChapterTasks(previous =>
+          previous.map(row => (row.id === saved.id ? saved : row))
+        );
+        return saved;
+      });
+
+    try {
+      const saved = await write(!task.done);
+
+      recordStep({
+        label: saved.done
+          ? `Tick off “${saved.text}”`
+          : `Reopen “${saved.text}”`,
+        undo: () => write(task.done),
+        redo: () => write(saved.done),
+      });
+    } catch (e) {
+      console.error('Failed to tick off an objective:', e);
+      setActionError(`Could not change the objective: ${String(e)}`);
+    }
+  };
+
+  const removeChapterObjective = async (task: ChapterTask) => {
+    try {
+      await narrativeApi.deleteChapterTask(task.id, actor);
+      setStoryChapterTasks(previous => previous.filter(row => row.id !== task.id));
+
+      let liveId = task.id;
+
+      recordStep({
+        label: `Drop the objective “${task.text}”`,
+        undo: async () => {
+          const again = await narrativeApi.addChapterTask(
+            task.chapter_id,
+            task.text,
+            actor
+          );
+          // The line comes back at the end of the checklist: the row it had is
+          // gone, and a restored objective is worth more than a restored order.
+          if (task.done) await narrativeApi.setChapterTaskDone(again.id, true, actor);
+          const restored = task.done
+            ? { ...again, done: true }
+            : again;
+          liveId = again.id;
+          setStoryChapterTasks(previous => [...previous, restored]);
+        },
+        redo: async () => {
+          const removing = liveId;
+          await narrativeApi.deleteChapterTask(removing, actor);
+          setStoryChapterTasks(previous =>
+            previous.filter(row => row.id !== removing)
+          );
+        },
+      });
+    } catch (e) {
+      console.error('Failed to drop an objective:', e);
+      setActionError(`Could not drop the objective: ${String(e)}`);
+    }
+  };
+
+  // The point of view is a column on the chapter card, so it is written with the
+  // chapter's other details rather than with the cast rows.
+  const setChapterPovOnBoard = async (chapterId: string, pov: string | null) => {
+    const node = nodes.find(row => row.id === chapterId);
+    if (!node) return;
+
+    const before = node.data.chapterPov ?? null;
+    if (before === pov) return;
+
+    const write = async (next: string | null) => {
+      const updated: any = await narrativeApi.setChapterDetails(
+        chapterId,
+        node.data.chapterArc ?? null,
+        node.data.chapterWords ?? null,
+        node.data.chapterTarget ?? null,
+        next,
+        node.data.chapterDay ?? null,
+        node.data.chapterTime ?? null,
+        actor
+      );
+
+      setNodes(previous =>
+        previous.map(row =>
+          row.id === chapterId
+            ? {
+                ...row,
+                data: { ...row.data, chapterPov: updated.chapter_pov ?? null },
+              }
+            : row
+        )
+      );
+    };
+
+    try {
+      await write(pov);
+
+      const who = characters.find(character => character.id === pov)?.name;
+
+      recordStep({
+        label: who
+          ? `Make ${who} the POV of “${node.data.label}”`
+          : `Clear the POV of “${node.data.label}”`,
+        undo: () => write(before),
+        redo: () => write(pov),
+      });
+    } catch (e) {
+      console.error('Failed to change a chapter POV:', e);
+      setActionError(`Could not change the point of view: ${String(e)}`);
+    }
+  };
+
+  // A name on the card's roster is one row in the chapter's cast. The POV is
+  // always present and is not a row, so it is written above instead.
+  const setChapterCastOnBoard = async (
+    chapterId: string,
+    characterId: string,
+    present: boolean
+  ) => {
+    const existing = storyChapterCast.find(
+      member =>
+        member.chapter_id === chapterId && member.character_id === characterId
+    );
+
+    if (present === Boolean(existing)) return;
+
+    const chapterLabel =
+      nodes.find(row => row.id === chapterId)?.data.label ?? 'the chapter';
+    const name = characters.find(character => character.id === characterId)?.name ?? 'Cast member';
+
+    try {
+      if (present) {
+        const created = await narrativeApi.addChapterCastMember(
+          chapterId,
+          characterId,
+          actor
+        );
+        setStoryChapterCast(previous =>
+          previous.some(member => member.id === created.id)
+            ? previous
+            : [...previous, created]
+        );
+
+        let liveId = created.id;
+
+        recordStep({
+          label: `Add ${name} to “${chapterLabel}”`,
+          undo: async () => {
+            const removing = liveId;
+            await narrativeApi.removeChapterCastMember(removing, actor);
+            setStoryChapterCast(previous =>
+              previous.filter(member => member.id !== removing)
+            );
+          },
+          redo: async () => {
+            const again = await narrativeApi.addChapterCastMember(
+              chapterId,
+              characterId,
+              actor
+            );
+            liveId = again.id;
+            setStoryChapterCast(previous => [...previous, again]);
+          },
+        });
+      } else if (existing) {
+        await narrativeApi.removeChapterCastMember(existing.id, actor);
+        setStoryChapterCast(previous =>
+          previous.filter(member => member.id !== existing.id)
+        );
+
+        let liveId = existing.id;
+
+        recordStep({
+          label: `Take ${name} out of “${chapterLabel}”`,
+          undo: async () => {
+            const again = await narrativeApi.addChapterCastMember(
+              chapterId,
+              characterId,
+              actor
+            );
+            liveId = again.id;
+            setStoryChapterCast(previous => [...previous, again]);
+          },
+          redo: async () => {
+            const removing = liveId;
+            await narrativeApi.removeChapterCastMember(removing, actor);
+            setStoryChapterCast(previous =>
+              previous.filter(member => member.id !== removing)
+            );
+          },
+        });
+      }
+    } catch (e) {
+      console.error('Failed to change a chapter cast:', e);
+      setActionError(`Could not change the cast: ${String(e)}`);
+    }
+  };
+
+  // XP is paid into the chapter's income, which is where the curve reads it:
+  // the level, the stats the level hands out and the badges on every card follow
+  // from that one write, so they are read back rather than guessed at.
+  const awardChapterXp = async (
+    chapterId: string,
+    characterId: string,
+    amount: number
+  ): Promise<boolean> => {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setActionError('Award XP as a whole number above zero.');
+      return false;
+    }
+
+    // Each pay-in is a new row, so the step keeps the id that is live: undo after
+    // a redo takes back the row the redo wrote.
+    let liveId: string | null = null;
+
+    const pay = async () => {
+      const saved = await progressionApi.addCharacterAward(
+        characterId,
+        chapterId,
+        'xp',
+        null,
+        amount,
+        null,
+        actor
+      );
+
+      liveId = saved.id;
+      setStoryAwards(previous => [...previous, saved]);
+
+      return saved;
+    };
+
+    try {
+      await pay();
+      await reloadProgressionNumbers(characterId);
+
+      const chapterLabel =
+        nodes.find(row => row.id === chapterId)?.data.label ?? 'the chapter';
+      const name =
+        characters.find(character => character.id === characterId)?.name ?? 'the cast';
+
+      recordStep({
+        label: `Award ${formatCount(amount)} XP to ${name} in “${chapterLabel}”`,
+        undo: async () => {
+          const removing = liveId;
+          if (!removing) return;
+
+          await progressionApi.deleteCharacterAward(removing, actor);
+          setStoryAwards(previous =>
+            previous.filter(award => award.id !== removing)
+          );
+          await reloadProgressionNumbers(characterId);
+        },
+        redo: async () => {
+          await pay();
+          await reloadProgressionNumbers(characterId);
+        },
+      });
+
+      return true;
+    } catch (e) {
+      console.error('Failed to award XP:', e);
+      setActionError(`Could not award the XP: ${String(e)}`);
+      return false;
     }
   };
 
@@ -7264,6 +7621,8 @@ function App() {
       const itemHolders = inventoryByNode[node.id] ?? [];
       const chapterCast = chapterCastByChapter.get(node.id) ?? [];
       const chapterQuests = questBadgesByChapter.get(node.id) ?? [];
+      const chapterTasks = chapterTasksByChapter.get(node.id) ?? [];
+      const isChapterCard = node.data.nodeType === 'chapter';
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
         ...(progressFlagsByChapter.get(node.id) ?? []),
@@ -7278,6 +7637,7 @@ function App() {
       if (
         !characterId &&
         !classes &&
+        !isChapterCard &&
         notes.length === 0 &&
         holders.length === 0 &&
         itemHolders.length === 0 &&
@@ -7335,6 +7695,29 @@ function App() {
                   openChapterCastSheet(characterId, node.id),
               }
             : {}),
+          // A chapter card is a workbench: the roster, the scene's checklist and
+          // a quick XP award are written on the card itself, so planning a scene
+          // does not mean leaving the board.
+          ...(isChapterCard
+            ? {
+                chapterTasks,
+                castChoices,
+                onSetChapterPov: (pov: string | null) =>
+                  void setChapterPovOnBoard(node.id, pov),
+                onAddChapterCast: (characterId: string) =>
+                  void setChapterCastOnBoard(node.id, characterId, true),
+                onRemoveChapterCast: (characterId: string) =>
+                  void setChapterCastOnBoard(node.id, characterId, false),
+                onAddChapterObjective: (text: string) =>
+                  addChapterObjective(node.id, text),
+                onToggleChapterObjective: (task: ChapterTask) =>
+                  void toggleChapterObjective(task),
+                onRemoveChapterObjective: (task: ChapterTask) =>
+                  void removeChapterObjective(task),
+                onQuickAward: (characterId: string, amount: number) =>
+                  awardChapterXp(node.id, characterId, amount),
+              }
+            : {}),
           ...(chapterQuests.length > 0
             ? {
                 questBadges: chapterQuests,
@@ -7364,6 +7747,8 @@ function App() {
     storyInventory,
     castStats,
     chapterCastByChapter,
+    chapterTasksByChapter,
+    castChoices,
     dropTargetNodeId,
     searchOpen,
     searchMatchIds,
@@ -7376,6 +7761,12 @@ function App() {
     openQuest,
     openCharacterSheet,
     openChapterCastSheet,
+    setChapterPovOnBoard,
+    setChapterCastOnBoard,
+    addChapterObjective,
+    toggleChapterObjective,
+    removeChapterObjective,
+    awardChapterXp,
     markItemReturned,
     returningItemId,
     syncMilestoneXp,

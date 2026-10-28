@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { HelpTip } from '../../components/HelpTip';
@@ -22,6 +23,52 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const continuityFlags = data.continuityFlags ?? [];
   const chapterCast = data.chapterCast ?? [];
   const questBadges = data.questBadges ?? [];
+  const castChoices = data.castChoices ?? [];
+  const objectives = data.chapterTasks ?? [];
+
+  // The card's own two small forms, which open over the face rather than in a
+  // panel: who is in the scene, and what the scene pays out. Only one is up at a
+  // time, because they cover the same corner of the card.
+  const [face, setFace] = useState<'cast' | 'award' | null>(null);
+  const [objectiveDraft, setObjectiveDraft] = useState('');
+  const [awardCharacterId, setAwardCharacterId] = useState('');
+  const [awardAmount, setAwardAmount] = useState('');
+  const [awardError, setAwardError] = useState<string | null>(null);
+
+  const awardTarget =
+    awardCharacterId ||
+    data.chapterPov ||
+    chapterCast[0]?.characterId ||
+    castChoices[0]?.id ||
+    '';
+  const doneObjectives = objectives.filter(task => task.done).length;
+
+  const submitObjective = async () => {
+    const text = objectiveDraft.trim();
+    if (!text || !data.onAddChapterObjective) return;
+
+    const added = await data.onAddChapterObjective(text);
+    if (added !== false) setObjectiveDraft('');
+  };
+
+  const submitAward = async () => {
+    const amount = Number(awardAmount);
+
+    if (!data.onQuickAward || !awardTarget) return;
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setAwardError('A whole number above zero.');
+      return;
+    }
+
+    setAwardError(null);
+    const awarded = await data.onQuickAward(awardTarget, amount);
+
+    if (awarded !== false) {
+      setAwardAmount('');
+      setFace(null);
+    }
+  };
 
   const castSkillText = (member: ChapterCastBadge) =>
     member.skills.length === 0
@@ -36,7 +83,7 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
 
   return (
     <>
-    <div className={`graph-node ${kind}`}>
+    <div className={`graph-node ${kind}${kind === 'chapter' ? ' workbench' : ''}`}>
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
       <span className="graph-node-topline">
         <span className="graph-node-kind">{kind}</span>
@@ -51,54 +98,341 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           a real button, so the hover title works with a keyboard too, and the
           help dot says where the list comes from: three places on the chapter,
           not one. */}
-      {kind === 'chapter' && chapterCast.length > 0 && (
+      {/* The scene's own words, so a chapter card can be read without opening
+          the drawer: what happens here, in the author's summary. */}
+      {kind === 'chapter' && (
+        <p className="chapter-summary" title={data.content?.trim() || undefined}>
+          {data.content?.trim() || (
+            <span className="chapter-summary-empty">No scene summary yet</span>
+          )}
+        </p>
+      )}
+      {/* A chapter card names the cast whose snapshot applies there. The badge is
+          a real button, so the hover title works with a keyboard too, and the
+          help dot says where the list comes from: two places on the chapter, not
+          one. The Cast button opens the roster on the card face. */}
+      {kind === 'chapter' && (
         <div className="graph-node-chapter-cast-row">
-          <div
-            className="graph-node-chapter-cast"
-            role="group"
-            aria-label="Cast in this chapter"
+          {chapterCast.length > 0 ? (
+            <div
+              className="graph-node-chapter-cast"
+              role="group"
+              aria-label="Cast in this chapter"
+            >
+              {chapterCast.map(member => (
+                <button
+                  type="button"
+                  key={member.characterId}
+                  className="graph-node-chapter-cast-badge nodrag nopan"
+                  data-chapter-cast={member.characterId}
+                  title={`${member.name} — ${castLevelText(member)}\nActive skills: ${castSkillText(
+                    member
+                  )}\nOpen ${member.name}'s sheet`}
+                  aria-label={`${member.name}, ${castLevelText(
+                    member
+                  )}. Active skills: ${castSkillText(member)}`}
+                  onClick={event => {
+                    event.stopPropagation();
+                    data.onOpenChapterCast?.(member.characterId);
+                  }}
+                >
+                  <span className="graph-node-chapter-cast-name">{member.name}</span>
+                  {member.level !== null && (
+                    <span
+                      className={`graph-node-chapter-cast-level${
+                        member.levelIsPenalty ? ' penalty' : ''
+                      }`}
+                    >
+                      Lv {member.level}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="graph-node-cast-empty">Nobody in this scene yet</span>
+          )}
+          <button
+            type="button"
+            className={`chapter-face-open nodrag nopan${face === 'cast' ? ' active' : ''}`}
+            aria-expanded={face === 'cast'}
+            title="Choose this chapter’s point of view and who else is in the scene"
+            onClick={event => {
+              event.stopPropagation();
+              setFace(current => (current === 'cast' ? null : 'cast'));
+            }}
           >
-            {chapterCast.map(member => (
-              <button
-                type="button"
-                key={member.characterId}
-                className="graph-node-chapter-cast-badge nodrag nopan"
-                data-chapter-cast={member.characterId}
-                title={`${member.name} — ${castLevelText(member)}\nActive skills: ${castSkillText(
-                  member
-                )}\nOpen ${member.name}'s sheet`}
-                aria-label={`${member.name}, ${castLevelText(
-                  member
-                )}. Active skills: ${castSkillText(member)}`}
-                onClick={event => {
-                  event.stopPropagation();
-                  data.onOpenChapterCast?.(member.characterId);
-                }}
-              >
-                <span className="graph-node-chapter-cast-name">{member.name}</span>
-                {member.level !== null && (
-                  <span
-                    className={`graph-node-chapter-cast-level${
-                      member.levelIsPenalty ? ' penalty' : ''
-                    }`}
-                  >
-                    Lv {member.level}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+            Cast
+          </button>
           <span className="nodrag nopan">
             <HelpTip label="the cast on a chapter card">
               This is who the story has in this chapter. Two things put a name
               here: the chapter's point of view, and anyone ticked under
-              “Present in this chapter” on the Chapters tab — so a party shares
-              a scene without anyone being bound to the card twice. The level
-              beside a name is the level they had as of this chapter, not their
-              latest one, and the hover title lists the skills they had then.
-              Click a name to open that sheet as of this chapter.
+              “Present in this chapter” — from the Cast button on this card, or
+              on the Chapters tab — so a party shares a scene without anyone
+              being bound to the card twice. The level beside a name is the level
+              they had as of this chapter, not their latest one, and the hover
+              title lists the skills they had then. Click a name to open that
+              sheet as of this chapter, or Cast to change the roster here.
             </HelpTip>
           </span>
+        </div>
+      )}
+      {kind === 'chapter' && face === 'cast' && (
+        <div
+          className="chapter-popover nodrag nopan"
+          role="group"
+          aria-label={`Who is in ${data.label}`}
+        >
+          <label className="chapter-popover-row">
+            <span>Point of view</span>
+            <select
+              className="nodrag nopan"
+              aria-label={`Point of view of ${data.label}`}
+              value={data.chapterPov ?? ''}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => event.stopPropagation()}
+              onChange={event =>
+                data.onSetChapterPov?.(event.target.value || null)
+              }
+            >
+              <option value="">Nobody yet</option>
+              {castChoices.map(choice => (
+                <option key={choice.id} value={choice.id}>
+                  {choice.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {castChoices.length === 0 ? (
+            <p className="chapter-popover-empty">
+              Add someone on the Characters tab first.
+            </p>
+          ) : (
+            <ul className="chapter-popover-cast">
+              {castChoices.map(choice => {
+                const present = chapterCast.some(
+                  member => member.characterId === choice.id
+                );
+                const isPov = data.chapterPov === choice.id;
+
+                return (
+                  <li key={choice.id}>
+                    <label className="chapter-popover-cast-row">
+                      <input
+                        type="checkbox"
+                        className="nodrag nopan"
+                        checked={present}
+                        disabled={isPov}
+                        aria-label={`${choice.name} present in ${data.label}`}
+                        onClick={event => event.stopPropagation()}
+                        onChange={event => {
+                          if (event.target.checked) {
+                            data.onAddChapterCast?.(choice.id);
+                          } else {
+                            data.onRemoveChapterCast?.(choice.id);
+                          }
+                        }}
+                      />
+                      <span className="chapter-popover-cast-name">
+                        {choice.name}
+                      </span>
+                      {isPov && <span className="chapter-cast-tag">POV</span>}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <p className="chapter-popover-hint">
+            The point of view is always present. A tick changes the whole story,
+            and Undo takes it back.
+          </p>
+        </div>
+      )}
+      {/* The scene's checklist. Every tick is one undo step, and the lines keep
+          the order they were written in. */}
+      {kind === 'chapter' && (
+        <div
+          className="chapter-objectives"
+          role="group"
+          aria-label={`Objectives in ${data.label}`}
+        >
+          <div className="chapter-objectives-head">
+            <span className="chapter-objectives-title">Objectives</span>
+            {objectives.length > 0 && (
+              <span className="chapter-objectives-count">
+                {doneObjectives}/{objectives.length}
+              </span>
+            )}
+          </div>
+
+          {objectives.length === 0 ? (
+            <p className="chapter-objectives-empty">
+              Nothing planned yet — add the scene’s first line.
+            </p>
+          ) : (
+            <ul className="chapter-objectives-list">
+              {objectives.map(task => (
+                <li
+                  key={task.id}
+                  className={`chapter-objective${task.done ? ' done' : ''}`}
+                >
+                  <label className="chapter-objective-row">
+                    <input
+                      type="checkbox"
+                      className="nodrag nopan"
+                      checked={task.done}
+                      aria-label={`${task.text} — ${task.done ? 'done' : 'open'}`}
+                      onClick={event => event.stopPropagation()}
+                      onChange={() => data.onToggleChapterObjective?.(task)}
+                    />
+                    <span className="chapter-objective-text">{task.text}</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="chapter-objective-remove nodrag nopan"
+                    title={`Drop “${task.text}”`}
+                    aria-label={`Drop the objective: ${task.text}`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      data.onRemoveChapterObjective?.(task);
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="chapter-objective-add nodrag nopan">
+            <input
+              className="nodrag nopan"
+              type="text"
+              aria-label={`Add an objective to ${data.label}`}
+              placeholder="Add an objective…"
+              value={objectiveDraft}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => event.stopPropagation()}
+              onChange={event => setObjectiveDraft(event.target.value)}
+              onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === 'Enter') void submitObjective();
+                if (event.key === 'Escape') setObjectiveDraft('');
+              }}
+            />
+            <button
+              type="button"
+              className="nodrag nopan"
+              disabled={!objectiveDraft.trim()}
+              onClick={() => void submitObjective()}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+      {/* XP paid into this chapter, without opening anyone's sheet: the curve
+          reads it back, so the levels on the board follow in the same render. */}
+      {kind === 'chapter' && castChoices.length > 0 && (
+        <div className="chapter-award">
+          <button
+            type="button"
+            className={`chapter-face-open nodrag nopan${
+              face === 'award' ? ' active' : ''
+            }`}
+            aria-expanded={face === 'award'}
+            title="Pay XP into this chapter without leaving the board"
+            onClick={event => {
+              event.stopPropagation();
+              setAwardError(null);
+              setFace(current => (current === 'award' ? null : 'award'));
+            }}
+          >
+            + XP
+          </button>
+        </div>
+      )}
+      {kind === 'chapter' && face === 'award' && (
+        <div
+          className="chapter-popover chapter-award-form nodrag nopan"
+          role="group"
+          aria-label={`Award XP in ${data.label}`}
+        >
+          <label className="chapter-popover-row">
+            <span>Who</span>
+            <select
+              className="nodrag nopan"
+              aria-label={`Who the XP is for in ${data.label}`}
+              value={awardTarget}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => event.stopPropagation()}
+              onChange={event => setAwardCharacterId(event.target.value)}
+            >
+              {castChoices.map(choice => (
+                <option key={choice.id} value={choice.id}>
+                  {choice.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="chapter-popover-row">
+            <span>XP</span>
+            <input
+              className="nodrag nopan"
+              type="number"
+              min={1}
+              step={1}
+              aria-label={`XP to award in ${data.label}`}
+              placeholder="200"
+              value={awardAmount}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => event.stopPropagation()}
+              onChange={event => setAwardAmount(event.target.value)}
+              onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === 'Enter') void submitAward();
+                if (event.key === 'Escape') {
+                  setAwardAmount('');
+                  setAwardError(null);
+                  setFace(null);
+                }
+              }}
+            />
+          </label>
+          {awardError && (
+            <p className="chapter-award-error" role="alert">
+              {awardError}
+            </p>
+          )}
+          <div className="chapter-award-actions">
+            <button
+              type="button"
+              className="nodrag nopan"
+              disabled={!awardAmount.trim() || !awardTarget}
+              onClick={() => void submitAward()}
+            >
+              Award
+            </button>
+            <button
+              type="button"
+              className="nodrag nopan"
+              onClick={() => {
+                setAwardAmount('');
+                setAwardError(null);
+                setFace(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="chapter-popover-hint">
+            XP is paid into this chapter’s income, so the level it buys and the
+            stats that level hands out follow from one write. Undo takes it back.
+          </p>
         </div>
       )}
       {kind === 'chapter' && questBadges.length > 0 && (
