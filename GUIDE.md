@@ -241,10 +241,12 @@ her numbers without leaving the canvas.*
 
 *The Graph tab. Three chapter cards along the top (each carrying its cast badges,
 the quests that touch it and its own continuity warnings), the cast rail on the
-left, character cards in the middle, skill cards and a faction card below. Every
-line is labelled with what it means: `next` between chapters, `cast` from a chapter
-to a cast member, `skill` from a character to a skill they hold, `rival` / `enemy`
-between two characters.*
+left, character cards in the middle, skill cards and a faction card below. The
+lines the board is drawn around are solid and named: `next` between chapters,
+`rival` / `enemy` between two characters, `member` into a faction. A line that
+only repeats what a badge or a sheet already holds — a cast assignment, a skill
+hold — is the faint dashed thread with no verb, still clickable when the wiring
+itself is what you came to change.*
 
 ### The easy route: drop a cast member on the board
 

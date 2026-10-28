@@ -70,13 +70,14 @@ the toolbar says what kind you are about to add:
 
 *The board, its cast rail on the left and the legend of card types on the right.
 Chapter cards are numbered, `Ch. 1` to `Ch. 3`; the boxes on the lines are the
-words you gave those connections.*
+words you gave those connections. The faint dashed threads are casts and skill
+holds, which the badges and the sheets already say.*
 
 To connect two cards, drag from the small circle on the side of one card onto the
 other. The label on the new line defaults to what the line means — `next` between
-two chapters, `cast` from a chapter to a person, `skill` from a skill card to
-somebody who holds it — and you can change it later
-([section 9](#9-what-a-line-between-two-cards-means)).
+two chapters, a bond word between two people — and you can change it later
+([section 9](#9-what-a-line-between-two-cards-means)). A cast or skill line keeps
+its meaning but is drawn quietly, so the story's own shape is what stands out.
 
 Some connections write more than a line. That is the point of the next three
 sections: connecting a person to a chapter casts them in it, connecting two people
@@ -146,10 +147,11 @@ character**; the list shows what each person is (their level, and their rank if 
 gave them one).
 
 On the Graph tab, the **cast rail** is the same list. Drag a name onto the board
-and you get a `character` card already linked to them; drop it onto an existing
-card instead and that card is re-pointed at the cast member, keeping its label,
-notes and type. Linked cards wear that person's numbers as small badges, so the
-board tells you who is ahead without opening a sheet.
+and you get a `character` card already linked to them; drop it onto another card
+instead and that card is re-pointed at the cast member, keeping its label, notes
+and type. A chapter card is the exception: dropping somebody on it adds them to
+that chapter's cast. Linked cards wear that person's numbers as small badges, so
+the board tells you who is ahead without opening a sheet.
 
 Then say who is where:
 
@@ -349,7 +351,9 @@ Click any line on the board and it opens for editing.
 *A line has an optional **Label** and a relation type, which is the line's verb:
 `leads_to` and `foreshadows` are the usual ones, and `unlocks`, `requires` and
 `rewards` are suggested. Both are free text, and the label is what the board shows;
-without one it falls back to the type. Each field you change is its own entry in the
+without one it falls back to the type. A cast or skill line is drawn as a faint
+dashed thread with no verb — it only repeats what a badge or a sheet already says —
+but it opens in this same editor. Each field you change is its own entry in the
 history, so rewording a label is not buried under a change to the type.*
 
 The exception is a line that stands for a bond between two people. Its relation type
