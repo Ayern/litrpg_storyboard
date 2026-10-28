@@ -63,8 +63,9 @@ export type NodeData = {
   // Who is carrying this item, filled in when the canvas is drawn.
   inventoryHolders?: InventoryHolder[];
   hiddenInventoryHolders?: number;
-  // The cast whose snapshot applies to this chapter, linked in the reading
-  // order by the database. The card shows a level only when one was recorded.
+  // The cast whose snapshot applies to this chapter: its point of view and its
+  // cast rows, read in the reading order by the database. The card shows a
+  // level only when one was recorded.
   chapterCast?: ChapterCastBadge[];
   onOpenChapterCast?: (characterId: string) => void;
   // The quests accepted or ended in this chapter, and where their badges lead.
@@ -155,6 +156,19 @@ export const CAST_DRAG_TYPE = 'application/x-litrpg-character';
 // Suggested relation types for a connection. The field stays free text, because
 // a story's own verbs matter more than a fixed list.
 export const edgeRelationTypes = ['unlocks', 'requires', 'rewards'] as const;
+
+// A line drawn for a cast assignment or a skill hold repeats what the chapter's
+// badges and the holder's sheet already state. It is still a row and still
+// clickable, but it is styled as a quiet thread: the board is a timeline first,
+// and the lines worth following are the ones between chapters, quests and
+// people. Everything else - a bond, a lead-in, a requirement - is story flow.
+const ASSIGNMENT_RELATIONS = new Set(['cast', 'skill']);
+
+export function edgeKindClass(relationType: string | null | undefined): string {
+  return ASSIGNMENT_RELATIONS.has(String(relationType ?? '').toLowerCase())
+    ? 'storyboard-assignment'
+    : 'storyboard-flow';
+}
 
 // The card types whose Add form also creates the record behind the card. The
 // other types are narrative cards and keep the quick label-only creation.

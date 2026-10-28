@@ -289,6 +289,12 @@ linked cast member's level, XP and stats, and lets them be edited in place:
 the card is linked to, and — because this is a skill card — the holders it already
 has and the form that adds one.*
 
+A chapter card's drawer is the exception: a chapter names its people through its
+point of view and its cast rows, so the drawer lists that roster — each name
+opening that sheet as of the chapter — with a button to the Chapters tab and no
+single-cast picker at all. Linking one name on the card was the second, redundant
+binding this roster replaced.
+
 The inspector's numbers come from `useCanvasInspector`, which is handed the
 character's stats and attributes for the card that is open. Editing a stat there
 writes `set_character_stat`, the same command the sheet uses, so the two views

@@ -146,6 +146,10 @@ interface Call {
 
 let calls: Call[] = [];
 
+// The explicit chapter cast rows the mock keeps, so a drop on a chapter card can
+// be read back the way the badge and the drawer read it.
+let chapterCastRows: { id: string; chapter_id: string; character_id: string }[] = [];
+
 function lastCall(command: string) {
   return [...calls].reverse().find(call => call.command === command)?.args;
 }
@@ -198,6 +202,7 @@ beforeEach(() => {
       updated_at: '2026-10-22T12:00:00Z',
     },
   ];
+  chapterCastRows = [];
   calls = [];
 
   invokeMock.mockReset();
@@ -216,6 +221,36 @@ beforeEach(() => {
         return cast;
       case 'get_story_character_stats':
         return stats;
+      case 'get_story_chapter_cast':
+        return chapterCastRows;
+      case 'get_story_chapter_cast_states':
+        return chapterCastRows.map(row => ({
+          chapter_id: row.chapter_id,
+          character_id: row.character_id,
+          level: null,
+          level_is_penalty: false,
+          skills: [],
+        }));
+      case 'add_chapter_cast_member': {
+        const existing = chapterCastRows.find(
+          row =>
+            row.chapter_id === args.chapterId && row.character_id === args.characterId
+        );
+        if (existing) return existing;
+
+        const row = {
+          id: `cast-${args.characterId}`,
+          chapter_id: args.chapterId as string,
+          character_id: args.characterId as string,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        chapterCastRows = [...chapterCastRows, row];
+        return row;
+      }
+      case 'remove_chapter_cast_member':
+        chapterCastRows = chapterCastRows.filter(row => row.id !== args.id);
+        return null;
       case 'create_graph_node': {
         const created = nodeRow({
           id: 'n-dropped',
@@ -457,6 +492,51 @@ describe('dragging a cast member onto the canvas', () => {
     await waitFor(() => expect(within(drawer()).getByLabelText('Label')).toHaveValue('Rook'));
     expect(lastCall('set_node_character')).toBeUndefined();
     expect(lastCall('create_graph_node')).toBeUndefined();
+  });
+
+  it('adds a card dropped on a chapter to its cast, as one undoable step', async () => {
+    rows = [
+      ...rows,
+      { id: 'n-ch', label: 'Opening', type: 'chapter', characterId: null },
+    ];
+
+    const { container, rail } = await canvasAndRail();
+    const user = userEvent.setup();
+    const chip = within(rail).getByText('Rook').closest('.cast-chip') as HTMLElement;
+    const payload = dragPayload('char-1');
+    const target = container.querySelector('.react-flow__node[data-id="n-ch"]') as HTMLElement;
+
+    fireEvent.dragStart(chip, { dataTransfer: payload });
+    fireEvent.dragOver(target, { dataTransfer: payload });
+    dropOn(target, payload, 10, 10);
+
+    await waitFor(() =>
+      expect(lastCall('add_chapter_cast_member')).toEqual({
+        chapterId: 'n-ch',
+        characterId: 'char-1',
+        user: 'You',
+      })
+    );
+    // The chapter is not bound to one person: the row is the whole change.
+    expect(lastCall('set_node_character')).toBeUndefined();
+
+    // The card names them once, as a badge, and the drawer lists the roster
+    // instead of a picker.
+    const panel = drawer();
+    expect(within(panel).queryByLabelText('Cast member')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(panel).getByRole('button', { name: 'Rook' })).toBeInTheDocument()
+    );
+    await waitFor(() => expect(cardFor(container, 'Opening')).toHaveTextContent('Rook'));
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('remove_chapter_cast_member')).toEqual({
+        id: 'cast-char-1',
+        user: 'You',
+      })
+    );
   });
 
   it('ignores a drop that carries nothing it knows', async () => {

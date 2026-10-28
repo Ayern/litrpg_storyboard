@@ -1,18 +1,17 @@
 import type { Character } from '../shared/types';
 
 // The cast checklist under a chapter row: who is present in the chapter beyond
-// the card's own linked cast member and its point of view. The write belongs to
-// the app, because the board's own cast edge is the same write.
+// its point of view. This is the only list that adds names to a scene, so the
+// board, this panel and the card's badges all read the same rows.
 
 export interface ChapterCastPanelProps {
   chapterId: string;
   chapterLabel: string;
-  // The card's linked cast member and its POV, which are always present.
-  linkedId: string | null;
+  // The point of view, which is always present and is tagged rather than ticked.
   povId: string | null;
   characters: Character[];
-  // Whether the author ticked this character in, leaving the two always-present
-  // cast members out of it.
+  // Whether the author ticked this character in, leaving the point of view out
+  // of it.
   chapterCastIsExplicit: (chapterId: string, characterId: string) => boolean;
   setChapterCastPresence: (
     chapterId: string,
@@ -27,7 +26,6 @@ export interface ChapterCastPanelProps {
 export function ChapterCastPanel({
   chapterId,
   chapterLabel,
-  linkedId,
   povId,
   characters,
   chapterCastIsExplicit,
@@ -44,8 +42,8 @@ export function ChapterCastPanel({
       <div className="chapter-cast-panel-head">
         <strong>Present in this chapter</strong>
         <span>
-          The card’s linked cast member and POV are always
-          present; tick everyone else in the scene.
+          The chapter’s point of view is always present; tick everyone else in
+          the scene. The card’s badges are these names and nobody else.
         </span>
       </div>
 
@@ -61,7 +59,6 @@ export function ChapterCastPanel({
               character.id
             );
             const isPov = povId === character.id;
-            const isLinked = linkedId === character.id;
 
             return (
               <li key={character.id}>
@@ -84,9 +81,6 @@ export function ChapterCastPanel({
                   </span>
                   {isPov && (
                     <span className="chapter-cast-tag">POV</span>
-                  )}
-                  {isLinked && (
-                    <span className="chapter-cast-tag">Linked</span>
                   )}
                 </label>
               </li>

@@ -575,7 +575,6 @@ function castProps(overrides: Partial<ChapterCastPanelProps> = {}): ChapterCastP
   return {
     chapterId: 'ch-1',
     chapterLabel: 'One',
-    linkedId: null,
     povId: null,
     characters: [],
     chapterCastIsExplicit: () => false,
@@ -596,7 +595,7 @@ describe('ChapterCastPanel', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
-  it('ticks a character in, tagging the linked cast member and the point of view', async () => {
+  it('ticks a character in, tagging the point of view and nobody else', async () => {
     const user = userEvent.setup();
     const setChapterCastPresence = vi.fn(async () => {});
 
@@ -604,7 +603,6 @@ describe('ChapterCastPanel', () => {
       <ChapterCastPanel
         {...castProps({
           characters: [mira, rook],
-          linkedId: 'c-1',
           povId: 'c-2',
           chapterCastIsExplicit: (_chapterId: string, characterId: string) =>
             characterId === 'c-1',
@@ -616,12 +614,12 @@ describe('ChapterCastPanel', () => {
     const panel = screen.getByRole('group', { name: 'Cast present in One' });
     const rows = within(panel).getAllByRole('listitem');
 
+    // One name is ticked in, the other is the point of view: there is no third
+    // kind of presence to tag.
     expect(rows[0]).toHaveTextContent('Mira');
-    expect(rows[0]).toHaveTextContent('Linked');
     expect(rows[0]).not.toHaveTextContent('POV');
     expect(rows[1]).toHaveTextContent('Rook');
     expect(rows[1]).toHaveTextContent('POV');
-    expect(rows[1]).not.toHaveTextContent('Linked');
 
     await user.click(within(panel).getByRole('checkbox', { name: 'Rook present in One' }));
 

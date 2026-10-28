@@ -76,7 +76,7 @@ import { effectiveGrowthRule } from './domains/progression/growth';
 import { milestoneStatChanges } from './domains/progression/helpers';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
-import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
+import { CAST_DRAG_TYPE, edgeKindClass, isCanvasCreateKind } from './domains/canvas/types';
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
   ChapterCastBadge,
@@ -406,6 +406,7 @@ function toFlowEdge(row: any): Edge<EdgeData> {
     id: row.id,
     source: row.source_id,
     target: row.target_id,
+    className: edgeKindClass(row.relation_type),
     label: row.label || row.relation_type || '',
     data: {
       label: row.label ?? undefined,
@@ -635,10 +636,9 @@ function App() {
   const [quitPrompt, setQuitPrompt] = useState(false);
   const quitKeepWorkingRef = useRef<HTMLButtonElement | null>(null);
 
-  // The explicit cast of each chapter: everyone present beyond the card's own
-  // linked cast member and its point of view. The board writes these rows too —
-  // a character drawn into a chapter adds one — so they stay here and the
-  // workspace is handed them.
+  // The explicit cast of each chapter: everyone present beyond its point of
+  // view. The board writes these rows too — a character drawn or dropped into a
+  // chapter adds one — so they stay here and the workspace is handed them.
   const [storyChapterCast, setStoryChapterCast] = useState<ChapterCastMember[]>([]);
 
   // The live chapters, in reading order. The board says which cards are chapters
@@ -871,6 +871,13 @@ function App() {
   const [focusedProgression, setFocusedProgression] =
     useState<ProgressionFocus | null>(null);
   const progressionFocusTimer = useRef<number | null>(null);
+
+  // The sheet a chapter card's badge asked for, read as of that chapter.
+  const [chapterStateFocus, setChapterStateFocus] = useState<{
+    characterId: string;
+    chapterId: string;
+    request: number;
+  } | null>(null);
 
   // Every live cast member's stats, which is what the cards on the canvas show.
   // Kept here rather than fetched per card so one read covers the whole board.
@@ -2090,7 +2097,7 @@ function App() {
   );
 
   // The chapter card badges describe the cast assigned to each chapter. The
-  // database decides the assignment (linked cast and POV) and the snapshot; this
+  // database decides the assignment (POV and cast rows) and the snapshot; this
   // key only says when that assignment has changed enough to ask again, without
   // refetching on every node drag.
   const chapterCastAssignmentsKey = useMemo(
@@ -2098,7 +2105,7 @@ function App() {
       chapterNodes
         .map(
           node =>
-            `${node.id}:${node.data.characterId ?? ''}:${node.data.chapterPov ?? ''}`
+            `${node.id}:${node.data.chapterPov ?? ''}`
         )
         .join('|'),
     [chapterNodes]
@@ -3192,6 +3199,22 @@ function App() {
     []
   );
 
+  // A chapter card's cast badge opens that sheet as it stood in that chapter:
+  // the tab and the character are the sheet's, and the chapter is the readout's.
+  // The counter makes a second click on the same badge a fresh request, so the
+  // readout reopens even when it was closed in between.
+  const openChapterCastSheet = useCallback(
+    (characterId: string, chapterId: string) => {
+      openCharacterSheet(characterId);
+      setChapterStateFocus(previous => ({
+        characterId,
+        chapterId,
+        request: (previous?.request ?? 0) + 1,
+      }));
+    },
+    [openCharacterSheet]
+  );
+
   // Continuity is advisory: nothing here blocks a save. It names what looks
   // inconsistent — a chapter with no POV, a time with no day to place it on, a
   // day that goes backwards, a time that goes backwards inside a day, two
@@ -3420,6 +3443,17 @@ function App() {
     setSelectedTab('quests');
     setQuestFocus(previous => ({ questId, request: (previous?.request ?? 0) + 1 }));
   }, []);
+
+  // A chapter card's inspector sends the author to the one place its roster is
+  // edited. The Chapters tab renders the row that is opened, so the form is
+  // opened after that render rather than against the tab that is leaving.
+  const openChapterFromInspector = useCallback(
+    (chapterId: string) => {
+      setSelectedTab('chapters');
+      window.setTimeout(() => revealChapter(chapterId), 0);
+    },
+    [revealChapter]
+  );
 
   const requestTab = (tab: typeof selectedTab) => {
     if (tab === selectedTab) return;
@@ -3823,6 +3857,71 @@ function App() {
       const target = nodes.find(node => node.id === targetId);
       if (!target) return;
 
+      // A chapter's cast is its point of view and its cast rows, so dropping a
+      // cast member on a chapter card adds them to the scene rather than binding
+      // the card to one person: the roster, not the card, is what names them.
+      if (target.data.nodeType === 'chapter') {
+        const already = storyChapterCast.some(
+          row => row.chapter_id === target.id && row.character_id === character.id
+        );
+
+        if (already) {
+          openNode({
+            id: target.id,
+            label: target.data.label,
+            content: target.data.content,
+          });
+          return;
+        }
+
+        try {
+          const member: ChapterCastMember = await narrativeApi.addChapterCastMember(
+            target.id,
+            character.id,
+            actor
+          );
+          let currentCastId = member.id;
+
+          setStoryChapterCast(previous =>
+            previous.some(row => row.id === member.id) ? previous : [...previous, member]
+          );
+
+          recordStep({
+            label: `Add ${character.name} to “${target.data.label}”`,
+            undo: async () => {
+              await narrativeApi.removeChapterCastMember(currentCastId, actor);
+              setStoryChapterCast(previous =>
+                previous.filter(row => row.id !== currentCastId)
+              );
+            },
+            redo: async () => {
+              const again: ChapterCastMember = await narrativeApi.addChapterCastMember(
+                target.id,
+                character.id,
+                actor
+              );
+              currentCastId = again.id;
+              setStoryChapterCast(previous =>
+                previous.some(row => row.id === again.id) ? previous : [...previous, again]
+              );
+            },
+          });
+
+          openNode({
+            id: target.id,
+            label: target.data.label,
+            content: target.data.content,
+          });
+        } catch (e) {
+          console.error('Failed to add a cast member to a chapter:', e);
+          setActionError(
+            `Could not add ${character.name} to “${target.data.label}”: ${String(e)}`
+          );
+        }
+
+        return;
+      }
+
       // Already pointing at this member, so the drop changes nothing; opening it
       // still tells the person the card landed.
       if (target.data.characterId === character.id) {
@@ -4059,6 +4158,7 @@ function App() {
             id: newDbEdge.id,
             source: params.source,
             target: params.target,
+            className: edgeKindClass('cast'),
             label: 'cast',
             data: { createdBy: actor, label: 'cast', relationType: 'cast' },
           };
@@ -4194,6 +4294,7 @@ function App() {
                   id: newDbEdge.id,
                   source: fromNodeId,
                   target: toNodeId,
+                  className: edgeKindClass('skill'),
                   label: 'skill',
                   data: { createdBy: actor, label: 'skill', relationType: 'skill' },
                 },
@@ -4247,6 +4348,7 @@ function App() {
           id: newDbEdge.id,
           source: params.source,
           target: params.target,
+          className: edgeKindClass(null),
           label: '',
           data: {
             createdBy: actor,
@@ -5817,6 +5919,10 @@ function App() {
             ? {
                 ...edge,
                 label: updated.label || updated.relation_type || '',
+                // The verb decides whether the line is a structural one or a
+                // quiet thread, so a renamed connection is redrawn as what it
+                // now is.
+                className: edgeKindClass(updated.relation_type),
                 data: {
                   createdBy: edge.data?.createdBy ?? actor,
                   label: updated.label ?? undefined,
@@ -6851,6 +6957,10 @@ function App() {
             ? {
                 ...edge,
                 label: updated.label || updated.relation_type || '',
+                // The verb decides whether the line is a structural one or a
+                // quiet thread, so a renamed connection is redrawn as what it
+                // now is.
+                className: edgeKindClass(updated.relation_type),
                 data: {
                   createdBy: edge.data?.createdBy ?? actor,
                   label: updated.label ?? undefined,
@@ -7218,12 +7328,13 @@ function App() {
                 hiddenInventoryHolders: Math.max(0, itemHolders.length - 2),
               }
             : {}),
-          ...(chapterCast.length > 0              ? {
-                  chapterCast,
-                  onOpenChapterCast: (characterId: string) =>
-                    openCharacterSheet(characterId),
-                }
-              : {}),
+          ...(chapterCast.length > 0
+            ? {
+                chapterCast,
+                onOpenChapterCast: (characterId: string) =>
+                  openChapterCastSheet(characterId, node.id),
+              }
+            : {}),
           ...(chapterQuests.length > 0
             ? {
                 questBadges: chapterQuests,
@@ -7264,6 +7375,7 @@ function App() {
     questBadgesByChapter,
     openQuest,
     openCharacterSheet,
+    openChapterCastSheet,
     markItemReturned,
     returningItemId,
     syncMilestoneXp,
@@ -7331,12 +7443,11 @@ function App() {
     const factions = new Set(factionCardChoices.map(node => node.id));
     const castInChapter = new Map<string, Set<string>>();
 
-    // A chapter's linked cast member and point of view count as present even
-    // when they were never added to the extra cast list.
+    // A chapter's point of view counts as present even when they were never
+    // ticked into the cast list.
     for (const node of chapterNodes) {
       const existing = castInChapter.get(node.id) ?? new Set<string>();
 
-      if (node.data.characterId) existing.add(node.data.characterId);
       if (node.data.chapterPov) existing.add(node.data.chapterPov);
 
       if (existing.size > 0) castInChapter.set(node.id, existing);
@@ -8503,7 +8614,14 @@ function App() {
             setEdgeRelationDraft={setEdgeRelationDraft}
             saveEdge={saveEdge}
             edgeEditError={edgeEditError}
-            selectedNode={selectedNode}
+            // The drawer reads the drawn card, not the stored row: the roster a
+            // chapter shows is worked out when the board is drawn, and the
+            // drawer lists the same names the card does.
+            selectedNode={
+              (selectedNodeId
+                ? canvasNodes.find(node => node.id === selectedNodeId) ?? selectedNode
+                : selectedNode)
+            }
             selectedNodeId={selectedNodeId}
             nodeIsDirty={nodeDirty}
             closeNodeInspector={closeNode}
@@ -8521,6 +8639,8 @@ function App() {
             setClosePrompt={setClosePrompt}
             discardNodeDraft={discardNode}
             changeNodeCharacter={changeNodeCharacter}
+            onOpenSheet={openCharacterSheet}
+            onOpenChapter={openChapterFromInspector}
             skills={storySkills}
             skillHolderCharacterId={skillHolderCharacterId}
             setSkillHolderCharacterId={setSkillHolderCharacterId}
@@ -8705,6 +8825,7 @@ function App() {
             chartStateError={chartStateError}
             chartStateById={chartStateById}
             visibleComparisonSeries={visibleComparisonSeries}
+            chapterStateFocus={chapterStateFocus}
             castStats={castStats}
             characters={characters}
             selectedCharacterId={selectedCharacterId}

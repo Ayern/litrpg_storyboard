@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 30;
+const SCHEMA_VERSION: i32 = 31;
 
 /// The step a level costs when nothing says otherwise: 100 XP between the first
 /// levels, which is the smallest curve an author is likely to want and the one a
@@ -762,7 +762,9 @@ impl Db {
             140.0,
             120.0,
             user.clone(),
-            Some(rook.id.clone()),
+            // A chapter names its people through its point of view and its cast,
+            // never through a link of its own.
+            None,
         )?;
         let second = self.create_node_with_character(
             story_id.to_string(),
@@ -772,7 +774,7 @@ impl Db {
             500.0,
             120.0,
             user.clone(),
-            Some(mira.id.clone()),
+            None,
         )?;
         let third = self.create_node_with_character(
             story_id.to_string(),
@@ -782,7 +784,7 @@ impl Db {
             860.0,
             120.0,
             user.clone(),
-            Some(rook.id.clone()),
+            None,
         )?;
 
         self.set_chapter_details(
@@ -6318,14 +6320,17 @@ impl Db {
     }
 
     /// The chapter cards need the same snapshot for every character assigned to
-    /// every chapter, without one command per card. The database still decides
-    /// who is assigned — a chapter's linked cast, its point of view and the
-    /// explicit cast rows — and what each snapshot held as the story reached
-    /// that chapter.
+    /// every chapter, without one command per card. Two things decide who is
+    /// assigned — the chapter's point of view and its cast rows — and what each
+    /// snapshot held as the story reached that chapter.
+    ///
+    /// A chapter names no single linked cast member: one path for a party is
+    /// enough, and a second one that only ever held one name was the confusion
+    /// this roster replaced.
     pub fn list_chapter_cast_states(&self, story_id: &str) -> DbResult<Vec<ChapterCastState>> {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
-            "SELECT n.id, n.character_id, n.chapter_pov
+            "SELECT n.id, n.chapter_pov
              FROM nodes n
              JOIN stories st ON st.id = n.story_id
              WHERE n.story_id = ?1 AND n.node_type = 'chapter'
@@ -6335,11 +6340,7 @@ impl Db {
 
         let nodes = stmt
             .query_map(params![story_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
             })?
             .collect::<SqliteResult<Vec<_>>>()?;
 
@@ -6347,18 +6348,18 @@ impl Db {
 
         let mut assignments: Vec<(String, String)> = Vec::new();
 
-        for (chapter_id, linked, pov) in nodes {
-            for character_id in [linked, pov].into_iter().flatten() {
-                let pair = (chapter_id.clone(), character_id);
+        for (chapter_id, pov) in nodes {
+            if let Some(character_id) = pov {
+                let pair = (chapter_id, character_id);
                 if !assignments.contains(&pair) {
                     assignments.push(pair);
                 }
             }
         }
 
-        // The explicit cast joins the linked cast and point of view. Trashed
-        // chapters and characters drop out here so the board never shows a
-        // badge for someone who is no longer in the story.
+        // The cast rows join the point of view. Trashed chapters and characters
+        // drop out here so the board never shows a badge for someone who is no
+        // longer in the story.
         let mut explicit_stmt = guard.prepare(
             "SELECT cc.chapter_id, cc.character_id
              FROM chapter_cast cc
@@ -6409,10 +6410,10 @@ impl Db {
 
     // ===== CHAPTER CAST =====
     //
-    // A chapter's cast is the linked cast member and point of view, plus every
-    // character explicitly attached as present in the scene. The explicit rows
-    // are kept here so a party can share a chapter without overwriting the
-    // card's one linked cast member.
+    // A chapter's cast is its point of view plus every character explicitly
+    // attached as present in the scene. Both are rows an author edits on the
+    // Chapters tab, so a party shares a chapter without anybody having to bind
+    // the same person on the card as well.
 
     pub fn list_story_chapter_cast(&self, story_id: &str) -> DbResult<Vec<ChapterCastMember>> {
         let guard = self.conn()?;
@@ -7894,15 +7895,16 @@ impl Db {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
-        let (story_id, previous, deleted_at) = tx
+        let (story_id, previous, deleted_at, node_type) = tx
             .query_row(
-                "SELECT story_id, character_id, deleted_at FROM nodes WHERE id = ?1",
+                "SELECT story_id, character_id, deleted_at, node_type FROM nodes WHERE id = ?1",
                 params![node_id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )
@@ -7912,6 +7914,15 @@ impl Db {
         if deleted_at.is_some() {
             return Err(DbError::Invalid(
                 "that node is in the trash; restore it before linking a cast member".to_string(),
+            ));
+        }
+
+        // A chapter's cast is its point of view and its cast rows. Refusing the
+        // link here is what keeps a second, single-name binding from creeping
+        // back onto the card through an older caller.
+        if node_type == "chapter" && character_id.is_some() {
+            return Err(DbError::Invalid(
+                "a chapter's cast comes from its point of view and its cast rows; add the character to the cast instead".to_string(),
             ));
         }
 
@@ -13110,9 +13121,9 @@ pub struct ChapterCastState {
     pub skills: Vec<CharacterChapterSkill>,
 }
 
-/// One explicit member of a chapter's cast. The chapter's linked cast member
-/// and point of view are implicit additions to the same scene; this row is the
-/// author's additional list of who is present.
+/// One explicit member of a chapter's cast. The chapter's point of view joins
+/// these rows in the same scene; this is the author's list of who else is
+/// present, and the only list the chapter card adds to.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct ChapterCastMember {
     pub id: String,
@@ -16254,6 +16265,31 @@ CREATE INDEX IF NOT EXISTS idx_character_growth_points_character
 
 "#;
 
+/// Schema v31: a chapter's cast is its point of view plus its cast rows.
+///
+/// The chapter card used to name one linked cast member of its own, which made
+/// the same person bindable in two places and left the card's footer repeating
+/// one name out of the scene. That link becomes the cast row it always meant, so
+/// a chapter already on file keeps everyone it had, and the card's own column is
+/// cleared so nothing can read it as a second roster.
+const MIGRATION_031_CHAPTER_CAST_ROWS: &str = r#"
+INSERT OR IGNORE INTO chapter_cast (id, chapter_id, character_id, created_at, updated_at)
+SELECT
+    lower(hex(randomblob(4))) || '-' ||
+    lower(hex(randomblob(2))) || '-4' ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    substr('89ab', abs(random()) % 4 + 1, 1) ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    lower(hex(randomblob(6))),
+    n.id, n.character_id, n.created_at, n.updated_at
+FROM nodes n
+WHERE n.node_type = 'chapter' AND n.character_id IS NOT NULL;
+
+UPDATE nodes SET character_id = NULL
+WHERE node_type = 'chapter' AND character_id IS NOT NULL;
+
+"#;
+
 fn migrate(conn: &Connection) -> SqliteResult<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
@@ -16460,6 +16496,16 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
     // then says.
     if version < 30 {
         conn.execute_batch(MIGRATION_030_GROWTH_POINTS)?;
+    }
+
+    // v31 folds a chapter's old single link into its cast rows, so the roster
+    // reads from one place and the card has no second name to draw. A file old
+    // enough to have neither the column nor the table has nothing to fold.
+    if version < 31
+        && column_exists(conn, "nodes", "character_id")?
+        && table_exists(conn, "chapter_cast")?
+    {
+        conn.execute_batch(MIGRATION_031_CHAPTER_CAST_ROWS)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -26327,7 +26373,7 @@ mod tests {
     }
 
     #[test]
-    fn chapter_cast_states_follow_the_linked_cast_and_pov_without_duplicates() {
+    fn chapter_cast_states_follow_the_point_of_view_and_the_cast_rows() {
         let (db, story, character, one, _) = skill_story();
         let wren = db
             .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
@@ -26358,12 +26404,21 @@ mod tests {
             )
             .unwrap();
 
-        db.set_node_character(&one.id, Some(character.id.clone()), "Ada".into())
-            .unwrap();
+        // The opening chapter names its point of view, which is one of the two
+        // sources of a roster.
+        db.set_chapter_details(
+            &one.id,
+            None,
+            None,
+            None,
+            Some(character.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
         // The second chapter names Wren in both ways. The card should not show
-        // her twice because the two links happen to agree.
-        db.set_node_character(&two.id, Some(wren.id.clone()), "Ada".into())
-            .unwrap();
+        // her twice because the two rows happen to agree.
         db.set_chapter_details(
             &two.id,
             None,
@@ -26375,8 +26430,11 @@ mod tests {
             "Ada".into(),
         )
         .unwrap();
-        // The third chapter links Tess, who has no milestone at all.
-        db.set_node_character(&three.id, Some(tess.id.clone()), "Ada".into())
+        db.add_chapter_cast_member(two.id.clone(), wren.id.clone(), "Ada".into())
+            .unwrap();
+        // The third chapter holds Tess only as a cast row, and she has no level
+        // at all.
+        db.add_chapter_cast_member(three.id.clone(), tess.id.clone(), "Ada".into())
             .unwrap();
 
         db.add_character_level(
@@ -26422,12 +26480,19 @@ mod tests {
         assert_eq!(third.character_id, tess.id);
         assert_eq!(
             third.level, None,
-            "a character with no milestone yet keeps a badge but no level"
+            "a character with no level yet keeps a badge but no level"
         );
+
+        // A chapter card cannot name a role of its own: the cast is the only
+        // path in, so nothing can be bound in two places.
+        assert!(matches!(
+            db.set_node_character(&one.id, Some(wren.id.clone()), "Ada".into()),
+            Err(DbError::Invalid(_))
+        ));
     }
 
     #[test]
-    fn an_explicit_chapter_cast_joins_the_linked_cast_and_pov_without_duplicates() {
+    fn an_explicit_chapter_cast_joins_the_point_of_view_without_duplicates() {
         let (db, story, rook, chapter, _) = skill_story();
         let wren = db
             .create_character(story.id.clone(), "Wren".into(), None, "Ada".into())
@@ -26436,8 +26501,6 @@ mod tests {
             .create_character(story.id.clone(), "Tess".into(), None, "Ada".into())
             .unwrap();
 
-        db.set_node_character(&chapter.id, Some(rook.id.clone()), "Ada".into())
-            .unwrap();
         db.set_chapter_details(
             &chapter.id,
             None,
@@ -26469,9 +26532,9 @@ mod tests {
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 2);
 
         let states = db.list_chapter_cast_states(&story.id).unwrap();
-        assert_eq!(states.len(), 3, "linked cast, POV and Tess, each once");
+        assert_eq!(states.len(), 2, "the POV and Tess, each once");
         assert!(states.iter().all(|state| state.chapter_id == chapter.id));
-        for character in [&rook, &wren, &tess] {
+        for character in [&wren, &tess] {
             assert!(
                 states
                     .iter()
@@ -26480,6 +26543,11 @@ mod tests {
                 character.name
             );
         }
+        assert!(
+            !states.iter().any(|state| state.character_id == rook.id),
+            "Rook is neither the point of view nor in the cast, so he is not in \
+             the scene, however many cards he is drawn near"
+        );
 
         db.remove_chapter_cast_member(&wren_member.id, "Ada".into())
             .unwrap();
@@ -26487,9 +26555,62 @@ mod tests {
         let after = db.list_chapter_cast_states(&story.id).unwrap();
         assert_eq!(
             after.len(),
-            3,
+            2,
             "removing the explicit row leaves the POV badge"
         );
+    }
+
+    #[test]
+    fn migrating_a_chapter_link_into_a_cast_row_keeps_the_people_it_had() {
+        // A database already at v30, with a chapter that still names its own
+        // linked cast member.
+        let db = Db::open_in_memory().unwrap();
+        let conn = db.conn().unwrap();
+
+        conn.execute(
+            "INSERT INTO stories (id, title, description, created_at, updated_at)
+             VALUES ('s1', 'Linked cast', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO characters (id, story_id, name, description, created_at, updated_at)
+             VALUES ('c1', 's1', 'Rook', NULL, 'then', 'then')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, story_id, node_type, label, content, pos_x, pos_y,
+                                created_by, created_at, updated_at, character_id, chapter_seq)
+             VALUES ('n1', 's1', 'chapter', 'Opening', NULL, 0, 0, 'Ada', 'then', 'then', 'c1', 1)",
+            [],
+        )
+        .unwrap();
+
+        conn.pragma_update(None, "user_version", 30).unwrap();
+        migrate(&conn).unwrap();
+
+        let cast: (String, String) = conn
+            .query_row(
+                "SELECT chapter_id, character_id FROM chapter_cast",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            cast,
+            ("n1".to_string(), "c1".to_string()),
+            "the card's one name is a cast row now"
+        );
+
+        let link: Option<String> = conn
+            .query_row(
+                "SELECT character_id FROM nodes WHERE id = 'n1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(link, None, "the card keeps no second roster of its own");
     }
 
     #[test]

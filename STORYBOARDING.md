@@ -153,13 +153,13 @@ board tells you who is ahead without opening a sheet.
 
 Then say who is where:
 
-- **Connect a character card to a chapter card** and that person joins the
-  chapter's cast. The chapter card then names everyone present — the character it
-  is linked to, its POV, and everyone you added — with each one's level *as of that
-  chapter*, not today.
+- **Connect a character card to a chapter card** (or drag their chip from the
+  cast rail onto it) and that person joins the chapter's cast. The chapter card
+  then names everyone present — its POV and everyone you added — with each one's
+  level *as of that chapter*, not today.
 - **Cast** on a chapter row opens the whole list with a checkbox each, so a party
-  can share a scene without disturbing the two links the card already has (a POV
-  and its own linked character).
+  can share a scene without changing the chapter's POV. A chapter card has no
+  single linked character of its own: this list is the roster.
 - **Connect two character cards** and the app asks what the bond is before
   recording anything.
 

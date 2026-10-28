@@ -300,12 +300,12 @@ function deriveProgression(characterId: string) {
 // ---- who is in a chapter, and what they were then -----------------------
 //
 // A chapter card's cast is not a list the author types: the database works it
-// out from three places — the one character linked to the chapter, its point of
-// view, and the rows ticked under “Present in this chapter” — and dates each
-// person at that chapter. The harness used to answer from the fixture's
-// snapshot, so the preview never drew a badge for a chapter or a cast member the
-// author had just added. Deriving here means linking a character, naming a POV or
-// ticking somebody present draws the same badge the desktop build draws.
+// out from two places — the chapter's point of view and the rows ticked under
+// “Present in this chapter” — and dates each person at that chapter. The harness
+// used to answer from the fixture's snapshot, so the preview never drew a badge
+// for a chapter or a cast member the author had just added. Deriving here means
+// naming a POV or ticking somebody present draws the same badge the desktop
+// build draws; a chapter card has no single linked cast member to fall back on.
 
 const chaptersInReadingOrder = () =>
   store.nodes
@@ -454,10 +454,10 @@ const chapterCastStates = () => {
     assignments.push({ chapterId, characterId });
   };
 
-  chapters.forEach(node => {
-    assign(node.id, node.character_id ?? null);
-    assign(node.id, node.chapter_pov ?? null);
-  });
+  // A chapter's roster is its point of view and its cast rows, exactly as the
+  // database works it out. The card's own character_id is not a third source:
+  // nothing in the app writes one on a chapter any more.
+  chapters.forEach(node => assign(node.id, node.chapter_pov ?? null));
 
   store.chapterCast.forEach(row =>
     assign(row.chapter_id ?? null, row.character_id ?? null)
@@ -580,6 +580,11 @@ const writes: Record<string, (args: Row) => unknown> = {
   set_node_character: args => {
     const node = store.nodes.find(row => row.id === args.nodeId);
     if (!node) throw new Error('no such card');
+    // A chapter's people are its point of view and its cast rows; the database
+    // refuses this link, so the harness must too.
+    if (node.node_type === 'chapter' && args.characterId) {
+      throw new Error('a chapter takes its cast, not a linked character');
+    }
     node.character_id = args.characterId ?? null;
     node.updated_at = now();
     return node;

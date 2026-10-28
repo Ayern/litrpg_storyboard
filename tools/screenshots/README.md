@@ -83,10 +83,11 @@ the same character and chapter is refused, and so is an income row naming a
 chapter the board does not have — both as the database refuses them.
 
 The chapter card's cast is worked out the same way, not read from the fixture's
-snapshot: the linked cast, the point of view and the rows ticked under “Present in
-this chapter” are collected per chapter, and each name is dated by the income and
-skills the story had reached by then. A chapter you add here therefore draws
-badges the moment you link somebody to it, as it does in the app.
+snapshot: the chapter's point of view and the rows ticked under “Present in this
+chapter” are collected per chapter, and each name is dated by the income and
+skills the story had reached by then. A chapter you add here therefore draws a
+badge the moment somebody joins its cast, as it does in the app; a chapter takes
+its people from that list and never from a single link on the card.
 
 Two details keep the page honest while you use it. Every answer is a copy,
 because a real command crosses the IPC bridge: returning the store's own arrays

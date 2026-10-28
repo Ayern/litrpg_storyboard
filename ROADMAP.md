@@ -341,11 +341,12 @@ database query
 also answers "where did this character stand as of this chapter?" —
 active level, skills learned and their rank at the time, with sacrifices removed —
 and the chart's **As of chapter** readout uses it. Chapter cards on the Graph tab
-also carry compact badges for the linked cast, the POV character and every
-character added with **Cast** on the Chapters tab, with that snapshot's level and
-the active skills in the tooltip. `chapter_cast` is schema v16, so a party can
-share a chapter without overwriting its one linked cast member; the explicit list
-travels in export and import. Remaining: a grid entry flow and declared jumps
+also carry compact badges for the POV character and every character added with
+**Cast** on the Chapters tab, with that snapshot's level and the active skills in
+the tooltip. `chapter_cast` is schema v16, so a party can share a chapter, and
+schema v31 folded each chapter's old single link into those rows: the badges are
+the whole roster now, and the card has no second binding to disagree with them.
+The explicit list travels in export and import. Remaining: a grid entry flow and declared jumps
 allowed. **L**
 
 **9b. A level that explains itself.** **Done.** The level is no longer a field

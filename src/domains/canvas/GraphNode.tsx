@@ -90,14 +90,13 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           </div>
           <span className="nodrag nopan">
             <HelpTip label="the cast on a chapter card">
-              This is who the story has in this chapter. Three things put a name
-              here: the one character linked to the chapter card, the chapter's
-              point of view, and anyone ticked under “Present in this chapter”
-              on the Chapters tab — so a party can share a scene without
-              replacing the linked cast. The level beside a name is the level
-              they had as of this chapter, not their latest one, and the hover
-              title lists the skills they had then. Click a name to open that
-              character's sheet.
+              This is who the story has in this chapter. Two things put a name
+              here: the chapter's point of view, and anyone ticked under
+              “Present in this chapter” on the Chapters tab — so a party shares
+              a scene without anyone being bound to the card twice. The level
+              beside a name is the level they had as of this chapter, not their
+              latest one, and the hover title lists the skills they had then.
+              Click a name to open that sheet as of this chapter.
             </HelpTip>
           </span>
         </div>

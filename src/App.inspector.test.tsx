@@ -258,7 +258,12 @@ describe('the node inspector', () => {
   });
 
   it('links a cast member from the picker and shows its numbers', async () => {
-    const user = await openNode('chapter: Opening');
+    rows = [
+      ...rows,
+      { id: 'n4', label: 'Unnamed', type: 'character', characterId: null },
+    ];
+
+    const user = await openNode('character: Unnamed');
     const panel = drawer();
 
     expect(within(panel).getByLabelText('Cast member')).toHaveValue('');
@@ -267,7 +272,7 @@ describe('the node inspector', () => {
     await user.selectOptions(within(panel).getByLabelText('Cast member'), 'char-1');
 
     expect(lastCall('set_node_character')).toEqual({
-      nodeId: 'n1',
+      nodeId: 'n4',
       characterId: 'char-1',
       user: 'You',
     });

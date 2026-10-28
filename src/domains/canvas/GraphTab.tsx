@@ -115,6 +115,9 @@ export interface GraphTabProps {
   setClosePrompt: React.Dispatch<React.SetStateAction<boolean>>;
   discardNodeDraft: () => void;
   changeNodeCharacter: (characterId: string) => void;
+  // A card is a shortcut to what it stands for as well as a place to edit it.
+  onOpenSheet: (characterId: string) => void;
+  onOpenChapter: (chapterId: string) => void;
 
   // The skill card's holders.
   skills: CharacterSkill[];
@@ -215,6 +218,8 @@ export function GraphTab({
   setClosePrompt,
   discardNodeDraft,
   changeNodeCharacter,
+  onOpenSheet,
+  onOpenChapter,
   skills,
   skillHolderCharacterId,
   setSkillHolderCharacterId,
@@ -246,6 +251,21 @@ export function GraphTab({
 }: GraphTabProps) {
   const skillCardNode =
     selectedNode?.data.nodeType === 'skill' ? selectedNode : null;
+
+  // A chapter names its people through its point of view and its cast rows, so
+  // it has no linked cast member of its own to edit here. What the drawer shows
+  // is the roster the card draws, and clicking a name opens that sheet.
+  const chapterIsSelected = selectedNode?.data.nodeType === 'chapter';
+  const linkedCharacterId = chapterIsSelected
+    ? null
+    : selectedNode?.data.characterId ?? null;
+  const chapterRoster = chapterIsSelected
+    ? selectedNode?.data.chapterCast ?? []
+    : [];
+  const linkedCharacterName =
+    characters.find(character => character.id === linkedCharacterId)?.name ??
+    selectedNode?.data.characterName ??
+    'this character';
 
   // The holders already attached to the selected card, and the cast members who
   // could still learn it. A person is only offered once: the database also
@@ -672,31 +692,106 @@ export function GraphTab({
                   </div>
                 )}
   
-                <label className="node-drawer-label" htmlFor="inspector-cast">
-                  Cast member
-                </label>
-                <select
-                  id="inspector-cast"
-                  className="node-drawer-select"
-                  title="Link this node to a cast member; saved as soon as you choose"
-                  value={selectedNode.data.characterId ?? ''}
-                  onChange={e => changeNodeCharacter(e.target.value)}
-                >
-                  <option value="">Not linked</option>
-                  {characters.map(character => (
-                    <option key={character.id} value={character.id}>
-                      {character.name}
-                    </option>
-                  ))}
-                  {selectedNode.data.characterId &&
-                    !characters.some(
-                      character => character.id === selectedNode.data.characterId
-                    ) && (
-                      <option value={selectedNode.data.characterId}>
-                        Linked cast member (not in the cast)
-                      </option>
+                {chapterIsSelected ? (
+                  <section
+                    className="node-drawer-chapter"
+                    aria-label="Chapter roster"
+                  >
+                    <div className="node-drawer-section">
+                      In this chapter
+                      <span className="node-drawer-note">
+                        {chapterRoster.length === 0
+                          ? 'nobody yet'
+                          : `${chapterRoster.length} in the scene`}
+                      </span>
+                    </div>
+
+                    {chapterRoster.length === 0 ? (
+                      <p className="node-drawer-hint">
+                        Nobody is in this scene yet. Give the chapter a point of
+                        view, or tick who is present, on the Chapters tab.
+                      </p>
+                    ) : (
+                      <ul className="node-drawer-holder-list">
+                        {chapterRoster.map(member => (
+                          <li className="node-drawer-holder" key={member.characterId}>
+                            <button
+                              type="button"
+                              className="node-drawer-holder-name"
+                              title={`Open ${member.name}'s sheet as of this chapter`}
+                              onClick={() =>
+                                selectedNode.data.onOpenChapterCast?.(
+                                  member.characterId
+                                )
+                              }
+                            >
+                              {member.name}
+                            </button>
+                            {member.level !== null && (
+                              <span className="node-drawer-holder-rank">
+                                Lv {member.level}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                </select>
+
+                    <p className="node-drawer-hint">
+                      The roster comes from the chapter's point of view and the
+                      people ticked under “Present in this chapter”; dropping a
+                      cast member on this card adds them to it.
+                    </p>
+
+                    <button
+                      type="button"
+                      className="node-drawer-add-holder"
+                      title="Open this chapter on the Chapters tab, where its point of view and cast are edited"
+                      onClick={() => onOpenChapter(selectedNode.id)}
+                    >
+                      Edit on the Chapters tab
+                    </button>
+                  </section>
+                ) : (
+                  <>
+                    <label className="node-drawer-label" htmlFor="inspector-cast">
+                      Cast member
+                    </label>
+                    <select
+                      id="inspector-cast"
+                      className="node-drawer-select"
+                      title="Link this card to a cast member; saved as soon as you choose"
+                      value={linkedCharacterId ?? ''}
+                      onChange={e => changeNodeCharacter(e.target.value)}
+                    >
+                      <option value="">Not linked</option>
+                      {characters.map(character => (
+                        <option key={character.id} value={character.id}>
+                          {character.name}
+                        </option>
+                      ))}
+                      {linkedCharacterId &&
+                        !characters.some(
+                          character => character.id === linkedCharacterId
+                        ) && (
+                          <option value={linkedCharacterId}>
+                            Linked cast member (not in the cast)
+                          </option>
+                        )}
+                    </select>
+
+                    {linkedCharacterId && (
+                      <button
+                        type="button"
+                        className="node-drawer-add-holder"
+                        title={`Open ${linkedCharacterName}'s sheet`}
+                        onClick={() => onOpenSheet(linkedCharacterId)}
+                      >
+                        Open {linkedCharacterName}'s sheet
+                      </button>
+                    )}
+                  </>
+                )}
   
                 {renameOffer && renameOffer.nodeId === selectedNode.id && (
                   <div className="node-drawer-offer" role="status">
@@ -884,7 +979,7 @@ export function GraphTab({
                   </section>
                 )}
   
-                {selectedNode.data.characterId && (
+                {linkedCharacterId && (
                   <section className="node-drawer-cast" aria-label="Cast numbers">
                     {inspectorCharacter ? (
                       <>

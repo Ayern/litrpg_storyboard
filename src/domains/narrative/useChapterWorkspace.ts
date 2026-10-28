@@ -72,8 +72,8 @@ export function useChapterWorkspace({
   const [chapterDayDraft, setChapterDayDraft] = useState('');
   const [chapterTimeDraft, setChapterTimeDraft] = useState('');
 
-  // The explicit cast of each chapter: everyone present beyond the card's own
-  // linked cast member and its point of view. One picker is open at a time.
+  // The explicit cast of each chapter: everyone present beyond its point of
+  // view. One picker is open at a time.
   const [openChapterCastId, setOpenChapterCastId] = useState<string | null>(null);
   const [chapterCastBusyId, setChapterCastBusyId] = useState<string | null>(null);
   const [chapterCastError, setChapterCastError] = useState<string | null>(null);
@@ -521,9 +521,9 @@ export function useChapterWorkspace({
     setChapterCastError(null);
   };
 
-  // The card's linked cast member and POV are always present. This adds or
-  // removes the rest of the scene's cast, one command per person, so every
-  // change is recorded in the history like any other edit.
+  // The chapter's POV is always present. This adds or removes the rest of the
+  // scene's cast, one command per person, so every change is recorded in the
+  // history like any other edit.
   const setChapterCastPresence = async (
     chapterId: string,
     characterId: string,

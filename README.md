@@ -795,9 +795,8 @@ loss until one is chosen, which is different from an item known to be lost. Vers
 15 added `character_level_milestones` and `character_skill_events`; an older story
 starts with neither, so its levels and skills are still recorded on the sheets but
 have no chapter-by-chapter history until the author adds one. Version 16 added
-`chapter_cast`, which starts empty: a chapter keeps its single linked cast member
-and point of view, and the table holds only the additional people added with
-**Cast**. Version 17 added `character_level_milestones.xp`, `stat_name` and
+`chapter_cast`, which starts empty: a chapter's point of view is a link on the
+node, and the table holds the rest of the people added with **Cast**. Version 17 added `character_level_milestones.xp`, `stat_name` and
 `stat_points`; an existing milestone has no snapshots until one is recorded,
 which is different from a recorded value of zero. Version 18 added
 `character_progress`; an older story starts with no income rows, and one row per
@@ -815,7 +814,12 @@ while so no reader was ever left without an answer. Version 28 moved each level'
 stat gains onto the record they belong to, and version 29 dropped the old timeline
 table and re-pointed a skill event's optional link at the level itself. A level
 recorded twice while the old table allowed it collapses into the single row its
-level now has; nothing else about a story changes on the way over.
+level now has; nothing else about a story changes on the way over. Version 30
+added `character_growth_points`, where the points a level hands out are placed.
+Version 31 folded the one cast member a chapter card used to name into
+`chapter_cast`: that link becomes a cast row, and the card keeps no roster of its
+own, so a chapter's people come from its point of view and its cast list and
+nowhere else.
 
 | Table | Contents |
 | --- | --- |
@@ -990,10 +994,11 @@ page that arrives late, and what it says when a filter matches nothing.
   chapter leaves its position empty until something is moved or **Renumber** is
   pressed; that is shown in the tab, not repaired silently.
 - **A chapter's cast is a chapter-level list, not per-scene blocking.** It joins
-  the card's linked cast member, its POV and every character ticked in **Cast**,
-  but the same list applies to the whole chapter. Every present character gets a
-  badge, so a large party makes the card taller rather than hiding names behind a
-  count.
+  the chapter's POV with every character ticked in **Cast**, and the same list
+  applies to the whole chapter. Every present character gets a badge, so a large
+  party makes the card taller rather than hiding names behind a count. A chapter
+  card itself names no cast member: dropping one on the card adds them to this
+  list, and the drawer lists the roster instead of offering a second binding.
 - **The story bible carries only what the app models.** The file and the clipboard
   hold the same Markdown: chapters with arcs, days, times, POV and counts, a timeline,
   the cast with their skills and inventory, and the other cards. Copying needs

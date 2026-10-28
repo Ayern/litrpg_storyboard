@@ -9,7 +9,7 @@ import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { GraphTab } from './GraphTab';
 import type { GraphTabProps } from './GraphTab';
-import { CAST_DRAG_TYPE, NODE_STAT_BADGES } from './types';
+import { CAST_DRAG_TYPE, NODE_STAT_BADGES, edgeKindClass } from './types';
 import type { EdgeData, NodeData, NodeType } from './types';
 
 // The Graph tab renders what the app holds and hands every keystroke back
@@ -162,6 +162,8 @@ function canvasSpies() {
     saveNode: vi.fn(),
     discardNodeDraft: vi.fn(),
     changeNodeCharacter: vi.fn(),
+    onOpenSheet: vi.fn(),
+    onOpenChapter: vi.fn(),
     setSkillHolderError: vi.fn(),
     addSkillHolder: vi.fn(),
     startInspectorStat: vi.fn(),
@@ -267,6 +269,8 @@ function props(spies: Spies, start: Start = {}, overrides: Partial<GraphTabProps
     setClosePrompt: vi.fn(),
     discardNodeDraft: spies.discardNodeDraft,
     changeNodeCharacter: spies.changeNodeCharacter,
+    onOpenSheet: spies.onOpenSheet,
+    onOpenChapter: spies.onOpenChapter,
 
     skills: [],
     skillHolderCharacterId: start.skillHolderCharacterId ?? '',
@@ -380,6 +384,18 @@ function open(overrides: Partial<GraphTabProps> = {}, start: Start = {}) {
   render(<Harness spies={spies} start={start} overrides={overrides} />);
   return spies;
 }
+
+describe('connection kinds', () => {
+  // The board draws two kinds of line. A cast or skill line repeats what a
+  // badge or a sheet already says, so it is the quiet one; everything else is
+  // the story's own shape.
+  it('marks a cast or skill line as an assignment, and the rest as flow', () => {
+    expect(edgeKindClass('cast')).toBe('storyboard-assignment');
+    expect(edgeKindClass('SKILL')).toBe('storyboard-assignment');
+    expect(edgeKindClass('unlocks')).toBe('storyboard-flow');
+    expect(edgeKindClass(null)).toBe('storyboard-flow');
+  });
+});
 
 describe('the graph tab', () => {
   it('asks for a story before it draws a board', () => {
@@ -916,6 +932,66 @@ describe('the graph tab', () => {
       await user.selectOptions(screen.getByLabelText('Cast member'), rook.id);
 
       expect(spies.changeNodeCharacter).toHaveBeenCalledWith(rook.id);
+    });
+
+    it('opens a linked card’s sheet from the drawer instead of only naming it', async () => {
+      const user = userEvent.setup();
+      const spies = openDrawer({ characters: [mira, rook] });
+
+      await user.click(screen.getByRole('button', { name: "Open Mira's sheet" }));
+
+      expect(spies.onOpenSheet).toHaveBeenCalledWith(mira.id);
+    });
+
+    it('shows a chapter’s roster and no single-cast link', async () => {
+      const user = userEvent.setup();
+      const onOpenChapterCast = vi.fn();
+      const chapterCard = node('n-ch', 'Opening', 'chapter', {
+        chapterCast: [
+          { characterId: mira.id, name: 'Mira', level: 3, levelIsPenalty: false, skills: [] },
+          { characterId: rook.id, name: 'Rook', level: null, levelIsPenalty: false, skills: [] },
+        ],
+        onOpenChapterCast,
+      });
+
+      const spies = openDrawer({
+        characters: [mira, rook],
+        nodes: [chapterCard],
+        selectedNode: chapterCard,
+        selectedNodeId: chapterCard.id,
+        nodeLabelDraft: 'Opening',
+      });
+
+      // The roster is the whole of it: there is no second way to bind one name.
+      expect(screen.queryByLabelText('Cast member')).not.toBeInTheDocument();
+      expect(screen.getByText('2 in the scene')).toBeInTheDocument();
+      expect(
+        within(screen.getByLabelText('Chapter roster')).getByText('Lv 3')
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Mira' }));
+      expect(onOpenChapterCast).toHaveBeenCalledWith(mira.id);
+
+      await user.click(
+        screen.getByRole('button', { name: 'Edit on the Chapters tab' })
+      );
+      expect(spies.onOpenChapter).toHaveBeenCalledWith('n-ch');
+    });
+
+    it('says a chapter has nobody yet, and where to add them', () => {
+      const chapterCard = node('n-empty', 'Quiet', 'chapter');
+
+      openDrawer({
+        nodes: [chapterCard],
+        selectedNode: chapterCard,
+        selectedNodeId: chapterCard.id,
+        nodeLabelDraft: 'Quiet',
+      });
+
+      expect(screen.getByText('nobody yet')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Give the chapter a point of view/)
+      ).toBeInTheDocument();
     });
 
     it('offers a rename only for the card the offer names', () => {

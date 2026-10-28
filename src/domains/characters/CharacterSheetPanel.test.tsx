@@ -69,6 +69,7 @@ function baseProps(
     chartStateById: new Map(),
     visibleComparisonSeries: [],
     castStats: {},
+    chapterStateFocus: null,
     characters: [],
     selectedCharacterId: null,
     setSelectedCharacterId: vi.fn(),
@@ -179,6 +180,48 @@ describe('the power curve empty states', () => {
         "No numeric stats yet — add a stat on a character's sheet first."
       )
     ).toBeInTheDocument();
+  });
+
+  it('opens the chapter a card’s badge asked for, on that character', () => {
+    const setChartStateChapterId = vi.fn();
+    const chapterOne = chapter('ch-1', 'One', 1);
+    const state = {
+      character_id: 'c-1',
+      chapter_id: 'ch-1',
+      chapter_seq: 1,
+      level: 2,
+      level_record_id: null,
+      level_is_penalty: false,
+      level_chapter_id: 'ch-1',
+      level_chapter_seq: 1,
+      stats: [],
+      skills: [],
+      items: [],
+      undated_items: 0,
+    };
+
+    render(
+      <CharacterSheetPanel
+        {...baseProps([chapterOne], {
+          selectedCharacterId: 'c-1',
+          chartMilestoneSeries: [series('Mira')],
+          visibleComparisonSeries: [series('Mira')],
+          chartStateChapters: [chapterOne],
+          chartStateChapter: chapterOne,
+          chartStateById: new Map([['c-1', state]]),
+          setChartStateChapterId,
+          chapterStateFocus: { characterId: 'c-1', chapterId: 'ch-1', request: 1 },
+        })}
+      />
+    );
+
+    // The readout moves to the chapter the badge names, rather than staying on
+    // whichever chapter was last picked by hand.
+    expect(setChartStateChapterId).toHaveBeenCalledWith('ch-1');
+    expect(
+      screen.getByLabelText("Mira's sheet at One")
+    ).toBeInTheDocument();
+    expect(screen.getByText('Level 2')).toBeInTheDocument();
   });
 
   it('asks for a character when every line is hidden', () => {

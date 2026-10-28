@@ -51,6 +51,13 @@ export interface CharacterSheetPanelProps {
   // The stats each sheet holds now, so the expanded readout can show what a
   // number became rather than only what it was.
   castStats: Record<string, CharacterStat[]>;
+  // A chapter card's badge asks for one sheet as it stood in that chapter. The
+  // request carries a counter, so clicking the same badge twice asks again.
+  chapterStateFocus: {
+    characterId: string;
+    chapterId: string;
+    request: number;
+  } | null;
 
   // The cast rail, and the two fields that add to it.
   characters: Character[];
@@ -105,6 +112,7 @@ export function CharacterSheetPanel({
   chartStateById,
   visibleComparisonSeries,
   castStats,
+  chapterStateFocus,
   characters,
   selectedCharacterId,
   setSelectedCharacterId,
@@ -130,6 +138,27 @@ export function CharacterSheetPanel({
   // Which cast member's whole sheet is open under the chapter readout. One at a
   // time keeps the panel the height of a comparison rather than a stack.
   const [openSnapshotId, setOpenSnapshotId] = React.useState<string | null>(null);
+
+  // A chapter card's cast badge lands here: the readout moves to that chapter,
+  // that character's whole sheet opens under it, and the row is scrolled into
+  // view once the panel that draws it exists.
+  React.useEffect(() => {
+    if (!chapterStateFocus) return;
+    if (chapterStateFocus.characterId !== selectedCharacterId) return;
+
+    setChartStateChapterId(chapterStateFocus.chapterId);
+    setOpenSnapshotId(chapterStateFocus.characterId);
+
+    const timer = window.setTimeout(() => {
+      document
+        .querySelector(
+          `[data-state-character="${chapterStateFocus.characterId}"]`
+        )
+        ?.scrollIntoView?.({ block: 'nearest' });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [chapterStateFocus, selectedCharacterId, setChartStateChapterId]);
 
   return (
     <div className="tab-content">

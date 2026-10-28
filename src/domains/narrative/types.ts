@@ -36,8 +36,9 @@ export interface ChapterCastState {
   skills: CharacterChapterSkill[];
 }
 
-// One character the author added to a chapter's cast. The linked cast member
-// and POV are kept as links on the node, so they are not rows here.
+// One character the author added to a chapter's cast. The point of view is a
+// link on the node and joins this list in the scene; a chapter has no other
+// single-cast link.
 export interface ChapterCastMember {
   id: string;
   chapter_id: string;

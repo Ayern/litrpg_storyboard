@@ -700,7 +700,6 @@ export function ChaptersPanel({
                   <ChapterCastPanel
                     chapterId={node.id}
                     chapterLabel={node.data.label}
-                    linkedId={node.data.characterId ?? null}
                     povId={node.data.chapterPov ?? null}
                     characters={characters}
                     chapterCastIsExplicit={chapterCastIsExplicit}

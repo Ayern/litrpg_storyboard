@@ -4680,6 +4680,34 @@ body {
   border-radius: 2px;
 }
 
+/* Two kinds of line share the board. A structural line is the story's shape —
+   a chapter leading into the next, a quest hanging off a chapter, a bond
+   between two people — so it is solid and keeps its verb. A cast or skill line
+   repeats what a chapter badge or a sheet already states, so it is a faint
+   dashed thread: still there to click when the wiring matters, never the line
+   the eye follows. */
+.react-flow__edge.storyboard-flow .react-flow__edge-path {
+  stroke: #8f8aa8;
+  stroke-width: 1.6;
+}
+
+.react-flow__edge.storyboard-assignment .react-flow__edge-path {
+  stroke: #6b7a74;
+  stroke-width: 1.05;
+  stroke-dasharray: 2 5;
+  opacity: 0.4;
+}
+
+.react-flow__edge.storyboard-assignment:hover .react-flow__edge-path,
+.react-flow__edge.storyboard-assignment.selected .react-flow__edge-path {
+  stroke: #9fb2aa;
+  opacity: 0.95;
+}
+
+.react-flow__edge.storyboard-assignment .react-flow__edge-textwrapper {
+  display: none;
+}
+
 /* Found in the trash: what was deleted, and the two things that can be done
    with it. Permanent deletion is the only action here that cannot be undone, so
    it is the only one styled as a warning. */
