@@ -7,6 +7,7 @@
 // more. A command that is not implemented says so in the console rather than
 // failing silently.
 
+import { levelForXp, levelXpThreshold } from '../../src/domains/progression/growth';
 import fixture from './fixture.json';
 
 type Row = Record<string, any>;
@@ -15,7 +16,7 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const story = clone(fixture.story) as Row;
 
-const store = {
+const createStore = () => ({
   storyId: fixture.storyId as string,
   stories: clone(fixture.stories) as Row[],
   nodes: clone(fixture.nodes) as Row[],
@@ -24,10 +25,17 @@ const store = {
   stats: clone(fixture.story_stats) as Row[],
   skills: clone(fixture.story_skills) as Row[],
   skillEvents: clone(fixture.story_skill_events) as Row[],
-  levels: clone(fixture.story_levels) as Row[],
+  // The demo's levels were all posted by its curve, which is what lets income that
+  // is taken away take its levels with it. The database keeps that in a `source`
+  // column the app never reads, so the fixture does not carry it.
+  levels: clone(fixture.story_levels).map((row: Row) => ({
+    ...row,
+    source: row.source ?? 'level',
+  })) as Row[],
   progress: clone(fixture.story_progress) as Row[],
   growthPoints: clone(fixture.story_growth_points ?? []) as Row[],
   growthRules: clone(fixture.story_level_growth_rules ?? []) as Row[],
+  awards: [] as Row[],
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],
@@ -43,14 +51,34 @@ const store = {
   trash: clone(fixture.trash) as Row[],
   trashStories: clone(fixture.trash_stories) as Row[],
   trashRetention: fixture.trash_retention as number | null,
+});
+
+type Store = ReturnType<typeof createStore>;
+
+// An edit to this file would otherwise re-evaluate the module and rebuild the
+// store from the fixture under a page that is holding ids and rows from the old
+// one: a chapter the page still names would no longer exist here, and every XP
+// row would read "Chapter in the trash". Carrying the store across the update
+// keeps the session the author was in the middle of.
+type HotData = { store?: Store; counter?: number; clock?: number };
+
+const hot = (import.meta as { hot?: { data: HotData } }).hot;
+
+const store: Store = hot?.data.store ?? createStore();
+
+if (hot) hot.data.store = store;
+
+let counter = hot?.data.counter ?? 0;
+let clock = hot?.data.clock ?? Date.parse('2026-10-27T20:15:00Z');
+
+const id = (prefix: string) => {
+  counter += 1;
+  if (hot) hot.data.counter = counter;
+  return `${prefix}0000000-0000-4000-8000-${String(counter).padStart(12, '0')}`;
 };
-
-let counter = 0;
-let clock = Date.parse('2026-10-27T20:15:00Z');
-
-const id = (prefix: string) => `${prefix}0000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`;
 const now = () => {
   clock += 1000;
+  if (hot) hot.data.clock = clock;
   return new Date(clock).toISOString();
 };
 
@@ -85,6 +113,190 @@ const characterState = (characterId: string, chapterId: string): Row =>
     level_is_penalty: false,
     skills: [],
   };
+
+// ---- progression, derived the way the database derives it --------------
+//
+// A character's level is not an author's field: it is the income rows added up and
+// run through the rule's curve, and every crossing writes a level whose stat gains
+// the rule describes. The desktop build does that in one transaction inside the
+// database. The harness used to skip it, which made the preview lie: an author
+// added a chapter's XP and watched nothing level. These helpers repeat the same
+// arithmetic from the app's own growth rules, so a click here answers like a click
+// in the app.
+
+const chapterSeqOf = (chapterId: string | null) =>
+  store.nodes.find(node => node.id === chapterId)?.chapter_seq ?? null;
+
+const ruleFor = (characterId: string) =>
+  store.growthRules.find(rule => rule.character_id === characterId) ??
+  store.growthRules.find(rule => rule.character_id === null) ??
+  null;
+
+// A chapter an income row names, checked the way the database checks it: the row
+// has to point at a chapter card that is on the board. Without this a stale id
+// quietly becomes income nobody can name, which the sheet can only report as a
+// chapter that is not there.
+const chapterOrThrow = (chapterId: string | null) => {
+  const chapter = store.nodes.find(node => node.id === chapterId);
+
+  if (!chapter || chapter.node_type !== 'chapter') {
+    throw new Error('a chapter on the board is required');
+  }
+
+  return chapter;
+};
+
+// One stat a level raises, added to the sheet: the row is created at the gained
+// value when the sheet has none, which is what the database's post does.
+const gainStat = (characterId: string, statName: string, amount: number, timestamp: string) => {
+  const gain = Number(amount) || 0;
+  const existing = store.stats.find(
+    row => row.character_id === characterId && row.stat_name === statName
+  );
+
+  if (existing) {
+    existing.value = (Number(existing.value) || 0) + gain;
+    existing.updated_at = timestamp;
+    return existing.value;
+  }
+
+  const row: Row = {
+    id: id('stat'),
+    character_id: characterId,
+    stat_name: statName,
+    value: gain,
+    notes: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+
+  store.stats.push(row);
+  return row.value;
+};
+
+const reverseStat = (characterId: string, statName: string, amount: number) => {
+  const stat = store.stats.find(
+    row => row.character_id === characterId && row.stat_name === statName
+  );
+
+  if (stat) {
+    stat.value = (Number(stat.value) || 0) - (Number(amount) || 0);
+    stat.updated_at = now();
+  }
+};
+
+// Brings one character's level, total and target back in step with their income,
+// posting the levels the income crossed and taking back the ones it no longer pays
+// for. Rows written by hand are the floor: an author's level stands for itself.
+function deriveProgression(characterId: string) {
+  const character = store.characters.find(row => row.id === characterId);
+  if (!character) return;
+
+  const income = store.progress
+    .filter(row => row.character_id === characterId)
+    .sort(
+      (a, b) =>
+        (chapterSeqOf(a.chapter_id) ?? Number.MAX_SAFE_INTEGER) -
+          (chapterSeqOf(b.chapter_id) ?? Number.MAX_SAFE_INTEGER) ||
+        String(a.created_at).localeCompare(String(b.created_at)) ||
+        String(a.id).localeCompare(String(b.id))
+    );
+
+  const total = income.reduce((sum, row) => sum + row.xp_earned, 0);
+  const rule = ruleFor(characterId);
+  const base = rule?.xp_base ?? 100;
+  const growth = rule?.xp_growth ?? 0;
+  // The floor is the highest level nobody's curve wrote: a row from the fixture or
+  // one the author added by hand. The rows the curve posted are the curve's to take
+  // back when the income goes away, so they are not counted here.
+  const recorded = store.levels
+    .filter(row => row.character_id === characterId && row.source !== 'level')
+    .reduce((highest, row) => Math.max(highest, row.level), 1);
+  const level = Math.max(levelForXp(base, growth, total), recorded);
+
+  // Income that has gone away takes the levels it paid for with it, and their
+  // gains come back off the sheet — only the rows the curve wrote, never an
+  // author's own.
+  for (const row of store.levels.filter(
+    entry => entry.character_id === characterId && entry.source === 'level' && entry.level > level
+  )) {
+    for (const change of row.stat_changes ?? []) {
+      if (change.amount != null) reverseStat(characterId, change.stat_name, change.amount);
+    }
+
+    // A skill event that named the level keeps its place in the story; the level
+    // it pointed at is gone, so the link goes with it.
+    store.skillEvents.forEach(event => {
+      if (event.level_record_id === row.id) event.level_record_id = null;
+    });
+
+    drop(store.levels, row.id);
+  }
+
+  // Each rung is filed under the chapter whose income carried the total over its
+  // step, so the timeline says where the level landed rather than when it was typed.
+  const taken = new Set(
+    store.levels
+      .filter(row => row.character_id === characterId)
+      .map(row => row.level as number)
+  );
+
+  let running = 0;
+
+  for (const entry of income) {
+    running += entry.xp_earned;
+
+    for (let rung = recorded + 1; rung <= level; rung += 1) {
+      if (taken.has(rung)) continue;
+      if (running < levelXpThreshold(base, growth, rung)) continue;
+
+      const timestamp = now();
+      // A rate of zero is not a gain: the database skips it rather than filing a
+      // change that moves nothing, and creating a stat at zero would put a row on
+      // the sheet the author never asked for.
+      const statChanges = (rule?.stats ?? [])
+        .filter((rate: Row) => Number(rate.per_level) !== 0)
+        .map((rate: Row) => {
+          const valueAfter = gainStat(characterId, rate.stat_name, rate.per_level, timestamp);
+
+          return {
+            id: id('change'),
+            level_record_id: null,
+            stat_name: rate.stat_name,
+            amount: rate.per_level,
+            value_after: valueAfter,
+            created_at: timestamp,
+            updated_at: timestamp,
+          };
+        });
+
+      const row: Row = {
+        id: id('level'),
+        character_id: characterId,
+        level: rung,
+        chapter_id: entry.chapter_id,
+        is_debuff: false,
+        xp: levelXpThreshold(base, growth, rung),
+        stat_changes: statChanges,
+        source: 'level',
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+
+      statChanges.forEach((change: Row) => {
+        change.level_record_id = row.id;
+      });
+
+      store.levels.push(row);
+      taken.add(rung);
+    }
+  }
+
+  character.xp = total;
+  character.level = level;
+  character.xp_to_next = level >= 999 ? null : levelXpThreshold(base, growth, level + 1);
+  character.updated_at = now();
+}
 
 const auditEntry = (args: Row, action: string, detail: string, entityType = 'history') =>
   ({
@@ -122,6 +334,7 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_story_levels: () => store.levels,
   get_story_character_progress: () => store.progress,
   get_story_growth_points: () => store.growthPoints,
+  get_story_character_awards: () => store.awards,
   // The rule the sheet reads its tally and its level against, so the gallery
   // shows the points a level hands out rather than "Not set".
   get_story_level_growth_rules: () => store.growthRules,
@@ -711,6 +924,18 @@ const writes: Record<string, (args: Row) => unknown> = {
   },
 
   add_character_progress: args => {
+    chapterOrThrow(args.chapterId);
+
+    // One amount per character per chapter, as the database insists: a second entry
+    // for the same chapter is refused rather than quietly doubling the income.
+    if (
+      store.progress.some(
+        row => row.character_id === args.characterId && row.chapter_id === args.chapterId
+      )
+    ) {
+      throw new Error('that chapter already has XP recorded for this character');
+    }
+
     const timestamp = now();
     const row: Row = {
       id: id('progress'),
@@ -722,20 +947,106 @@ const writes: Record<string, (args: Row) => unknown> = {
     };
 
     store.progress.push(row);
+    deriveProgression(args.characterId);
     return row;
   },
 
   update_character_progress: args => {
     const row = store.progress.find(candidate => candidate.id === args.id);
     if (!row) throw new Error('no such income');
+    chapterOrThrow(args.chapterId);
     row.chapter_id = args.chapterId;
     row.xp_earned = args.xpEarned;
     row.updated_at = now();
+    deriveProgression(row.character_id);
     return row;
   },
 
   delete_character_progress: args => {
+    const row = store.progress.find(candidate => candidate.id === args.id);
     drop(store.progress, args.id);
+    if (row) deriveProgression(row.character_id);
+    return null;
+  },
+
+  // An award is a gain that skips the level-up: XP lands on the chapter's income,
+  // a stat point lands on the sheet, and the roll records what was handed over.
+  // The database applies both in the transaction that writes the award, so the
+  // sheet follows the same click here.
+  add_character_award: args => {
+    const amount = Number(args.amount) || 0;
+
+    if (amount === 0) throw new Error('an award is a whole number other than zero');
+
+    const timestamp = now();
+
+    if (args.kind === 'xp') {
+      if (!args.chapterId) throw new Error('XP awarded belongs to a chapter');
+      chapterOrThrow(args.chapterId);
+
+      const entry = store.progress.find(
+        row => row.character_id === args.characterId && row.chapter_id === args.chapterId
+      );
+
+      if (entry) {
+        entry.xp_earned += amount;
+        entry.updated_at = timestamp;
+      } else {
+        store.progress.push({
+          id: id('progress'),
+          character_id: args.characterId,
+          chapter_id: args.chapterId,
+          xp_earned: amount,
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+      }
+    } else {
+      if (!args.statName) throw new Error('a stat award needs a stat');
+      gainStat(args.characterId, args.statName, amount, timestamp);
+    }
+
+    const row: Row = {
+      id: id('award'),
+      character_id: args.characterId,
+      chapter_id: args.chapterId ?? null,
+      kind: args.kind,
+      stat_name: args.kind === 'stat' ? args.statName : null,
+      amount,
+      note: args.note ?? null,
+      created_by: args.user ?? 'Ada',
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    store.awards.push(row);
+    deriveProgression(args.characterId);
+    return row;
+  },
+
+  delete_character_award: args => {
+    const award = store.awards.find(row => row.id === args.id);
+    if (!award) return null;
+
+    if (award.kind === 'stat') {
+      if (award.stat_name) reverseStat(award.character_id, award.stat_name, award.amount);
+    } else if (award.chapter_id) {
+      const entry = store.progress.find(
+        row => row.character_id === award.character_id && row.chapter_id === award.chapter_id
+      );
+
+      if (entry) {
+        // A row the award emptied has nothing left to say about the chapter.
+        if (entry.xp_earned - award.amount <= 0) drop(store.progress, entry.id);
+        else {
+          entry.xp_earned -= award.amount;
+          entry.updated_at = now();
+        }
+      }
+    }
+
+    drop(store.awards, args.id);
+    deriveProgression(award.character_id);
     return null;
   },
 
@@ -757,6 +1068,7 @@ const writes: Record<string, (args: Row) => unknown> = {
         created_at: timestamp,
         updated_at: timestamp,
       })),
+      source: 'recorded',
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -848,6 +1160,56 @@ const writes: Record<string, (args: Row) => unknown> = {
     }
 
     drop(store.growthPoints, args.id);
+    return null;
+  },
+
+  // The rule a level follows, written the way the database writes it: one row per
+  // scope (the story, or one character), with its rates replaced rather than
+  // appended, and the level re-derived afterwards because the cost may have moved
+  // everybody in the cast.
+  save_level_growth_rule: args => {
+    const owner = args.characterId ?? null;
+    const timestamp = now();
+    const existing = store.growthRules.find(rule => rule.character_id === owner);
+    const row: Row = {
+      id: existing?.id ?? id('rule'),
+      story_id: args.storyId ?? store.storyId,
+      character_id: owner,
+      points_per_level: args.pointsPerLevel,
+      xp_base: args.xpBase,
+      xp_growth: args.xpGrowth,
+      stats: (args.stats ?? []).map((rate: Row) => ({
+        id: id('rate'),
+        rule_id: existing?.id ?? 'rule',
+        stat_name: rate.stat_name,
+        per_level: rate.per_level,
+        created_at: timestamp,
+        updated_at: timestamp,
+      })),
+      created_by: args.user ?? 'Ada',
+      created_at: existing?.created_at ?? timestamp,
+      updated_at: timestamp,
+    };
+
+    if (existing) Object.assign(existing, row);
+    else store.growthRules.push(row);
+
+    row.stats.forEach((rate: Row) => {
+      rate.rule_id = row.id;
+    });
+
+    for (const character of store.characters) {
+      deriveProgression(character.id);
+    }
+
+    return store.growthRules.find(rule => rule.id === row.id)!;
+  },
+
+  delete_level_growth_rule: args => {
+    drop(store.growthRules, args.id);
+    for (const character of store.characters) {
+      deriveProgression(character.id);
+    }
     return null;
   },
 
@@ -1039,7 +1401,14 @@ export async function invoke(command: string, args: Row = {}): Promise<unknown> 
   // The app renders a spinner while a command is in flight and the screenshots
   // are taken of the settled screen, so the write is exposed as a promise.
   const result = handler(args ?? {});
-  return result;
+
+  // A real command crosses the IPC bridge, so what the app receives is a copy of
+  // what the database serialised: no row can be mutated behind React's back, and a
+  // memo keyed on the answer sees a new value every time. Handing back the store's
+  // own arrays instead made a level the write had just added invisible to a memo
+  // that had already run, which is exactly the kind of lie this harness exists not
+  // to tell.
+  return result === null || result === undefined ? result : clone(result);
 }
 
 // A short label for the harness itself, so a capture can say which story it is.

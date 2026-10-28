@@ -74,6 +74,20 @@ exactly as it does in the app. A command the backend does not implement logs
 `[harness] <name> is not implemented; the UI got null` in the console instead of
 failing silently.
 
+Progression is derived here the way the database derives it: recording a chapter's
+XP re-runs the rule's curve, posts the level the income crossed, applies that
+rule's automatic stat gains, and takes the level and its gains back off the sheet
+when the income is deleted. An award pays its XP into the chapter's income or its
+point onto the sheet in the same step, as the database does. A second entry for
+the same character and chapter is refused, and so is an income row naming a
+chapter the board does not have — both as the database refuses them.
+
+Two details keep the page honest while you use it. Every answer is a copy,
+because a real command crosses the IPC bridge: returning the store's own arrays
+let a memo keep a list a write had already changed. And the store survives an edit
+to this file, carried across the hot update, so a session you are in the middle of
+is not replaced under a page still holding the old ids.
+
 Two things are deliberately absent:
 
 - **Import and export** answer as if the file picker were cancelled, since there

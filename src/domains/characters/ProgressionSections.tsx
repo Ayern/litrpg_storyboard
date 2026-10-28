@@ -190,6 +190,29 @@ export function ProgressionSections({
   };
 
   const addXpEntry = async () => {
+    // One amount per chapter is the ledger's rule, so a chapter that already has
+    // an entry cannot take a second one. The author almost certainly means to
+    // change what that chapter paid out, so the entry it already has opens for
+    // editing instead of sending a write the database would refuse — which the
+    // sheet can only report from the top of a page they are not looking at.
+    const alreadyRecorded = xpEntries.find(
+      entry => entry.chapter_id === newXpEntryChapter
+    );
+
+    if (newXpEntryChapter && alreadyRecorded) {
+      const label =
+        chapters.find(choice => choice.id === newXpEntryChapter)?.data.label ??
+        'That chapter';
+
+      onError(
+        `${label} already has XP recorded for this character — edit that entry to change it.`
+      );
+      startXpEntryEdit(alreadyRecorded);
+      setNewXpEntryChapter('');
+      setNewXpEntryXp('');
+      return;
+    }
+
     const saved = await onCreateXpEntry({
       chapterId: newXpEntryChapter,
       xp: newXpEntryXp,
