@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import type {
+  CharacterGrowthPoint,
   CharacterLevel,
   LevelGrowthRule,
   LevelGrowthStat,
@@ -8,6 +9,9 @@ import type {
 import {
   characterGrowthRule,
   effectiveGrowthRule,
+  growthPointTally,
+  growthPointsOnStat,
+  growthPointsOwed,
   growthRateText,
   growthStatRows,
   levelForXp,
@@ -74,6 +78,23 @@ function milestone(
 const story = rule('rule-story', null, 3, [rate('Strength', 1)]);
 const override = rule('rule-rook', 'char-1', 1);
 
+function placement(
+  id: string,
+  characterId: string,
+  statName: string,
+  amount: number
+): CharacterGrowthPoint {
+  return {
+    id,
+    character_id: characterId,
+    stat_name: statName,
+    amount,
+    note: null,
+    created_at: stamp(1),
+    updated_at: stamp(1),
+  };
+}
+
 describe('the growth rule a sheet follows', () => {
   it('tells the story rule apart from a character’s override', () => {
     expect(storyGrowthRule([override, story])).toBe(story);
@@ -138,6 +159,51 @@ describe('the rows a level-up opens with', () => {
 
   it('opens with no rows when there is no rule', () => {
     expect(growthStatRows(null)).toEqual([]);
+  });
+});
+
+describe('the points a level hands out', () => {
+  it('is one level’s worth for every level above the first', () => {
+    expect(growthPointsOwed(story, 1)).toBe(0);
+    expect(growthPointsOwed(story, 3)).toBe(6);
+    expect(growthPointsOwed(override, 4)).toBe(3);
+  });
+
+  it('counts nothing when the rule hands out nothing, or there is no rule', () => {
+    expect(growthPointsOwed(rule('rule-empty', null, 0), 7)).toBe(0);
+    expect(growthPointsOwed(null, 7)).toBe(0);
+  });
+
+  it('treats a level below the first as no levels', () => {
+    expect(growthPointsOwed(story, 0)).toBe(0);
+    expect(growthPointsOwed(story, -2)).toBe(0);
+  });
+
+  it('tallies what is left after the placings', () => {
+    const points = [
+      placement('g-1', 'char-1', 'Strength', 1),
+      placement('g-2', 'char-1', 'Insight', 2),
+    ];
+
+    expect(growthPointTally(story, 3, points)).toEqual({ owed: 6, placed: 3, left: 3 });
+    expect(growthPointTally(story, 3, [])).toEqual({ owed: 6, placed: 0, left: 6 });
+  });
+
+  it('goes negative when the rule was tuned down under what was placed', () => {
+    const points = [placement('g-1', 'char-1', 'Strength', 4)];
+
+    expect(growthPointTally(story, 2, points)).toEqual({ owed: 3, placed: 4, left: -1 });
+  });
+
+  it('adds up what one stat received, ignoring case and other stats', () => {
+    const points = [
+      placement('g-1', 'char-1', 'Strength', 1),
+      placement('g-2', 'char-1', 'strength', 2),
+      placement('g-3', 'char-1', 'Insight', 5),
+    ];
+
+    expect(growthPointsOnStat(points, 'Strength')).toBe(3);
+    expect(growthPointsOnStat(points, 'Luck')).toBe(0);
   });
 });
 

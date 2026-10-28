@@ -264,10 +264,14 @@ override. The cost is two numbers — XP for the second level, and a percentage 
 for each level after it, where 0 keeps every level the same price. When the income
 crosses a step the database writes the level, posts the rule's automatic stats to
 the sheet as real stat rows, and leaves the points to place for the author, because
-spending somebody's points for them is the part that would feel wrong. Removing an
-override puts the character back on the story's rule. A rule that hands out nothing
-is a valid choice rather than a missing value, and a character with no income stays
-at level 1 however generous the rule is.
+spending somebody's points for them is the part that would feel wrong. Those points
+are counted under the progression bar — "5 of 6 points to place" — from the level
+and the rule, so changing what a level hands out changes the tally rather than
+leaving a number behind. Each stat row carries a **Place point** button while
+points are left, and clicking it raises the stat and records where the point went
+in one undoable step. Removing an override puts the character back on the story's
+rule. A rule that hands out nothing is a valid choice rather than a missing value,
+and a character with no income stays at level 1 however generous the rule is.
 
 **Awards** are gains that are not level-ups: XP a chapter paid, or a stat point
 handed over by a blessing, a hidden quest or a drop. Adding one applies it — XP
@@ -995,7 +999,8 @@ page that arrives late, and what it says when a filter matches nothing.
   added up and the level is the story's curve applied to it, so neither is a
   number an author types and neither can drift from the other. What a level hands
   out is still the author's: the rule says how many points to place and which
-  stats rise by themselves, and the points wait for somebody to spend them. The
+  stats rise by themselves, the sheet tallies what is left, and a placed point is
+  one undoable step against the stat it went on. The
   bar clamps at 100% when experience passes the step rather than inventing a
   second level. XP income and skill events are author-recorded, and income is only
   reconciled against a recorded total for a character who kept a ledger. The chart

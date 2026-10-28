@@ -1,4 +1,5 @@
 import type {
+  CharacterGrowthPoint,
   CharacterLevel,
   LevelGrowthRule,
 } from '../shared/types';
@@ -124,6 +125,51 @@ export function growthStatRows(
     amount: String(rate.per_level),
     valueAfter: '',
   }));
+}
+
+// The points a character's levels have handed out, which is the pool an author
+// places from: one level's worth for every level above the first.
+//
+// Nothing is stored for this. The level already says how far the character has
+// come, and the rule says what each level is worth, so tuning the rule retunes
+// the pool instead of leaving old counts claiming a share it no longer describes.
+export function growthPointsOwed(
+  rule: LevelGrowthRule | null,
+  level: number
+): number {
+  if (!rule || rule.points_per_level <= 0) return 0;
+
+  return rule.points_per_level * Math.max(0, Math.max(1, level) - 1);
+}
+
+// The tally the sheet shows: what the levels handed out, what has been placed,
+// and what is left. `left` can go negative when the rule was tuned down after
+// points were placed, which the section says rather than hides.
+export interface GrowthPointTally {
+  owed: number;
+  placed: number;
+  left: number;
+}
+
+export function growthPointTally(
+  rule: LevelGrowthRule | null,
+  level: number,
+  points: CharacterGrowthPoint[]
+): GrowthPointTally {
+  const owed = growthPointsOwed(rule, level);
+  const placed = points.reduce((total, point) => total + point.amount, 0);
+
+  return { owed, placed, left: owed - placed };
+}
+
+// How much went onto one stat, which is what a stat row's caption says.
+export function growthPointsOnStat(
+  points: CharacterGrowthPoint[],
+  statName: string
+): number {
+  return points
+    .filter(point => point.stat_name.toLowerCase() === statName.toLowerCase())
+    .reduce((total, point) => total + point.amount, 0);
 }
 
 // The one-line description of a rule, used beside the sheet and in the level-up

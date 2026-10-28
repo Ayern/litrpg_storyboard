@@ -2299,6 +2299,26 @@ body {
   white-space: nowrap;
 }
 
+/* How much of a stat came from placing level points, so a value that rose on its
+   own can be told from one the author typed. */
+.stat-growth-points {
+  font-size: 10px;
+  color: #a99bd6;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-row button.stat-place-point {
+  border-color: #4a3f66;
+  color: #cbb8f2;
+}
+
+.stat-row button.stat-place-point:hover {
+  background: #2f2942;
+  color: #f0e6ff;
+}
+
 .stat-row button {
   margin-left: auto;
   background: transparent;
@@ -2431,6 +2451,38 @@ body {
   margin-top: 6px;
   font-size: 11px;
   color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The points a level handed out, and what is left of them: the tally sits under
+   the bar it belongs to, with the placings counted beside it. */
+.growth-point-tally {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  background: #262233;
+  border: 1px solid #3d3552;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #d8c9f5;
+}
+
+.growth-point-tally[data-growth-points='0'] {
+  background: #24272a;
+  border-color: #34403a;
+  color: #a8c8a8;
+}
+
+.growth-point-left {
+  font-variant-numeric: tabular-nums;
+}
+
+.growth-point-placed {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8d849e;
   font-variant-numeric: tabular-nums;
 }
 

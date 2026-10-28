@@ -26,6 +26,8 @@ const store = {
   skillEvents: clone(fixture.story_skill_events) as Row[],
   levels: clone(fixture.story_levels) as Row[],
   progress: clone(fixture.story_progress) as Row[],
+  growthPoints: clone(fixture.story_growth_points ?? []) as Row[],
+  growthRules: clone(fixture.story_level_growth_rules ?? []) as Row[],
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],
@@ -119,6 +121,10 @@ const reads: Record<string, (args: Row) => unknown> = {
 
   get_story_levels: () => store.levels,
   get_story_character_progress: () => store.progress,
+  get_story_growth_points: () => store.growthPoints,
+  // The rule the sheet reads its tally and its level against, so the gallery
+  // shows the points a level hands out rather than "Not set".
+  get_story_level_growth_rules: () => store.growthRules,
   get_character_state_at_chapter: args =>
     characterState(args.characterId, args.chapterId),
 
@@ -785,6 +791,63 @@ const writes: Record<string, (args: Row) => unknown> = {
 
   delete_character_level: args => {
     drop(store.levels, args.id);
+    return null;
+  },
+
+  // Placing a growth point raises the stat and records the placement, the way
+  // the database does both in one transaction. The pool is not checked here: the
+  // harness only has to show the sheet reacting to the click.
+  spend_growth_point: (args: Row) => {
+    const timestamp = now();
+    const existing = store.stats.find(
+      row => row.character_id === args.characterId && row.stat_name === args.statName
+    );
+
+    const stat = existing ?? {
+      id: id('stat'),
+      character_id: args.characterId,
+      stat_name: args.statName,
+      value: 0,
+      notes: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    stat.value += args.amount;
+    stat.updated_at = timestamp;
+
+    if (!existing) store.stats.push(stat);
+
+    const point: Row = {
+      id: id('growth'),
+      character_id: args.characterId,
+      stat_name: args.statName,
+      amount: args.amount,
+      note: args.note ?? null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    store.growthPoints.push(point);
+
+    return { point, stat };
+  },
+
+  delete_growth_point: args => {
+    const point = store.growthPoints.find(row => row.id === args.id);
+    if (!point) return null;
+
+    const stat = store.stats.find(
+      row =>
+        row.character_id === point.character_id && row.stat_name === point.stat_name
+    );
+
+    if (stat) {
+      stat.value -= point.amount;
+      stat.updated_at = now();
+    }
+
+    drop(store.growthPoints, args.id);
     return null;
   },
 

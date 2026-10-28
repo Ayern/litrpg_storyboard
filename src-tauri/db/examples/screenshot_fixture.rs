@@ -93,6 +93,16 @@ fn main() {
     );
     put(
         &mut root,
+        "story_growth_points",
+        &db.list_story_growth_points(&story_id).unwrap(),
+    );
+    put(
+        &mut root,
+        "story_level_growth_rules",
+        &db.list_story_level_growth_rules(&story_id).unwrap(),
+    );
+    put(
+        &mut root,
         "story_inventory",
         &db.list_story_inventory(&story_id).unwrap(),
     );

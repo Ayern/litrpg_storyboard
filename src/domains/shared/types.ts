@@ -152,6 +152,27 @@ export interface LevelGrowthRule {
   updated_at: string;
 }
 
+// One placing of the points a level handed out: `amount` of them went onto
+// `stat_name`. Only the placings are rows — what a character has earned follows
+// from their level and the rule their sheet follows — so the sheet's tally is the
+// pool minus these rows.
+export interface CharacterGrowthPoint {
+  id: string;
+  character_id: string;
+  stat_name: string;
+  amount: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// What placing a point answered with: the row it wrote and the stat it raised, so
+// the sheet and the canvas badges both move without a second read.
+export interface GrowthPointSpend {
+  point: CharacterGrowthPoint;
+  stat: CharacterStat;
+}
+
 // A gain that is not a level-up: XP a chapter paid, or stat points something in
 // it handed over. Writing one applies it, and deleting it takes it back.
 export interface CharacterAward {

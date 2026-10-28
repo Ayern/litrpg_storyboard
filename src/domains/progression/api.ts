@@ -2,8 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   Character,
   CharacterAward,
+  CharacterGrowthPoint,
   CharacterLevel,
   CharacterProgress,
+  GrowthPointSpend,
   LevelGrowthRule,
 } from '../shared/types';
 import type { CharacterChapterState } from '../narrative/types';
@@ -95,6 +97,35 @@ export function updateCharacterLevel(
 
 export function deleteCharacterLevel(id: string, actor: string) {
   return invoke<void>('delete_character_level', { id, user: actor });
+}
+
+// The points a level handed out, and where the author placed them. The pool
+// itself is not a row: it is the rule's points taken once per level, so only the
+// placings are read and written.
+export function getStoryGrowthPoints(storyId: string) {
+  return invoke<CharacterGrowthPoint[]>('get_story_growth_points', { storyId });
+}
+
+export function spendGrowthPoint(
+  characterId: string,
+  statName: string,
+  amount: number,
+  note: string | null,
+  actor: string
+) {
+  return invoke<GrowthPointSpend>('spend_growth_point', {
+    characterId,
+    statName,
+    amount,
+    note,
+    user: actor,
+  });
+}
+
+// Takes a placement back off the sheet: the stat falls by what was placed and the
+// row goes. One step, because a placement only ever did those two things.
+export function deleteGrowthPoint(id: string, actor: string) {
+  return invoke<void>('delete_growth_point', { id, user: actor });
 }
 
 // The one progression field an author types. Experience is the ledger's sum and

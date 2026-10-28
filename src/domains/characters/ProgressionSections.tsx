@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
+import { HelpTip } from '../../components/HelpTip';
 import type { ChapterNode } from '../narrative/chapters';
 import { AwardsSection } from '../progression/AwardsSection';
 import { GrowthSection } from '../progression/GrowthSection';
 import type { GrowthScope } from '../progression/GrowthSection';
-import { effectiveGrowthRule, growthRateText } from '../progression/growth';
+import {
+  effectiveGrowthRule,
+  growthPointTally,
+  growthRateText,
+} from '../progression/growth';
 import { milestoneStatChanges, statChangeText } from '../progression/helpers';
 import type {
   AwardDraft,
@@ -13,6 +18,7 @@ import type {
 import type {
   Character,
   CharacterAward,
+  CharacterGrowthPoint,
   CharacterLevel,
   CharacterProgress,
   CharacterSkill,
@@ -62,8 +68,10 @@ export interface ProgressionSectionsProps {
   xpEntries: CharacterProgress[];
   skillEvents: CharacterSkillEvent[];
   skills: CharacterSkill[];
-  // What a level hands out, and the gains that skipped a level-up.
+  // What a level hands out, the gains that skipped a level-up, and where this
+  // character's points have been placed so far.
   growthRules: LevelGrowthRule[];
+  growthPoints: CharacterGrowthPoint[];
   awards: CharacterAward[];
   // The stat names a milestone's rows, a growth rate or an award can pick from.
   statNameOptions: string[];
@@ -102,6 +110,7 @@ export function ProgressionSections({
   skillEvents,
   skills,
   growthRules,
+  growthPoints,
   awards,
   statNameOptions,
   focus,
@@ -127,6 +136,12 @@ export function ProgressionSections({
 
   // The rule this sheet follows: its own when it has one, the story's otherwise.
   const growth = effectiveGrowthRule(growthRules, characterId);
+
+  // What the levels handed out against what has been placed. Both halves are
+  // worked out: the pool follows the level and the rule, the placings are rows,
+  // so the tally moves when either does without anything having to be kept in
+  // step by hand.
+  const tally = growthPointTally(growth, shownLevel, growthPoints);
 
   // The rank form holds the selected character's words rather than a row's, so
   // moving to somebody else closes it.
@@ -219,6 +234,34 @@ export function ProgressionSections({
             ? `${Math.max(0, shownTarget - shownXp)} XP to level ${shownLevel + 1}`
             : 'No target set — edit progression to show a bar.'}
         </div>
+
+        {/* The points a level hands out are the author's to place, so the tally
+            sits with the level rather than with the rule that set the number:
+            it is about how far this character has come. */}
+        {growth && tally.owed > 0 && (
+          <div className="growth-point-tally" data-growth-points={tally.left}>
+            <span className="growth-point-left">
+              {tally.left > 0
+                ? `${tally.left} of ${tally.owed} points to place`
+                : tally.left === 0
+                  ? `All ${tally.owed} points placed`
+                  : `${-tally.left} more placed than this level's rule hands out`}
+            </span>
+            <span className="growth-point-placed">
+              {tally.placed > 0
+                ? `${tally.placed} placed`
+                : 'None placed yet'}
+            </span>
+            <HelpTip label="growth points">
+              Every level hands out points, and they are yours to place: put
+              them on the stats below, one point per click. Each placing raises
+              the stat straight away and is one undo step, so a point placed in
+              the wrong stat comes straight back. Only the placings are stored;
+              the pool itself follows the level and the rule, which is why
+              changing what a level hands out changes the tally.
+            </HelpTip>
+          </div>
+        )}
 
         {editingProgress ? (
           <div className="progress-form">

@@ -150,6 +150,29 @@ interface ProgressRow {
   updated_at: string;
 }
 
+interface AwardRow {
+  id: string;
+  character_id: string;
+  chapter_id: string | null;
+  kind: 'xp' | 'stat';
+  stat_name: string | null;
+  amount: number;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GrowthPointRow {
+  id: string;
+  character_id: string;
+  stat_name: string;
+  amount: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface EventRow {
   id: string;
   skill_id: string;
@@ -181,6 +204,8 @@ let levels: LevelRow[] = [];
 let events: EventRow[] = [];
 let stats: StatRow[] = [];
 let progress: ProgressRow[] = [];
+let awards: AwardRow[] = [];
+let growthPoints: GrowthPointRow[] = [];
 
 beforeEach(() => {
   skills = [
@@ -261,6 +286,8 @@ beforeEach(() => {
       updated_at: '2026-10-22T12:00:00Z',
     },
   ];
+  awards = [];
+  growthPoints = [];
   progress = [
     {
       id: 'progress-1',
@@ -343,6 +370,10 @@ beforeEach(() => {
         ];
       case 'get_story_character_progress':
         return progress.map(entry => ({ ...entry }));
+      case 'get_story_character_awards':
+        return awards.map(entry => ({ ...entry }));
+      case 'get_story_growth_points':
+        return growthPoints.map(entry => ({ ...entry }));
       case 'get_character_progress':
         return progress
           .filter(entry => entry.character_id === args.characterId)
@@ -728,6 +759,70 @@ describe('a sheet against the values its level-ups recorded', () => {
 
     expect(continuityText(continuityPanel())).toContain(
       "Rook's Strength is 13 on the sheet, but the level-up in “Chapter Two” recorded 12."
+    );
+  });
+
+  it('counts a point placed after the level-up as part of the same stat', async () => {
+    // The level-up recorded Strength 12; the author then placed one of the points
+    // that level handed out, so the sheet stands at 13 rather than drifting.
+    growthPoints = [
+      {
+        id: 'gp-1',
+        character_id: 'char-1',
+        stat_name: 'Strength',
+        amount: 1,
+        note: null,
+        created_at: '2026-10-23T12:00:00Z',
+        updated_at: '2026-10-23T12:00:00Z',
+      },
+    ];
+    stats[0].value = 13;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).not.toContain('on the sheet');
+  });
+
+  it('counts a stat award recorded after the level-up too', async () => {
+    awards = [
+      {
+        id: 'award-1',
+        character_id: 'char-1',
+        chapter_id: 'n3',
+        kind: 'stat',
+        stat_name: 'Strength',
+        amount: 2,
+        note: 'A hidden quest paid.',
+        created_by: 'Ada',
+        created_at: '2026-10-23T12:00:00Z',
+        updated_at: '2026-10-23T12:00:00Z',
+      },
+    ];
+    stats[0].value = 14;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).not.toContain('on the sheet');
+  });
+
+  it('still flags a sheet that goes beyond what was placed', async () => {
+    growthPoints = [
+      {
+        id: 'gp-1',
+        character_id: 'char-1',
+        stat_name: 'Strength',
+        amount: 1,
+        note: null,
+        created_at: '2026-10-23T12:00:00Z',
+        updated_at: '2026-10-23T12:00:00Z',
+      },
+    ];
+    stats[0].value = 15;
+
+    await openChapters();
+
+    expect(continuityText(continuityPanel())).toContain(
+      "Rook's Strength is 15 on the sheet, but the level-up in “Chapter Two” recorded 12 plus 1 awarded or placed since."
     );
   });
 

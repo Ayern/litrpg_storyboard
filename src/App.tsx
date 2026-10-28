@@ -73,7 +73,11 @@ import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
 import { crossingsByCharacter, levelCrossingsFor } from './domains/progression/crossings';
-import { effectiveGrowthRule } from './domains/progression/growth';
+import {
+  effectiveGrowthRule,
+  growthPointTally,
+  growthPointsOnStat,
+} from './domains/progression/growth';
 import { milestoneStatChanges } from './domains/progression/helpers';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
@@ -113,11 +117,13 @@ import type {
   Character,
   CharacterAward,
   CharacterChapterSkill,
+  CharacterGrowthPoint,
   CharacterLevel,
   CharacterProgress,
   CharacterRelation,
   CharacterSkill,
   CharacterStat,
+  GrowthPointSpend,
   FactionStanding,
   InventoryHolder,
   LevelGrowthRule,
@@ -799,6 +805,9 @@ function App() {
   // What a level hands out, for the story and for any character that overrides
   // it, and the gains that skipped a level-up entirely.
   const [storyGrowthRules, setStoryGrowthRules] = useState<LevelGrowthRule[]>([]);
+  // Where the points a level handed out were placed. The pool itself is not here:
+  // it follows the level and the rule, so only the placings are stored.
+  const [storyGrowthPoints, setStoryGrowthPoints] = useState<CharacterGrowthPoint[]>([]);
   const [storyAwards, setStoryAwards] = useState<CharacterAward[]>([]);
   // Read by a sync's undo step, so putting an old total back does not also put
   // the milestone's other fields back.
@@ -1001,6 +1010,7 @@ function App() {
         levels,
         progress,
         growthRules,
+        growthPoints,
         awards,
         inventory,
         noteRows,
@@ -1018,6 +1028,7 @@ function App() {
           progressionApi.getStoryLevels(story.id),
           progressionApi.getStoryCharacterProgress(story.id),
           progressionApi.getStoryLevelGrowthRules(story.id),
+          progressionApi.getStoryGrowthPoints(story.id),
           progressionApi.getStoryCharacterAwards(story.id),
           inventoryApi.getStoryInventory(story.id),
           narrativeApi.getChapterNotes(story.id),
@@ -1034,6 +1045,7 @@ function App() {
       setStoryLevels(levels ?? []);
       setStoryCharacterProgress(progress ?? []);
       setStoryGrowthRules(growthRules ?? []);
+      setStoryGrowthPoints(growthPoints ?? []);
       setStoryAwards(awards ?? []);
       setStoryInventory(inventory ?? []);
       followLoadedNotes(noteRows ?? []);
@@ -2478,7 +2490,29 @@ function App() {
         return;
       }
 
-      if (sheet.value === value) return;
+      // A stat also rises without a level-up: a stat award, or a point placed
+      // from the level pool. Both are recorded rows, so the sheet is only in
+      // disagreement when it says something the snapshot plus those gains does
+      // not. Counting them is what keeps a placed point from reading as drift.
+      const gainsSince =
+        storyAwards.reduce((total, award) => {
+          if (award.kind !== 'stat' || award.character_id !== characterId) return total;
+          if (!award.stat_name || statKey(award.stat_name) !== statKey(statName)) {
+            return total;
+          }
+
+          return award.created_at > milestone.created_at ? total + award.amount : total;
+        }, 0) +
+        storyGrowthPoints.reduce((total, point) => {
+          if (point.character_id !== characterId) return total;
+          if (statKey(point.stat_name) !== statKey(statName)) return total;
+
+          return point.created_at > milestone.created_at ? total + point.amount : total;
+        }, 0);
+
+      const ledgerValue = value + gainsSince;
+
+      if (sheet.value === ledgerValue) return;
 
       // The sheet's own spelling is the row the fix writes, because a stat is
       // written by name; the recorded spelling is named when it differs.
@@ -2487,7 +2521,9 @@ function App() {
         characterLink(characterId, owner, target),
         `'s ${sheet.stat_name} is ${sheet.value} on the sheet, but the level-up in `,
         chapterLink(chapter.id, chapter.data.label, true),
-        ` recorded ${value}${spelling}.`,
+        ` recorded ${value}${spelling}${
+          gainsSince > 0 ? ` plus ${formatCount(gainsSince)} awarded or placed since` : ''
+        }.`,
       ];
 
       flags.push({
@@ -2497,8 +2533,8 @@ function App() {
         characterId,
         characterName: owner,
         statName: sheet.stat_name,
-        statValue: value,
-        summary: `${owner}'s ${sheet.stat_name} is ${sheet.value}, ledger says ${value}`,
+        statValue: ledgerValue,
+        summary: `${owner}'s ${sheet.stat_name} is ${sheet.value}, ledger says ${ledgerValue}`,
         detail: continuityText(parts),
         parts,
         target,
@@ -3076,6 +3112,8 @@ function App() {
     storyLevels,
     storyCharacterProgress,
     storyGrowthRules,
+    storyGrowthPoints,
+    storyAwards,
     storySkillEvents,
     storySkills,
     storySkillEvolutions,
@@ -6623,6 +6661,9 @@ function App() {
       setStoryLevels(previous =>
         previous.filter(milestone => milestone.character_id !== removedId)
       );
+      setStoryGrowthPoints(previous =>
+        previous.filter(point => point.character_id !== removedId)
+      );
       setEditingCharacter(false);
     } catch (e) {
       console.error('Failed to delete character:', e);
@@ -7622,6 +7663,19 @@ function App() {
       ? Math.min(100, Math.round((shownXp / shownTarget) * 100))
       : 0;
 
+  // The points this character's levels handed out, and where they went. The pool
+  // is worked out from the level and the rule, the placings are rows, so the
+  // tally below is read rather than kept.
+  const selectedGrowthPoints = useMemo(
+    () => storyGrowthPoints.filter(point => point.character_id === selectedCharacterId),
+    [storyGrowthPoints, selectedCharacterId]
+  );
+  const growthTally = growthPointTally(
+    effectiveGrowthRule(storyGrowthRules, selectedCharacterId),
+    shownLevel,
+    selectedGrowthPoints
+  );
+
   const applyCharacterRow = (updated: Character) => {
     setCharacters(previous =>
       previous.map(entry => (entry.id === updated.id ? updated : entry))
@@ -7834,6 +7888,60 @@ function App() {
     } catch (e) {
       console.error('Failed to delete an award:', e);
       setCharacterError(`Could not delete the award: ${String(e)}`);
+    }
+  };
+
+  // Puts one unspent growth point on a stat. The stat rises and the placement is
+  // recorded in the same command, so the sheet and the tally cannot disagree, and
+  // the pair is one undo step: undoing takes the placement back and the stat with
+  // it. The pool is checked in the database rather than here, because a stale
+  // sheet would otherwise spend a point the level never handed out.
+  const placeGrowthPoint = async (statName: string): Promise<void> => {
+    const characterId = selectedCharacterId;
+    if (!characterId) return;
+
+    setCharacterError(null);
+
+    const spend = async (): Promise<GrowthPointSpend> => {
+      const saved: GrowthPointSpend = await progressionApi.spendGrowthPoint(
+        characterId,
+        statName,
+        1,
+        null,
+        actor
+      );
+
+      setStoryGrowthPoints(previous => [
+        ...previous.filter(point => point.id !== saved.point.id),
+        saved.point,
+      ]);
+      applyWrittenStat(saved.stat);
+
+      return saved;
+    };
+
+    try {
+      const saved = await spend();
+
+      recordStep({
+        label: `Place a point on ${statName}`,
+        undo: async () => {
+          await progressionApi.deleteGrowthPoint(saved.point.id, actor);
+          setStoryGrowthPoints(previous =>
+            previous.filter(point => point.id !== saved.point.id)
+          );
+          // The reversal moves the stat in the database, so both the sheet and
+          // the badges on the cards are read back rather than adjusted by hand.
+          const stats: CharacterStat[] =
+            await charactersApi.getCharacterStats(characterId);
+          setCastStats(previous => ({ ...previous, [characterId]: stats }));
+          if (characterId === selectedCharacterId) setCharacterStats(stats);
+        },
+        redo: spend,
+      });
+    } catch (e) {
+      console.error('Failed to place a growth point:', e);
+      setCharacterError(`Could not place the point: ${String(e)}`);
     }
   };
 
@@ -8669,6 +8777,7 @@ function App() {
               statNameOptions={statNameOptions}
               focus={focusedProgression}
               growthRules={storyGrowthRules}
+              growthPoints={selectedGrowthPoints}
               awards={storyAwards.filter(
                 award => award.character_id === selectedCharacterId
               )}
@@ -8808,6 +8917,27 @@ function App() {
                     <>
                       <span className="stat-value">{stat.value}</span>
                       {stat.notes && <span className="stat-notes">{stat.notes}</span>}
+                      {growthPointsOnStat(selectedGrowthPoints, stat.stat_name) > 0 && (
+                        <span
+                          className="stat-growth-points"
+                          title={`Of this value, ${growthPointsOnStat(
+                            selectedGrowthPoints,
+                            stat.stat_name
+                          )} came from placing level points`}
+                        >
+                          +{growthPointsOnStat(selectedGrowthPoints, stat.stat_name)} from
+                          levels
+                        </span>
+                      )}
+                      {growthTally.left > 0 && (
+                        <button
+                          className="stat-place-point"
+                          title={`Place one of ${selectedCharacter?.name ?? 'this character'}'s ${growthTally.left} unspent points on ${stat.stat_name} — one undo step`}
+                          onClick={() => placeGrowthPoint(stat.stat_name)}
+                        >
+                          Place point
+                        </button>
+                      )}
                       <button
                         title={`Change this ${stat.stat_name} value or notes`}
                         onClick={() => startStatEdit(stat)}

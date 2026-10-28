@@ -507,15 +507,24 @@ already written takes that row over rather than making a second one, which is ho
 an author places a level the experience paid for, and an empty form on that add
 leaves the gains the level already handed out alone. **M**
 
-**13d. Points a level hands out.** **Next.** The rule's `points_per_level` is
-described on the sheet and never spent: nothing counts the points a character has
-earned, nothing records where they went, and the author is left to edit a stat by
-hand and remember the arithmetic. A growth-point ledger (`character_growth_points`,
-written by the same transaction that posts a level, read by the sheet) would put a
-"3 points to place" tally under the progression bar, a **Place point** control on
-each stat row, and one audited, undoable step per point; a rule change that reaches
-back over levels would add or retire points rather than silently changing what a
-character was owed. **M**
+**13d. Points a level hands out.** **Done.** Version 30 adds
+`character_growth_points`, and it holds only the placings: what a character has
+earned is `points_per_level` taken once for every level above the first, read from
+the rule their sheet follows. That is why a rule the author retunes retunes the
+pool instead of leaving old rows claiming a share the rule no longer describes, and
+why nothing had to be back-filled for a story already on file — an empty table is
+every point still waiting. The sheet shows the tally directly under the progression
+bar ("5 of 6 points to place", with what has been placed beside it), each stat row
+carries a **Place point** button while points are left, and a stat that took any
+says how many of its value came from levelling rather than from typing.
+`spend_growth_point` raises the stat and records the placement in one transaction
+and refuses a point the levels never handed out — the pool is checked there, not in
+the form, because a stale sheet would otherwise overspend it. The pair is one undo
+step: undo takes the placement back and the stat with it, and redo spends again.
+Placings travel with the JSON export and import. The continuity check now counts a
+stat award and a placed point recorded after a level-up when it compares the sheet
+with the ledger, so spending a point no longer reads as the sheet drifting, while a
+value beyond what was recorded still does. **M**
 
 **13e. The sheet's stats where the levels are.** **Next.** The stats a level moves
 live far below the progression header, so an author who just watched a level land

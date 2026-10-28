@@ -1,9 +1,10 @@
 use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
-    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterLevel, CharacterProgress,
-    CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
-    FactionStanding, InventoryItem, LevelGrowthRule, LevelGrowthStatInput, LevelStatChangeInput,
-    Node, Quest, QuestReward, SkillEvolution, SkillTree, Story, StoryExport,
+    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterGrowthPoint, CharacterLevel,
+    CharacterProgress, CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db,
+    DeletedItem, Edge, FactionStanding, GrowthPointSpend, InventoryItem, LevelGrowthRule,
+    LevelGrowthStatInput, LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution,
+    SkillTree, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -399,6 +400,33 @@ fn delete_character_level(
 ) -> Result<(), String> {
     db.delete_character_level(&id, user)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_growth_points(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterGrowthPoint>, String> {
+    db.list_story_growth_points(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn spend_growth_point(
+    db: tauri::State<'_, Db>,
+    character_id: String,
+    stat_name: String,
+    amount: i64,
+    note: Option<String>,
+    user: String,
+) -> Result<GrowthPointSpend, String> {
+    db.spend_growth_point(character_id, stat_name, amount, note, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_growth_point(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_growth_point(&id, user).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1461,6 +1489,9 @@ pub fn run() {
             add_character_level,
             update_character_level,
             delete_character_level,
+            get_story_growth_points,
+            spend_growth_point,
+            delete_growth_point,
             get_story_relations,
             add_relation,
             update_relation,

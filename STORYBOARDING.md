@@ -214,6 +214,13 @@ What the numbers mean, and what they do not:
   and any stats that rise every level (`Strength +1`). The story has one rule and a
   character can override it — a monster that levels at 300 XP where people need
   700, a human who gets nothing free.
+- **Points to place** are counted for you. The line under the progression bar says
+  what the levels have handed out and what is left ("5 of 6 points to place"), and
+  every stat row has a **Place point** button while there are any: one click puts
+  one point on that stat and raises it straight away. Each placing is one step, so
+  **Undo** takes the point back off the stat. A stat that has taken some says so
+  (`+2 from levels`), which is how you tell a number you typed from one the
+  character earned.
 - **XP by chapter** is income, and it is what levels the character: what chapter 2
   paid out. Recording the same character and chapter twice is refused, because one
   amount is what a chapter pays.
