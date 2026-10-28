@@ -2262,6 +2262,51 @@ body {
   cursor: not-allowed;
 }
 
+/* The stats a level moves, sitting directly under the progression bar: the
+   heading names the rule's own rates, so the section reads as one sentence with
+   the bar above it. */
+.stat-section {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+
+.stat-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.stat-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+/* The rule's rate beside a stat it raises: "+1 a level". */
+.stat-rule {
+  font-size: 11px;
+  color: #8fb8d8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A stat the rule raises that the sheet has no row for: a dash where the value
+   would be, and the note saying what to do about it. */
+.stat-row-rule {
+  border-style: dashed;
+  background: #212123;
+}
+
+.stat-row-rule .stat-value-none {
+  color: #666;
+}
+
+.stat-row-rule .stat-notes {
+  white-space: normal;
+}
+
 .stat-list {
   display: flex;
   flex-direction: column;

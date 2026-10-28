@@ -42,7 +42,6 @@ import * as skillsApi from './domains/skills/api';
 import * as storiesApi from './domains/stories/api';
 import * as trashApi from './domains/trash/api';
 import { AttributeList } from './domains/characters/AttributeList';
-import { useSheetStats } from './domains/characters/useSheetStats';
 import { CurrencyList } from './domains/characters/CurrencyList';
 import { InventoryList } from './domains/characters/InventoryList';
 import type { InventoryDraft } from './domains/characters/InventoryList';
@@ -73,11 +72,7 @@ import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
 import { crossingsByCharacter, levelCrossingsFor } from './domains/progression/crossings';
-import {
-  effectiveGrowthRule,
-  growthPointTally,
-  growthPointsOnStat,
-} from './domains/progression/growth';
+import { effectiveGrowthRule } from './domains/progression/growth';
 import { milestoneStatChanges } from './domains/progression/helpers';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
@@ -4937,31 +4932,6 @@ function App() {
     [rememberStat]
   );
 
-  // The stat section's new-stat form, its one open row and its two writes live
-  // in the characters domain. The rows stay here, where they are read for the
-  // open cast member and read again after a revert, and the sheet's error line
-  // is shared with the tab's other writes rather than owned by this section.
-  const {
-    newStatName,
-    setNewStatName,
-    newStatValue,
-    setNewStatValue,
-    addStat,
-    editingStatId,
-    setEditingStatId,
-    statValueDraft,
-    setStatValueDraft,
-    statNotesDraft,
-    setStatNotesDraft,
-    startStatEdit,
-    saveStat,
-  } = useSheetStats({
-    characterId: selectedCharacterId,
-    onStatWritten: applyWrittenStat,
-    reportError: message => setCharacterError(message),
-    actor,
-  });
-
   const saveAttribute = async (
     attribute: CharacterAttribute,
     value: string
@@ -7663,17 +7633,12 @@ function App() {
       ? Math.min(100, Math.round((shownXp / shownTarget) * 100))
       : 0;
 
-  // The points this character's levels handed out, and where they went. The pool
-  // is worked out from the level and the rule, the placings are rows, so the
-  // tally below is read rather than kept.
+  // Where the points this character's levels handed out were placed. The pool
+  // itself is worked out from the level and the rule, so the sheet reads the
+  // tally from these rows rather than keeping a count of its own.
   const selectedGrowthPoints = useMemo(
     () => storyGrowthPoints.filter(point => point.character_id === selectedCharacterId),
     [storyGrowthPoints, selectedCharacterId]
-  );
-  const growthTally = growthPointTally(
-    effectiveGrowthRule(storyGrowthRules, selectedCharacterId),
-    shownLevel,
-    selectedGrowthPoints
   );
 
   const applyCharacterRow = (updated: Character) => {
@@ -8781,6 +8746,10 @@ function App() {
               awards={storyAwards.filter(
                 award => award.character_id === selectedCharacterId
               )}
+              stats={characterStats}
+              onStatWritten={applyWrittenStat}
+              onPlacePoint={placeGrowthPoint}
+              actor={actor}
               onError={setCharacterError}
               onSaveProgress={saveProgress}
               onSaveGrowth={saveGrowthRule}
@@ -8868,111 +8837,6 @@ function App() {
               onError={setCharacterError}
             />
 
-            <div className="stat-list">
-              {characterStats.length === 0 && (
-                <div className="empty">No stats yet — add one below.</div>
-              )}
-
-              {characterStats.map(stat => (
-                <div key={stat.id} className="stat-row">
-                  <span className="stat-name">{stat.stat_name}</span>
-
-                  {editingStatId === stat.id ? (
-                    <>
-                      <input
-                        className="stat-value-input"
-                        type="number"
-                        autoFocus
-                        value={statValueDraft}
-                        onChange={(e) => setStatValueDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveStat(stat);
-                          if (e.key === 'Escape') setEditingStatId(null);
-                        }}
-                      />
-                      <input
-                        className="stat-notes-input"
-                        placeholder="Notes (optional)"
-                        value={statNotesDraft}
-                        onChange={(e) => setStatNotesDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveStat(stat);
-                          if (e.key === 'Escape') setEditingStatId(null);
-                        }}
-                      />
-                      <button
-                        title={`Save this new ${stat.stat_name} value and notes`}
-                        onClick={() => saveStat(stat)}
-                      >
-                        Save
-                      </button>
-                      <button
-                        title="Leave the value as it was"
-                        onClick={() => setEditingStatId(null)}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="stat-value">{stat.value}</span>
-                      {stat.notes && <span className="stat-notes">{stat.notes}</span>}
-                      {growthPointsOnStat(selectedGrowthPoints, stat.stat_name) > 0 && (
-                        <span
-                          className="stat-growth-points"
-                          title={`Of this value, ${growthPointsOnStat(
-                            selectedGrowthPoints,
-                            stat.stat_name
-                          )} came from placing level points`}
-                        >
-                          +{growthPointsOnStat(selectedGrowthPoints, stat.stat_name)} from
-                          levels
-                        </span>
-                      )}
-                      {growthTally.left > 0 && (
-                        <button
-                          className="stat-place-point"
-                          title={`Place one of ${selectedCharacter?.name ?? 'this character'}'s ${growthTally.left} unspent points on ${stat.stat_name} — one undo step`}
-                          onClick={() => placeGrowthPoint(stat.stat_name)}
-                        >
-                          Place point
-                        </button>
-                      )}
-                      <button
-                        title={`Change this ${stat.stat_name} value or notes`}
-                        onClick={() => startStatEdit(stat)}
-                      >
-                        Edit
-                      </button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="stat-creator">
-              <input
-                placeholder="Stat name"
-                value={newStatName}
-                onChange={(e) => setNewStatName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addStat()}
-              />
-              <input
-                className="stat-value-input"
-                type="number"
-                placeholder="0"
-                value={newStatValue}
-                onChange={(e) => setNewStatValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addStat()}
-              />
-              <button
-                title="Add this stat, or update it if the name already exists"
-                onClick={addStat}
-                disabled={!newStatName.trim()}
-              >
-                Add stat
-              </button>
-            </div>
           </CharacterSheetPanel>
         )}
 

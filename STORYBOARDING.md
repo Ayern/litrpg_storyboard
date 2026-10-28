@@ -192,7 +192,9 @@ recorded number yet shows a dash, not a zero.*
 
 ![The lower half of the same sheet](screenshots/character-sheet-detail.png)
 
-*Below the progression bar come **Level timeline**, **Level growth**, **XP by
+*Directly below the progression bar come the **Stats** — the numbers a level moves
+— with the rule's own rate named on each (`+1 a level`) and a **Place point**
+button while points are waiting. Then **Level timeline**, **Level growth**, **XP by
 chapter** and **Awards**, then **Attributes**, **Skills**, **Inventory**,
 **Currency** and the two ledgers of the next sections. Everything you type is
 typed where the thing is, not into a separate settings screen.*

@@ -568,7 +568,10 @@ function statRow(name: string) {
 }
 
 // The story's growth rule, which is what a sheet without an override follows.
-function moveRule(points: number): GrowthRow {
+function moveRule(
+  points: number,
+  rates: { stat_name: string; per_level: number }[] = []
+): GrowthRow {
   return {
     id: 'g-1',
     story_id: story.id,
@@ -576,12 +579,76 @@ function moveRule(points: number): GrowthRow {
     points_per_level: points,
     xp_base: 700,
     xp_growth: 0,
-    stats: [],
+    stats: rates.map((rate, index) => ({
+      id: `gs-${index + 1}`,
+      rule_id: 'g-1',
+      stat_name: rate.stat_name,
+      per_level: rate.per_level,
+      created_at: stamp(1),
+      updated_at: stamp(1),
+    })),
     created_by: 'You',
     created_at: stamp(1),
     updated_at: stamp(1),
   };
 }
+
+describe('the stats under the bar', () => {
+  it('puts them directly under the progression, before the timeline', async () => {
+    await openSheet();
+
+    const stats = screen.getByRole('region', { name: 'Stats' });
+    const timeline = screen.getByRole('region', { name: 'Level timeline' });
+
+    // The bar and what it handed out read as one block: the stats come after the
+    // progression and before the timeline that explains where the level came
+    // from, rather than below the inventory and the relations.
+    expect(
+      sheet().compareDocumentPosition(stats) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      stats.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('names the rule’s rate beside the stat it raises', async () => {
+    growth = [moveRule(3, [{ stat_name: 'Strength', per_level: 1 }])];
+    await openSheet();
+
+    expect(statRow('Strength')?.textContent).toMatch(/\+1\s+a\s+level/);
+    expect(
+      screen.getByText('Every level raises Strength +1 on its own.')
+    ).toBeInTheDocument();
+  });
+
+  it('shows a negative rate as a loss rather than a gain', async () => {
+    growth = [moveRule(0, [{ stat_name: 'Strength', per_level: -2 }])];
+    await openSheet();
+
+    expect(statRow('Strength')?.textContent).toMatch(/-2\s+a\s+level/);
+  });
+
+  it('gives a stat the rule raises, but the sheet has no row for, a row of its own', async () => {
+    growth = [moveRule(3, [{ stat_name: 'Insight', per_level: 2 }])];
+    await openSheet();
+
+    const row = statRow('Insight');
+
+    expect(row).toBeDefined();
+    expect(row?.textContent).toMatch(/\+2\s+a\s+level/);
+    expect(row?.textContent).toContain('Not on the sheet yet');
+  });
+
+  it('says so when the rule raises nothing by itself', async () => {
+    await openSheet();
+
+    expect(
+      within(screen.getByRole('region', { name: 'Stats' })).getByText(
+        'No stat rises with a level — the rule hands out points to place instead.'
+      )
+    ).toBeInTheDocument();
+  });
+});
 
 describe('progression', () => {
   it('shows the level the level-ups recorded, with the rank and experience', async () => {

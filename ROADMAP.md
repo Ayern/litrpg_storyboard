@@ -526,12 +526,18 @@ stat award and a placed point recorded after a level-up when it compares the she
 with the ledger, so spending a point no longer reads as the sheet drifting, while a
 value beyond what was recorded still does. **M**
 
-**13e. The sheet's stats where the levels are.** **Next.** The stats a level moves
-live far below the progression header, so an author who just watched a level land
-has to scroll to see what it handed out. The stat rows belong directly under the
-progression bar, with the rule's per-level rates named on each (`Strength +1 a
-level`), and the rule's own gains shown as a row of their own so the timeline and
-the sheet read as one sentence. **S**
+**13e. The sheet's stats where the levels are.** **Done.** The stats live in
+`src/domains/characters/StatList.tsx`, rendered by the progression sections
+directly under the bar, before the timeline: the order is now level, points, the
+numbers the level moved, and then the record of where it came from. The section's
+heading names the rule's own gains in a sentence (`Every level raises Strength +1
+on its own`), each row repeats its rate beside the value (`+1 a level`, or `-2 a
+level` when a level takes something away), and a stat the rule raises that the
+sheet has no row for is drawn as its own dashed row saying so — the rule cannot
+raise a number nobody records. The row's open editor and the two writes moved with
+it: `useSheetStats` is called by the list now rather than the app, the open row
+closes when the sheet changes hands, and the app keeps only the rows themselves,
+because the canvas badges are drawn from them. **S**
 
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
 Chapters tab currently flags chapter timing and duplication, a cast member intwo chapters on one day, an item still carried after its recorded loss or lost before

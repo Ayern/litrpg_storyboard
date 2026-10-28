@@ -235,7 +235,16 @@ starts at level 1 with nothing earned. Nothing on this line can be set by hand,
 which is what stops the header, the cast list, the cards, the chart and the exports
 from disagreeing with each other.
 
-**Level timeline** sits below the bar: the levels the curve wrote. A row carries
+**Stats** sit directly under the progression bar, because they are the numbers a
+level moves. The heading names what the rule raises by itself — *Every level raises
+Strength +1 on its own* — each row repeats that rate beside its value (`+1 a
+level`), and a row that took placed points says how many (`+2 from levels`). A stat
+the rule raises that the sheet has no row for gets a row of its own, marked as
+missing, so the rule cannot quietly raise a number nobody records. The rows
+otherwise behave as they always have: a name and a whole number, one row open at a
+time, saved and audited individually.
+
+**Level timeline** sits below the stats: the levels the curve wrote. A row carries
 the level, the chapter whose income crossed it, the running total at that point and
 the gains the rule handed out there. The row is written in the same transaction as
 the income that paid for it, so a level never arrives without an entry behind it,

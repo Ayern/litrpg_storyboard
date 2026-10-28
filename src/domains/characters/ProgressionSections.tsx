@@ -22,9 +22,11 @@ import type {
   CharacterLevel,
   CharacterProgress,
   CharacterSkill,
+  CharacterStat,
   LevelGrowthRule,
 } from '../shared/types';
 import type { CharacterSkillEvent } from '../skills/types';
+import { StatList } from './StatList';
 
 // Three lists make up a character's progression: the level and experience the
 // sheet shows now, the timeline of levels the curve wrote, and the XP each
@@ -73,6 +75,11 @@ export interface ProgressionSectionsProps {
   growthRules: LevelGrowthRule[];
   growthPoints: CharacterGrowthPoint[];
   awards: CharacterAward[];
+  // The sheet's stats, shown under the bar: they are what a level moves.
+  stats: CharacterStat[];
+  onStatWritten: (stat: CharacterStat) => void;
+  onPlacePoint: (statName: string) => Promise<void>;
+  actor: string;
   // The stat names a milestone's rows, a growth rate or an award can pick from.
   statNameOptions: string[];
   focus: ProgressionFocus | null;
@@ -112,6 +119,10 @@ export function ProgressionSections({
   growthRules,
   growthPoints,
   awards,
+  stats,
+  onStatWritten,
+  onPlacePoint,
+  actor,
   statNameOptions,
   focus,
   onError,
@@ -300,6 +311,22 @@ export function ProgressionSections({
           </div>
         )}
       </section>
+
+      {/* The numbers a level moves, directly under the bar that moved them. The
+          timeline below explains where the level came from; this is what it
+          handed out, so it comes first. */}
+      <StatList
+        characterName={character?.name ?? 'this character'}
+        characterId={characterId}
+        stats={stats}
+        rule={growth}
+        growthPoints={growthPoints}
+        pointsLeft={tally.left}
+        onPlacePoint={onPlacePoint}
+        onStatWritten={onStatWritten}
+        onError={onError}
+        actor={actor}
+      />
 
       {/* The timeline is what the curve wrote: a level, the chapter its income
           crossed in, and the gains the rule handed out there. It is a readout,
