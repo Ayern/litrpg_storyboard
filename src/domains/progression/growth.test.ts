@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import type {
-  CharacterLevelMilestone,
+  CharacterLevel,
   LevelGrowthRule,
   LevelGrowthStat,
 } from '../shared/types';
@@ -57,7 +57,7 @@ function milestone(
   characterId: string,
   level: number,
   minute: number
-): CharacterLevelMilestone {
+): CharacterLevel {
   return {
     id,
     character_id: characterId,

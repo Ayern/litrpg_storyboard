@@ -211,7 +211,7 @@ interface SkillEventRow {
   kind: string;
   chapter_id: string | null;
   rank: string | null;
-  milestone_id: string | null;
+  level_record_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -484,7 +484,7 @@ beforeEach(() => {
           kind: args.kind,
           chapter_id: args.chapterId ?? null,
           rank: args.rank ?? null,
-          milestone_id: args.milestoneId ?? null,
+          level_record_id: args.levelRecordId ?? null,
           created_at: timestamp(),
           updated_at: timestamp(),
         };
@@ -929,7 +929,7 @@ describe('connection actions', () => {
         kind: 'upgraded',
         chapter_id: null,
         rank: 'Rank 2',
-        milestone_id: null,
+        level_record_id: null,
         created_at: timestamp(),
         updated_at: timestamp(),
       },

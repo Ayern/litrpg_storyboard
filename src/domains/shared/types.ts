@@ -63,7 +63,10 @@ export interface SkillEvolution {
 // the latter, because the old field was a snapshot rather than a gain.
 export interface CharacterLevelStatChange {
   id: string;
-  milestone_id: string;
+  // The level record whose gains these are, which is the level the change hangs
+  // off. Exports written while the row was filed under a timeline entry carry
+  // `milestone_id` instead; nothing reads it.
+  level_record_id: string;
   stat_name: string;
   amount?: number | null;
   value_after?: number | null;
@@ -73,7 +76,7 @@ export interface CharacterLevelStatChange {
 
 // One level a cast member had in a chapter. A lower level is only a problem when
 // it was not explicitly marked as a penalty.
-export interface CharacterLevelMilestone {
+export interface CharacterLevel {
   id: string;
   character_id: string;
   level: number;

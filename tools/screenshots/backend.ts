@@ -24,7 +24,7 @@ const store = {
   stats: clone(fixture.story_stats) as Row[],
   skills: clone(fixture.story_skills) as Row[],
   skillEvents: clone(fixture.story_skill_events) as Row[],
-  milestones: clone(fixture.story_level_milestones) as Row[],
+  levels: clone(fixture.story_levels) as Row[],
   progress: clone(fixture.story_progress) as Row[],
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
@@ -79,7 +79,7 @@ const characterState = (characterId: string, chapterId: string): Row =>
     chapter_seq:
       store.nodes.find(node => node.id === chapterId)?.chapter_seq ?? null,
     level: null,
-    level_milestone_id: null,
+    level_record_id: null,
     level_is_penalty: false,
     skills: [],
   };
@@ -117,7 +117,7 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_story_skill_events: () => store.skillEvents,
   get_story_skill_evolutions: () => store.evolutions,
 
-  get_story_level_milestones: () => store.milestones,
+  get_story_levels: () => store.levels,
   get_story_character_progress: () => store.progress,
   get_character_state_at_chapter: args =>
     characterState(args.characterId, args.chapterId),
@@ -442,7 +442,7 @@ const writes: Record<string, (args: Row) => unknown> = {
       kind: args.kind,
       chapter_id: args.chapterId ?? null,
       rank: args.rank ?? null,
-      milestone_id: args.milestoneId ?? null,
+      level_record_id: args.levelRecordId ?? null,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -458,7 +458,7 @@ const writes: Record<string, (args: Row) => unknown> = {
       kind: args.kind,
       chapter_id: args.chapterId ?? null,
       rank: args.rank ?? null,
-      milestone_id: args.milestoneId ?? null,
+      level_record_id: args.levelRecordId ?? null,
       updated_at: now(),
     });
     return event;
@@ -733,10 +733,10 @@ const writes: Record<string, (args: Row) => unknown> = {
     return null;
   },
 
-  add_level_milestone: args => {
+  add_character_level: args => {
     const timestamp = now();
     const row: Row = {
-      id: id('milestone'),
+      id: id('level'),
       character_id: args.characterId,
       level: args.level,
       chapter_id: args.chapterId ?? null,
@@ -744,7 +744,7 @@ const writes: Record<string, (args: Row) => unknown> = {
       xp: args.xp ?? null,
       stat_changes: (args.statChanges ?? []).map((change: Row) => ({
         id: id('change'),
-        milestone_id: null,
+        level_record_id: null,
         stat_name: change.stat_name,
         amount: change.amount ?? null,
         value_after: change.value_after ?? null,
@@ -756,15 +756,15 @@ const writes: Record<string, (args: Row) => unknown> = {
     };
 
     row.stat_changes.forEach((change: Row) => {
-      change.milestone_id = row.id;
+      change.level_record_id = row.id;
     });
 
-    store.milestones.push(row);
+    store.levels.push(row);
     return row;
   },
 
-  update_level_milestone: args => {
-    const row = store.milestones.find(candidate => candidate.id === args.id);
+  update_character_level: args => {
+    const row = store.levels.find(candidate => candidate.id === args.id);
     if (!row) throw new Error('no such level');
     row.level = args.level;
     row.chapter_id = args.chapterId ?? null;
@@ -772,7 +772,7 @@ const writes: Record<string, (args: Row) => unknown> = {
     row.xp = args.xp ?? null;
     row.stat_changes = (args.statChanges ?? []).map((change: Row) => ({
       id: id('change'),
-      milestone_id: row.id,
+      level_record_id: row.id,
       stat_name: change.stat_name,
       amount: change.amount ?? null,
       value_after: change.value_after ?? null,
@@ -783,8 +783,8 @@ const writes: Record<string, (args: Row) => unknown> = {
     return row;
   },
 
-  delete_level_milestone: args => {
-    drop(store.milestones, args.id);
+  delete_character_level: args => {
+    drop(store.levels, args.id);
     return null;
   },
 

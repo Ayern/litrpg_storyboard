@@ -200,7 +200,7 @@ beforeEach(() => {
         ];
       case 'get_graph_edges':
       case 'get_story_character_stats':
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
       case 'get_story_skills':
       case 'get_story_skill_events':
       case 'get_story_inventory':

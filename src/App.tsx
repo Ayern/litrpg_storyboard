@@ -72,7 +72,8 @@ import { useSkillHolderForm } from './domains/canvas/useSkillHolderForm';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
-import { crossingsByCharacter } from './domains/progression/crossings';
+import { crossingsByCharacter, levelCrossingsFor } from './domains/progression/crossings';
+import { effectiveGrowthRule } from './domains/progression/growth';
 import { milestoneStatChanges } from './domains/progression/helpers';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
@@ -112,7 +113,7 @@ import type {
   Character,
   CharacterAward,
   CharacterChapterSkill,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   CharacterRelation,
   CharacterSkill,
@@ -792,8 +793,8 @@ function App() {
   // Progression is read for the whole story so continuity can compare every
   // character's chapters without one request per character.
   const [storySkillEvents, setStorySkillEvents] = useState<CharacterSkillEvent[]>([]);
-  const [storyLevelMilestones, setStoryLevelMilestones] = useState<
-    CharacterLevelMilestone[]
+  const [storyLevels, setStoryLevels] = useState<
+    CharacterLevel[]
   >([]);
   // What a level hands out, for the story and for any character that overrides
   // it, and the gains that skipped a level-up entirely.
@@ -801,7 +802,7 @@ function App() {
   const [storyAwards, setStoryAwards] = useState<CharacterAward[]>([]);
   // Read by a sync's undo step, so putting an old total back does not also put
   // the milestone's other fields back.
-  const storyLevelMilestonesRef = useRef<CharacterLevelMilestone[]>([]);
+  const storyLevelsRef = useRef<CharacterLevel[]>([]);
   // The one-click ledger sync, offered back for a moment like Mark returned.
   const [syncedXpNotice, setSyncedXpNotice] = useState<{
     characterName: string;
@@ -1014,7 +1015,7 @@ function App() {
           charactersApi.getStoryCharacterStats(story.id),
           skillsApi.getStorySkills(story.id),
           skillsApi.getStorySkillEvents(story.id),
-          progressionApi.getStoryLevelMilestones(story.id),
+          progressionApi.getStoryLevels(story.id),
           progressionApi.getStoryCharacterProgress(story.id),
           progressionApi.getStoryLevelGrowthRules(story.id),
           progressionApi.getStoryCharacterAwards(story.id),
@@ -1030,7 +1031,7 @@ function App() {
       setCastStats(statsByCharacter(stats));
       setStorySkills(skills ?? []);
       setStorySkillEvents(skillEvents ?? []);
-      setStoryLevelMilestones(levels ?? []);
+      setStoryLevels(levels ?? []);
       setStoryCharacterProgress(progress ?? []);
       setStoryGrowthRules(growthRules ?? []);
       setStoryAwards(awards ?? []);
@@ -1388,8 +1389,8 @@ function App() {
   }, [storyInventory]);
 
   useEffect(() => {
-    storyLevelMilestonesRef.current = storyLevelMilestones;
-  }, [storyLevelMilestones]);
+    storyLevelsRef.current = storyLevels;
+  }, [storyLevels]);
 
   useEffect(() => {
     castStatsRef.current = castStats;
@@ -2125,7 +2126,7 @@ function App() {
     chapterCastAssignmentsKey,
     chapterNodes.length,
     storyChapterCast,
-    storyLevelMilestones,
+    storyLevels,
     storySkills,
     storySkillEvents,
   ]);
@@ -2258,9 +2259,9 @@ function App() {
 
     // One level per chapter: the last one recorded there is the one that counts,
     // so two notes on the same chapter cannot make a false regression.
-    const milestonesByCharacter = new Map<string, CharacterLevelMilestone[]>();
+    const milestonesByCharacter = new Map<string, CharacterLevel[]>();
 
-    for (const milestone of storyLevelMilestones) {
+    for (const milestone of storyLevels) {
       if (!milestone.chapter_id || seqOf(milestone.chapter_id) == null) continue;
       const existing = milestonesByCharacter.get(milestone.character_id) ?? [];
       existing.push(milestone);
@@ -2269,7 +2270,7 @@ function App() {
 
     milestonesByCharacter.forEach((milestones, characterId) => {
       const owner = castNames.get(characterId) ?? 'A cast member';
-      const byChapter = new Map<string, CharacterLevelMilestone>();
+      const byChapter = new Map<string, CharacterLevel>();
 
       for (const milestone of [...milestones].sort(
         (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
@@ -2325,7 +2326,7 @@ function App() {
     const crossingsByCast = crossingsByCharacter(
       characters,
       storyCharacterProgress,
-      storyLevelMilestones,
+      storyLevels,
       storyGrowthRules,
       chapterNodes
     );
@@ -2334,7 +2335,7 @@ function App() {
       const owner = castNames.get(character.id) ?? 'A cast member';
       const crossings = crossingsByCast[character.id] ?? [];
 
-      for (const milestone of storyLevelMilestones) {
+      for (const milestone of storyLevels) {
         if (milestone.character_id !== character.id) continue;
         if (milestone.xp == null) continue;
 
@@ -2385,14 +2386,14 @@ function App() {
       {
         characterId: string;
         statName: string;
-        milestone: CharacterLevelMilestone;
+        milestone: CharacterLevel;
         value: number;
         chapter: (typeof chapterNodes)[number];
         seq: number;
       }
     >();
 
-    for (const milestone of storyLevelMilestones) {
+    for (const milestone of storyLevels) {
       const chapter = milestone.chapter_id
         ? chapterById.get(milestone.chapter_id)
         : undefined;
@@ -3072,7 +3073,7 @@ function App() {
     chapterNodes,
     castNames,
     characters,
-    storyLevelMilestones,
+    storyLevels,
     storyCharacterProgress,
     storyGrowthRules,
     storySkillEvents,
@@ -5247,7 +5248,7 @@ function App() {
                   event.kind,
                   event.chapter_id,
                   event.rank,
-                  event.milestone_id ?? null,
+                  event.level_record_id ?? null,
                   actor
                 )
               );
@@ -5436,15 +5437,15 @@ function App() {
   // level is. The level lives on the cast row, worked out from the ledger and the
   // rule, so writing a timeline row leaves the cast alone and the row is read back
   // from the database when a write could have moved it.
-  const applyMilestoneList = useCallback((next: CharacterLevelMilestone[]) => {
-    storyLevelMilestonesRef.current = next;
-    setStoryLevelMilestones(next);
+  const applyMilestoneList = useCallback((next: CharacterLevel[]) => {
+    storyLevelsRef.current = next;
+    setStoryLevels(next);
   }, []);
 
   const applyLevelMilestone = useCallback(
-    (saved: CharacterLevelMilestone) => {
+    (saved: CharacterLevel) => {
       const next = [
-        ...storyLevelMilestonesRef.current.filter(
+        ...storyLevelsRef.current.filter(
           milestone => milestone.id !== saved.id
         ),
         saved,
@@ -5466,7 +5467,7 @@ function App() {
 
       const ledgerXp = flag.ledgerXp;
       const targetMilestoneId = flag.target.milestoneId;
-      const milestone = storyLevelMilestonesRef.current.find(
+      const milestone = storyLevelsRef.current.find(
         candidate => candidate.id === targetMilestoneId
       );
 
@@ -5481,9 +5482,9 @@ function App() {
       // or stats is not swept away by this correction.
       const writeXp = (xp: number | null) => async () => {
         const current =
-          storyLevelMilestonesRef.current.find(candidate => candidate.id === milestoneId) ??
+          storyLevelsRef.current.find(candidate => candidate.id === milestoneId) ??
           milestone;
-        const saved: CharacterLevelMilestone = await progressionApi.updateLevelMilestone(
+        const saved: CharacterLevel = await progressionApi.updateCharacterLevel(
           current.id,
           current.level,
           current.chapter_id,
@@ -6619,7 +6620,7 @@ function App() {
       setStorySkillEvents(previous =>
         previous.filter(event => !removedSkillIds.has(event.skill_id))
       );
-      setStoryLevelMilestones(previous =>
+      setStoryLevels(previous =>
         previous.filter(milestone => milestone.character_id !== removedId)
       );
       setEditingCharacter(false);
@@ -7543,7 +7544,7 @@ function App() {
     chartStateError,
   } = useProgressionChart({
     characters,
-    milestones: storyLevelMilestones,
+    milestones: storyLevels,
     progress: storyCharacterProgress,
     chapterNodes,
     castStats,
@@ -7558,9 +7559,9 @@ function App() {
 
   // A chapter without a position sorts after every placed chapter, then by the
   // order it was recorded. The same order is used on the board and the sheet.
-  const selectedLevelMilestones = useMemo(
+  const selectedLevels = useMemo(
     () =>
-      storyLevelMilestones
+      storyLevels
         .filter(milestone => milestone.character_id === selectedCharacterId)
         .sort(
           (a, b) =>
@@ -7569,8 +7570,30 @@ function App() {
             a.created_at.localeCompare(b.created_at) ||
             a.id.localeCompare(b.id)
         ),
-    [storyLevelMilestones, selectedCharacterId, chapterSeqById]
+    [storyLevels, selectedCharacterId, chapterSeqById]
   );
+
+  // The skill-event picker offers the levels the curve actually reached, so an
+  // upgrade cannot be hung on a row the ledger never paid for.
+  const selectedCrossingMilestones = useMemo(() => {
+    const crossings = levelCrossingsFor(
+      selectedCharacterId ?? '',
+      storyCharacterProgress,
+      storyLevels,
+      effectiveGrowthRule(storyGrowthRules, selectedCharacterId),
+      chapterNodes
+    );
+    const levels = new Set(crossings.map(crossing => crossing.level));
+
+    return selectedLevels.filter(milestone => levels.has(milestone.level));
+  }, [
+    selectedCharacterId,
+    storyCharacterProgress,
+    storyLevels,
+    storyGrowthRules,
+    chapterNodes,
+    selectedLevels,
+  ]);
 
   const selectedXpEntries = useMemo(
     () =>
@@ -7743,7 +7766,7 @@ function App() {
 
     const [cast, milestones, storyStats, progress] = await Promise.all([
       charactersApi.getCharacters(currentStory.id),
-      progressionApi.getStoryLevelMilestones(currentStory.id),
+      progressionApi.getStoryLevels(currentStory.id),
       charactersApi.getStoryCharacterStats(currentStory.id),
       progressionApi.getStoryCharacterProgress(currentStory.id),
     ]);
@@ -8639,7 +8662,7 @@ function App() {
               shownTarget={shownTarget}
               progressPercent={progressPercent}
               chapters={chapterChoices}
-              milestones={selectedLevelMilestones}
+              milestones={selectedLevels}
               xpEntries={selectedXpEntries}
               skills={storySkills}
               skillEvents={storySkillEvents}
@@ -8682,7 +8705,7 @@ function App() {
               evolutions={storySkillEvolutions}
               chapters={skillChapterOptions}
               cards={skillCardOptions}
-              milestones={selectedLevelMilestones}
+              milestones={selectedCrossingMilestones}
               chapterSeqById={chapterSeqById}
               focus={focusedProgression}
               onError={setCharacterError}

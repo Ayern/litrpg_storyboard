@@ -279,7 +279,7 @@ beforeEach(() => {
           .map(entry => ({ ...entry }));
       case 'get_character_attributes':
         return [];
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
         return milestones.map(entry => ({ ...entry }));
       case 'get_story_character_progress':
         return progress.map(entry => ({ ...entry }));
@@ -308,7 +308,7 @@ beforeEach(() => {
         derive(args.characterId);
         return saved;
       }
-      case 'add_level_milestone': {
+      case 'add_character_level': {
         const character = cast.find(entry => entry.id === args.characterId);
         if (!character) return null;
 
@@ -329,7 +329,7 @@ beforeEach(() => {
         character.level = saved.level;
         return { ...saved };
       }
-      case 'delete_level_milestone': {
+      case 'delete_character_level': {
         const found = milestones.find(entry => entry.id === args.id);
         milestones = milestones.filter(entry => entry.id !== args.id);
         const character = found ? cast.find(entry => entry.id === found.character_id) : null;

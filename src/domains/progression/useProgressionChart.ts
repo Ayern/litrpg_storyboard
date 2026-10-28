@@ -4,7 +4,7 @@ import type { CharacterChapterState } from '../narrative/types';
 import type { CharacterSkillEvent } from '../skills/types';
 import type {
   Character,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   CharacterStat,
   LevelGrowthRule,
@@ -26,7 +26,7 @@ import type { ProgressionMetric } from './types';
 
 export interface ProgressionChartOptions {
   characters: Character[];
-  milestones: CharacterLevelMilestone[];
+  milestones: CharacterLevel[];
   progress: CharacterProgress[];
   // The chapters, so a point is only placed on one that is still on the board.
   chapterNodes: ChapterNode[];

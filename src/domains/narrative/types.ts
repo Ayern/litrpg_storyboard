@@ -13,7 +13,7 @@ export interface CharacterChapterState {
   chapter_id: string;
   chapter_seq: number;
   level: number | null;
-  level_milestone_id: string | null;
+  level_record_id: string | null;
   level_is_penalty: boolean;
   // The chapter the level was recorded in, so a readout can say where the
   // number came from as well as what it was.

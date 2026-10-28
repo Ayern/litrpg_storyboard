@@ -1,9 +1,9 @@
 use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
-    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterLevelMilestone,
-    CharacterProgress, CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db,
-    DeletedItem, Edge, FactionStanding, InventoryItem, LevelGrowthRule, LevelGrowthStatInput,
-    LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution, SkillTree, Story, StoryExport,
+    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterLevel, CharacterProgress,
+    CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
+    FactionStanding, InventoryItem, LevelGrowthRule, LevelGrowthStatInput, LevelStatChangeInput,
+    Node, Quest, QuestReward, SkillEvolution, SkillTree, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -337,25 +337,24 @@ fn get_story_skills(
 }
 
 #[tauri::command]
-fn get_character_level_milestones(
+fn get_character_levels(
     db: tauri::State<'_, Db>,
     character_id: String,
-) -> Result<Vec<CharacterLevelMilestone>, String> {
-    db.list_level_milestones(&character_id)
+) -> Result<Vec<CharacterLevel>, String> {
+    db.list_character_levels(&character_id)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_story_level_milestones(
+fn get_story_levels(
     db: tauri::State<'_, Db>,
     story_id: String,
-) -> Result<Vec<CharacterLevelMilestone>, String> {
-    db.list_story_level_milestones(&story_id)
-        .map_err(|e| e.to_string())
+) -> Result<Vec<CharacterLevel>, String> {
+    db.list_story_levels(&story_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn add_level_milestone(
+fn add_character_level(
     db: tauri::State<'_, Db>,
     character_id: String,
     level: i64,
@@ -364,8 +363,8 @@ fn add_level_milestone(
     xp: Option<i64>,
     stat_changes: Vec<LevelStatChangeInput>,
     user: String,
-) -> Result<CharacterLevelMilestone, String> {
-    db.add_level_milestone_with_changes(
+) -> Result<CharacterLevel, String> {
+    db.add_character_level_with_changes(
         character_id,
         level,
         chapter_id,
@@ -378,7 +377,7 @@ fn add_level_milestone(
 }
 
 #[tauri::command]
-fn update_level_milestone(
+fn update_character_level(
     db: tauri::State<'_, Db>,
     id: String,
     level: i64,
@@ -387,18 +386,18 @@ fn update_level_milestone(
     xp: Option<i64>,
     stat_changes: Vec<LevelStatChangeInput>,
     user: String,
-) -> Result<CharacterLevelMilestone, String> {
-    db.update_level_milestone_with_changes(id, level, chapter_id, is_debuff, xp, stat_changes, user)
+) -> Result<CharacterLevel, String> {
+    db.update_character_level_with_changes(id, level, chapter_id, is_debuff, xp, stat_changes, user)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn delete_level_milestone(
+fn delete_character_level(
     db: tauri::State<'_, Db>,
     id: String,
     user: String,
 ) -> Result<(), String> {
-    db.delete_level_milestone(&id, user)
+    db.delete_character_level(&id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -769,10 +768,10 @@ fn add_skill_event(
     kind: String,
     chapter_id: Option<String>,
     rank: Option<String>,
-    milestone_id: Option<String>,
+    level_record_id: Option<String>,
     user: String,
 ) -> Result<CharacterSkillEvent, String> {
-    db.add_skill_event(skill_id, kind, chapter_id, rank, milestone_id, user)
+    db.add_skill_event(skill_id, kind, chapter_id, rank, level_record_id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -783,10 +782,10 @@ fn update_skill_event(
     kind: String,
     chapter_id: Option<String>,
     rank: Option<String>,
-    milestone_id: Option<String>,
+    level_record_id: Option<String>,
     user: String,
 ) -> Result<CharacterSkillEvent, String> {
-    db.update_skill_event(id, kind, chapter_id, rank, milestone_id, user)
+    db.update_skill_event(id, kind, chapter_id, rank, level_record_id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -1457,11 +1456,11 @@ pub fn run() {
             delete_skill,
             get_character_skills,
             get_story_skills,
-            get_character_level_milestones,
-            get_story_level_milestones,
-            add_level_milestone,
-            update_level_milestone,
-            delete_level_milestone,
+            get_character_levels,
+            get_story_levels,
+            add_character_level,
+            update_character_level,
+            delete_character_level,
             get_story_relations,
             add_relation,
             update_relation,

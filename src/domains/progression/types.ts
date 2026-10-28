@@ -1,4 +1,4 @@
-import type { CharacterLevelMilestone, CharacterProgress } from '../shared/types';
+import type { CharacterLevel, CharacterProgress } from '../shared/types';
 import type { LevelCrossing } from './crossings';
 
 // One line on the progression chart. The colour is fixed per cast member while
@@ -8,7 +8,7 @@ export interface ProgressionChartSeries {
   name: string;
   color: string;
   // The rows that were recorded, which the stat line reads.
-  milestones: CharacterLevelMilestone[];
+  milestones: CharacterLevel[];
   // The levels the ledger bought, which the level and XP lines read.
   crossings: LevelCrossing[];
   progress: CharacterProgress[];

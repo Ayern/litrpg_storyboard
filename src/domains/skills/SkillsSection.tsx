@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { HelpTip } from '../../components/HelpTip';
 import { milestoneLabel } from '../progression/helpers';
 import type {
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterSkill,
   SkillEvolution,
 } from '../shared/types';
@@ -67,7 +67,7 @@ export function SkillsSection({
   // The chapters and skill cards a skill can point at, already labelled.
   chapters: SkillOption[];
   cards: SkillOption[];
-  milestones: CharacterLevelMilestone[];
+  milestones: CharacterLevel[];
   // Where each chapter sits in the reading order, so a skill's events read in
   // story order rather than in the order they were typed.
   chapterSeqById: Map<string, number>;
@@ -186,7 +186,7 @@ export function SkillsSection({
     setSkillEventKindDraft(event.kind);
     setSkillEventChapterDraft(event.chapter_id ?? '');
     setSkillEventRankDraft(event.rank ?? '');
-    setSkillEventMilestoneDraft(event.milestone_id ?? '');
+    setSkillEventMilestoneDraft(event.level_record_id ?? '');
   };
 
   const cancelSkillEventEdit = () => {
@@ -621,7 +621,7 @@ export function SkillsSection({
                     focus?.kind === 'skill-event' &&
                     focus.id === event.id;
                   const eventMilestone = milestones.find(
-                    milestone => milestone.id === event.milestone_id
+                    milestone => milestone.id === event.level_record_id
                   );
                   const label =
                     event.kind === 'upgraded'

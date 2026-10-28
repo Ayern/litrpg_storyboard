@@ -1,6 +1,6 @@
 import type { Node } from 'reactflow';
 import type { NodeData } from '../canvas/types';
-import type { Character, CharacterLevelMilestone, CharacterProgress } from '../shared/types';
+import type { Character, CharacterLevel, CharacterProgress } from '../shared/types';
 import type { ProgressionChartSeries, ProgressionMetric } from './types';
 import { milestoneStatChanges } from './helpers';
 
@@ -24,7 +24,7 @@ export function ProgressionChart({
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const chapterIndex = new Map(chapters.map((chapter, index) => [chapter.id, index]));
-  const metricValue = (milestone: CharacterLevelMilestone): number | null => {
+  const metricValue = (milestone: CharacterLevel): number | null => {
     if (metric === 'level') return milestone.level;
     if (metric === 'xp') return milestone.xp ?? null;
     if (metric === 'earned') return null;
@@ -63,7 +63,7 @@ export function ProgressionChart({
     // A later milestone without XP or a stat snapshot does not erase it.
     const byChapter = new Map<
       number,
-      { milestone: CharacterLevelMilestone; value: number }
+      { milestone: CharacterLevel; value: number }
     >();
 
     for (const milestone of ordered) {
@@ -147,7 +147,7 @@ export function ProgressionChart({
   );
   const labelEvery = Math.max(1, Math.ceil(chapters.length / 8));
   const names = series.map(entry => entry.name).join(', ');
-  const pointText = (marker: { milestone: CharacterLevelMilestone; value: number }) => {
+  const pointText = (marker: { milestone: CharacterLevel; value: number }) => {
     if (metric === 'level') {
       return `level ${marker.value}${marker.milestone.is_debuff ? ' (penalty)' : ''}`;
     }

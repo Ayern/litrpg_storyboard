@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChapterNode } from '../narrative/chapters';
 import type {
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   LevelGrowthRule,
 } from '../shared/types';
@@ -32,7 +32,7 @@ function milestone(
   level: number,
   chapterId: string | null,
   xp: number | null
-): CharacterLevelMilestone {
+): CharacterLevel {
   return {
     id,
     character_id: 'c-1',

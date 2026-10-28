@@ -1,5 +1,5 @@
 import type {
-  CharacterLevelMilestone,
+  CharacterLevel,
   LevelGrowthRule,
 } from '../shared/types';
 import type { LevelStatChangeDraft } from './drafts';
@@ -81,14 +81,14 @@ export function effectiveGrowthRule(
 
 // The order milestones are compared in: the order they were recorded, which is
 // the one the database keeps and the one the level itself follows.
-function byRecorded(a: CharacterLevelMilestone, b: CharacterLevelMilestone): number {
+function byRecorded(a: CharacterLevel, b: CharacterLevel): number {
   return a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
 }
 
 // The level a sheet stands at. It comes from the last level-up recorded, and a
 // cast member with no level-up is at 1 — there is no other place to type it.
 export function levelFromMilestones(
-  milestones: CharacterLevelMilestone[],
+  milestones: CharacterLevel[],
   characterId: string | null
 ): number {
   if (!characterId) return 1;
@@ -103,7 +103,7 @@ export function levelFromMilestones(
 
 // The level the next level-up would record.
 export function nextLevelFromMilestones(
-  milestones: CharacterLevelMilestone[],
+  milestones: CharacterLevel[],
   characterId: string | null
 ): number {
   return levelFromMilestones(milestones, characterId) + 1;

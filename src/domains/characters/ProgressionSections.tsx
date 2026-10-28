@@ -13,7 +13,7 @@ import type {
 import type {
   Character,
   CharacterAward,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   CharacterSkill,
   LevelGrowthRule,
@@ -58,7 +58,7 @@ export interface ProgressionSectionsProps {
   // The chapters a milestone or an income row can name, in reading order.
   chapters: ChapterNode[];
 
-  milestones: CharacterLevelMilestone[];
+  milestones: CharacterLevel[];
   xpEntries: CharacterProgress[];
   skillEvents: CharacterSkillEvent[];
   skills: CharacterSkill[];
@@ -306,7 +306,7 @@ export function ProgressionSections({
                     </span>
                   ))}
                   {skillEvents
-                    .filter(event => event.milestone_id === milestone.id)
+                    .filter(event => event.level_record_id === milestone.id)
                     .map(event => {
                       const skill = skills.find(
                         entry => entry.id === event.skill_id

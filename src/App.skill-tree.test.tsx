@@ -183,7 +183,7 @@ interface EventRow {
   kind: string;
   chapter_id: string | null;
   rank: string | null;
-  milestone_id?: string | null;
+  level_record_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -267,9 +267,9 @@ beforeEach(() => {
       case 'get_character_attributes':
       case 'get_character_inventory':
       case 'get_character_currency':
-      case 'get_character_level_milestones':
+      case 'get_character_levels':
       case 'get_character_progress':
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
       case 'get_story_relations':
       case 'get_story_faction_standings':
       case 'get_chapter_notes':

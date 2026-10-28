@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   Character,
   CharacterAward,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   LevelGrowthRule,
 } from '../shared/types';
@@ -49,11 +49,11 @@ export function deleteCharacterProgress(id: string, actor: string) {
   return invoke<void>('delete_character_progress', { id, user: actor });
 }
 
-export function getStoryLevelMilestones(storyId: string) {
-  return invoke<CharacterLevelMilestone[]>('get_story_level_milestones', { storyId });
+export function getStoryLevels(storyId: string) {
+  return invoke<CharacterLevel[]>('get_story_levels', { storyId });
 }
 
-export function addLevelMilestone(
+export function addCharacterLevel(
   characterId: string,
   level: number,
   chapterId: string | null,
@@ -62,7 +62,7 @@ export function addLevelMilestone(
   statChanges: LevelStatChangeInput[],
   actor: string
 ) {
-  return invoke<CharacterLevelMilestone>('add_level_milestone', {
+  return invoke<CharacterLevel>('add_character_level', {
     characterId,
     level,
     chapterId,
@@ -73,7 +73,7 @@ export function addLevelMilestone(
   });
 }
 
-export function updateLevelMilestone(
+export function updateCharacterLevel(
   id: string,
   level: number,
   chapterId: string | null,
@@ -82,7 +82,7 @@ export function updateLevelMilestone(
   statChanges: LevelStatChangeInput[],
   actor: string
 ) {
-  return invoke<CharacterLevelMilestone>('update_level_milestone', {
+  return invoke<CharacterLevel>('update_character_level', {
     id,
     level,
     chapterId,
@@ -93,8 +93,8 @@ export function updateLevelMilestone(
   });
 }
 
-export function deleteLevelMilestone(id: string, actor: string) {
-  return invoke<void>('delete_level_milestone', { id, user: actor });
+export function deleteCharacterLevel(id: string, actor: string) {
+  return invoke<void>('delete_character_level', { id, user: actor });
 }
 
 // The one progression field an author types. Experience is the ledger's sum and

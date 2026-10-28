@@ -320,8 +320,8 @@ window asks before a chapter or note draft goes, with **Keep working** focused.
 Remaining: cast in two places at once across different days, and
 moments that can only be described in words. **M**
 
-**9. Progression ledger.** **Started.** A per-chapter level milestone now exists
-(`character_level_milestones`), entered on the sheet with a chapter, an explicit
+**9. Progression ledger.** **Started.** A per-chapter level row now exists (since schema v29,
+`character_level_records`), entered on the sheet with a chapter, an explicit
 penalty flag, optional **Total XP** and any number of **stat changes** (schema v19:
 gain, resulting value, or both, one row per stat), and compared
 in reading order on the Chapters tab and the chapter cards. The Characters tab now
@@ -466,7 +466,7 @@ deleting the income reverses both. **Record level-up**, the milestone creator an
 the XP and target fields are gone: the sheet's only progression input is the rank,
 and experience is recorded where it was earned, on the chapter it was earned in.
 The timeline is a readout, and a level recorded before the curve is a floor rather
-than a rival (`character_level_milestones.source`). The sheet's head reads the cast
+than a rival (`character_level_records.source`). The sheet's head reads the cast
 row the curve wrote, not the last level in the timeline, so a character whose
 experience has carried it past its recorded levels shows the level it is at; and
 every write that can move a level — income, an award, a rule — reads the cast row,
@@ -491,7 +491,21 @@ contradicted its System. Remaining, and next: `character_state_at_chapter` still
 picks its level from the last row at or before the chapter rather than from the
 income paid by then, the skill-event picker still lists every row instead of the
 levels reached, and the milestone table is still where a level's stat gains live.
-Porting those three is what has to happen before the table can be dropped. **M**
+The snapshot and the picker both read the curve now, so what is left is the table
+itself. Done: the levels live in one table. `character_level_records` holds one
+row per character per level — the chapter it landed in, the total it stood at, and
+whether the curve (`level`) or the author (`recorded`) put it there — unique on the
+pair, so a level can only be recorded once. Version 27 copied the timeline into it
+under the same ids and wrote both tables while the readers moved; version 28 moved
+each level's stat gains onto the record, so they travel with the level when it
+moves; version 29 dropped the timeline table and re-pointed a skill event's link at
+the level itself. The readers, the export, the import, the demo seed and the guide's
+fixture all answer from the records, and the commands say so:
+`get_character_levels`, `get_story_levels`, `add_character_level`,
+`update_character_level`, `delete_character_level`. Adding a level the curve has
+already written takes that row over rather than making a second one, which is how
+an author places a level the experience paid for, and an empty form on that add
+leaves the gains the level already handed out alone. **M**
 
 **13d. Points a level hands out.** **Next.** The rule's `points_per_level` is
 described on the sheet and never spent: nothing counts the points a character has

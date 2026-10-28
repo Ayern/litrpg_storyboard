@@ -236,12 +236,12 @@ beforeEach(() => {
       case 'get_character_attributes':
       case 'get_character_inventory':
       case 'get_character_currency':
-      case 'get_character_level_milestones':
+      case 'get_character_levels':
       case 'get_character_progress':
       case 'get_story_character_stats':
       case 'get_story_skill_events':
       case 'get_story_skill_evolutions':
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
       case 'get_story_relations':
       case 'get_story_faction_standings':
       case 'get_story_chapter_cast':

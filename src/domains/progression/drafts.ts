@@ -1,4 +1,4 @@
-import type { CharacterLevelMilestone } from '../shared/types';
+import type { CharacterLevel } from '../shared/types';
 import { milestoneStatChanges } from './helpers';
 
 // One stat a level-up changed, as a sheet's form holds it while it is being
@@ -16,7 +16,7 @@ export function blankStatChange(): LevelStatChangeDraft {
 
 // The form a milestone opens with: one row per stat the level already changed.
 export function statChangesFromMilestone(
-  milestone: CharacterLevelMilestone
+  milestone: CharacterLevel
 ): LevelStatChangeDraft[] {
   return milestoneStatChanges(milestone).map(change => ({
     statName: change.stat_name,

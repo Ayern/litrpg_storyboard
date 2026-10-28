@@ -33,7 +33,7 @@ export interface CharacterSkillEvent {
   kind: SkillEventKind;
   chapter_id: string | null;
   rank: string | null;
-  milestone_id?: string | null;
+  level_record_id?: string | null;
   created_at: string;
   updated_at: string;
 }

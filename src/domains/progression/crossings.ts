@@ -1,7 +1,7 @@
 import type { ChapterNode } from '../narrative/chapters';
 import type {
   Character,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   LevelGrowthRule,
 } from '../shared/types';
@@ -49,7 +49,7 @@ function chapterOrder(chapters: ChapterNode[]): Map<string, number> {
 export function levelCrossingsFor(
   characterId: string,
   progress: CharacterProgress[],
-  milestones: CharacterLevelMilestone[],
+  milestones: CharacterLevel[],
   rule: LevelGrowthRule | null,
   chapters: ChapterNode[]
 ): LevelCrossing[] {
@@ -133,7 +133,7 @@ export function levelCrossingsFor(
 export function crossingsByCharacter(
   characters: Character[],
   progress: CharacterProgress[],
-  milestones: CharacterLevelMilestone[],
+  milestones: CharacterLevel[],
   rules: LevelGrowthRule[],
   chapters: ChapterNode[]
 ): Record<string, LevelCrossing[]> {
@@ -160,7 +160,7 @@ export function crossingsByCharacter(
 export function crossingMilestones(
   characterId: string,
   crossings: LevelCrossing[]
-): CharacterLevelMilestone[] {
+): CharacterLevel[] {
   return crossings.map((crossing, index) => ({
     id: crossing.recordedMilestoneId ?? `crossing-${characterId}-${crossing.level}`,
     character_id: characterId,

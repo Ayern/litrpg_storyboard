@@ -343,7 +343,7 @@ function stateAt(characterId: string, chapterId: string) {
     chapter_id: chapterId,
     chapter_seq: chapter.seq,
     level: latest?.level ?? null,
-    level_milestone_id: latest?.id ?? null,
+    level_record_id: latest?.id ?? null,
     level_is_penalty: latest?.is_debuff ?? false,
     level_chapter_id: latest?.chapter_id ?? null,
     level_chapter_seq: latest ? placeOf(latest.chapter_id)?.seq ?? null : null,
@@ -447,7 +447,7 @@ beforeEach(() => {
         return [];
       case 'get_characters':
         return args.storyId === story.id ? cast.map(entry => ({ ...entry })) : [];
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
         return levels.map(entry => ({ ...entry }));
       case 'get_story_character_progress':
         return progress.map(entry => ({ ...entry }));
@@ -455,7 +455,7 @@ beforeEach(() => {
         return progress
           .filter(entry => entry.character_id === args.characterId)
           .map(entry => ({ ...entry }));
-      case 'get_character_level_milestones':
+      case 'get_character_levels':
         return levels
           .filter(entry => entry.character_id === args.characterId)
           .map(entry => ({ ...entry }));
@@ -509,7 +509,7 @@ describe('per-character progression chart', () => {
     expect(screen.getByText('Ch. 1')).toBeInTheDocument();
     expect(screen.getByText('Ch. 3')).toBeInTheDocument();
     expect(
-      invokeMock.mock.calls.some(call => call[0] === 'get_story_level_milestones')
+      invokeMock.mock.calls.some(call => call[0] === 'get_story_levels')
     ).toBe(true);
   });
 

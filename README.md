@@ -277,7 +277,7 @@ belongs to a chapter because income is kept per chapter; a stat award's chapter 
 optional. Both travel in the JSON export and import.
 
 **Progression chart and chapter state** — the top of the Characters tab draws a
-power curve from `character_level_milestones` and the XP ledger: the chapters in
+power curve from the character's levels and the XP ledger: the chapters in
 reading order along the x-axis. The y-axis switches between **Level**, **Total
 XP**, **XP earned** and a chosen **stat**. Level, total XP and a stat draw
 one step line per character, where only chapters with a recorded value get a
@@ -796,6 +796,13 @@ story starts with neither, so its cast simply has no recorded bonds or faction
 memberships until one is added. Version 21 added `quests` and `quest_rewards`; an
 older story starts with no contracts, and nothing is inferred from cards of type
 `quest` — those remain plain cards until a quest is recorded on the Quests tab.
+Version 27 added `character_level_records` — one row per character per level — and
+copied the timeline's rows into it under the same ids, writing both tables for a
+while so no reader was ever left without an answer. Version 28 moved each level's
+stat gains onto the record they belong to, and version 29 dropped the old timeline
+table and re-pointed a skill event's optional link at the level itself. A level
+recorded twice while the old table allowed it collapses into the single row its
+level now has; nothing else about a story changes on the way over.
 
 | Table | Contents |
 | --- | --- |
@@ -804,9 +811,9 @@ older story starts with no contracts, and nothing is inferred from cards of type
 | `character_stats` | Belongs to a character; `stat_name`, integer `value`, `notes` |
 | `character_attributes` | Belongs to a character; `attr_name`, text `value`, unique per character |
 | `character_skills` | Belongs to a character; `name` (unique per character), nullable `rank` and `effect`, optional `chapter_id` and `node_id` links (cleared when that node is purged) |
-| `character_level_milestones` | Belongs to a character; integer `level` (1 or higher), optional `chapter_id` link (cleared when the chapter is purged), `is_debuff` for an explicit penalty, optional `xp`, `stat_name` and `stat_points` snapshots |
+| `character_level_records` | One row per level a character has: integer `level` (1 or higher), optional `chapter_id` link (cleared when the chapter is purged), `is_debuff` for an explicit penalty, optional `xp` snapshot, and `source` — `level` when the curve wrote it, `recorded` when the author placed it, which makes it a floor experience cannot take back. Unique on the character/level pair |
 | `character_progress` | One chapter's XP income for a character; integer `xp_earned` (zero or higher), unique on the character/chapter pair, cascading when either side is purged |
-| `character_skill_events` | Belongs to a skill; `kind` (`upgraded`, `used` or `sacrificed`), optional `chapter_id` link (cleared when purged) and nullable `rank` |
+| `character_skill_events` | Belongs to a skill; `kind` (`upgraded`, `used` or `sacrificed`), optional `chapter_id` link (cleared when purged), nullable `rank`, and optional `level_record_id` linking the change to the level it came with (cleared when that level is deleted) |
 | `chapter_cast` | One row per additional cast member in a chapter, unique on the chapter/character pair and cascading when either is purged |
 | `character_inventory` | Belongs to a character; `name` (unique per character), nullable `rarity` and `effect`, integer `quantity`, optional `chapter_id`, `lost_chapter_id` and `node_id` links (cleared when that node is purged) |
 | `character_currency` | Belongs to a character; `name` (unique per character), integer `amount` |
@@ -832,7 +839,8 @@ how restoring the node knows which connections to bring back with it. A
 connection deleted on its own keeps its earlier timestamp and stays in the trash.
 
 `characters`, `character_stats`, `character_attributes`, `character_skills`,
-`character_level_milestones`, `character_progress`, `character_skill_events`,
+`character_level_records`, `character_level_stat_changes`, `character_progress`,
+`character_skill_events`,
 `character_inventory`, `character_currency`, `chapter_cast`, `character_relations`,
 `faction_standings`, `quests` (with their rewards), `nodes` and `edges` all cascade from their parent, with
 `PRAGMA foreign_keys = ON`. `audit_log`

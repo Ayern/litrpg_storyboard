@@ -1,9 +1,9 @@
-import type { CharacterLevelMilestone, CharacterLevelStatChange } from '../shared/types';
+import type { CharacterLevel, CharacterLevelStatChange } from '../shared/types';
 
 // Every stat a milestone changed. A v18 milestone may still hold the old single
 // snapshot in a fixture or an import; treat it as a value-after with no gain.
 export function milestoneStatChanges(
-  milestone: CharacterLevelMilestone
+  milestone: CharacterLevel
 ): CharacterLevelStatChange[] {
   if (milestone.stat_changes && milestone.stat_changes.length > 0) {
     return milestone.stat_changes;
@@ -13,7 +13,7 @@ export function milestoneStatChanges(
     return [
       {
         id: `legacy-${milestone.id}`,
-        milestone_id: milestone.id,
+        level_record_id: milestone.id,
         stat_name: milestone.stat_name,
         amount: null,
         value_after: milestone.stat_points,
@@ -28,7 +28,7 @@ export function milestoneStatChanges(
 
 // Level-ups are named by level rather than id wherever one is chosen, so a
 // linked skill event reads the way the author thinks of it.
-export function milestoneLabel(milestone: CharacterLevelMilestone): string {
+export function milestoneLabel(milestone: CharacterLevel): string {
   return `Level ${milestone.level}${milestone.is_debuff ? ' (penalty)' : ''}`;
 }
 

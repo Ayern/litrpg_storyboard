@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type {
   Character,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterLevelStatChange,
   CharacterProgress,
   CharacterStat,
@@ -56,7 +56,7 @@ function chapter(id: string, label: string, seq: number | null): ChapterNode {
 function statChange(statName: string, valueAfter: number | null): CharacterLevelStatChange {
   return {
     id: `change-${statName}-${valueAfter}`,
-    milestone_id: '',
+    level_record_id: '',
     stat_name: statName,
     amount: valueAfter,
     value_after: valueAfter,
@@ -72,7 +72,7 @@ function milestone(
   chapterId: string | null,
   xp: number | null,
   changes: CharacterLevelStatChange[] = []
-): CharacterLevelMilestone {
+): CharacterLevel {
   return {
     id,
     character_id: characterId,
@@ -115,7 +115,7 @@ function chapterState(characterId: string, chapterId: string, level: number | nu
     chapter_id: chapterId,
     chapter_seq: 1,
     level,
-    level_milestone_id: null,
+    level_record_id: null,
     level_is_penalty: false,
     level_chapter_id: null,
     level_chapter_seq: null,

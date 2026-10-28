@@ -66,7 +66,7 @@ export function addSkillEvent(
   kind: string,
   chapterId: string | null,
   rank: string | null,
-  milestoneId: string | null,
+  levelRecordId: string | null,
   actor: string
 ) {
   return invoke<CharacterSkillEvent>('add_skill_event', {
@@ -74,7 +74,7 @@ export function addSkillEvent(
     kind,
     chapterId,
     rank,
-    milestoneId,
+    levelRecordId,
     user: actor,
   });
 }
@@ -84,7 +84,7 @@ export function updateSkillEvent(
   kind: string,
   chapterId: string | null,
   rank: string | null,
-  milestoneId: string | null,
+  levelRecordId: string | null,
   actor: string
 ) {
   return invoke<CharacterSkillEvent>('update_skill_event', {
@@ -92,7 +92,7 @@ export function updateSkillEvent(
     kind,
     chapterId,
     rank,
-    milestoneId,
+    levelRecordId,
     user: actor,
   });
 }

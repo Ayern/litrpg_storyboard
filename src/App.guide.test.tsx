@@ -107,7 +107,7 @@ const emptyLists = [
   'get_story_character_stats',
   'get_story_skills',
   'get_story_skill_events',
-  'get_story_level_milestones',
+  'get_story_levels',
   'get_story_character_progress',
   'get_story_inventory',
   'get_chapter_notes',
@@ -121,7 +121,7 @@ const emptyLists = [
   'get_character_skills',
   'get_character_inventory',
   'get_character_currency',
-  'get_character_level_milestones',
+  'get_character_levels',
   'get_character_progress',
 ];
 

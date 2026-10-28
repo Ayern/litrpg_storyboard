@@ -1,7 +1,7 @@
 import type { ChapterNode } from '../narrative/chapters';
 import type {
   Character,
-  CharacterLevelMilestone,
+  CharacterLevel,
   CharacterProgress,
   CharacterStat,
   LevelGrowthRule,
@@ -35,7 +35,7 @@ export const PROGRESSION_CHART_COLORS = [
 // the curve's crossings, worked out from the ledger and the story's rule.
 export function chartSeriesFor(
   characters: Character[],
-  milestones: CharacterLevelMilestone[],
+  milestones: CharacterLevel[],
   progress: CharacterProgress[],
   chapterNodes: ChapterNode[],
   rules: LevelGrowthRule[]
@@ -81,7 +81,7 @@ export function chartSeriesFor(
 // snapshotted on a milestone before the sheet changed.
 export function statNamesFrom(
   castStats: Record<string, CharacterStat[]>,
-  milestones: CharacterLevelMilestone[]
+  milestones: CharacterLevel[]
 ): string[] {
   const names = new Set<string>();
 

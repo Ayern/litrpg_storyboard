@@ -111,7 +111,7 @@ interface SkillRow {
 
 interface StatChangeRow {
   id: string;
-  milestone_id: string;
+  level_record_id: string;
   stat_name: string;
   amount: number | null;
   value_after: number | null;
@@ -156,7 +156,7 @@ interface EventRow {
   kind: 'upgraded' | 'sacrificed' | 'used';
   chapter_id: string | null;
   rank: string | null;
-  milestone_id?: string | null;
+  level_record_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -208,7 +208,7 @@ beforeEach(() => {
       stat_changes: [
         {
           id: 'change-1',
-          milestone_id: 'milestone-1',
+          level_record_id: 'milestone-1',
           stat_name: 'Strength',
           amount: 2,
           value_after: 10,
@@ -229,7 +229,7 @@ beforeEach(() => {
       stat_changes: [
         {
           id: 'change-2',
-          milestone_id: 'milestone-2',
+          level_record_id: 'milestone-2',
           stat_name: 'Strength',
           amount: 2,
           value_after: 12,
@@ -321,7 +321,7 @@ beforeEach(() => {
         return skills
           .filter(skill => skill.character_id === args.characterId)
           .map(skill => ({ ...skill }));
-      case 'get_story_level_milestones':
+      case 'get_story_levels':
         return levels.map(level => ({ ...level }));
       case 'get_story_level_growth_rules':
         return [
@@ -347,7 +347,7 @@ beforeEach(() => {
         return progress
           .filter(entry => entry.character_id === args.characterId)
           .map(entry => ({ ...entry }));
-      case 'get_character_level_milestones':
+      case 'get_character_levels':
         return levels
           .filter(level => level.character_id === args.characterId)
           .map(level => ({ ...level }));
@@ -357,7 +357,7 @@ beforeEach(() => {
         return events
           .filter(event => event.skill_id === args.skillId)
           .map(event => ({ ...event }));
-      case 'add_level_milestone': {
+      case 'add_character_level': {
         const saved: LevelRow = {
           id: `milestone-${levels.length + 1}`,
           character_id: args.characterId,
@@ -368,7 +368,7 @@ beforeEach(() => {
           stat_changes: (args.statChanges ?? []).map(
             (change: { stat_name: string; amount: number | null; value_after: number | null }, at: number) => ({
               id: `change-new-${at + 1}`,
-              milestone_id: `milestone-${levels.length + 1}`,
+              level_record_id: `milestone-${levels.length + 1}`,
               stat_name: change.stat_name,
               amount: change.amount,
               value_after: change.value_after,
@@ -382,7 +382,7 @@ beforeEach(() => {
         levels = [...levels, saved];
         return { ...saved };
       }
-      case 'update_level_milestone': {
+      case 'update_character_level': {
         const existing = levels.find(level => level.id === args.id);
         if (!existing) return null;
 
@@ -395,7 +395,7 @@ beforeEach(() => {
           stat_changes: (args.statChanges ?? []).map(
             (change: { stat_name: string; amount: number | null; value_after: number | null }, at: number) => ({
               id: `change-updated-${at + 1}`,
-              milestone_id: existing.id,
+              level_record_id: existing.id,
               stat_name: change.stat_name,
               amount: change.amount,
               value_after: change.value_after,
@@ -407,7 +407,7 @@ beforeEach(() => {
         levels = levels.map(level => (level.id === updated.id ? updated : level));
         return { ...updated };
       }
-      case 'delete_level_milestone':
+      case 'delete_character_level':
         levels = levels.filter(level => level.id !== args.id);
         return null;
       case 'set_character_stat': {
@@ -462,7 +462,7 @@ beforeEach(() => {
           kind: args.kind,
           chapter_id: args.chapterId ?? null,
           rank: args.kind === 'sacrificed' ? null : (args.rank ?? null),
-          milestone_id: args.milestoneId ?? null,
+          level_record_id: args.levelRecordId ?? null,
           created_at: '2026-10-22T12:00:00Z',
           updated_at: '2026-10-22T12:00:00Z',
         };
@@ -478,7 +478,7 @@ beforeEach(() => {
           kind: args.kind,
           chapter_id: args.chapterId ?? null,
           rank: args.kind === 'sacrificed' ? null : (args.rank ?? null),
-          milestone_id: args.milestoneId ?? null,
+          level_record_id: args.levelRecordId ?? null,
         };
         events = events.map(event => (event.id === updated.id ? updated : event));
         return { ...updated };
@@ -956,7 +956,7 @@ describe('progression warnings open the entry to edit', () => {
     );
 
     await waitFor(() =>
-      expect(lastCall('update_level_milestone')).toMatchObject({
+      expect(lastCall('update_character_level')).toMatchObject({
         id: 'milestone-2',
         level: 4,
         chapterId: 'n2',
@@ -975,7 +975,7 @@ describe('progression warnings open the entry to edit', () => {
     );
 
     await waitFor(() =>
-      expect(lastCall('update_level_milestone')).toMatchObject({
+      expect(lastCall('update_character_level')).toMatchObject({
         id: 'milestone-2',
         xp: 1800,
       })
@@ -1067,7 +1067,7 @@ describe('progression warnings open the entry to edit', () => {
     );
 
     await waitFor(() =>
-      expect(lastCall('update_level_milestone')).toMatchObject({
+      expect(lastCall('update_character_level')).toMatchObject({
         id: 'milestone-2',
         xp: 2100,
         statChanges: [{ stat_name: 'Strength', amount: 2, value_after: 12 }],
@@ -1227,7 +1227,7 @@ describe('level milestones and skill events on the sheet', () => {
     expect(lastCall('add_skill_event')).toMatchObject({
       skillId: 'skill-1',
       kind: 'upgraded',
-      milestoneId: 'milestone-1',
+      levelRecordId: 'milestone-1',
       rank: 'Rank 2',
       user: 'You',
     });
@@ -1250,7 +1250,7 @@ describe('level milestones and skill events on the sheet', () => {
 
     expect(lastCall('update_skill_event')).toMatchObject({
       id: 'event-2',
-      milestoneId: null,
+      levelRecordId: null,
       user: 'You',
     });
     expect(

@@ -39,7 +39,7 @@ fn main() {
     let user = USER.to_string();
 
     // The prepared demo story, complete: the cast and the three chapters, the
-    // skills with their history, the level milestones, the deliberate 100 XP gap
+    // skills with their history, the levels, the deliberate 100 XP gap
     // in Mira's ledger that the continuity panel is meant to find, and the cards,
     // connections, quests, loot, notes and trash the guide's pictures show.
     let story = db
@@ -83,8 +83,8 @@ fn main() {
     );
     put(
         &mut root,
-        "story_level_milestones",
-        &db.list_story_level_milestones(&story_id).unwrap(),
+        "story_levels",
+        &db.list_story_levels(&story_id).unwrap(),
     );
     put(
         &mut root,
