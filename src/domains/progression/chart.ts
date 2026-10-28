@@ -4,7 +4,10 @@ import type {
   CharacterLevelMilestone,
   CharacterProgress,
   CharacterStat,
+  LevelGrowthRule,
 } from '../shared/types';
+import { levelCrossingsFor } from './crossings';
+import { effectiveGrowthRule } from './growth';
 import { milestoneStatChanges } from './helpers';
 import type { ProgressionChartSeries, ProgressionMetric } from './types';
 
@@ -26,14 +29,16 @@ export const PROGRESSION_CHART_COLORS = [
   '#ff9e64',
 ];
 
-// The chart reads the same story-wide milestone rows the continuity checks use.
-// Only chapters that are on the board can place a point, so a milestone whose
-// chapter is in the trash is left out rather than guessed at.
+// The chart reads the same story-wide rows the continuity checks use. Only
+// chapters that are on the board can place a point, so a row whose chapter is in
+// the trash is left out rather than guessed at. The levels themselves come from
+// the curve's crossings, worked out from the ledger and the story's rule.
 export function chartSeriesFor(
   characters: Character[],
   milestones: CharacterLevelMilestone[],
   progress: CharacterProgress[],
-  chapterNodes: ChapterNode[]
+  chapterNodes: ChapterNode[],
+  rules: LevelGrowthRule[]
 ): ProgressionChartSeries[] {
   const chapterIds = new Set(chapterNodes.map(chapter => chapter.id));
 
@@ -42,6 +47,15 @@ export function chartSeriesFor(
       characterId: character.id,
       name: character.name,
       color: PROGRESSION_CHART_COLORS[index % PROGRESSION_CHART_COLORS.length],
+      crossings: levelCrossingsFor(
+        character.id,
+        progress,
+        milestones,
+        effectiveGrowthRule(rules, character.id),
+        chapterNodes
+      ).filter(
+        crossing => crossing.chapterId !== null && chapterIds.has(crossing.chapterId)
+      ),
       milestones: milestones.filter(
         milestone =>
           milestone.character_id === character.id &&
@@ -55,7 +69,12 @@ export function chartSeriesFor(
           chapterIds.has(entry.chapter_id)
       ),
     }))
-    .filter(series => series.milestones.length > 0 || series.progress.length > 0);
+    .filter(
+      series =>
+        series.crossings.length > 0 ||
+        series.milestones.length > 0 ||
+        series.progress.length > 0
+    );
 }
 
 // A primary-stat line needs a name that either sits on a sheet now or was
@@ -89,12 +108,15 @@ export function metricSeriesFor(
 ): ProgressionChartSeries[] {
   const withMilestones = series.filter(entry => entry.milestones.length > 0);
 
-  if (metric === 'level') return withMilestones;
+  // A level and a total XP point are the curve's, not a row's, so a character a
+  // hand-written level was recorded for still has a line only where the ledger
+  // actually carried them.
+  if (metric === 'level') {
+    return series.filter(entry => entry.crossings.length > 0);
+  }
 
   if (metric === 'xp') {
-    return withMilestones.filter(entry =>
-      entry.milestones.some(milestone => milestone.xp != null)
-    );
+    return series.filter(entry => entry.crossings.length > 0);
   }
 
   if (metric === 'earned') {

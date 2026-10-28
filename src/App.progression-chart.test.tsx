@@ -588,8 +588,10 @@ describe('per-character progression chart', () => {
 
     const rook = [...container.querySelectorAll('[data-series="char-1"] .progression-chart-marker')];
     const wren = [...container.querySelectorAll('[data-series="char-2"] .progression-chart-marker')];
-    expect(rook.map(marker => marker.getAttribute('data-value'))).toEqual(['100', '900']);
-    expect(wren.map(marker => marker.getAttribute('data-value'))).toEqual(['50', '700']);
+    // The total plotted is the step the rule puts that level on, not the number
+    // a hand-written row happened to record.
+    expect(rook.map(marker => marker.getAttribute('data-value'))).toEqual(['200', '400']);
+    expect(wren.map(marker => marker.getAttribute('data-value'))).toEqual(['100', '300']);
     expect(rook.map(marker => marker.getAttribute('data-level'))).toEqual(['3', '5']);
   });
 
@@ -672,13 +674,14 @@ describe('per-character progression chart', () => {
     ).toBeInTheDocument();
   });
 
-  it('says what is missing when no character has a level milestone', async () => {
+  it('says what is missing when no character has a level', async () => {
     levels = [];
+    progress = [];
     const { container } = await openCharacters();
 
     expect(
       await screen.findByText(
-        "No level milestones yet — record one on a character's sheet."
+        "No progression recorded yet — add a level milestone or XP earned on a character's sheet."
       )
     ).toBeInTheDocument();
     expect(container.querySelector('svg[role="img"]')).toBeNull();

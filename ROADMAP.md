@@ -473,10 +473,42 @@ every write that can move a level — income, an award, a rule — reads the cas
 the timeline and the sheet's stats back in the same step rather than waiting for
 the tab to be opened again. Purging a chapter keeps the
 experience it paid for and clears the chapter, so tidying the board cannot de-level
-anybody. Remaining, and next: port the readers that still treat the timeline as the
-source — the point-in-time sheet, the chart, the ledger reconciliation warning and
-the skill event link — to read the curve's crossings, then drop the milestone table
-and the commands that write it. **M**
+anybody.
+
+**13c. The curve's crossings.** **Started.** `src/domains/progression/crossings.ts`
+works out where the curve was crossed — one level per step, in the chapter whose
+income carried the total over it — from the ledger and the effective growth rule,
+and every reader that needs a level now reads it there. The chart's level and XP
+lines plot the crossings (the XP line plots what the rule says a level costs, not
+what a hand-written row says it cost); the warning about a level-up's total
+compares the row against the curve's step for that level, and its one-click fix
+writes the rule's number; the chapter snapshot's level is the curve's. A row the
+author recorded keeps its chapter, because that placement is the story's, and a
+level recorded above the ledger's reach still stands as a floor. The demo's own
+timeline was reseeded to cross the rule's steps, so the clean demo now records the
+rule's +1 Strength and +1 Insight on every level instead of a hand-typed set that
+contradicted its System. Remaining, and next: `character_state_at_chapter` still
+picks its level from the last row at or before the chapter rather than from the
+income paid by then, the skill-event picker still lists every row instead of the
+levels reached, and the milestone table is still where a level's stat gains live.
+Porting those three is what has to happen before the table can be dropped. **M**
+
+**13d. Points a level hands out.** **Next.** The rule's `points_per_level` is
+described on the sheet and never spent: nothing counts the points a character has
+earned, nothing records where they went, and the author is left to edit a stat by
+hand and remember the arithmetic. A growth-point ledger (`character_growth_points`,
+written by the same transaction that posts a level, read by the sheet) would put a
+"3 points to place" tally under the progression bar, a **Place point** control on
+each stat row, and one audited, undoable step per point; a rule change that reaches
+back over levels would add or retire points rather than silently changing what a
+character was owed. **M**
+
+**13e. The sheet's stats where the levels are.** **Next.** The stats a level moves
+live far below the progression header, so an author who just watched a level land
+has to scroll to see what it handed out. The stat rows belong directly under the
+progression bar, with the rule's per-level rates named on each (`Strength +1 a
+level`), and the rule's own gains shown as a row of their own so the timeline and
+the sheet read as one sentence. **S**
 
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
 Chapters tab currently flags chapter timing and duplication, a cast member intwo chapters on one day, an item still carried after its recorded loss or lost before

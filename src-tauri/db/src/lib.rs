@@ -734,6 +734,9 @@ impl Db {
             user.clone(),
         )?;
 
+        // The sheets hold what the rule's own gains add up to, so no stat is a
+        // number the timeline has to explain. Rook stands on 18 Strength and 12
+        // Insight after three levels at +1 each; Mira on 9 and 16 after two.
         for (character_id, stat_name, value) in [
             (&rook.id, "Strength", 18),
             (&rook.id, "Agility", 14),
@@ -857,60 +860,51 @@ impl Db {
         // carries every stat it changed. The skill upgrade is grouped with the
         // level-up it came with.
         //
-        // The demo's two sheets are the authority on its numbers: every stat a
-        // character holds is recorded by a level-up, and the last value recorded
-        // for it is the one on the sheet today. A snapshot that disagreed with
-        // the sheet would be a continuity problem the demo invented rather than
-        // the one it deliberately ships with.
+        // Each row states the total the rule puts its level at, and hands out the
+        // rule's own gains: +1 Strength and +1 Insight for every level. A row that
+        // recorded some other number would be the timeline arguing with the System
+        // it belongs to, which is the disagreement the continuity check exists to
+        // name.
+        //
+        // Mira's third level is the demo's one deliberate disagreement: her ledger
+        // pays 1,400 XP into that level and the row says 1,500, so the panel has a
+        // real total to settle instead of a demo that only ever agrees with itself.
         for (character, level, xp, changes, chapter) in [
             (
                 &rook,
                 2,
-                600,
-                vec![
-                    stat_gain("Strength", 2, 15),
-                    stat_gain("Agility", 1, 12),
-                    stat_gain("Insight", 1, 10),
-                ],
-                &first,
+                700,
+                vec![stat_gain("Strength", 1, 16), stat_gain("Insight", 1, 10)],
+                &second,
             ),
             (
                 &rook,
                 3,
-                1500,
-                vec![stat_gain("Strength", 1, 16), stat_gain("Insight", 1, 11)],
+                1400,
+                vec![stat_gain("Strength", 1, 17), stat_gain("Insight", 1, 11)],
                 &second,
             ),
             (
                 &rook,
                 4,
-                2400,
-                vec![
-                    stat_gain("Strength", 2, 18),
-                    stat_gain("Agility", 2, 14),
-                    stat_gain("Insight", 1, 12),
-                ],
+                2100,
+                vec![stat_gain("Strength", 1, 18), stat_gain("Insight", 1, 12)],
                 &third,
             ),
             (
                 &mira,
-                1,
-                200,
-                vec![
-                    stat_gain("Agility", 2, 13),
-                    stat_gain("Insight", 1, 15),
-                    stat_gain("Strength", 1, 9),
-                ],
-                &first,
+                2,
+                700,
+                vec![stat_gain("Strength", 1, 8), stat_gain("Insight", 1, 15)],
+                &second,
             ),
             (
                 &mira,
-                2,
-                800,
-                vec![stat_gain("Agility", 2, 15), stat_gain("Insight", 1, 16)],
-                &second,
+                3,
+                1500,
+                vec![stat_gain("Strength", 1, 9), stat_gain("Insight", 1, 16)],
+                &third,
             ),
-            (&mira, 3, 1500, vec![stat_gain("Agility", 2, 17)], &third),
         ] {
             let milestone = self.add_level_milestone_with_changes(
                 character.id.clone(),
@@ -16832,8 +16826,11 @@ mod tests {
         assert_eq!(chapters[2].chapter_pov.as_deref(), Some(rook.id.as_str()));
         assert_eq!(chapters[2].chapter_arc.as_deref(), Some("Confrontation"));
 
+        // Three levels for Rook and two for Mira, each recorded at the step the
+        // story's rule puts it on; the only row that disagrees with the rule is
+        // Mira's last one, which is the demo's deliberate gap.
         let milestones = db.list_story_level_milestones(&story.id).unwrap();
-        assert_eq!(milestones.len(), 6);
+        assert_eq!(milestones.len(), 5);
         let mira_total = milestones
             .iter()
             .find(|milestone| {
@@ -16852,13 +16849,23 @@ mod tests {
             })
             .expect("Rook's last level is recorded");
         assert_eq!(rook_last.level, 4);
-        assert_eq!(rook_last.stat_changes.len(), 3);
+        assert_eq!(
+            rook_last.stat_changes.len(),
+            2,
+            "the rule hands out two stats a level"
+        );
         assert!(rook_last
             .stat_changes
             .iter()
-            .any(|change| change.stat_name == "Agility"
-                && change.amount == Some(2)
-                && change.value_after == Some(14)));
+            .any(|change| change.stat_name == "Strength"
+                && change.amount == Some(1)
+                && change.value_after == Some(18)));
+        assert!(rook_last
+            .stat_changes
+            .iter()
+            .any(|change| change.stat_name == "Insight"
+                && change.amount == Some(1)
+                && change.value_after == Some(12)));
 
         // The demo's readings agree with its sheets: every stat a character
         // holds was recorded by a level-up, the last value recorded is the one
@@ -16882,6 +16889,12 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!("{} has no recorded {}", character.name, stat.stat_name)
                     });
+
+                // A stat the rule never raises is listed as unrecorded rather
+                // than guessed at, so it has nothing to disagree with.
+                if recorded.value.is_none() {
+                    continue;
+                }
 
                 assert_eq!(
                     recorded.value,
@@ -17003,7 +17016,7 @@ mod tests {
             .sum();
         assert_eq!(mira_income, 1400, "the intentional XP gap is back");
 
-        assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 5);
         assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 7);

@@ -156,6 +156,7 @@ const board: ProgressionChartOptions = {
   progress,
   chapterNodes: [gate, vault, unwritten],
   castStats,
+  growthRules: [],
   active: true,
   storyId: 'story-1',
   skillEvents: [],
@@ -223,12 +224,21 @@ describe('choosing what to plot', () => {
     ]);
   });
 
-  it('plots only the lines with a recorded XP when XP is chosen', () => {
+  it('plots the levels the ledger reached when XP is chosen', () => {
     const { result } = setup();
 
     act(() => result.current.setChartMetric('xp'));
 
-    expect(result.current.chartMetricSeries.map(line => line.characterId)).toEqual(['ch-1']);
+    // Both characters have a level, so both have a point on the XP line; the
+    // number plotted is the rule's step, not the total a row happens to hold.
+    expect(result.current.chartMetricSeries.map(line => line.characterId)).toEqual([
+      'ch-1',
+      'ch-2',
+    ]);
+    expect(result.current.chartMetricSeries[0].milestones.map(row => row.xp)).toEqual([
+      100,
+      200,
+    ]);
   });
 
   it('plots the income ledger when earned XP is chosen', () => {

@@ -7,9 +7,11 @@ import type {
   CharacterLevelMilestone,
   CharacterProgress,
   CharacterStat,
+  LevelGrowthRule,
 } from '../shared/types';
 import * as progressionApi from './api';
 import { chartSeriesFor, metricSeriesFor, statNamesFrom } from './chart';
+import { crossingMilestones } from './crossings';
 import type { ProgressionMetric } from './types';
 
 // The progression chart's own state: which metric its lines are read in, which
@@ -30,6 +32,9 @@ export interface ProgressionChartOptions {
   chapterNodes: ChapterNode[];
   // The stats the sheets hold now, which is where a stat line gets its names.
   castStats: Record<string, CharacterStat[]>;
+  // The story's rules, so a level line is drawn on the step the story levels on
+  // rather than on whatever a row happens to say.
+  growthRules: LevelGrowthRule[];
   // The sheet is on screen. While another tab is showing, the readout has no
   // reader, so nothing is asked of the database and what was read is dropped.
   active: boolean;
@@ -46,6 +51,7 @@ export function useProgressionChart({
   progress,
   chapterNodes,
   castStats,
+  growthRules,
   active,
   storyId,
   skillEvents,
@@ -77,19 +83,30 @@ export function useProgressionChart({
   }, [chartMetric, statNameOptions]);
 
   const chartSeries = useMemo(
-    () => chartSeriesFor(characters, milestones, progress, chapterNodes),
-    [characters, milestones, progress, chapterNodes]
+    () => chartSeriesFor(characters, milestones, progress, chapterNodes, growthRules),
+    [characters, milestones, progress, chapterNodes, growthRules]
   );
 
   const chartMilestoneSeries = useMemo(
-    () => chartSeries.filter(series => series.milestones.length > 0),
+    () =>
+      chartSeries.filter(
+        series => series.crossings.length > 0 || series.milestones.length > 0
+      ),
     [chartSeries]
   );
 
-  const chartMetricSeries = useMemo(
-    () => metricSeriesFor(chartSeries, chartMetric, chartStatName),
-    [chartSeries, chartMetric, chartStatName]
-  );
+  // A level or XP line is drawn at the curve's crossings; a stat line still needs
+  // the recorded snapshot, which only a row has.
+  const chartMetricSeries = useMemo(() => {
+    const series = metricSeriesFor(chartSeries, chartMetric, chartStatName);
+
+    if (chartMetric === 'stat' || chartMetric === 'earned') return series;
+
+    return series.map(entry => ({
+      ...entry,
+      milestones: crossingMilestones(entry.characterId, entry.crossings),
+    }));
+  }, [chartSeries, chartMetric, chartStatName]);
 
   const visibleComparisonSeries = useMemo(
     () => chartMilestoneSeries.filter(series => !hiddenChartCharacterIds.includes(series.characterId)),

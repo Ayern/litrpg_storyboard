@@ -203,7 +203,8 @@ beforeEach(() => {
       level: 3,
       chapter_id: 'n1',
       is_debuff: false,
-      xp: 900,
+      // The rule below puts level 3 at 1,400 XP.
+      xp: 1400,
       stat_changes: [
         {
           id: 'change-1',
@@ -224,7 +225,7 @@ beforeEach(() => {
       level: 4,
       chapter_id: 'n2',
       is_debuff: false,
-      xp: 2400,
+      xp: 2100,
       stat_changes: [
         {
           id: 'change-2',
@@ -322,6 +323,24 @@ beforeEach(() => {
           .map(skill => ({ ...skill }));
       case 'get_story_level_milestones':
         return levels.map(level => ({ ...level }));
+      case 'get_story_level_growth_rules':
+        return [
+          {
+            id: 'rule-1',
+            story_id: story.id,
+            character_id: null,
+            points_per_level: 3,
+            xp_base: 700,
+            xp_growth: 0,
+            stats: [
+              { id: 'rate-1', rule_id: 'rule-1', stat_name: 'Strength', per_level: 1 },
+              { id: 'rate-2', rule_id: 'rule-1', stat_name: 'Insight', per_level: 1 },
+            ],
+            created_by: 'Ada',
+            created_at: '2026-10-22T12:00:00Z',
+            updated_at: '2026-10-22T12:00:00Z',
+          },
+        ];
       case 'get_story_character_progress':
         return progress.map(entry => ({ ...entry }));
       case 'get_character_progress':
@@ -537,38 +556,38 @@ describe('level and skill continuity', () => {
     expect(continuityText(continuityPanel())).not.toContain('level goes back');
   });
 
-  it('accepts XP income that adds up to each total milestone', async () => {
+  it('accepts a level recorded at the step the rule puts it on', async () => {
     await openChapters();
 
-    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
+    expect(continuityText(continuityPanel())).not.toContain("story's rule puts level");
   });
 
-  it('flags XP income that does not add up to a total milestone', async () => {
-    progress[1].xp_earned = 1200;
+  it('flags a level recorded below the step the rule puts it on', async () => {
+    levels[1].xp = 1800;
 
     await openChapters();
 
     expect(continuityText(continuityPanel())).toContain(
-      "Rook's XP earned through “Chapter Two” adds up to 2,100 XP, but the total XP milestone there records 2,400 XP (300 short)."
+      "Rook's level 4 is recorded at 1,800 XP in “Chapter Two”, but this story's rule puts level 4 at 2,100 XP."
     );
   });
 
-  it('flags income over the recorded total as well', async () => {
-    progress[1].xp_earned = 1700;
+  it('flags a level recorded above the step as well', async () => {
+    levels[1].xp = 2500;
 
     await openChapters();
 
     expect(continuityText(continuityPanel())).toContain(
-      "Rook's XP earned through “Chapter Two” adds up to 2,600 XP, but the total XP milestone there records 2,400 XP (200 over)."
+      "Rook's level 4 is recorded at 2,500 XP in “Chapter Two”, but this story's rule puts level 4 at 2,100 XP."
     );
   });
 
-  it('leaves totals alone until a character has an income row', async () => {
-    progress = [];
+  it('leaves a level with no recorded total alone', async () => {
+    levels[1].xp = null;
 
     await openChapters();
 
-    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
+    expect(continuityText(continuityPanel())).not.toContain("story's rule puts level");
   });
 
   it('flags a skill used before it was learned', async () => {
@@ -912,12 +931,12 @@ describe('a sheet against the values its level-ups recorded', () => {
 
 describe('progression warnings open the entry to edit', () => {
   it('opens the total-XP milestone from a reconciliation warning', async () => {
-    progress[1].xp_earned = 1200;
+    levels[1].xp = 1800;
 
     const user = await openChapters();
     const panel = continuityPanel();
 
-    expect(continuityText(panel)).toContain('XP earned through');
+    expect(continuityText(panel)).toContain("story's rule puts level 4");
 
     await user.click(within(panel).getByRole('button', { name: 'Rook' }));
 
@@ -927,8 +946,8 @@ describe('progression warnings open the entry to edit', () => {
     ).toHaveClass('progression-row-focused');
   });
 
-  it('records the ledger total on the milestone in one click', async () => {
-    progress[1].xp_earned = 1200;
+  it('records the curve’s step on the milestone in one click', async () => {
+    levels[1].xp = 1800;
 
     const user = await openChapters();
 
@@ -948,7 +967,7 @@ describe('progression warnings open the entry to edit', () => {
       })
     );
 
-    expect(continuityText(continuityPanel())).not.toContain('XP earned through');
+    expect(continuityText(continuityPanel())).not.toContain("story's rule puts level");
     expect(screen.getByText("Synced Rook's total to 2,100 XP.")).toBeInTheDocument();
 
     await user.click(
@@ -958,14 +977,16 @@ describe('progression warnings open the entry to edit', () => {
     await waitFor(() =>
       expect(lastCall('update_level_milestone')).toMatchObject({
         id: 'milestone-2',
-        xp: 2400,
+        xp: 1800,
       })
     );
-    expect(continuityText(continuityPanel())).toContain('XP earned through');
+    expect(continuityText(continuityPanel())).toContain("story's rule puts level 4");
   });
 
   it('opens the level milestone from the continuity panel', async () => {
     levels[1].level = 2;
+    // One warning on the panel, so the link it offers is the one that is meant.
+    levels[1].xp = null;
 
     const user = await openChapters();
     const panel = continuityPanel();
@@ -1017,7 +1038,7 @@ describe('progression warnings open the entry to edit', () => {
   });
 
   it('shows the reconciliation warning on the chapter card', async () => {
-    progress[1].xp_earned = 1200;
+    levels[1].xp = 1800;
 
     await openGraph();
     const card = (
@@ -1026,12 +1047,12 @@ describe('progression warnings open the entry to edit', () => {
 
     expect(card).not.toBeNull();
     expect(card?.querySelector('.graph-node-continuity')).toHaveTextContent(
-      "Rook's XP income is 2,100 XP, milestone says 2,400"
+      "Rook's level 4 is recorded at 1,800 XP, the rule says 2,100"
     );
   });
 
-  it('syncs the ledger total from the chapter card', async () => {
-    progress[1].xp_earned = 1200;
+  it('syncs the curve’s step from the chapter card', async () => {
+    levels[1].xp = 1800;
 
     const user = await openGraph();
     const card = (

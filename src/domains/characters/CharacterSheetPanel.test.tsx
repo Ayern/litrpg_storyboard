@@ -27,6 +27,7 @@ function series(name: string): ProgressionChartSeries {
     name,
     color: '#8b5cf6',
     milestones: [],
+    crossings: [],
     progress: [],
   };
 }
@@ -124,7 +125,7 @@ describe('the power curve empty states', () => {
 
     expect(
       screen.getByText(
-        "No level milestones yet — record one on a character's sheet."
+        "No levels yet — record XP on a character's sheet."
       )
     ).toBeInTheDocument();
 
@@ -132,9 +133,7 @@ describe('the power curve empty states', () => {
       <CharacterSheetPanel {...baseProps(oneChapter, { chartMetric: 'xp', ...recorded })} />
     );
     expect(
-      screen.getByText(
-        "No XP recorded on a level milestone yet — add total XP on a character's sheet."
-      )
+      screen.getByText("No levels yet — record XP on a character's sheet.")
     ).toBeInTheDocument();
 
     rerender(

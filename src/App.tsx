@@ -72,6 +72,7 @@ import { useSkillHolderForm } from './domains/canvas/useSkillHolderForm';
 import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
+import { crossingsByCharacter } from './domains/progression/crossings';
 import { milestoneStatChanges } from './domains/progression/helpers';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
@@ -2316,81 +2317,61 @@ function App() {
       }
     });
 
-    // A total-XP milestone is a running total, while the ledger records income.
-    // Sum each character's income through a milestone's chapter and compare the
-    // two; the last snapshot in a chapter is the one that counts. A character
-    // with no income rows has not started a ledger, so older stories that only
-    // used totals are left alone rather than warned about on every chapter.
-    const incomeByCharacter = new Map<string, Map<string, number>>();
+    // The rule is what a level costs. A level the author recorded by hand states
+    // a total, and that total was written against whatever the rule said then, so
+    // where the two disagree it is the row that is out of step, not the ledger:
+    // the ledger is what buys the level. The fix puts the curve's number on the
+    // row, which is the one place a total is still typed.
+    const crossingsByCast = crossingsByCharacter(
+      characters,
+      storyCharacterProgress,
+      storyLevelMilestones,
+      storyGrowthRules,
+      chapterNodes
+    );
 
-    for (const entry of storyCharacterProgress) {
-      // An income row whose chapter was purged has no place in reading order, so
-      // there is no chapter to reconcile it against.
-      if (!entry.chapter_id || !chapterById.has(entry.chapter_id)) continue;
+    for (const character of characters) {
+      const owner = castNames.get(character.id) ?? 'A cast member';
+      const crossings = crossingsByCast[character.id] ?? [];
 
-      const byChapter = incomeByCharacter.get(entry.character_id) ?? new Map<string, number>();
-      byChapter.set(
-        entry.chapter_id,
-        (byChapter.get(entry.chapter_id) ?? 0) + entry.xp_earned
-      );
-      incomeByCharacter.set(entry.character_id, byChapter);
-    }
+      for (const milestone of storyLevelMilestones) {
+        if (milestone.character_id !== character.id) continue;
+        if (milestone.xp == null) continue;
 
-    milestonesByCharacter.forEach((milestones, characterId) => {
-      const income = incomeByCharacter.get(characterId);
-      if (!income || income.size === 0) return;
+        const crossing = crossings.find(entry => entry.level === milestone.level);
+        if (!crossing || crossing.xp === milestone.xp) continue;
 
-      const owner = castNames.get(characterId) ?? 'A cast member';
-      const totalsByChapter = new Map<string, CharacterLevelMilestone>();
+        const chapterId = milestone.chapter_id ?? crossing.chapterId;
+        const chapter = chapterId ? chapterById.get(chapterId) : undefined;
+        if (!chapter) continue;
 
-      for (const milestone of [...milestones].sort(
-        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
-      )) {
-        if (milestone.xp != null) {
-          totalsByChapter.set(milestone.chapter_id as string, milestone);
-        }
-      }
-
-      if (totalsByChapter.size === 0) return;
-
-      let earned = 0;
-
-      for (const chapter of chapterNodes) {
-        earned += income.get(chapter.id) ?? 0;
-
-        const milestone = totalsByChapter.get(chapter.id);
-        if (!milestone) continue;
-
-        const recorded = milestone.xp as number;
-        if (earned === recorded) continue;
-
+        const recorded = milestone.xp;
         const target: ProgressionTarget = { kind: 'level', milestoneId: milestone.id };
-        const difference = Math.abs(recorded - earned);
         const parts: ContinuityPart[] = [
-          characterLink(characterId, owner, target),
-          `'s XP earned through `,
+          characterLink(character.id, owner, target),
+          `'s level ${milestone.level} is recorded at ${formatCount(recorded)} XP in `,
           chapterLink(chapter.id, chapter.data.label, true),
-          ` adds up to ${formatCount(earned)} XP, but the total XP milestone there records ${formatCount(
-            recorded
-          )} XP (${formatCount(difference)} ${earned < recorded ? 'short' : 'over'}).`,
+          `, but this story's rule puts level ${milestone.level} at ${formatCount(
+            crossing.xp
+          )} XP.`,
         ];
 
         flags.push({
           id: `xp-income-${milestone.id}`,
           kind: 'xp-income-mismatch',
           chapterId: chapter.id,
-          characterId,
+          characterId: character.id,
           characterName: owner,
-          ledgerXp: earned,
-          summary: `${owner}'s XP income is ${formatCount(
-            earned
-          )} XP, milestone says ${formatCount(recorded)}`,
+          ledgerXp: crossing.xp,
+          summary: `${owner}'s level ${milestone.level} is recorded at ${formatCount(
+            recorded
+          )} XP, the rule says ${formatCount(crossing.xp)}`,
           detail: continuityText(parts),
           parts,
           target,
         });
       }
-    });
+    }
 
     // A level-up records the value a stat reached. That snapshot is the number
     // the story says the sheet had, so a sheet that reads differently has
@@ -3090,8 +3071,10 @@ function App() {
   }, [
     chapterNodes,
     castNames,
+    characters,
     storyLevelMilestones,
     storyCharacterProgress,
+    storyGrowthRules,
     storySkillEvents,
     storySkills,
     storySkillEvolutions,
@@ -7564,6 +7547,7 @@ function App() {
     progress: storyCharacterProgress,
     chapterNodes,
     castStats,
+    growthRules: storyGrowthRules,
     active: selectedTab === 'characters',
     storyId: currentStory?.id ?? null,
     skillEvents: storySkillEvents,

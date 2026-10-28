@@ -254,9 +254,9 @@ export function CharacterSheetPanel({
             ) : chartMetricSeries.length === 0 ? (
               <div className="empty">
                 {chartMetric === 'level'
-                  ? 'No level milestones yet — record one on a character\'s sheet.'
+                  ? 'No levels yet — record XP on a character\'s sheet.'
                   : chartMetric === 'xp'
-                    ? 'No XP recorded on a level milestone yet — add total XP on a character\'s sheet.'
+                    ? 'No levels yet — record XP on a character\'s sheet.'
                     : chartMetric === 'earned'
                       ? 'No XP earned by chapter yet — record it on a character\'s sheet.'
                       : chartStatName
