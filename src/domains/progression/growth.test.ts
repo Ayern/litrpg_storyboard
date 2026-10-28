@@ -10,6 +10,10 @@ import {
   effectiveGrowthRule,
   growthRateText,
   growthStatRows,
+  levelForXp,
+  levelXpCost,
+  levelXpThreshold,
+  xpStepText,
   levelFromMilestones,
   nextLevelFromMilestones,
   storyGrowthRule,
@@ -39,6 +43,8 @@ function rule(
     story_id: 'story-1',
     character_id: characterId,
     points_per_level: points,
+    xp_base: 100,
+    xp_growth: 0,
     stats,
     created_by: 'Ada',
     created_at: stamp(0),
@@ -136,17 +142,48 @@ describe('the rows a level-up opens with', () => {
 });
 
 describe('the sentence a rule reads as', () => {
-  it('names the points and the rates', () => {
-    expect(growthRateText(story)).toBe('3 points to place per level · Strength +1');
+  it('names the cost, the points and the rates', () => {
+    expect(growthRateText(story)).toBe(
+      '100 XP a level · 3 points to place per level · Strength +1'
+    );
   });
 
   it('says one point, not one points', () => {
-    expect(growthRateText(override)).toBe('1 point to place per level');
+    expect(growthRateText(override)).toBe('100 XP a level · 1 point to place per level');
   });
 
   it('is explicit about a rule that hands out nothing', () => {
-    expect(growthRateText(rule('rule-empty', null, 0))).toBe('no points to place');
+    expect(growthRateText(rule('rule-empty', null, 0))).toBe(
+      '100 XP a level · no points to place'
+    );
     expect(growthRateText(null)).toBe('No growth rule set');
+  });
+
+  it('says when each level costs more than the last', () => {
+    const climbing = { ...story, xp_base: 500, xp_growth: 50 };
+
+    expect(xpStepText(climbing)).toBe('500 XP, 50% more each level');
+  });
+});
+
+describe('the ladder a rule builds', () => {
+  it('charges the same for every level when nothing grows', () => {
+    expect(levelXpCost(100, 0, 2)).toBe(100);
+    expect(levelXpCost(100, 0, 9)).toBe(100);
+    expect(levelXpThreshold(100, 0, 4)).toBe(300);
+  });
+
+  it('charges more for each level when the rule grows', () => {
+    expect(levelXpCost(100, 50, 3)).toBe(150);
+    expect(levelXpThreshold(100, 50, 4)).toBe(450);
+  });
+
+  it('turns a total into the level it buys', () => {
+    expect(levelForXp(100, 0, 0)).toBe(1);
+    expect(levelForXp(100, 0, 99)).toBe(1);
+    expect(levelForXp(100, 0, 100)).toBe(2);
+    expect(levelForXp(100, 0, 250)).toBe(3);
+    expect(levelForXp(700, 0, 2400)).toBe(4);
   });
 });
 

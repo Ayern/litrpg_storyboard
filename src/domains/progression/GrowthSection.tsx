@@ -4,13 +4,17 @@ import type { LevelGrowthRule } from '../shared/types';
 import { growthRateText } from './growth';
 import type { GrowthRateDraft } from './types';
 
-// What a level hands out, read as two rows: the story's rule and this
+// What a level costs and hands out, read as two rows: the story's rule and this
 // character's. The story's is the System everyone follows; an override is the
 // exception it makes for one person, and removing it puts them back on the
 // story's rule.
 //
-// The form holds typed text, not numbers: a half-typed points field survives a
-// render, and the app is the one that refuses a number it cannot use.
+// This is where the ladder is set. Experience recorded on a chapter crosses these
+// steps on its own, so the sheet never asks for a level: change the cost here and
+// the whole cast re-levels against it.
+//
+// The form holds typed text, not numbers: a half-typed field survives a render,
+// and the app is the one that refuses a number it cannot use.
 
 export type GrowthScope = 'story' | 'character';
 
@@ -19,16 +23,26 @@ export interface GrowthSectionProps {
   characterRule: LevelGrowthRule | null;
   // The stat names an automatic rate can name: every stat on a sheet.
   statNameOptions: string[];
-  onSave: (scope: GrowthScope, pointsPerLevel: string, rates: GrowthRateDraft[]) => Promise<boolean>;
+  onSave: (
+    scope: GrowthScope,
+    pointsPerLevel: string,
+    xpBase: string,
+    xpGrowth: string,
+    rates: GrowthRateDraft[]
+  ) => Promise<boolean>;
   onDelete: (rule: LevelGrowthRule) => Promise<void>;
 }
 
 function draftsFromRule(rule: LevelGrowthRule | null): {
   points: string;
+  base: string;
+  growth: string;
   rates: GrowthRateDraft[];
 } {
   return {
     points: rule ? String(rule.points_per_level) : '0',
+    base: rule ? String(rule.xp_base) : '100',
+    growth: rule ? String(rule.xp_growth) : '0',
     rates:
       rule?.stats.map(rate => ({
         statName: rate.stat_name,
@@ -46,6 +60,8 @@ export function GrowthSection({
 }: GrowthSectionProps) {
   const [editing, setEditing] = useState<GrowthScope | null>(null);
   const [pointsDraft, setPointsDraft] = useState('0');
+  const [baseDraft, setBaseDraft] = useState('100');
+  const [growthDraft, setGrowthDraft] = useState('0');
   const [rateDrafts, setRateDrafts] = useState<GrowthRateDraft[]>([]);
 
   const startEdit = (scope: GrowthScope) => {
@@ -53,12 +69,16 @@ export function GrowthSection({
     const drafts = draftsFromRule(rule);
 
     setPointsDraft(drafts.points);
+    setBaseDraft(drafts.base);
+    setGrowthDraft(drafts.growth);
     setRateDrafts(drafts.rates);
     setEditing(scope);
   };
 
   const save = async (scope: GrowthScope) => {
-    if (await onSave(scope, pointsDraft, rateDrafts)) setEditing(null);
+    if (await onSave(scope, pointsDraft, baseDraft, growthDraft, rateDrafts)) {
+      setEditing(null);
+    }
   };
 
   const removeOverride = async () => {
@@ -71,11 +91,12 @@ export function GrowthSection({
       <div className="growth-head">
         <h4 className="character-section-heading">Level growth</h4>
         <HelpTip label="level growth">
-          What one level hands out. Points are yours to place when you record a
-          level-up; a rate is a stat that rises on its own. The story rule covers
-          everyone, and a character can override it — a monster that grows twice
-          as fast, or a human who gets nothing for free. The rule only fills in
-          the level-up form; it never moves a level by itself.
+          What a level costs and what it hands out. Experience recorded on a
+          chapter crosses the cost on its own, so the sheet's level is read, not
+          typed. Points are yours to place; a rate is a stat that rises on its
+          own when the level lands. The story rule covers everyone, and a
+          character can override it — a monster that grows twice as fast, or a
+          human who gets nothing for free.
         </HelpTip>
       </div>
 
@@ -134,6 +155,41 @@ export function GrowthSection({
 
       {editing && (
         <div className="growth-form">
+          <label className="level-metric-field">
+            XP per level
+            <input
+              aria-label="Growth XP per level"
+              title="What the second level costs; every level after it costs this much unless the growth percentage says otherwise"
+              type="number"
+              min={1}
+              step={1}
+              value={baseDraft}
+              onChange={e => setBaseDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') void save(editing);
+                if (e.key === 'Escape') setEditing(null);
+              }}
+            />
+          </label>
+
+          <label className="level-metric-field">
+            Growth %
+            <input
+              aria-label="Growth percentage per level"
+              title="How much more each level costs than the last; 0 keeps every level the same price"
+              type="number"
+              min={0}
+              max={1000}
+              step={5}
+              value={growthDraft}
+              onChange={e => setGrowthDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') void save(editing);
+                if (e.key === 'Escape') setEditing(null);
+              }}
+            />
+          </label>
+
           <label className="level-metric-field">
             Points per level
             <input

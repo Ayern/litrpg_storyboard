@@ -146,6 +146,8 @@ interface GrowthRow {
   story_id: string;
   character_id: string | null;
   points_per_level: number;
+  xp_base: number;
+  xp_growth: number;
   stats: {
     id: string;
     rule_id: string;
@@ -266,10 +268,21 @@ beforeEach(() => {
         const character = cast.find(entry => entry.id === args.characterId);
         if (!character) return null;
 
-        character.xp = args.xp;
         character.rank = args.rank ?? null;
-        character.xp_to_next = args.xpToNext ?? null;
         return { ...character };
+      }
+      case 'add_character_progress': {
+        const saved: ProgressRow = {
+          id: `p-${progress.length + 1}`,
+          character_id: args.characterId,
+          chapter_id: args.chapterId,
+          xp_earned: args.xpEarned,
+          created_at: stamp(progress.length + 1),
+          updated_at: stamp(progress.length + 1),
+        };
+
+        progress.push(saved);
+        return saved;
       }
       case 'add_level_milestone': {
         const character = cast.find(entry => entry.id === args.characterId);
@@ -310,6 +323,8 @@ beforeEach(() => {
           story_id: story.id,
           character_id: owner,
           points_per_level: args.pointsPerLevel,
+          xp_base: args.xpBase ?? 100,
+          xp_growth: args.xpGrowth ?? 0,
           stats: (args.stats ?? []).map((rate: any, index: number) => ({
             id: `gs-${index}`,
             rule_id: 'g',
@@ -431,7 +446,7 @@ function sheet() {
 }
 
 function milestonesPanel() {
-  return within(screen.getByRole('region', { name: 'Level milestones' }));
+  return within(screen.getByRole('region', { name: 'Level timeline' }));
 }
 
 function growthPanel() {
@@ -468,25 +483,20 @@ describe('progression', () => {
 
     expect(within(sheet()).getByText('1')).toBeInTheDocument();
     expect(
-      screen.getByText('No level milestones yet — record where a level was reached.')
+      screen.getByText('No levels yet — record what a chapter paid out and the timeline follows.')
     ).toBeInTheDocument();
   });
 
-  it('edits the totals without offering a level field', async () => {
+  it('edits the rank without offering a level, a total or a target', async () => {
     const user = await openSheet();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
+    await user.click(within(sheet()).getByRole('button', { name: 'Edit rank' }));
 
-    // The level belongs to the level-ups, so the form has no field for it.
+    // None of the three are typed any more: the ledger holds the total, the curve
+    // holds the level and the target.
     expect(within(sheet()).queryByLabelText('Level')).not.toBeInTheDocument();
-
-    const xp = within(sheet()).getByLabelText('Experience');
-    await user.clear(xp);
-    await user.type(xp, '1000');
-
-    const target = within(sheet()).getByLabelText('XP to next');
-    await user.clear(target);
-    await user.type(target, '1200');
+    expect(within(sheet()).queryByLabelText('Experience')).not.toBeInTheDocument();
+    expect(within(sheet()).queryByLabelText('XP to next')).not.toBeInTheDocument();
 
     const rank = within(sheet()).getByLabelText('Rank');
     await user.clear(rank);
@@ -496,93 +506,76 @@ describe('progression', () => {
 
     expect(lastCall('set_character_progress')).toEqual({
       characterId: 'char-1',
-      xp: 1000,
       rank: 'Silver',
-      xpToNext: 1200,
       user: 'You',
     });
 
-    expect(await within(sheet()).findByText('1000 / 1200')).toBeInTheDocument();
-    expect(bar()).toHaveAttribute('aria-valuenow', '83');
-    expect(within(sheet()).getByText('3')).toBeInTheDocument();
     expect(screen.getByText('Level 3 · Silver')).toBeInTheDocument();
   });
 
-  it('leaves the target and the rank empty when they are cleared', async () => {
+  it('leaves the rank empty when it is cleared', async () => {
     const user = await openSheet();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
-    await user.clear(within(sheet()).getByLabelText('XP to next'));
+    await user.click(within(sheet()).getByRole('button', { name: 'Edit rank' }));
     await user.clear(within(sheet()).getByLabelText('Rank'));
     await user.click(within(sheet()).getByRole('button', { name: 'Save' }));
 
     expect(lastCall('set_character_progress')).toEqual({
       characterId: 'char-1',
-      xp: 250,
       rank: null,
-      xpToNext: null,
       user: 'You',
     });
 
+    expect(await within(sheet()).findByText('Unranked')).toBeInTheDocument();
+  });
+
+  it('offers no way to type a level or a level-up', async () => {
+    await openSheet();
+
     expect(
-      await within(sheet()).findByText('No target set — edit progression to show a bar.')
-    ).toBeInTheDocument();
-    expect(within(sheet()).getByText('Unranked')).toBeInTheDocument();
-    expect(bar()).toHaveAttribute('aria-valuenow', '0');
+      within(sheet()).queryByRole('button', { name: 'Record level-up' })
+    ).not.toBeInTheDocument();
+    expect(
+      milestonesPanel().queryByRole('button', { name: 'Add milestone' })
+    ).not.toBeInTheDocument();
+    expect(
+      milestonesPanel().queryByRole('button', { name: 'Edit' })
+    ).not.toBeInTheDocument();
+
+    // The timeline is still the record of what the curve wrote.
+    expect(milestonesPanel().getByText('Level 3')).toBeInTheDocument();
   });
 
-  it('refuses a negative experience total without calling the database', async () => {
+  it('records experience on a chapter, which is what moves the level', async () => {
     const user = await openSheet();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
-    const xp = within(sheet()).getByLabelText('Experience');
-    await user.clear(xp);
-    await user.type(xp, '-5');
-    await user.click(within(sheet()).getByRole('button', { name: 'Save' }));
+    const ledger = within(screen.getByRole('region', { name: 'XP by chapter' }));
 
-    expect(screen.getByText('Experience is a whole number, 0 or more.')).toBeInTheDocument();
-    expect(lastCall('set_character_progress')).toBeUndefined();
-    expect(within(sheet()).getByLabelText('Experience')).toHaveValue(-5);
-  });
+    await user.selectOptions(ledger.getByLabelText('New XP entry chapter'), 'n1');
+    await user.type(ledger.getByLabelText('New XP entry earned XP'), '250');
+    await user.click(ledger.getByRole('button', { name: 'Add XP' }));
 
-  it('records the next level as a level-up in a chapter', async () => {
-    const user = await openSheet();
-
-    await user.click(within(sheet()).getByRole('button', { name: 'Record level-up' }));
-
-    // The creator opens one past the level the last level-up reached.
-    expect(milestonesPanel().getByLabelText('New milestone level')).toHaveValue(4);
-
-    await user.selectOptions(milestonesPanel().getByLabelText('New milestone chapter'), 'n1');
-    await user.click(milestonesPanel().getByRole('button', { name: 'Add milestone' }));
-
-    expect(lastCall('add_level_milestone')).toEqual({
+    expect(lastCall('add_character_progress')).toEqual({
       characterId: 'char-1',
-      level: 4,
       chapterId: 'n1',
-      isDebuff: false,
-      xp: null,
-      statChanges: [],
+      xpEarned: 250,
       user: 'You',
     });
 
-    expect(await milestonesPanel().findByText('Level 4')).toBeInTheDocument();
-    expect(within(sheet()).getByText('4')).toBeInTheDocument();
-    expect(within(sheet()).getByText('750 XP to level 5')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Graph' }));
-    expect(
-      await within(screen.getByRole('complementary', { name: 'Cast' })).findByText(/Lv 4/)
-    ).toBeInTheDocument();
+    // The form clears once the row is written, and the sheet reads its total from
+    // the ledger rather than keeping a copy to fall out of step with.
+    expect(ledger.getByLabelText('New XP entry earned XP')).toHaveValue(null);
   });
 
-  it('opens a level-up with the growth rule’s automatic gains in it', async () => {
+  it('says what a level costs and hands out from the rule', async () => {
     growth = [
       {
         id: 'g-1',
         story_id: story.id,
         character_id: null,
         points_per_level: 2,
+        xp_base: 700,
+        xp_growth: 0,
         stats: [
           {
             id: 'gs-1',
@@ -599,24 +592,13 @@ describe('progression', () => {
       },
     ];
 
-    const user = await openSheet();
+    await openSheet();
 
     expect(
-      milestonesPanel().getByText('This level hands out: 2 points to place per level · Strength +1.')
+      milestonesPanel().getByText(
+        'Every level hands out: 700 XP a level · 2 points to place per level · Strength +1.'
+      )
     ).toBeInTheDocument();
-
-    await user.click(within(sheet()).getByRole('button', { name: 'Record level-up' }));
-
-    expect(milestonesPanel().getByLabelText('New milestone stat 1 name')).toHaveValue('Strength');
-    expect(milestonesPanel().getByLabelText('New milestone stat 1 gain')).toHaveValue(1);
-
-    await user.selectOptions(milestonesPanel().getByLabelText('New milestone chapter'), 'n1');
-    await user.click(milestonesPanel().getByRole('button', { name: 'Add milestone' }));
-
-    expect(lastCall('add_level_milestone')).toMatchObject({
-      level: 4,
-      statChanges: [{ stat_name: 'Strength', amount: 1, value_after: null }],
-    });
   });
 
   it('saves the story rule a level follows', async () => {
@@ -638,12 +620,16 @@ describe('progression', () => {
       storyId: story.id,
       characterId: null,
       pointsPerLevel: 2,
+      xpBase: 100,
+      xpGrowth: 0,
       stats: [{ stat_name: 'Strength', per_level: 1 }],
       user: 'You',
     });
 
     expect(
-      await growthPanel().findByText('2 points to place per level · Strength +1')
+      await growthPanel().findByText(
+        '100 XP a level · 2 points to place per level · Strength +1'
+      )
     ).toBeInTheDocument();
   });
 
@@ -663,7 +649,7 @@ describe('progression', () => {
     });
 
     expect(
-      await growthPanel().findByText('1 point to place per level')
+      await growthPanel().findByText('100 XP a level · 1 point to place per level')
     ).toBeInTheDocument();
 
     await user.click(growthPanel().getByRole('button', { name: 'Remove' }));
@@ -729,7 +715,7 @@ describe('progression', () => {
   it('keeps the form open and says why when the save fails', async () => {
     const user = await openSheet();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
+    await user.click(within(sheet()).getByRole('button', { name: 'Edit rank' }));
     invokeMock.mockImplementationOnce(async () => {
       throw 'database is busy';
     });
@@ -738,27 +724,24 @@ describe('progression', () => {
     expect(
       await screen.findByText(/Could not save progression: database is busy/i)
     ).toBeInTheDocument();
-    expect(within(sheet()).getByLabelText('Experience')).toBeInTheDocument();
+    expect(within(sheet()).getByLabelText('Rank')).toBeInTheDocument();
   });
 
   it('does not carry a half-typed form over to another character', async () => {
     const user = await openSheet();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
-    const xp = within(sheet()).getByLabelText('Experience');
-    await user.clear(xp);
-    await user.type(xp, '9');
+    await user.click(within(sheet()).getByRole('button', { name: 'Edit rank' }));
+    const rank = within(sheet()).getByLabelText('Rank');
+    await user.clear(rank);
+    await user.type(rank, 'Silver');
 
     await user.click(screen.getByTitle("Show Wren's sheet"));
 
-    expect(
-      within(sheet()).getByRole('button', { name: 'Edit progression' })
-    ).toBeInTheDocument();
-    expect(within(sheet()).queryByLabelText('Experience')).not.toBeInTheDocument();
+    expect(within(sheet()).getByRole('button', { name: 'Edit rank' })).toBeInTheDocument();
+    expect(within(sheet()).queryByLabelText('Rank')).not.toBeInTheDocument();
     expect(within(sheet()).getByText('Unranked')).toBeInTheDocument();
 
-    await user.click(within(sheet()).getByRole('button', { name: 'Edit progression' }));
-    expect(within(sheet()).getByLabelText('Experience')).toHaveValue(0);
+    await user.click(within(sheet()).getByRole('button', { name: 'Edit rank' }));
     expect(within(sheet()).getByLabelText('Rank')).toHaveValue('');
     expect(lastCall('set_character_progress')).toBeUndefined();
   });

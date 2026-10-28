@@ -97,20 +97,17 @@ export function deleteLevelMilestone(id: string, actor: string) {
   return invoke<void>('delete_level_milestone', { id, user: actor });
 }
 
-// The running totals on the cast member itself. The level is deliberately not
-// one of them: it belongs to the level-up that recorded it.
+// The one progression field an author types. Experience is the ledger's sum and
+// the level falls out of the story's curve, so neither is sent: the command would
+// have nothing to do with them.
 export function setCharacterProgress(
   characterId: string,
-  xp: number,
   rank: string | null,
-  xpToNext: number | null,
   actor: string
 ) {
   return invoke<Character>('set_character_progress', {
     characterId,
-    xp,
     rank,
-    xpToNext,
     user: actor,
   });
 }
@@ -125,6 +122,8 @@ export function saveLevelGrowthRule(
   storyId: string,
   characterId: string | null,
   pointsPerLevel: number,
+  xpBase: number,
+  xpGrowth: number,
   stats: { stat_name: string; per_level: number }[],
   actor: string
 ) {
@@ -132,6 +131,8 @@ export function saveLevelGrowthRule(
     storyId,
     characterId,
     pointsPerLevel,
+    xpBase,
+    xpGrowth,
     stats,
     user: actor,
   });

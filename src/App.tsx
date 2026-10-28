@@ -89,7 +89,6 @@ import type { CharacterCurrency, InventoryItem } from './domains/inventory/types
 import type { ChapterCastMember, ChapterCastState } from './domains/narrative/types';
 import { ProgressionSections } from './domains/characters/ProgressionSections';
 import type {
-  MilestoneDraft,
   ProgressDraft,
   XpEntryDraft,
 } from './domains/characters/ProgressionSections';
@@ -2326,7 +2325,9 @@ function App() {
     const incomeByCharacter = new Map<string, Map<string, number>>();
 
     for (const entry of storyCharacterProgress) {
-      if (!chapterById.has(entry.chapter_id)) continue;
+      // An income row whose chapter was purged has no place in reading order, so
+      // there is no chapter to reconcile it against.
+      if (!entry.chapter_id || !chapterById.has(entry.chapter_id)) continue;
 
       const byChapter = incomeByCharacter.get(entry.character_id) ?? new Map<string, number>();
       byChapter.set(
@@ -6173,113 +6174,6 @@ function App() {
     return changes;
   };
 
-  // The level forms hand over what is in their fields; the app decides what a
-  // level, a total and a stat change are, and answers whether the row was
-  // written. A refused row keeps its editor, so the milestone's rule stays in
-  // front of the author.
-  const saveLevelMilestone = async (
-    milestone: CharacterLevelMilestone,
-    draft: MilestoneDraft
-  ): Promise<boolean> => {
-    const level = Number(draft.level);
-
-    if (!/^\d+$/.test(draft.level.trim()) || level < 1) {
-      setCharacterError('A level milestone needs a whole-number level of 1 or more.');
-      return false;
-    }
-
-    const xp = levelMilestoneXpFromDraft(draft.xp);
-    if (xp === 'invalid') return false;
-
-    const statChanges = statChangesFromDrafts(draft.statChanges);
-    if (!statChanges) return false;
-
-    setCharacterError(null);
-
-    try {
-      const saved: CharacterLevelMilestone = await progressionApi.updateLevelMilestone(
-        milestone.id,
-        level,
-        draft.chapterId || null,
-        draft.isDebuff,
-        xp,
-        statChanges,
-        actor
-      );
-
-      applyLevelMilestone(saved);
-      return true;
-    } catch (e) {
-      console.error('Failed to save a level milestone:', e);
-      setCharacterError(`Could not save the level milestone: ${String(e)}`);
-      return false;
-    }
-  };
-
-  const addLevelMilestone = async (draft: MilestoneDraft): Promise<boolean> => {
-    if (!selectedCharacterId) return false;
-
-    const level = Number(draft.level);
-
-    if (!/^\d+$/.test(draft.level.trim()) || level < 1) {
-      setCharacterError('A level milestone needs a whole-number level of 1 or more.');
-      return false;
-    }
-
-    const xp = levelMilestoneXpFromDraft(draft.xp);
-    if (xp === 'invalid') return false;
-
-    const statChanges = statChangesFromDrafts(draft.statChanges);
-    if (!statChanges) return false;
-
-    setCharacterError(null);
-
-    try {
-      const saved: CharacterLevelMilestone = await progressionApi.addLevelMilestone(
-        selectedCharacterId,
-        level,
-        draft.chapterId || null,
-        draft.isDebuff,
-        xp,
-        statChanges,
-        actor
-      );
-
-      applyLevelMilestone(saved);
-      return true;
-    } catch (e) {
-      console.error('Failed to add a level milestone:', e);
-      setCharacterError(`Could not add the level milestone: ${String(e)}`);
-      return false;
-    }
-  };
-
-  const removeLevelMilestone = async (
-    milestone: CharacterLevelMilestone
-  ): Promise<boolean> => {
-    setCharacterError(null);
-
-    try {
-      await progressionApi.deleteLevelMilestone(milestone.id, actor);
-      applyMilestoneList(
-        storyLevelMilestonesRef.current.filter(other => other.id !== milestone.id),
-        [milestone.character_id]
-      );
-      // The database sets a skill event's level-up link to null when the
-      // milestone goes; keep the board copy in step so no row points at it.
-      setStorySkillEvents(previous =>
-        previous.map(event =>
-          event.milestone_id === milestone.id ? { ...event, milestone_id: null } : event
-        )
-      );
-      return true;
-    } catch (e) {
-      console.error('Failed to delete a level milestone:', e);
-      setCharacterError(`Could not delete the level milestone: ${String(e)}`);
-      return false;
-    }
-  };
-
   const xpEntryAmount = (text: string): number | null => {
     const trimmed = text.trim();
 
@@ -7707,8 +7601,8 @@ function App() {
         .filter(entry => entry.character_id === selectedCharacterId)
         .sort(
           (a, b) =>
-            (chapterSeqById.get(a.chapter_id) ?? Number.MAX_SAFE_INTEGER) -
-              (chapterSeqById.get(b.chapter_id) ?? Number.MAX_SAFE_INTEGER) ||
+            (chapterSeqById.get(a.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) -
+              (chapterSeqById.get(b.chapter_id ?? '') ?? Number.MAX_SAFE_INTEGER) ||
             a.created_at.localeCompare(b.created_at) ||
             a.id.localeCompare(b.id)
         ),
@@ -7733,32 +7627,17 @@ function App() {
     );
   };
 
-  // The progression form opens with the stored numbers, so a save can change one
-  // field without having to retype the others.
+  // The rank is the one progression field an author types. The total is the
+  // ledger's sum and the level is the curve's, so both are read rather than sent.
   const saveProgress = async (draft: ProgressDraft): Promise<boolean> => {
     if (!selectedCharacter) return false;
-
-    const xp = Number(draft.xp);
-    const target = draft.target.trim() === '' ? null : Number(draft.target);
-
-    if (!Number.isInteger(xp) || xp < 0) {
-      setCharacterError('Experience is a whole number, 0 or more.');
-      return false;
-    }
-
-    if (target !== null && (!Number.isInteger(target) || target < 1)) {
-      setCharacterError('XP to next is a whole number above 0, or blank.');
-      return false;
-    }
 
     setCharacterError(null);
 
     try {
       const updated: Character = await progressionApi.setCharacterProgress(
         selectedCharacter.id,
-        xp,
         draft.rank.trim() || null,
-        target,
         actor
       );
 
@@ -7776,6 +7655,8 @@ function App() {
   const saveGrowthRule = async (
     scope: GrowthScope,
     pointsPerLevel: string,
+    xpBase: string,
+    xpGrowth: string,
     rates: GrowthRateDraft[]
   ): Promise<boolean> => {
     if (!currentStory) return false;
@@ -7785,6 +7666,20 @@ function App() {
 
     if (!/^\d+$/.test(pointsPerLevel.trim()) || points < 0) {
       setCharacterError('Points per level is a whole number, 0 or more.');
+      return false;
+    }
+
+    const base = Number(xpBase);
+
+    if (!/^\d+$/.test(xpBase.trim()) || base < 1) {
+      setCharacterError('A level costs a whole number of XP, 1 or more.');
+      return false;
+    }
+
+    const growth = Number(xpGrowth);
+
+    if (!/^\d+$/.test(xpGrowth.trim()) || growth > 1000) {
+      setCharacterError('The growth percentage is a whole number from 0 to 1,000.');
       return false;
     }
 
@@ -7823,6 +7718,8 @@ function App() {
         currentStory.id,
         scope === 'character' ? selectedCharacterId : null,
         points,
+        base,
+        growth,
         cleaned,
         actor
       );
@@ -7831,6 +7728,20 @@ function App() {
         ...previous.filter(rule => rule.id !== saved.id),
         saved,
       ]);
+
+      // The curve is what levels the cast, so a rule that moved it has to be read
+      // back rather than assumed: the levels, the timelines it wrote and the stats
+      // those levels handed out.
+      const [cast, milestones] = await Promise.all([
+        charactersApi.getCharacters(currentStory.id),
+        progressionApi.getStoryLevelMilestones(currentStory.id),
+      ]);
+
+      setCharacters(cast);
+      applyMilestoneList(milestones, cast.map(character => character.id));
+
+      if (selectedCharacterId) await refreshAwardedNumbers(selectedCharacterId);
+
       return true;
     } catch (e) {
       console.error('Failed to save a growth rule:', e);
@@ -8764,9 +8675,6 @@ function App() {
               onDeleteGrowth={removeGrowthRule}
               onAddAward={addAward}
               onDeleteAward={removeAward}
-              onCreateMilestone={addLevelMilestone}
-              onSaveMilestone={saveLevelMilestone}
-              onDeleteMilestone={removeLevelMilestone}
               onCreateXpEntry={addXpEntry}
               onSaveXpEntry={saveXpEntry}
               onDeleteXpEntry={removeXpEntry}

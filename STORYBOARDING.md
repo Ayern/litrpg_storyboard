@@ -192,32 +192,31 @@ recorded number yet shows a dash, not a zero.*
 
 ![The lower half of the same sheet](screenshots/character-sheet-detail.png)
 
-*Below the progression bar come **Level milestones**, **Level growth**, **XP by
+*Below the progression bar come **Level timeline**, **Level growth**, **XP by
 chapter** and **Awards**, then **Attributes**, **Skills**, **Inventory**,
-**Currency** and the two ledgers of the next sections. Everything here is edited
-in place with **Edit** and **Add**: the shape of the app is that you type where
-the thing is, not into a separate settings screen.*
+**Currency** and the two ledgers of the next sections. Everything you type is
+typed where the thing is, not into a separate settings screen.*
 
 What the numbers mean, and what they do not:
 
-- **Progression** is experience, an optional rank and an optional "XP to next".
-  **Record level-up** opens the next level-up with its level already filled in;
-  **Edit progression** types the totals. The level itself is read from the
-  level-ups, so there is no field to type it into and nothing to keep in step by
-  hand. Experience never rolls over into a level by itself.
-- **A level milestone** is where a level was reached: the chapter, the total XP at
-  that point, an optional **Penalty** flag for a deliberate drop, and any number of
-  **stat changes** — `Agility +2`, the value it became, or both. Listing two stats
-  on one level is how a sheet says "2 agility and 1 strength" without entering the
-  level twice. The last milestone written is the level the sheet, the cast list and
-  the cards show, so deleting it puts the earlier level back.
-- **Level growth** is what a level hands out: a number of points to place, plus any
-  stats that rise every level (`Strength +1`). The story has one rule and a
-  character can override it — a monster that grows faster, a human who gets nothing
-  free. It fills in the level-up form; it never levels anybody up on its own.
-- **XP by chapter** is income, not a running total: what chapter 2 paid out.
-  Recording the same character and chapter twice is refused, because one amount is
-  what a chapter pays.
+- **Progression** is a level, an experience total and a rank, and only the rank is
+  yours to type: **Edit rank** is the one field on the line. The experience is the
+  XP ledger added up, and the level is what your story's curve buys with it — so
+  the sheet counts down to the next level by itself and there is no target to
+  enter. There is no **Record level-up** button any more, because a level is no
+  longer something you write down.
+- **Level timeline** is what the curve wrote: a level, the chapter whose income
+  crossed it, and the stats the rule handed out there. You do not edit these rows;
+  you record experience below and they follow. Deleting the entry that paid for a
+  level takes the level and its gains back off the sheet.
+- **Level growth** is the curve plus what a level hands out: XP for the second
+  level and a percentage more for each one after it, a number of points to place,
+  and any stats that rise every level (`Strength +1`). The story has one rule and a
+  character can override it — a monster that levels at 300 XP where people need
+  700, a human who gets nothing free.
+- **XP by chapter** is income, and it is what levels the character: what chapter 2
+  paid out. Recording the same character and chapter twice is refused, because one
+  amount is what a chapter pays.
 - **Awards** are the gains that skip a level-up: XP a chapter paid, or a stat point
   from a blessing or a hidden quest. Adding one applies it, and deleting it takes it
   back out. A skill keeps its own clock too — its rank can rise in a chapter where
@@ -446,7 +445,7 @@ Your work lives in a single file on your own machine (`Data location` in
 | Draw a relationship | Drag from a card's circle onto another card |
 | Put a person in a chapter | Connect their card to the chapter card, or **Cast** on the chapter row |
 | Change the reading order | Chapters tab: drag a row's grip, or the **↑**/**↓** arrows |
-| Record a level, a stat or XP | The person's sheet: **Record level-up**, **Edit progression**, **Add milestone**, **Add XP**, **Add award** |
+| Record experience, a stat or a rank | The person's sheet: **Add XP** (the ledger, which is what levels them), **Add award**, **Edit rank** |
 | See the story's shape | Characters tab: the **Power curve**, and **As of chapter** |
 | Record what a chapter paid out | Quests tab: rewards, then **Apply rewards to chapter ledger** |
 | Take back a change | **Ctrl+Z**, the **Undo** button, or **Revert** in the Audit Log |

@@ -132,18 +132,17 @@ fn update_character(
         .map_err(|e| e.to_string())
 }
 
-/// Saves the running totals as the author typed them. The level is not one of
-/// them: it belongs to the level-up a character reached it on.
+/// Saves the one progression field an author types. Experience is the ledger's
+/// sum, the level is the curve's, and the target is the curve's too, so none of
+/// them arrive here to be written down.
 #[tauri::command]
 fn set_character_progress(
     db: tauri::State<'_, Db>,
     character_id: String,
-    xp: i64,
     rank: Option<String>,
-    xp_to_next: Option<i64>,
     user: String,
 ) -> Result<Character, String> {
-    db.set_character_progress(&character_id, xp, rank, xp_to_next, user)
+    db.set_character_progress(&character_id, rank, user)
         .map_err(|e| e.to_string())
 }
 
@@ -162,11 +161,21 @@ fn save_level_growth_rule(
     story_id: String,
     character_id: Option<String>,
     points_per_level: i64,
+    xp_base: i64,
+    xp_growth: i64,
     stats: Vec<LevelGrowthStatInput>,
     user: String,
 ) -> Result<LevelGrowthRule, String> {
-    db.save_level_growth_rule(story_id, character_id, points_per_level, stats, user)
-        .map_err(|e| e.to_string())
+    db.save_level_growth_rule(
+        story_id,
+        character_id,
+        points_per_level,
+        xp_base,
+        xp_growth,
+        stats,
+        user,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

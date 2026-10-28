@@ -139,6 +139,10 @@ export interface LevelGrowthRule {
   story_id: string;
   character_id: string | null;
   points_per_level: number;
+  // What a level costs, and how much more each one costs than the last. The
+  // experience recorded on a chapter crosses these steps on its own.
+  xp_base: number;
+  xp_growth: number;
   stats: LevelGrowthStat[];
   created_by: string;
   created_at: string;
@@ -165,7 +169,9 @@ export interface CharacterAward {
 export interface CharacterProgress {
   id: string;
   character_id: string;
-  chapter_id: string;
+  // None when the chapter it was earned in has been purged for good: the
+  // experience it paid for stays.
+  chapter_id: string | null;
   xp_earned: number;
   created_at: string;
   updated_at: string;

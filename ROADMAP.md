@@ -454,6 +454,25 @@ names unchanged, and the legend test covers them. **S**
 
 ### Phase 4 — see the story
 
+**13b. The curve, and experience that levels.** **Done.** Schema v26 gave the
+growth rule two numbers — `xp_base`, the XP the second level costs, and
+`xp_growth`, a percentage more for each level after it — and made `characters.xp`
+the sum of the chapter income instead of a typed field. `characters.level` and
+`characters.xp_to_next` are now read from that curve by
+`refresh_character_progression`, which runs inside every transaction that changes
+the income (an amount added, edited or deleted, an XP award, a rule saved) and
+writes the timeline row plus the rule's automatic stats when a step is crossed;
+deleting the income reverses both. **Record level-up**, the milestone creator and
+the XP and target fields are gone: the sheet's only progression input is the rank,
+and experience is recorded where it was earned, on the chapter it was earned in.
+The timeline is a readout, and a level recorded before the curve is a floor rather
+than a rival (`character_level_milestones.source`). Purging a chapter keeps the
+experience it paid for and clears the chapter, so tidying the board cannot de-level
+anybody. Remaining, and next: port the readers that still treat the timeline as the
+source — the point-in-time sheet, the chart, the ledger reconciliation warning and
+the skill event link — to read the curve's crossings, then drop the milestone table
+and the commands that write it. **M**
+
 **14. Continuity panel.** **Started.** An advisory list, never a blocker. The
 Chapters tab currently flags chapter timing and duplication, a cast member intwo chapters on one day, an item still carried after its recorded loss or lost before
 acquisition, a level drop without a penalty flag, a skill used before acquisition,

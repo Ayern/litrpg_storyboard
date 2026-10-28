@@ -922,7 +922,6 @@ describe('progression warnings open the entry to edit', () => {
     await user.click(within(panel).getByRole('button', { name: 'Rook' }));
 
     expect(screen.getByRole('button', { name: 'Characters' })).toHaveClass('active');
-    expect(screen.getByLabelText('Milestone total XP')).toHaveValue(2400);
     expect(
       document.querySelector('[data-progression="level-milestone-2"]')
     ).toHaveClass('progression-row-focused');
@@ -977,7 +976,6 @@ describe('progression warnings open the entry to edit', () => {
 
     expect(screen.getByRole('button', { name: 'Characters' })).toHaveClass('active');
     expect(document.querySelector('[data-character-id="char-1"]')).toHaveClass('active');
-    expect(screen.getByLabelText('Milestone level')).toHaveValue(2);
     expect(
       document.querySelector('[data-progression="level-milestone-2"]')
     ).toHaveClass('progression-row-focused');
@@ -1059,124 +1057,19 @@ describe('progression warnings open the entry to edit', () => {
 });
 
 describe('level milestones and skill events on the sheet', () => {
-  it('adds, edits and deletes a level milestone', async () => {
-    const user = await openSheet();
+  it('reads the timeline the curve wrote and offers no way to type a level', async () => {
+    await openSheet();
 
-    await user.clear(screen.getByLabelText('New milestone level'));
-    await user.type(screen.getByLabelText('New milestone level'), '6');
-    await user.selectOptions(screen.getByLabelText('New milestone chapter'), 'n3');
-    await user.selectOptions(screen.getByLabelText('New milestone stat 1 name'), 'Strength');
-    await user.type(screen.getByLabelText('New milestone stat 1 gain'), '2');
-    await user.type(screen.getByLabelText('New milestone stat 1 value after'), '14');
-    await user.click(screen.getByRole('button', { name: 'Add a new milestone stat' }));
-    await user.selectOptions(screen.getByLabelText('New milestone stat 2 name'), 'Dexterity');
-    await user.type(screen.getByLabelText('New milestone stat 2 gain'), '1');
-    await user.type(screen.getByLabelText('New milestone total XP'), '3600');
-    await user.click(screen.getByLabelText('New milestone is a penalty'));
-    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
+    // The level is a readout now: the experience above is the only input, and a
+    // level-up is written by the database when the income crosses the curve.
+    expect(screen.queryByRole('button', { name: 'Add milestone' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('New milestone level')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Milestone level')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record level-up' })).not.toBeInTheDocument();
 
-    expect(lastCall('add_level_milestone')).toMatchObject({
-      characterId: 'char-1',
-      level: 6,
-      chapterId: 'n3',
-      isDebuff: true,
-      xp: 3600,
-      statChanges: [
-        { stat_name: 'Strength', amount: 2, value_after: 14 },
-        { stat_name: 'Dexterity', amount: 1, value_after: null },
-      ],
-      user: 'You',
-    });
-    expect(
-      document.querySelector('[data-progression="level-milestone-3"]')
-    ).toHaveTextContent('Strength +2 (now 14)');
-    expect(
-      document.querySelector('[data-progression="level-milestone-3"]')
-    ).toHaveTextContent('Dexterity +1');
-    expect(document.querySelector('[data-progression="level-milestone-3"]')).toBeInTheDocument();
-    expect(
-      within(document.querySelector('[data-progression="level-milestone-3"]') as HTMLElement)
-        .getByText('Penalty')
-    ).toBeInTheDocument();
-
-    await user.click(
-      screen.getByTitle('Change the level and chapter of the level 3 milestone')
-    );
-    expect(screen.getByLabelText('Milestone total XP')).toHaveValue(900);
-    expect(screen.getByLabelText('Milestone stat 1 name')).toHaveValue('Strength');
-    expect(screen.getByLabelText('Milestone stat 1 gain')).toHaveValue(2);
-    expect(screen.getByLabelText('Milestone stat 1 value after')).toHaveValue(10);
-    await user.clear(screen.getByLabelText('Milestone level'));
-    await user.type(screen.getByLabelText('Milestone level'), '5');
-    await user.selectOptions(screen.getByLabelText('Milestone chapter'), 'n2');
-    await user.selectOptions(screen.getByLabelText('Milestone stat 1 name'), 'Dexterity');
-    await user.clear(screen.getByLabelText('Milestone stat 1 value after'));
-    await user.type(screen.getByLabelText('Milestone stat 1 value after'), '11');
-    await user.click(screen.getByRole('button', { name: 'Add a milestone stat' }));
-    await user.selectOptions(screen.getByLabelText('Milestone stat 2 name'), 'Strength');
-    await user.type(screen.getByLabelText('Milestone stat 2 gain'), '1');
-    await user.clear(screen.getByLabelText('Milestone total XP'));
-    await user.type(screen.getByLabelText('Milestone total XP'), '1500');
-    await user.click(screen.getByRole('button', { name: 'Save milestone' }));
-
-    expect(lastCall('update_level_milestone')).toMatchObject({
-      id: 'milestone-1',
-      level: 5,
-      chapterId: 'n2',
-      isDebuff: false,
-      xp: 1500,
-      statChanges: [
-        { stat_name: 'Dexterity', amount: 2, value_after: 11 },
-        { stat_name: 'Strength', amount: 1, value_after: null },
-      ],
-      user: 'You',
-    });
-
-    await user.click(screen.getByTitle('Delete the level 4 milestone'));
-    expect(lastCall('delete_level_milestone')).toMatchObject({
-      id: 'milestone-2',
-      user: 'You',
-    });
-  });
-
-  it('refuses negative XP and a stat without points', async () => {
-    const user = await openSheet();
-
-    await user.type(screen.getByLabelText('New milestone total XP'), '-1');
-    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
-
-    expect(
-      await screen.findByText('Total XP is a whole number, 0 or more, or blank.')
-    ).toBeInTheDocument();
-    expect(
-      invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
-    ).toHaveLength(0);
-
-    await user.clear(screen.getByLabelText('New milestone total XP'));
-    await user.selectOptions(screen.getByLabelText('New milestone stat 1 name'), 'Strength');
-    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
-
-    expect(
-      await screen.findByText('Strength needs a gain, a resulting value, or both.')
-    ).toBeInTheDocument();
-    expect(
-      invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
-    ).toHaveLength(0);
-  });
-
-  it('refuses a milestone below level 1', async () => {
-    const user = await openSheet();
-
-    await user.clear(screen.getByLabelText('New milestone level'));
-    await user.type(screen.getByLabelText('New milestone level'), '0');
-    await user.click(screen.getByRole('button', { name: 'Add milestone' }));
-
-    expect(
-      await screen.findByText('A level milestone needs a whole-number level of 1 or more.')
-    ).toBeInTheDocument();
-    expect(
-      invokeMock.mock.calls.filter(call => call[0] === 'add_level_milestone')
-    ).toHaveLength(0);
+    const row = document.querySelector('[data-progression="level-milestone-2"]');
+    expect(row).toHaveTextContent('Level 4');
+    expect(row).toHaveTextContent('Strength +2 (now 12)');
   });
 
   it('adds, edits and deletes XP earned by chapter', async () => {

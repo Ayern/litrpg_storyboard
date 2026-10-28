@@ -49,7 +49,10 @@ export function chartSeriesFor(
           chapterIds.has(milestone.chapter_id)
       ),
       progress: progress.filter(
-        entry => entry.character_id === character.id && chapterIds.has(entry.chapter_id)
+        entry =>
+          entry.character_id === character.id &&
+          entry.chapter_id !== null &&
+          chapterIds.has(entry.chapter_id)
       ),
     }))
     .filter(series => series.milestones.length > 0 || series.progress.length > 0);

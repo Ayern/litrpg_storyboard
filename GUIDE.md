@@ -197,13 +197,23 @@ src/
 | **trash** | Both deleted lists (the open story's, and the stories themselves), which row is waiting on a permanent-delete confirmation, and the retention window | `get_trash`, `get_trash_retention`, `set_trash_retention`, `restore_deleted`, `purge_deleted` |
 | **progression** | The power curve: which metric, which cast members are shown, the chapter the sheet is read as of, the whole sheet — stats, skills and carried items — that chapter opens, what a level hands out, and the gains that skipped a level-up | `get_story_level_milestones`, `get_story_level_growth_rules`, `get_story_character_awards`, `get_story_character_progress`, `get_character_state_at_chapter` |
 
-A level is the one number with a single owner: `characters.level` is a cache the
-database rewrites from the last level-up recorded (`refresh_character_level`), so
-the sheet, the cast rail and the cards cannot disagree with the milestones, and
-`set_character_progress` deliberately has no level argument. Growth rules and
-awards are the other half of the same idea: a rule is a promise the level-up form
-reads, and an award applies its own amount when it is written so the record and the
-sheet or chapter income never drift.
+Experience, the level and the target are three numbers with one owner each, and
+none of them can be typed. `characters.xp` is the sum of the `character_progress`
+rows, the level is what the story's curve buys with that sum, and `xp_to_next` is
+the next step of the same curve. All three are rewritten by one function,
+`refresh_character_progression`, called in the same transaction as every write
+that changes the income — adding, editing or deleting a chapter's amount, an XP
+award, or the curve itself — so the sheet, the cast rail, the cards and the
+exports cannot disagree with the ledger.
+
+A level that is reached is written down as it happens: the same call inserts the
+timeline row (the level, the chapter whose income crossed it, the running total)
+and posts the rule's automatic stats to the sheet as real `character_stat_changes`
+rows. Deleting the income reverses both, so no level survives without an entry
+behind it. The only thing authors still type about progression is the rank. A
+timeline row recorded before the curve existed keeps its level as a floor rather
+than a rival: `source` on the row says which is which, and the level is the greater
+of the curve's answer and the recorded one.
 
 The arrows between domains all pass through `App.tsx`. A chapter card asking for a
 cast member's level reads the rows `App.tsx` already loaded; the quest ledger

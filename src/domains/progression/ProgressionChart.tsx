@@ -93,6 +93,8 @@ export function ProgressionChart({
     const progressByChapter = new Map<number, CharacterProgress>();
 
     for (const progressEntry of entry.progress) {
+      if (!progressEntry.chapter_id) continue;
+
       const index = chapterIndex.get(progressEntry.chapter_id);
       if (index !== undefined) progressByChapter.set(index, progressEntry);
     }

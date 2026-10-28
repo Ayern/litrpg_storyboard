@@ -29,6 +29,8 @@ function rule(
     story_id: 'story-1',
     character_id: characterId,
     points_per_level: points,
+    xp_base: 100,
+    xp_growth: 0,
     stats,
     created_by: 'Ada',
     created_at: stamp(0),
@@ -70,9 +72,11 @@ describe('the level growth section', () => {
     );
 
     expect(
-      screen.getByText('3 points to place per level · Strength +1')
+      screen.getByText('100 XP a level · 3 points to place per level · Strength +1')
     ).toBeInTheDocument();
-    expect(screen.getByText('1 point to place per level')).toBeInTheDocument();
+    expect(
+      screen.getByText('100 XP a level · 1 point to place per level')
+    ).toBeInTheDocument();
   });
 
   it('saves the story rule with the points and rates that were typed', async () => {
@@ -91,7 +95,7 @@ describe('the level growth section', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save rule' }));
 
-    expect(onSave).toHaveBeenCalledWith('story', '2', [
+    expect(onSave).toHaveBeenCalledWith('story', '2', '100', '0', [
       { statName: 'Agility', perLevel: '1' },
     ]);
     expect(screen.queryByLabelText('Growth points per level')).not.toBeInTheDocument();
@@ -121,7 +125,7 @@ describe('the level growth section', () => {
 
     // The override starts from the story's rule but is saved for the character,
     // so the numbers are the story's until the author changes them.
-    expect(onSave).toHaveBeenCalledWith('character', '1', [
+    expect(onSave).toHaveBeenCalledWith('character', '1', '100', '0', [
       { statName: 'Strength', perLevel: '1' },
     ]);
   });

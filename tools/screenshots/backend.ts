@@ -788,14 +788,13 @@ const writes: Record<string, (args: Row) => unknown> = {
     return null;
   },
 
+  // Only the rank is typed now. The level and the total the gallery shows come
+  // from the fixture, which is built by the demo seed itself.
   set_character_progress: args => {
     const character = store.characters.find(row => row.id === args.characterId);
     if (!character) throw new Error('no such cast member');
     Object.assign(character, {
-      level: args.level,
-      xp: args.xp,
       rank: args.rank ?? null,
-      xp_to_next: args.xpToNext ?? null,
       updated_at: now(),
     });
     return character;

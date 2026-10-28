@@ -4,11 +4,57 @@ import type {
 } from '../shared/types';
 import type { LevelStatChangeDraft } from './drafts';
 
-// What a level hands out, read three ways: the story's rule, one character's
-// override, and whichever of the two applies to a sheet.
+// What a level costs and hands out, read three ways: the story's rule, one
+// character's override, and whichever of the two applies to a sheet.
 //
-// The rule is a promise the app reads, never arithmetic it runs: nothing here
-// moves a level, and a level-up still records only what the author wrote.
+// The two halves answer different questions. The step (`xp_base` and the
+// `xp_growth` percentage) is arithmetic: the database turns a chapter's income
+// into a level with it, and the helpers here do the same sum so a sheet can show
+// the ladder without a round trip. The rest (the points to place and the rates)
+// is what that level hands out, and the database writes it when the level lands.
+
+// XP needed to climb from the level below to `level`.
+export function levelXpCost(base: number, growth: number, level: number): number {
+  if (level < 2) return 0;
+
+  return base + Math.floor((base * growth * (level - 2)) / 100);
+}
+
+// Total XP a character stands on at `level`. Level 1 costs nothing.
+export function levelXpThreshold(
+  base: number,
+  growth: number,
+  level: number
+): number {
+  let total = 0;
+
+  for (let rung = 2; rung <= Math.min(level, 999); rung += 1) {
+    total += levelXpCost(base, growth, rung);
+  }
+
+  return total;
+}
+
+// The level a total buys.
+export function levelForXp(base: number, growth: number, xp: number): number {
+  let level = 1;
+
+  while (level < 999 && xp >= levelXpThreshold(base, growth, level + 1)) {
+    level += 1;
+  }
+
+  return level;
+}
+
+// The cost of a level as the rule states it: "700 XP a level" or "700 XP, 50%
+// more each level".
+export function xpStepText(rule: LevelGrowthRule | null): string {
+  if (!rule) return 'no cost set';
+
+  return rule.xp_growth > 0
+    ? `${rule.xp_base} XP, ${rule.xp_growth}% more each level`
+    : `${rule.xp_base} XP a level`;
+}
 
 export function storyGrowthRule(rules: LevelGrowthRule[]): LevelGrowthRule | null {
   return rules.find(rule => rule.character_id === null) ?? null;
@@ -85,7 +131,7 @@ export function growthStatRows(
 export function growthRateText(rule: LevelGrowthRule | null): string {
   if (!rule) return 'No growth rule set';
 
-  const parts: string[] = [];
+  const parts: string[] = [xpStepText(rule)];
 
   if (rule.points_per_level > 0) {
     parts.push(
