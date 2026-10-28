@@ -226,12 +226,12 @@ What the numbers mean, and what they do not:
 
 The Chapters tab compares milestones across the reading order, so a level that goes
 backwards without a penalty flag, a skill used before it was learned, a stat whose
-sheet value no longer matches the last level-up that recorded it, or an XP total
-that disagrees with the income rows shows up as a continuity warning with a link to
-the exact row to fix. When there is only one number to choose between, the warning
-also carries the fix itself: **Set to 12** writes the level-up's value onto the
-sheet, and **Sync to 1,400 XP** writes the ledger's sum onto the milestone. Either
-one is a single undoable step.
+sheet value no longer matches the last level-up that recorded it, or a level
+recorded at a total other than the one the rule puts that level on shows up as a
+continuity warning with a link to the exact row to fix. When there is only one
+number to choose between, the warning also carries the fix itself: **Set to 12**
+writes the level-up's value onto the sheet, and **Sync to 1,400 XP** writes the
+rule's step for that level onto the row. Either one is a single undoable step.
 
 Names are matched the way you would match them by eye: capitals and stray spaces do
 not matter, so `strength` in one level-up and `Strength` in the next are the same
