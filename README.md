@@ -331,9 +331,14 @@ other cards, because planning a scene happens on it rather than in another tab.
 The face carries the chapter's own summary (the card's note), its roster, its
 checklist and a quick **+ XP** action. **Cast** opens a small popover on the card
 with the point of view as a select and one checkbox per live cast member, so the
-roster is changed where it is read. Every one of those writes is a named history
-step: **Undo** takes the line back off the card, reopens a ticked objective,
-removes an added name or reverses the award.
+roster is changed where it is read. **Done**, `Escape` or a press off the card
+puts the popover away, and the **?** beside it opens outside the board's zoom
+transform, so the bubble stays under the button at every zoom level. **+ XP** takes
+an amount and an optional **Why**, and the card keeps a **Paid out** log of every
+award in that chapter — who, how much, and the reason — so the record is beside the
+scene that paid it. Every one of those writes is a named history step: **Undo**
+takes the line back off the card, reopens a ticked objective, removes an added
+name, reverses the award and drops its log row.
 
 **Chapter cast badges** — a chapter card names everyone present in that chapter:
 the point-of-view character and every cast member ticked as present, from the

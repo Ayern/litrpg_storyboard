@@ -1,4 +1,5 @@
 import React, { useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // The width a bubble asks for before it is measured; a first render has no
 // layout yet, so the clamp needs a size to work with.
@@ -42,6 +43,12 @@ export function placeTooltip(
 // keyboard focus and on click, is announced through aria-describedby, and closes
 // on Escape without moving focus. Its own position is fixed and clamped to the
 // window, so it cannot be cut off by the panel it belongs to.
+//
+// The bubble is rendered into `document.body` rather than beside its button: a
+// fixed element inside a scaled ancestor is positioned inside that transform, so
+// on the zoomed canvas the same tooltip would land somewhere else at every zoom
+// level. A portal puts it outside the board's transform and the coordinates stay
+// viewport coordinates.
 export function HelpTip({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<{
@@ -110,22 +117,24 @@ export function HelpTip({ label, children }: { label: string; children: React.Re
       >
         ?
       </button>
-      {open && (
-        <span
-          ref={bubbleRef}
-          id={bubbleId}
-          role="tooltip"
-          className="help-tip-bubble"
-          data-side={placement?.side ?? 'bottom'}
-          style={
-            placement
-              ? { top: placement.top, left: placement.left }
-              : { top: 0, left: 0, visibility: 'hidden' }
-          }
-        >
-          {children}
-        </span>
-      )}
+      {open &&
+        createPortal(
+          <span
+            ref={bubbleRef}
+            id={bubbleId}
+            role="tooltip"
+            className="help-tip-bubble"
+            data-side={placement?.side ?? 'bottom'}
+            style={
+              placement
+                ? { top: placement.top, left: placement.left }
+                : { top: 0, left: 0, visibility: 'hidden' }
+            }
+          >
+            {children}
+          </span>,
+          document.body
+        )}
     </span>
   );
 }

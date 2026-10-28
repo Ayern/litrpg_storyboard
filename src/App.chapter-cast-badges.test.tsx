@@ -655,6 +655,12 @@ describe('chapter card cast badges', () => {
       }),
       '100'
     );
+    await user.type(
+      within(card).getByRole('textbox', {
+        name: 'Why the XP is awarded in Chapter One',
+      }),
+      'Paid for the toll gate'
+    );
     await user.click(within(card).getByRole('button', { name: 'Award' }));
 
     await waitFor(() => {
@@ -665,8 +671,15 @@ describe('chapter card cast badges', () => {
         chapterId: 'n1',
         kind: 'xp',
         amount: 100,
+        note: 'Paid for the toll gate',
       });
     });
+
+    // The record sits on the chapter that paid it, and says why.
+    await waitFor(() => {
+      expect(within(card).getByText('+100 XP')).toBeInTheDocument();
+    });
+    expect(within(card).getByText('Paid for the toll gate')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
@@ -677,6 +690,10 @@ describe('chapter card cast badges', () => {
       expect(
         invokeMock.mock.calls.find(call => call[0] === 'delete_character_award')?.[1]
       ).toMatchObject({ id: 'award-1' });
+    });
+
+    await waitFor(() => {
+      expect(within(card).queryByText('+100 XP')).not.toBeInTheDocument();
     });
   });
 });

@@ -1036,7 +1036,7 @@ impl Db {
             "Rook Valebright",
             "Reads the System like a ledger and owes the Court a debt he cannot name.",
             200.0,
-            400.0,
+            580.0,
             Some(rook.id.clone()),
             &user,
         )?;
@@ -1047,7 +1047,7 @@ impl Db {
             "Mira Sable",
             "A courier with a stolen ember and a talent for exits.",
             620.0,
-            400.0,
+            580.0,
             Some(mira.id.clone()),
             &user,
         )?;
@@ -1058,7 +1058,7 @@ impl Db {
             "Halden Vane",
             "The clerk who wrote the debt down, and who intends to collect it.",
             1040.0,
-            400.0,
+            580.0,
             Some(vane.id.clone()),
             &user,
         )?;
@@ -1069,7 +1069,7 @@ impl Db {
             "The Ember Court",
             "Every flame in this room remembers what it was paid.",
             1040.0,
-            700.0,
+            880.0,
             None,
             &user,
         )?;
@@ -1080,7 +1080,7 @@ impl Db {
             "Ash Step",
             "A short step through smoke that leaves a grey afterimage.",
             200.0,
-            700.0,
+            880.0,
             None,
             &user,
         )?;
@@ -1091,7 +1091,7 @@ impl Db {
             "Ember Whisper",
             "Reads the last emotion a flame touched.",
             620.0,
-            700.0,
+            880.0,
             None,
             &user,
         )?;
@@ -1102,7 +1102,7 @@ impl Db {
             "Cut: the toll bell",
             "Dropped from chapter two; kept on the board in case the gate needs it again.",
             1380.0,
-            700.0,
+            880.0,
             None,
             &user,
         )?;

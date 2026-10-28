@@ -4455,7 +4455,8 @@ body {
   position: absolute;
   left: 7px;
   right: 7px;
-  top: 40px;
+  /* Below the roster row, so the Cast button that opened it stays visible. */
+  top: 54px;
   z-index: 12;
   display: flex;
   flex-direction: column;
@@ -4538,6 +4539,92 @@ body {
   color: #8f89a4;
   font-size: 10px;
   line-height: 1.4;
+}
+
+.chapter-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.chapter-popover-done {
+  padding: 2px 10px;
+  border: 1px solid #4a4060;
+  border-radius: 5px;
+  background: rgba(167, 139, 250, 0.16);
+  color: #cdbcfc;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.chapter-popover-done:hover,
+.chapter-popover-done:focus-visible {
+  border-color: #7c6aae;
+  background: rgba(167, 139, 250, 0.26);
+  color: #efe7ff;
+  outline: none;
+}
+
+/* What the chapter paid out, kept on the card so the reason is not lost in a
+   panel the author has to remember to open. */
+.chapter-awards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #33402f;
+}
+
+.chapter-awards-title {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8fbf8f;
+}
+
+.chapter-awards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapter-award-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.chapter-award-who {
+  color: #d5e8d5;
+  font-weight: 600;
+}
+
+.chapter-award-amount {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(122, 196, 122, 0.16);
+  color: #9ed59e;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chapter-award-amount.stat {
+  background: rgba(94, 200, 192, 0.14);
+  color: #a9e3de;
+}
+
+.chapter-award-note {
+  min-width: 0;
+  color: #948fa6;
+  font-style: italic;
+  overflow-wrap: anywhere;
 }
 
 .chapter-cast-tag {
@@ -6780,6 +6867,9 @@ body {
 .help-tip-bubble {
   position: fixed;
   z-index: 60;
+  /* The bubble is information, not a control: it must not sit between the
+     pointer and the card under it, or moving onto it would close it. */
+  pointer-events: none;
   width: 280px;
   max-width: calc(100vw - 16px);
   padding: 8px 10px;

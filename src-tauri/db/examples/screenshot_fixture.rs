@@ -106,6 +106,13 @@ fn main() {
         "story_inventory",
         &db.list_story_inventory(&story_id).unwrap(),
     );
+    // The awards the demo's chapters paid, so the chapter cards have a record to
+    // show instead of an empty log.
+    put(
+        &mut root,
+        "character_awards",
+        &db.list_story_character_awards(&story_id).unwrap(),
+    );
     put(
         &mut root,
         "chapter_notes",

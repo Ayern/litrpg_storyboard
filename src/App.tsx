@@ -81,6 +81,7 @@ import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
   ChapterCastBadge,
   IndexedEdge,
+  ChapterAwardRow,
   IndexedNode,
   NodeData,
   NodeType,
@@ -2183,6 +2184,40 @@ function App() {
     return byChapter;
   }, [storyChapterTasks]);
 
+  // What each chapter has paid out, oldest first. The awards live in the story's
+  // ledgers already; the card is handed them so the record sits beside the scene
+  // that paid it, with the reason the author wrote.
+  const chapterAwardsByChapter = useMemo(() => {
+    const byChapter = new Map<string, ChapterAwardRow[]>();
+
+    for (const award of storyAwards) {
+      if (!award.chapter_id) continue;
+
+      const list = byChapter.get(award.chapter_id) ?? [];
+      list.push({
+        id: award.id,
+        characterId: award.character_id,
+        characterName:
+          castNames.get(award.character_id) ?? 'Cast member in the trash',
+        kind: award.kind,
+        statName: award.stat_name,
+        amount: award.amount,
+        note: award.note,
+        createdAt: award.created_at,
+      });
+      byChapter.set(award.chapter_id, list);
+    }
+
+    for (const list of byChapter.values()) {
+      list.sort(
+        (a, b) =>
+          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+      );
+    }
+
+    return byChapter;
+  }, [storyAwards, castNames]);
+
   // Everybody a chapter card can name, as the card needs them: an id and a
   // name, not a whole sheet.
   const castChoices = useMemo(
@@ -3936,7 +3971,8 @@ function App() {
   const awardChapterXp = async (
     chapterId: string,
     characterId: string,
-    amount: number
+    amount: number,
+    note: string | null
   ): Promise<boolean> => {
     if (!Number.isInteger(amount) || amount <= 0) {
       setActionError('Award XP as a whole number above zero.');
@@ -3954,7 +3990,7 @@ function App() {
         'xp',
         null,
         amount,
-        null,
+        note,
         actor
       );
 
@@ -7622,6 +7658,7 @@ function App() {
       const chapterCast = chapterCastByChapter.get(node.id) ?? [];
       const chapterQuests = questBadgesByChapter.get(node.id) ?? [];
       const chapterTasks = chapterTasksByChapter.get(node.id) ?? [];
+      const chapterAwards = chapterAwardsByChapter.get(node.id) ?? [];
       const isChapterCard = node.data.nodeType === 'chapter';
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
@@ -7714,8 +7751,12 @@ function App() {
                   void toggleChapterObjective(task),
                 onRemoveChapterObjective: (task: ChapterTask) =>
                   void removeChapterObjective(task),
-                onQuickAward: (characterId: string, amount: number) =>
-                  awardChapterXp(node.id, characterId, amount),
+                onQuickAward: (
+                  characterId: string,
+                  amount: number,
+                  note: string | null
+                ) => awardChapterXp(node.id, characterId, amount, note),
+                chapterAwards,
               }
             : {}),
           ...(chapterQuests.length > 0
@@ -7748,6 +7789,7 @@ function App() {
     castStats,
     chapterCastByChapter,
     chapterTasksByChapter,
+    chapterAwardsByChapter,
     castChoices,
     dropTargetNodeId,
     searchOpen,

@@ -35,7 +35,7 @@ const createStore = () => ({
   progress: clone(fixture.story_progress) as Row[],
   growthPoints: clone(fixture.story_growth_points ?? []) as Row[],
   growthRules: clone(fixture.story_level_growth_rules ?? []) as Row[],
-  awards: [] as Row[],
+  awards: clone(fixture.character_awards ?? []) as Row[],
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],

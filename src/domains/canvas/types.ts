@@ -19,6 +19,19 @@ export interface ChapterCastBadge {
 
 // One chapter card's quest badge: which quest, and whether it was accepted or
 // ended there, so the card reads both ends of the contract.
+// One award a chapter paid, as its card reads it: the person, what they got and
+// the author's reason.
+export interface ChapterAwardRow {
+  id: string;
+  characterId: string;
+  characterName: string;
+  kind: 'xp' | 'stat';
+  statName: string | null;
+  amount: number;
+  note: string | null;
+  createdAt: string;
+}
+
 export interface QuestBadge {
   questId: string;
   title: string;
@@ -80,8 +93,16 @@ export type NodeData = {
   onAddChapterObjective?: (text: string) => Promise<boolean>;
   onToggleChapterObjective?: (task: ChapterTask) => void;
   onRemoveChapterObjective?: (task: ChapterTask) => void;
-  // XP paid into this chapter without opening the sheet.
-  onQuickAward?: (characterId: string, amount: number) => Promise<boolean>;
+  // XP paid into this chapter without opening the sheet, and the reason the
+  // author gave for it.
+  onQuickAward?: (
+    characterId: string,
+    amount: number,
+    note: string | null
+  ) => Promise<boolean>;
+  // What this chapter has already paid out, oldest first, so the card keeps the
+  // record beside the scene it was paid in.
+  chapterAwards?: ChapterAwardRow[];
   // The quests accepted or ended in this chapter, and where their badges lead.
   questBadges?: QuestBadge[];
   onOpenQuest?: (questId: string) => void;

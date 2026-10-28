@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { HelpTip } from '../../components/HelpTip';
@@ -33,7 +33,10 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const [objectiveDraft, setObjectiveDraft] = useState('');
   const [awardCharacterId, setAwardCharacterId] = useState('');
   const [awardAmount, setAwardAmount] = useState('');
+  const [awardNote, setAwardNote] = useState('');
   const [awardError, setAwardError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const chapterAwards = data.chapterAwards ?? [];
 
   const awardTarget =
     awardCharacterId ||
@@ -62,13 +65,42 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
     }
 
     setAwardError(null);
-    const awarded = await data.onQuickAward(awardTarget, amount);
+    const awarded = await data.onQuickAward(
+      awardTarget,
+      amount,
+      awardNote.trim() || null
+    );
 
     if (awarded !== false) {
       setAwardAmount('');
+      setAwardNote('');
       setFace(null);
     }
   };
+
+  // A form opened on the card can always be put away: Escape does it, and so
+  // does a press anywhere off the card. Clicking Cast again still toggles it.
+  useEffect(() => {
+    if (!face) return;
+
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!cardRef.current?.contains(event.target as Node)) setFace(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // Escape belongs to the card's form, not to the tab behind it.
+      event.stopPropagation();
+      setFace(null);
+    };
+
+    document.addEventListener('pointerdown', closeOnOutside, true);
+    document.addEventListener('keydown', closeOnEscape, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside, true);
+      document.removeEventListener('keydown', closeOnEscape, true);
+    };
+  }, [face]);
 
   const castSkillText = (member: ChapterCastBadge) =>
     member.skills.length === 0
@@ -83,7 +115,10 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
 
   return (
     <>
-    <div className={`graph-node ${kind}${kind === 'chapter' ? ' workbench' : ''}`}>
+    <div
+      ref={cardRef}
+      className={`graph-node ${kind}${kind === 'chapter' ? ' workbench' : ''}`}
+    >
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
       <span className="graph-node-topline">
         <span className="graph-node-kind">{kind}</span>
@@ -250,6 +285,19 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             The point of view is always present. A tick changes the whole story,
             and Undo takes it back.
           </p>
+
+          <div className="chapter-popover-actions">
+            <button
+              type="button"
+              className="chapter-popover-done nodrag nopan"
+              onClick={event => {
+                event.stopPropagation();
+                setFace(null);
+              }}
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
       {/* The scene's checklist. Every tick is one undo step, and the lines keep
@@ -397,6 +445,30 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 if (event.key === 'Enter') void submitAward();
                 if (event.key === 'Escape') {
                   setAwardAmount('');
+                  setAwardNote('');
+                  setAwardError(null);
+                  setFace(null);
+                }
+              }}
+            />
+          </label>
+          <label className="chapter-popover-row">
+            <span>Why</span>
+            <input
+              className="nodrag nopan"
+              type="text"
+              aria-label={`Why the XP is awarded in ${data.label}`}
+              placeholder="Why this XP"
+              value={awardNote}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => event.stopPropagation()}
+              onChange={event => setAwardNote(event.target.value)}
+              onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === 'Enter') void submitAward();
+                if (event.key === 'Escape') {
+                  setAwardAmount('');
+                  setAwardNote('');
                   setAwardError(null);
                   setFace(null);
                 }
@@ -422,6 +494,7 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
               className="nodrag nopan"
               onClick={() => {
                 setAwardAmount('');
+                setAwardNote('');
                 setAwardError(null);
                 setFace(null);
               }}
@@ -703,6 +776,41 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </span>
           )}
         </span>
+      )}
+      {/* What this chapter has already paid out, kept on its face: who got it,
+          how much, and the reason the author wrote down. */}
+      {kind === 'chapter' && chapterAwards.length > 0 && (
+        <div
+          className="chapter-awards"
+          role="group"
+          aria-label={`Awards paid in ${data.label}`}
+        >
+          <span className="chapter-awards-title">Paid out</span>
+          <ul className="chapter-awards-list">
+            {chapterAwards.map(award => (
+              <li key={award.id} className="chapter-award-row">
+                <span className="chapter-award-who">{award.characterName}</span>
+                <span
+                  className={`chapter-award-amount ${award.kind}`}
+                  title={
+                    award.kind === 'stat'
+                      ? `${award.amount} ${award.statName ?? 'stat points'} to ${
+                          award.characterName
+                        }`
+                      : `${formatCount(award.amount)} XP to ${award.characterName}`
+                  }
+                >
+                  {award.kind === 'stat'
+                    ? `+${award.amount} ${award.statName ?? 'stat'}`
+                    : `+${formatCount(award.amount)} XP`}
+                </span>
+                {award.note && (
+                  <span className="chapter-award-note">{award.note}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} />
     </div>

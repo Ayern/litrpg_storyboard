@@ -215,7 +215,7 @@ describe('GraphNode chapter workbench', () => {
     expect(onRemoveChapterCast).toHaveBeenCalledWith('c-2');
   });
 
-  it('pays XP into the chapter from the card', async () => {
+  it('pays XP into the chapter from the card, with the reason', async () => {
     const user = userEvent.setup();
     const onQuickAward = vi.fn(async () => true);
 
@@ -231,12 +231,94 @@ describe('GraphNode chapter workbench', () => {
       screen.getByRole('spinbutton', { name: 'XP to award in The Ashen Gate' }),
       '250'
     );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Why the XP is awarded in The Ashen Gate' }),
+      'Paid for a name at the toll gate'
+    );
     await user.click(screen.getByRole('button', { name: 'Award' }));
 
-    expect(onQuickAward).toHaveBeenCalledWith('c-1', 250);
+    expect(onQuickAward).toHaveBeenCalledWith(
+      'c-1',
+      250,
+      'Paid for a name at the toll gate'
+    );
     expect(
       screen.queryByRole('button', { name: 'Award' })
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps the record of what the chapter paid out on its face', () => {
+    renderNode({
+      chapterAwards: [
+        {
+          id: 'a-1',
+          characterId: 'c-2',
+          characterName: 'Rook',
+          kind: 'xp',
+          statName: null,
+          amount: 250,
+          note: 'Paid for a name at the toll gate',
+          createdAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'a-2',
+          characterId: 'c-1',
+          characterName: 'Mira',
+          kind: 'stat',
+          statName: 'Insight',
+          amount: 1,
+          note: null,
+          createdAt: '2026-01-01T00:01:00Z',
+        },
+      ],
+    });
+
+    const log = screen.getByRole('group', { name: 'Awards paid in The Ashen Gate' });
+
+    expect(log).toHaveTextContent('Rook');
+    expect(log).toHaveTextContent('+250 XP');
+    expect(log).toHaveTextContent('Paid for a name at the toll gate');
+    expect(log).toHaveTextContent('Mira');
+    expect(log).toHaveTextContent('+1 Insight');
+  });
+
+  it('can be put away with Done, Escape or a press outside', async () => {
+    const user = userEvent.setup();
+
+    renderNode();
+
+    await user.click(screen.getByRole('button', { name: 'Cast' }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+
+    expect(
+      screen.queryByRole('combobox', { name: 'Point of view of The Ashen Gate' })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cast' }));
+    await user.keyboard('{Escape}');
+
+    expect(
+      screen.queryByRole('combobox', { name: 'Point of view of The Ashen Gate' })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cast' }));
+    await user.click(document.body);
+
+    expect(
+      screen.queryByRole('combobox', { name: 'Point of view of The Ashen Gate' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens the help bubble outside the zoomed board', async () => {
+    renderNode();
+
+    screen.getByRole('button', { name: 'About the cast on a chapter card' }).focus();
+
+    const bubble = await screen.findByRole('tooltip');
+
+    // A fixed bubble inside a scaled node is positioned in the board's own
+    // coordinates, which is why it drifted as the board zoomed.
+    expect(bubble.parentElement).toBe(document.body);
   });
 
   it('refuses an award that is not a positive whole number', async () => {
