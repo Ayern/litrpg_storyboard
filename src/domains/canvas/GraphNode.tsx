@@ -1,5 +1,6 @@
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
+import { HelpTip } from '../../components/HelpTip';
 import { formatCount } from '../../lib/format';
 import type { ChapterCastBadge, NodeData } from './types';
 import { isNodeType, NODE_STAT_BADGES, QUEST_BADGES_SHOWN } from './types';
@@ -47,42 +48,58 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       </span>
       <span className="graph-node-label">{data.label}</span>
       {/* A chapter card names the cast whose snapshot applies there. The badge is
-          a real button, so the hover title works with a keyboard too. */}
+          a real button, so the hover title works with a keyboard too, and the
+          help dot says where the list comes from: three places on the chapter,
+          not one. */}
       {kind === 'chapter' && chapterCast.length > 0 && (
-        <div
-          className="graph-node-chapter-cast"
-          role="group"
-          aria-label="Cast in this chapter"
-        >
-          {chapterCast.map(member => (
-            <button
-              type="button"
-              key={member.characterId}
-              className="graph-node-chapter-cast-badge nodrag nopan"
-              data-chapter-cast={member.characterId}
-              title={`${member.name} — ${castLevelText(member)}\nActive skills: ${castSkillText(
-                member
-              )}\nOpen ${member.name}'s sheet`}
-              aria-label={`${member.name}, ${castLevelText(
-                member
-              )}. Active skills: ${castSkillText(member)}`}
-              onClick={event => {
-                event.stopPropagation();
-                data.onOpenChapterCast?.(member.characterId);
-              }}
-            >
-              <span className="graph-node-chapter-cast-name">{member.name}</span>
-              {member.level !== null && (
-                <span
-                  className={`graph-node-chapter-cast-level${
-                    member.levelIsPenalty ? ' penalty' : ''
-                  }`}
-                >
-                  Lv {member.level}
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="graph-node-chapter-cast-row">
+          <div
+            className="graph-node-chapter-cast"
+            role="group"
+            aria-label="Cast in this chapter"
+          >
+            {chapterCast.map(member => (
+              <button
+                type="button"
+                key={member.characterId}
+                className="graph-node-chapter-cast-badge nodrag nopan"
+                data-chapter-cast={member.characterId}
+                title={`${member.name} — ${castLevelText(member)}\nActive skills: ${castSkillText(
+                  member
+                )}\nOpen ${member.name}'s sheet`}
+                aria-label={`${member.name}, ${castLevelText(
+                  member
+                )}. Active skills: ${castSkillText(member)}`}
+                onClick={event => {
+                  event.stopPropagation();
+                  data.onOpenChapterCast?.(member.characterId);
+                }}
+              >
+                <span className="graph-node-chapter-cast-name">{member.name}</span>
+                {member.level !== null && (
+                  <span
+                    className={`graph-node-chapter-cast-level${
+                      member.levelIsPenalty ? ' penalty' : ''
+                    }`}
+                  >
+                    Lv {member.level}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <span className="nodrag nopan">
+            <HelpTip label="the cast on a chapter card">
+              This is who the story has in this chapter. Three things put a name
+              here: the one character linked to the chapter card, the chapter's
+              point of view, and anyone ticked under “Present in this chapter”
+              on the Chapters tab — so a party can share a scene without
+              replacing the linked cast. The level beside a name is the level
+              they had as of this chapter, not their latest one, and the hover
+              title lists the skills they had then. Click a name to open that
+              character's sheet.
+            </HelpTip>
+          </span>
         </div>
       )}
       {kind === 'chapter' && questBadges.length > 0 && (
@@ -212,7 +229,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           )}
         </div>
       )}
-      {linked && (
+      {/* A chapter's roster is already above as badges, with the same names and
+          levels, so the linked-cast footer would only repeat one of them. */}
+      {linked && kind !== 'chapter' && (
         <span
           className="graph-node-cast"
           title={

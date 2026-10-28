@@ -39,7 +39,6 @@ const createStore = () => ({
   inventory: clone(fixture.story_inventory) as Row[],
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],
-  castStates: clone(fixture.chapter_cast_states) as Row[],
   relations: clone(fixture.story_relations) as Row[],
   standings: clone(fixture.story_faction_standings) as Row[],
   quests: clone(fixture.story_quests) as Row[],
@@ -298,6 +297,193 @@ function deriveProgression(characterId: string) {
   character.updated_at = now();
 }
 
+// ---- who is in a chapter, and what they were then -----------------------
+//
+// A chapter card's cast is not a list the author types: the database works it
+// out from three places — the one character linked to the chapter, its point of
+// view, and the rows ticked under “Present in this chapter” — and dates each
+// person at that chapter. The harness used to answer from the fixture's
+// snapshot, so the preview never drew a badge for a chapter or a cast member the
+// author had just added. Deriving here means linking a character, naming a POV or
+// ticking somebody present draws the same badge the desktop build draws.
+
+const chaptersInReadingOrder = () =>
+  store.nodes
+    .filter(node => node.node_type === 'chapter')
+    .sort(
+      (a, b) =>
+        (a.chapter_seq ?? Number.MAX_SAFE_INTEGER) -
+          (b.chapter_seq ?? Number.MAX_SAFE_INTEGER) ||
+        String(a.created_at).localeCompare(String(b.created_at)) ||
+        String(a.id).localeCompare(String(b.id))
+    );
+
+type ChapterState = {
+  level: number | null;
+  levelIsPenalty: boolean;
+  skills: Row[];
+};
+
+// A character as the story had them at a chapter: the income paid by then run
+// through their rule's curve, a level somebody recorded as the floor, and the
+// skills learned — and not since sacrificed — up to the same chapter.
+const stateAtChapter = (characterId: string, chapterId: string): ChapterState => {
+  const chapter = store.nodes.find(node => node.id === chapterId);
+
+  if (!chapter || chapter.node_type !== 'chapter') throw new Error('no such chapter');
+
+  const sequence = chapter.chapter_seq as number | null;
+
+  if (sequence == null) {
+    throw new Error(
+      'a chapter needs a place in the reading order before its state can be read'
+    );
+  }
+
+  const earned = store.progress
+    .filter(
+      row =>
+        row.character_id === characterId &&
+        (chapterSeqOf(row.chapter_id) ?? Number.MAX_SAFE_INTEGER) <= sequence
+    )
+    .reduce((sum, row) => sum + Number(row.xp_earned ?? 0), 0);
+
+  const rule = ruleFor(characterId);
+  const curve = levelForXp(rule?.xp_base ?? 100, rule?.xp_growth ?? 0, earned);
+
+  const recorded = store.levels
+    .filter(
+      row =>
+        row.character_id === characterId &&
+        (chapterSeqOf(row.chapter_id) ?? Number.MAX_SAFE_INTEGER) <= sequence
+    )
+    .sort(
+      (a, b) =>
+        Number(b.level) - Number(a.level) ||
+        (chapterSeqOf(b.chapter_id) ?? 0) - (chapterSeqOf(a.chapter_id) ?? 0) ||
+        String(b.created_at).localeCompare(String(a.created_at))
+    )[0];
+
+  // Nothing earned and nothing recorded is a character the story has not placed
+  // yet, rather than a level 1 the card would be claiming.
+  const level = recorded
+    ? Math.max(curve, Number(recorded.level))
+    : earned === 0
+      ? null
+      : curve;
+
+  const skills = store.skills
+    .filter(row => row.character_id === characterId)
+    .map(row => ({ row, learned: chapterSeqOf(row.chapter_id) }))
+    .filter(
+      (entry): entry is { row: Row; learned: number } =>
+        entry.learned != null && entry.learned <= sequence
+    )
+    .sort(
+      (a, b) =>
+        a.learned - b.learned ||
+        String(a.row.created_at).localeCompare(String(b.row.created_at))
+    )
+    .flatMap(({ row, learned }) => {
+      const events = store.skillEvents
+        .filter(event => event.skill_id === row.id)
+        .map(event => ({ event, seq: chapterSeqOf(event.chapter_id) }))
+        .filter(
+          entry =>
+            entry.seq != null && entry.seq >= learned && entry.seq <= sequence
+        )
+        .sort(
+          (a, b) =>
+            (a.seq ?? 0) - (b.seq ?? 0) ||
+            String(a.event.created_at).localeCompare(String(b.event.created_at))
+        );
+
+      // A sacrifice removes the skill; a later use is a warning, not a revival.
+      if (events.some(entry => entry.event.kind === 'sacrificed')) return [];
+
+      const rank =
+        [...events]
+          .reverse()
+          .find(
+            entry =>
+              (entry.event.kind === 'upgraded' || entry.event.kind === 'used') &&
+              entry.event.rank != null &&
+              String(entry.event.rank).trim() !== ''
+          )?.event.rank ??
+        row.rank ??
+        null;
+
+      return [
+        {
+          skill_id: row.id,
+          name: row.name,
+          rank,
+          effect: row.effect ?? null,
+          learned_chapter_id: row.chapter_id,
+          learned_chapter_seq: learned,
+        },
+      ];
+    });
+
+  return {
+    level,
+    // Only the row that records the level the character actually reached can
+    // say the level was a penalty.
+    levelIsPenalty: Boolean(
+      recorded && recorded.is_debuff && Number(recorded.level) === level
+    ),
+    skills,
+  };
+};
+
+const chapterCastStates = () => {
+  const chapters = chaptersInReadingOrder();
+  const chapterIds = new Set(chapters.map(node => node.id));
+  const live = new Set(store.characters.map(row => row.id));
+  const assignments: { chapterId: string; characterId: string }[] = [];
+  const seen = new Set<string>();
+
+  const assign = (chapterId: string | null, characterId: string | null) => {
+    if (!chapterId || !characterId) return;
+    if (!chapterIds.has(chapterId) || !live.has(characterId)) return;
+
+    const key = `${chapterId}|${characterId}`;
+    if (seen.has(key)) return;
+
+    seen.add(key);
+    assignments.push({ chapterId, characterId });
+  };
+
+  chapters.forEach(node => {
+    assign(node.id, node.character_id ?? null);
+    assign(node.id, node.chapter_pov ?? null);
+  });
+
+  store.chapterCast.forEach(row =>
+    assign(row.chapter_id ?? null, row.character_id ?? null)
+  );
+
+  return assignments.flatMap(({ chapterId, characterId }) => {
+    try {
+      const state = stateAtChapter(characterId, chapterId);
+
+      return [
+        {
+          chapter_id: chapterId,
+          character_id: characterId,
+          level: state.level,
+          level_is_penalty: state.levelIsPenalty,
+          skills: state.skills,
+        },
+      ];
+    } catch {
+      // A chapter with no place in the reading order has no snapshot, and the
+      // database leaves it out too rather than failing the whole board.
+      return [];
+    }
+  });
+};
+
 const auditEntry = (args: Row, action: string, detail: string, entityType = 'history') =>
   ({
     id: id('audit'),
@@ -349,7 +535,7 @@ const reads: Record<string, (args: Row) => unknown> = {
 
   get_chapter_notes: () => store.notes,
   get_story_chapter_cast: () => store.chapterCast,
-  get_story_chapter_cast_states: () => store.castStates,
+  get_story_chapter_cast_states: () => chapterCastStates(),
 
   get_story_relations: () => store.relations,
   get_story_faction_standings: () => store.standings,
@@ -594,6 +780,17 @@ const writes: Record<string, (args: Row) => unknown> = {
   },
 
   add_chapter_cast_member: args => {
+    chapterOrThrow(args.chapterId);
+
+    // Ticking somebody on twice is not a change: the scene already has them,
+    // and the database hands back the row it kept.
+    const existing = store.chapterCast.find(
+      row =>
+        row.chapter_id === args.chapterId && row.character_id === args.characterId
+    );
+
+    if (existing) return existing;
+
     const timestamp = now();
     const row: Row = {
       id: id('cast'),

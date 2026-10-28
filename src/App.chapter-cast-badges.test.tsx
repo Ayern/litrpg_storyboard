@@ -311,6 +311,50 @@ describe('chapter card cast badges', () => {
     ).toBe(true);
   });
 
+  it('draws the roster once, not again in the linked-cast footer', async () => {
+    const { container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await waitFor(() => {
+      expect(
+        within(card).getByRole('button', { name: /Rook, Level 12/i })
+      ).toBeInTheDocument();
+    });
+
+    // The chapter is linked to Rook, and Rook is already a badge: the card says
+    // his level once rather than adding a second row underneath.
+    expect(card.querySelector('.graph-node-cast')).toBeNull();
+  });
+
+  it('explains where the roster comes from, from the keyboard too', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    const help = await within(card).findByRole('button', {
+      name: 'About the cast on a chapter card',
+    });
+
+    expect(within(help).getByText('?')).toBeInTheDocument();
+
+    // Focus, not hover: the bubble has to open for a keyboard author too.
+    help.focus();
+
+    const bubble = await screen.findByRole('tooltip');
+    expect(bubble).toHaveTextContent('point of view');
+    expect(bubble).toHaveTextContent('Present in this chapter');
+    expect(bubble).toHaveTextContent('as of this chapter');
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+    // A chapter with no cast has no roster and nothing to explain.
+    expect(
+      within(cardFor(container, 'n3')).queryByRole('button', {
+        name: 'About the cast on a chapter card',
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it('opens the character sheet from a badge', async () => {
     const { user, container } = await openGraph();
 

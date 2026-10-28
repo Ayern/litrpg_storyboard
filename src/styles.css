@@ -4320,6 +4320,19 @@ body {
 
 /* A chapter's cast badges: who the database places there, and the level that
    applied, with active skills kept in the hover title rather than the card. */
+/* The badges and the help dot that explains where the roster comes from: the
+   dot sits outside the group so it is not read as one of the names. */
+.graph-node-chapter-cast-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.graph-node-chapter-cast-row .graph-node-chapter-cast {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .graph-node-chapter-cast {
   display: flex;
   flex-wrap: wrap;
