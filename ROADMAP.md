@@ -466,7 +466,12 @@ deleting the income reverses both. **Record level-up**, the milestone creator an
 the XP and target fields are gone: the sheet's only progression input is the rank,
 and experience is recorded where it was earned, on the chapter it was earned in.
 The timeline is a readout, and a level recorded before the curve is a floor rather
-than a rival (`character_level_milestones.source`). Purging a chapter keeps the
+than a rival (`character_level_milestones.source`). The sheet's head reads the cast
+row the curve wrote, not the last level in the timeline, so a character whose
+experience has carried it past its recorded levels shows the level it is at; and
+every write that can move a level — income, an award, a rule — reads the cast row,
+the timeline and the sheet's stats back in the same step rather than waiting for
+the tab to be opened again. Purging a chapter keeps the
 experience it paid for and clears the chapter, so tidying the board cannot de-level
 anybody. Remaining, and next: port the readers that still treat the timeline as the
 source — the point-in-time sheet, the chart, the ledger reconciliation warning and

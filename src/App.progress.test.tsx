@@ -190,9 +190,32 @@ let growth: GrowthRow[] = [];
 
 const stamp = (minute: number) => `2026-10-22T12:${String(minute).padStart(2, '0')}:00Z`;
 
+// The database derives a character's level and target from the ledger and the
+// story's rule. The mock stands in for that — a flat 700 XP a level — so a write
+// the app makes moves the numbers it reads back.
+const XP_PER_LEVEL = 700;
+
+function derive(characterId: string) {
+  const character = cast.find(entry => entry.id === characterId);
+  if (!character) return;
+
+  const total = progress
+    .filter(entry => entry.character_id === characterId)
+    .reduce((sum, entry) => sum + entry.xp_earned, 0);
+  const recorded = milestones
+    .filter(entry => entry.character_id === characterId)
+    .reduce((highest, entry) => Math.max(highest, entry.level), 1);
+  const level = Math.max(1 + Math.floor(total / XP_PER_LEVEL), recorded);
+
+  character.xp = total;
+  character.level = level;
+  character.xp_to_next = level * XP_PER_LEVEL;
+}
+
 beforeEach(() => {
   cast = [row('char-1', 'Rook', 3, 250, 'Bronze', 1000), row('char-2', 'Wren', 1, 0, null, null)];
-  // The sheet's level is read from the level-ups, so Rook's third level is one.
+  // The level the cast row carries is the one the curve worked out; the timeline
+  // only says where each level was reached.
   milestones = [
     {
       id: 'm-1',
@@ -282,6 +305,7 @@ beforeEach(() => {
         };
 
         progress.push(saved);
+        derive(args.characterId);
         return saved;
       }
       case 'add_level_milestone': {
@@ -396,6 +420,8 @@ beforeEach(() => {
               created_at: stamp(1),
               updated_at: stamp(1),
             });
+
+          derive(saved.character_id);
         }
 
         return { ...saved };
@@ -416,6 +442,8 @@ beforeEach(() => {
               item.character_id === found.character_id && item.chapter_id === found.chapter_id
           );
           if (entry) entry.xp_earned = Math.max(0, entry.xp_earned - found.amount);
+
+          derive(found.character_id);
         }
         return null;
       }
@@ -565,6 +593,52 @@ describe('progression', () => {
     // The form clears once the row is written, and the sheet reads its total from
     // the ledger rather than keeping a copy to fall out of step with.
     expect(ledger.getByLabelText('New XP entry earned XP')).toHaveValue(null);
+  });
+
+  it('shows the level the experience buys, not the last level the timeline recorded', async () => {
+    // Rook has 6,350 XP, which the story's 700 XP a level carries to level 10,
+    // while the newest row in the timeline is the third level it once crossed.
+    // Reading the level out of the timeline would put 3 on the sheet beside 10
+    // on the rail, which is the sheet disagreeing with itself.
+    cast[0] = row('char-1', 'Rook', 10, 6350, 'Bronze', 7000);
+
+    await openSheet();
+
+    expect(within(sheet()).getByText('10')).toBeInTheDocument();
+    expect(within(sheet()).getByText('6350 / 7000')).toBeInTheDocument();
+    expect(within(sheet()).getByText('650 XP to level 11')).toBeInTheDocument();
+    expect(screen.getByText('Level 10 · Bronze')).toBeInTheDocument();
+  });
+
+  it('moves the level as soon as an award pays experience in', async () => {
+    const user = await openSheet();
+
+    const awardsRegion = within(screen.getByRole('region', { name: 'Awards' }));
+
+    await user.selectOptions(awardsRegion.getByLabelText('Award chapter'), 'n1');
+    await user.type(awardsRegion.getByLabelText('Award amount'), '5000');
+    await user.click(awardsRegion.getByRole('button', { name: 'Add award' }));
+
+    // The award applies itself in the database, so the numbers it moved are read
+    // back at once: without that the sheet kept its old level until the tab was
+    // opened again.
+    expect(await within(sheet()).findByText('8')).toBeInTheDocument();
+    expect(within(sheet()).getByText('5000 / 5600')).toBeInTheDocument();
+    expect(screen.getByText('Level 8 · Bronze')).toBeInTheDocument();
+  });
+
+  it('moves the level as soon as a chapter records its experience', async () => {
+    const user = await openSheet();
+
+    const ledger = within(screen.getByRole('region', { name: 'XP by chapter' }));
+
+    await user.selectOptions(ledger.getByLabelText('New XP entry chapter'), 'n1');
+    await user.type(ledger.getByLabelText('New XP entry earned XP'), '3500');
+    await user.click(ledger.getByRole('button', { name: 'Add XP' }));
+
+    expect(await within(sheet()).findByText('6')).toBeInTheDocument();
+    expect(within(sheet()).getByText('3500 / 4200')).toBeInTheDocument();
+    expect(screen.getByText('Level 6 · Bronze')).toBeInTheDocument();
   });
 
   it('says what a level costs and hands out from the rule', async () => {

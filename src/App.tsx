@@ -73,7 +73,6 @@ import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
 import { milestoneStatChanges } from './domains/progression/helpers';
-import { levelFromMilestones } from './domains/progression/growth';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
@@ -5450,23 +5449,14 @@ function App() {
     }
   };
 
-  // A level-up is what the sheet's level follows, so the cast rows are moved with
-  // the milestones rather than waiting for another read. The rail, search and the
-  // chapter cards then agree with the sheet in the same render.
-  const applyMilestoneList = useCallback(
-    (next: CharacterLevelMilestone[], characterIds: string[]) => {
-      storyLevelMilestonesRef.current = next;
-      setStoryLevelMilestones(next);
-      setCharacters(rows =>
-        rows.map(row =>
-          characterIds.includes(row.id)
-            ? { ...row, level: levelFromMilestones(next, row.id) }
-            : row
-        )
-      );
-    },
-    []
-  );
+  // A milestone records where the curve put a level; it does not decide what the
+  // level is. The level lives on the cast row, worked out from the ledger and the
+  // rule, so writing a timeline row leaves the cast alone and the row is read back
+  // from the database when a write could have moved it.
+  const applyMilestoneList = useCallback((next: CharacterLevelMilestone[]) => {
+    storyLevelMilestonesRef.current = next;
+    setStoryLevelMilestones(next);
+  }, []);
 
   const applyLevelMilestone = useCallback(
     (saved: CharacterLevelMilestone) => {
@@ -5479,7 +5469,7 @@ function App() {
         (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
       );
 
-      applyMilestoneList(next, [saved.character_id]);
+      applyMilestoneList(next);
     },
     [applyMilestoneList]
   );
@@ -6215,6 +6205,7 @@ function App() {
       );
 
       applyXpEntry(saved);
+      await reloadProgressionNumbers(entry.character_id);
       return true;
     } catch (e) {
       console.error('Failed to save XP income:', e);
@@ -6245,6 +6236,7 @@ function App() {
       );
 
       applyXpEntry(saved);
+      await reloadProgressionNumbers(selectedCharacterId);
       return true;
     } catch (e) {
       console.error('Failed to add XP income:', e);
@@ -6261,6 +6253,7 @@ function App() {
       setStoryCharacterProgress(previous =>
         previous.filter(other => other.id !== entry.id)
       );
+      await reloadProgressionNumbers(entry.character_id);
       return true;
     } catch (e) {
       console.error('Failed to delete XP income:', e);
@@ -7610,10 +7603,11 @@ function App() {
   );
 
   // What the sheet shows for the selected character.
-  // The sheet's level comes from the level-ups it has recorded, which is the one
-  // number the database keeps in step; the stored field is the fallback for a
-  // character whose level-ups have not been loaded yet.
-  const shownLevel = levelFromMilestones(storyLevelMilestones, selectedCharacterId);
+  // The level is the one the curve wrote on the cast row — the ledger's total run
+  // through the story's rule — and the target is the next step of that curve. The
+  // timeline says where each level was reached, not where the character stands, so
+  // reading the level out of it would show the last crossing instead.
+  const shownLevel = selectedCharacter?.level ?? 1;
   const shownXp = selectedCharacter?.xp ?? 0;
   const shownTarget = selectedCharacter?.xp_to_next ?? null;
   const progressPercent =
@@ -7732,15 +7726,7 @@ function App() {
       // The curve is what levels the cast, so a rule that moved it has to be read
       // back rather than assumed: the levels, the timelines it wrote and the stats
       // those levels handed out.
-      const [cast, milestones] = await Promise.all([
-        charactersApi.getCharacters(currentStory.id),
-        progressionApi.getStoryLevelMilestones(currentStory.id),
-      ]);
-
-      setCharacters(cast);
-      applyMilestoneList(milestones, cast.map(character => character.id));
-
-      if (selectedCharacterId) await refreshAwardedNumbers(selectedCharacterId);
+      await reloadProgressionNumbers(selectedCharacterId);
 
       return true;
     } catch (e) {
@@ -7762,20 +7748,30 @@ function App() {
     }
   };
 
-  // An award applies itself in the database, so the numbers it changed are read
-  // back rather than guessed at: the sheet's stats and the chapter's income.
-  const refreshAwardedNumbers = async (characterId: string) => {
+  // An award or an income row applies itself in the database, where the ledger's
+  // total, the level it buys and the stats that level hands out are all worked
+  // out together. So none of it is guessed at here: the cast row (level, total and
+  // target), the timeline the curve wrote and the numbers on the sheet are read
+  // back, and the rail, the search results and the cards follow in the same render
+  // instead of waiting for the tab to be opened again.
+  const reloadProgressionNumbers = async (characterId: string | null) => {
     if (!currentStory) return;
 
-    const [storyStats, sheetStats, progress] = await Promise.all([
+    const [cast, milestones, storyStats, progress] = await Promise.all([
+      charactersApi.getCharacters(currentStory.id),
+      progressionApi.getStoryLevelMilestones(currentStory.id),
       charactersApi.getStoryCharacterStats(currentStory.id),
-      charactersApi.getCharacterStats(characterId),
       progressionApi.getStoryCharacterProgress(currentStory.id),
     ]);
 
+    applyMilestoneList(milestones);
+    setCharacters(cast);
     setCastStats(statsByCharacter(storyStats));
-    setCharacterStats(sheetStats);
     setStoryCharacterProgress(progress ?? []);
+
+    // The sheet's own stats belong to whoever is open; a rule that moved the whole
+    // cast still only has one sheet to fill.
+    if (characterId) setCharacterStats(await charactersApi.getCharacterStats(characterId));
   };
 
   const addAward = async (draft: AwardDraft): Promise<boolean> => {
@@ -7812,7 +7808,7 @@ function App() {
       );
 
       setStoryAwards(previous => [...previous, saved]);
-      await refreshAwardedNumbers(selectedCharacterId);
+      await reloadProgressionNumbers(selectedCharacterId);
       return true;
     } catch (e) {
       console.error('Failed to add an award:', e);
@@ -7827,7 +7823,7 @@ function App() {
     try {
       await progressionApi.deleteCharacterAward(award.id, actor);
       setStoryAwards(previous => previous.filter(other => other.id !== award.id));
-      await refreshAwardedNumbers(award.character_id);
+      await reloadProgressionNumbers(award.character_id);
     } catch (e) {
       console.error('Failed to delete an award:', e);
       setCharacterError(`Could not delete the award: ${String(e)}`);
