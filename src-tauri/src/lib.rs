@@ -1,9 +1,9 @@
 use litrpg_db::{
     AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, Character, CharacterAttribute,
-    CharacterChapterState, CharacterCurrency, CharacterLevelMilestone, CharacterProgress,
-    CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge,
-    FactionStanding, InventoryItem, LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution,
-    SkillTree, Story, StoryExport,
+    CharacterAward, CharacterChapterState, CharacterCurrency, CharacterLevelMilestone,
+    CharacterProgress, CharacterRelation, CharacterSkill, CharacterSkillEvent, CharacterStat, Db,
+    DeletedItem, Edge, FactionStanding, InventoryItem, LevelGrowthRule, LevelGrowthStatInput,
+    LevelStatChangeInput, Node, Quest, QuestReward, SkillEvolution, SkillTree, Story, StoryExport,
 };
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -132,30 +132,92 @@ fn update_character(
         .map_err(|e| e.to_string())
 }
 
-/// Saves level, XP, rank and the XP target as the author typed them. No formula
-/// runs here: the app records progression, it does not decide it.
+/// Saves the running totals as the author typed them. The level is not one of
+/// them: it belongs to the level-up a character reached it on.
 #[tauri::command]
 fn set_character_progress(
     db: tauri::State<'_, Db>,
     character_id: String,
-    level: i64,
     xp: i64,
     rank: Option<String>,
     xp_to_next: Option<i64>,
     user: String,
 ) -> Result<Character, String> {
-    db.set_character_progress(&character_id, level, xp, rank, xp_to_next, user)
+    db.set_character_progress(&character_id, xp, rank, xp_to_next, user)
         .map_err(|e| e.to_string())
 }
 
-/// One level more, recorded as a level-up rather than an ordinary field edit.
 #[tauri::command]
-fn level_up_character(
+fn get_story_level_growth_rules(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<LevelGrowthRule>, String> {
+    db.list_story_level_growth_rules(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_level_growth_rule(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+    character_id: Option<String>,
+    points_per_level: i64,
+    stats: Vec<LevelGrowthStatInput>,
+    user: String,
+) -> Result<LevelGrowthRule, String> {
+    db.save_level_growth_rule(story_id, character_id, points_per_level, stats, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_level_growth_rule(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
+    db.delete_level_growth_rule(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_story_character_awards(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<CharacterAward>, String> {
+    db.list_story_character_awards(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_character_award(
     db: tauri::State<'_, Db>,
     character_id: String,
+    chapter_id: Option<String>,
+    kind: String,
+    stat_name: Option<String>,
+    amount: i64,
+    note: Option<String>,
     user: String,
-) -> Result<Character, String> {
-    db.level_up_character(&character_id, user)
+) -> Result<CharacterAward, String> {
+    db.add_character_award(
+        character_id,
+        chapter_id,
+        kind,
+        stat_name,
+        amount,
+        note,
+        user,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_character_award(
+    db: tauri::State<'_, Db>,
+    id: String,
+    user: String,
+) -> Result<(), String> {
+    db.delete_character_award(&id, user)
         .map_err(|e| e.to_string())
 }
 
@@ -1369,7 +1431,12 @@ pub fn run() {
             get_characters,
             update_character,
             set_character_progress,
-            level_up_character,
+            get_story_level_growth_rules,
+            save_level_growth_rule,
+            delete_level_growth_rule,
+            get_story_character_awards,
+            add_character_award,
+            delete_character_award,
             delete_character,
             set_character_stat,
             get_character_stats,

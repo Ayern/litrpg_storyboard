@@ -73,6 +73,7 @@ import { useChapterWorkspace } from './domains/narrative/useChapterWorkspace';
 import { useStoryShelf } from './domains/stories/useStoryShelf';
 import { useSearchPalette } from './domains/search/useSearchPalette';
 import { milestoneStatChanges } from './domains/progression/helpers';
+import { levelFromMilestones } from './domains/progression/growth';
 import { findSheetStat, likelyRenamedStat, statKey } from './domains/progression/statNames';
 import { useProgressionChart } from './domains/progression/useProgressionChart';
 import { CAST_DRAG_TYPE, isCanvasCreateKind } from './domains/canvas/types';
@@ -93,7 +94,12 @@ import type {
   XpEntryDraft,
 } from './domains/characters/ProgressionSections';
 import type { LevelStatChangeDraft } from './domains/progression/drafts';
-import type { ProgressionFocus } from './domains/progression/types';
+import type { GrowthScope } from './domains/progression/GrowthSection';
+import type {
+  AwardDraft,
+  GrowthRateDraft,
+  ProgressionFocus,
+} from './domains/progression/types';
 import type { Quest, QuestWarning } from './domains/quests/types';
 import { SkillsSection } from './domains/skills/SkillsSection';
 import type { SkillDraft, SkillEventDraft } from './domains/skills/SkillsSection';
@@ -105,6 +111,7 @@ import type {
 } from './domains/shared/types';
 import type {
   Character,
+  CharacterAward,
   CharacterChapterSkill,
   CharacterLevelMilestone,
   CharacterProgress,
@@ -113,6 +120,7 @@ import type {
   CharacterStat,
   FactionStanding,
   InventoryHolder,
+  LevelGrowthRule,
   SkillEvolution,
   SkillHolder,
 } from './domains/shared/types';
@@ -788,6 +796,10 @@ function App() {
   const [storyLevelMilestones, setStoryLevelMilestones] = useState<
     CharacterLevelMilestone[]
   >([]);
+  // What a level hands out, for the story and for any character that overrides
+  // it, and the gains that skipped a level-up entirely.
+  const [storyGrowthRules, setStoryGrowthRules] = useState<LevelGrowthRule[]>([]);
+  const [storyAwards, setStoryAwards] = useState<CharacterAward[]>([]);
   // Read by a sync's undo step, so putting an old total back does not also put
   // the milestone's other fields back.
   const storyLevelMilestonesRef = useRef<CharacterLevelMilestone[]>([]);
@@ -988,6 +1000,8 @@ function App() {
         skillEvents,
         levels,
         progress,
+        growthRules,
+        awards,
         inventory,
         noteRows,
         chapterCast,
@@ -1003,6 +1017,8 @@ function App() {
           skillsApi.getStorySkillEvents(story.id),
           progressionApi.getStoryLevelMilestones(story.id),
           progressionApi.getStoryCharacterProgress(story.id),
+          progressionApi.getStoryLevelGrowthRules(story.id),
+          progressionApi.getStoryCharacterAwards(story.id),
           inventoryApi.getStoryInventory(story.id),
           narrativeApi.getChapterNotes(story.id),
           narrativeApi.getStoryChapterCast(story.id),
@@ -1017,6 +1033,8 @@ function App() {
       setStorySkillEvents(skillEvents ?? []);
       setStoryLevelMilestones(levels ?? []);
       setStoryCharacterProgress(progress ?? []);
+      setStoryGrowthRules(growthRules ?? []);
+      setStoryAwards(awards ?? []);
       setStoryInventory(inventory ?? []);
       followLoadedNotes(noteRows ?? []);
       setStoryChapterCast(chapterCast ?? []);
@@ -5431,13 +5449,39 @@ function App() {
     }
   };
 
-  const applyLevelMilestone = useCallback((saved: CharacterLevelMilestone) => {
-    setStoryLevelMilestones(previous =>
-      [...previous.filter(milestone => milestone.id !== saved.id), saved].sort(
+  // A level-up is what the sheet's level follows, so the cast rows are moved with
+  // the milestones rather than waiting for another read. The rail, search and the
+  // chapter cards then agree with the sheet in the same render.
+  const applyMilestoneList = useCallback(
+    (next: CharacterLevelMilestone[], characterIds: string[]) => {
+      storyLevelMilestonesRef.current = next;
+      setStoryLevelMilestones(next);
+      setCharacters(rows =>
+        rows.map(row =>
+          characterIds.includes(row.id)
+            ? { ...row, level: levelFromMilestones(next, row.id) }
+            : row
+        )
+      );
+    },
+    []
+  );
+
+  const applyLevelMilestone = useCallback(
+    (saved: CharacterLevelMilestone) => {
+      const next = [
+        ...storyLevelMilestonesRef.current.filter(
+          milestone => milestone.id !== saved.id
+        ),
+        saved,
+      ].sort(
         (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
-      )
-    );
-  }, []);
+      );
+
+      applyMilestoneList(next, [saved.character_id]);
+    },
+    [applyMilestoneList]
+  );
 
   // The chapter ledger and a total-XP milestone can disagree. Recording the
   // ledger's sum on the milestone goes through the same audited command as the
@@ -6217,8 +6261,9 @@ function App() {
 
     try {
       await progressionApi.deleteLevelMilestone(milestone.id, actor);
-      setStoryLevelMilestones(previous =>
-        previous.filter(other => other.id !== milestone.id)
+      applyMilestoneList(
+        storyLevelMilestonesRef.current.filter(other => other.id !== milestone.id),
+        [milestone.character_id]
       );
       // The database sets a skill event's level-up link to null when the
       // milestone goes; keep the board copy in step so no row points at it.
@@ -7671,7 +7716,10 @@ function App() {
   );
 
   // What the sheet shows for the selected character.
-  const shownLevel = selectedCharacter?.level ?? 1;
+  // The sheet's level comes from the level-ups it has recorded, which is the one
+  // number the database keeps in step; the stored field is the fallback for a
+  // character whose level-ups have not been loaded yet.
+  const shownLevel = levelFromMilestones(storyLevelMilestones, selectedCharacterId);
   const shownXp = selectedCharacter?.xp ?? 0;
   const shownTarget = selectedCharacter?.xp_to_next ?? null;
   const progressPercent =
@@ -7690,14 +7738,8 @@ function App() {
   const saveProgress = async (draft: ProgressDraft): Promise<boolean> => {
     if (!selectedCharacter) return false;
 
-    const level = Number(draft.level);
     const xp = Number(draft.xp);
     const target = draft.target.trim() === '' ? null : Number(draft.target);
-
-    if (!Number.isInteger(level) || level < 1) {
-      setCharacterError('A level is a whole number, 1 or more.');
-      return false;
-    }
 
     if (!Number.isInteger(xp) || xp < 0) {
       setCharacterError('Experience is a whole number, 0 or more.');
@@ -7714,7 +7756,6 @@ function App() {
     try {
       const updated: Character = await progressionApi.setCharacterProgress(
         selectedCharacter.id,
-        level,
         xp,
         draft.rank.trim() || null,
         target,
@@ -7730,24 +7771,159 @@ function App() {
     }
   };
 
-  // One level more, recorded as a level-up event rather than a field edit.
-  const levelUpCharacter = async () => {
-    if (!selectedCharacter) return;
+  // What a level hands out, saved for the story or for one character. The form
+  // hands over text; what a whole number of points is belongs here.
+  const saveGrowthRule = async (
+    scope: GrowthScope,
+    pointsPerLevel: string,
+    rates: GrowthRateDraft[]
+  ): Promise<boolean> => {
+    if (!currentStory) return false;
+    if (scope === 'character' && !selectedCharacterId) return false;
+
+    const points = Number(pointsPerLevel);
+
+    if (!/^\d+$/.test(pointsPerLevel.trim()) || points < 0) {
+      setCharacterError('Points per level is a whole number, 0 or more.');
+      return false;
+    }
+
+    const cleaned: { stat_name: string; per_level: number }[] = [];
+    const seen = new Set<string>();
+
+    for (const rate of rates) {
+      const statName = rate.statName.trim();
+      const perLevel = rate.perLevel.trim();
+
+      if (statName === '' && perLevel === '') continue;
+
+      if (statName === '') {
+        setCharacterError('A growth rate needs a stat.');
+        return false;
+      }
+
+      if (!/^-?\d+$/.test(perLevel) || Number(perLevel) === 0) {
+        setCharacterError(`${statName} grows by a whole number other than zero.`);
+        return false;
+      }
+
+      if (seen.has(statName)) {
+        setCharacterError(`${statName} grows more than once per level.`);
+        return false;
+      }
+
+      seen.add(statName);
+      cleaned.push({ stat_name: statName, per_level: Number(perLevel) });
+    }
 
     setCharacterError(null);
 
     try {
-      const updated: Character = await progressionApi.levelUpCharacter(
-        selectedCharacter.id,
+      const saved: LevelGrowthRule = await progressionApi.saveLevelGrowthRule(
+        currentStory.id,
+        scope === 'character' ? selectedCharacterId : null,
+        points,
+        cleaned,
         actor
       );
 
-      applyCharacterRow(updated);
+      setStoryGrowthRules(previous => [
+        ...previous.filter(rule => rule.id !== saved.id),
+        saved,
+      ]);
+      return true;
     } catch (e) {
-      console.error('Failed to level up:', e);
-      setCharacterError(`Could not level up: ${String(e)}`);
+      console.error('Failed to save a growth rule:', e);
+      setCharacterError(`Could not save the growth rule: ${String(e)}`);
+      return false;
     }
   };
+
+  const removeGrowthRule = async (rule: LevelGrowthRule): Promise<void> => {
+    setCharacterError(null);
+
+    try {
+      await progressionApi.deleteLevelGrowthRule(rule.id, actor);
+      setStoryGrowthRules(previous => previous.filter(other => other.id !== rule.id));
+    } catch (e) {
+      console.error('Failed to delete a growth rule:', e);
+      setCharacterError(`Could not remove the growth rule: ${String(e)}`);
+    }
+  };
+
+  // An award applies itself in the database, so the numbers it changed are read
+  // back rather than guessed at: the sheet's stats and the chapter's income.
+  const refreshAwardedNumbers = async (characterId: string) => {
+    if (!currentStory) return;
+
+    const [storyStats, sheetStats, progress] = await Promise.all([
+      charactersApi.getStoryCharacterStats(currentStory.id),
+      charactersApi.getCharacterStats(characterId),
+      progressionApi.getStoryCharacterProgress(currentStory.id),
+    ]);
+
+    setCastStats(statsByCharacter(storyStats));
+    setCharacterStats(sheetStats);
+    setStoryCharacterProgress(progress ?? []);
+  };
+
+  const addAward = async (draft: AwardDraft): Promise<boolean> => {
+    if (!selectedCharacterId) return false;
+
+    const amount = Number(draft.amount);
+
+    if (!/^-?\d+$/.test(draft.amount.trim()) || amount === 0) {
+      setCharacterError('An award is a whole number other than zero.');
+      return false;
+    }
+
+    if (draft.kind === 'xp' && (!draft.chapterId || amount < 0)) {
+      setCharacterError('XP awarded belongs to a chapter, as a whole number above zero.');
+      return false;
+    }
+
+    if (draft.kind === 'stat' && draft.statName.trim() === '') {
+      setCharacterError('A stat award needs a stat.');
+      return false;
+    }
+
+    setCharacterError(null);
+
+    try {
+      const saved: CharacterAward = await progressionApi.addCharacterAward(
+        selectedCharacterId,
+        draft.chapterId || null,
+        draft.kind,
+        draft.kind === 'stat' ? draft.statName.trim() : null,
+        amount,
+        draft.note.trim() || null,
+        actor
+      );
+
+      setStoryAwards(previous => [...previous, saved]);
+      await refreshAwardedNumbers(selectedCharacterId);
+      return true;
+    } catch (e) {
+      console.error('Failed to add an award:', e);
+      setCharacterError(`Could not add the award: ${String(e)}`);
+      return false;
+    }
+  };
+
+  const removeAward = async (award: CharacterAward): Promise<void> => {
+    setCharacterError(null);
+
+    try {
+      await progressionApi.deleteCharacterAward(award.id, actor);
+      setStoryAwards(previous => previous.filter(other => other.id !== award.id));
+      await refreshAwardedNumbers(award.character_id);
+    } catch (e) {
+      console.error('Failed to delete an award:', e);
+      setCharacterError(`Could not delete the award: ${String(e)}`);
+    }
+  };
+
+
 
   // One palette, placed on two tabs: over the canvas and above the chapter list.
   // Only one tab renders at a time, so there is never a second copy of it.
@@ -8578,9 +8754,16 @@ function App() {
               skillEvents={storySkillEvents}
               statNameOptions={statNameOptions}
               focus={focusedProgression}
+              growthRules={storyGrowthRules}
+              awards={storyAwards.filter(
+                award => award.character_id === selectedCharacterId
+              )}
               onError={setCharacterError}
               onSaveProgress={saveProgress}
-              onLevelUp={levelUpCharacter}
+              onSaveGrowth={saveGrowthRule}
+              onDeleteGrowth={removeGrowthRule}
+              onAddAward={addAward}
+              onDeleteAward={removeAward}
               onCreateMilestone={addLevelMilestone}
               onSaveMilestone={saveLevelMilestone}
               onDeleteMilestone={removeLevelMilestone}

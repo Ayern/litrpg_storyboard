@@ -375,12 +375,13 @@ export function SkillsSection({
                 onChange={(e) => {
                   const milestoneId = e.target.value;
                   setSkillEventMilestoneDraft(milestoneId);
-                  // A skill change shares its level-up's chapter,
-                  // so picking the level-up fills the chapter in.
+                  // A skill keeps its own clock, so the level-up is a note about
+                  // what came with the change rather than where it happened. Its
+                  // chapter only fills in one the author left blank.
                   const milestone = milestones.find(
                     entry => entry.id === milestoneId
                   );
-                  if (milestone?.chapter_id) {
+                  if (milestone?.chapter_id && !skillEventChapterDraft) {
                     setSkillEventChapterDraft(milestone.chapter_id);
                   }
                 }}

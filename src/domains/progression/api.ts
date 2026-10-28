@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   Character,
+  CharacterAward,
   CharacterLevelMilestone,
   CharacterProgress,
+  LevelGrowthRule,
 } from '../shared/types';
 import type { CharacterChapterState } from '../narrative/types';
 import type { LevelStatChangeInput } from './types';
@@ -95,11 +97,10 @@ export function deleteLevelMilestone(id: string, actor: string) {
   return invoke<void>('delete_level_milestone', { id, user: actor });
 }
 
-// The running totals on the cast member itself, which the level-up command
-// moves on by one. Both answer with the character as it now stands.
+// The running totals on the cast member itself. The level is deliberately not
+// one of them: it belongs to the level-up that recorded it.
 export function setCharacterProgress(
   characterId: string,
-  level: number,
   xp: number,
   rank: string | null,
   xpToNext: number | null,
@@ -107,7 +108,6 @@ export function setCharacterProgress(
 ) {
   return invoke<Character>('set_character_progress', {
     characterId,
-    level,
     xp,
     rank,
     xpToNext,
@@ -115,8 +115,60 @@ export function setCharacterProgress(
   });
 }
 
-export function levelUpCharacter(characterId: string, actor: string) {
-  return invoke<Character>('level_up_character', { characterId, user: actor });
+// What a level hands out. A rule with no character id is the story's own; one
+// with an id replaces it for that character.
+export function getStoryLevelGrowthRules(storyId: string) {
+  return invoke<LevelGrowthRule[]>('get_story_level_growth_rules', { storyId });
+}
+
+export function saveLevelGrowthRule(
+  storyId: string,
+  characterId: string | null,
+  pointsPerLevel: number,
+  stats: { stat_name: string; per_level: number }[],
+  actor: string
+) {
+  return invoke<LevelGrowthRule>('save_level_growth_rule', {
+    storyId,
+    characterId,
+    pointsPerLevel,
+    stats,
+    user: actor,
+  });
+}
+
+export function deleteLevelGrowthRule(id: string, actor: string) {
+  return invoke<void>('delete_level_growth_rule', { id, user: actor });
+}
+
+// Gains that are not level-ups. Writing one applies it: XP lands on the
+// chapter's income and stat points on the sheet.
+export function getStoryCharacterAwards(storyId: string) {
+  return invoke<CharacterAward[]>('get_story_character_awards', { storyId });
+}
+
+export function addCharacterAward(
+  characterId: string,
+  chapterId: string | null,
+  kind: 'xp' | 'stat',
+  statName: string | null,
+  amount: number,
+  note: string | null,
+  actor: string
+) {
+  return invoke<CharacterAward>('add_character_award', {
+    characterId,
+    chapterId,
+    kind,
+    statName,
+    amount,
+    note,
+    user: actor,
+  });
+}
+
+export function deleteCharacterAward(id: string, actor: string) {
+  return invoke<void>('delete_character_award', { id, user: actor });
 }
 
 // What a sheet held at one chapter, worked out by the database rather than the

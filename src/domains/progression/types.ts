@@ -27,3 +27,25 @@ export interface LevelStatChangeInput {
   amount: number | null;
   value_after: number | null;
 }
+
+// What a growth editor hands the app. The numbers stay the text that was typed,
+// because the app is the one that decides what a whole number of points is.
+export interface GrowthRateDraft {
+  statName: string;
+  perLevel: string;
+}
+
+export interface GrowthDraft {
+  pointsPerLevel: string;
+  rates: GrowthRateDraft[];
+}
+
+// One award, as its form holds it. XP belongs to a chapter; a stat point can be
+// handed over anywhere, so its chapter is optional.
+export interface AwardDraft {
+  kind: 'xp' | 'stat';
+  chapterId: string;
+  statName: string;
+  amount: string;
+  note: string;
+}

@@ -226,16 +226,15 @@ identified by name, so adding a stat or an attribute you already have updates it
 instead of creating a duplicate. The cast list says each character's level and
 rank, and the cast rail on the Graph tab puts the level on every card.
 
-**Progression** — each character's level, experience, rank and optional "XP to
-next" are stored as their own fields rather than as a stat called "Level". The
-sheet shows the numbers under a bar filled against the XP target, and the caption
-counts down to the next level; without a target the bar stays empty and the raw
-total is shown instead. **Level up** adds one level and records it as a level-up
-event in the history; **Edit progression** types all four fields at once, saving
-only the ones that changed. Nothing is derived: experience never rolls over into
-a level, and clearing the rank or the target stores nothing rather than an empty
-string. A level starts at 1 and experience at 0, which is what the migration gives
-a character created before these fields existed.
+**Progression** — each character's experience, rank and optional "XP to next" are
+stored as their own fields rather than as a stat called "Level". The sheet shows
+the numbers under a bar filled against the XP target, and the caption counts down
+to the next level; without a target the bar stays empty and the raw total is shown
+instead. **Record level-up** opens the next milestone in the creator with the
+level already filled in, and **Edit progression** types the experience, rank and
+target, saving only the ones that changed. Nothing is derived from experience: it
+never rolls over into a level, and clearing the rank or the target stores nothing
+rather than an empty string. A character starts at level 1 with 0 experience.
 
 **Level milestones** sit below the progression bar: a level, the chapter it was
 reached in, an explicit **Penalty** flag for a deliberate drop, optional **Total
@@ -243,14 +242,16 @@ XP**, and any number of **stat changes**. One level-up is one milestone, and eac
 stat change on it records the gain (such as `Agility +2`), the value it became, or
 both; listing two stats on level 2 is how a sheet says "2 agility and 1 strength"
 without entering the same level twice. A stat can appear only once per level-up.
-A **skill event** can name the level-up it belongs to, so an upgrade groups under
-the milestone that caused it instead of needing a second level-2 row. The numbers
-record what the sheet said at that chapter; none are required. A milestone is a
-record of where a level applied, not the character's current level, so changing
-the sheet does not rewrite history. The Chapters tab compares them in reading
-order and warns when a level goes backwards without that penalty flag; the same
-warning is drawn on the chapter card where the drop appears. Clicking either one
-opens the holder's sheet and puts that milestone straight into its editor.
+The milestones are the only thing that moves a sheet's level: the last one written
+is the level the header, the cast list and the cards read, and deleting it takes
+that level back off the sheet. The numbers it carries record what the sheet said
+at that chapter, and none are required. A **skill event** can name the level-up it
+came with, so an upgrade groups under the milestone without needing a second
+level-2 row; the skill keeps its own chapter, because it grows on its own clock.
+The Chapters tab compares the milestones in reading order and warns when a level
+goes backwards without that penalty flag; the same warning is drawn on the
+chapter card where the drop appears. Clicking either one opens the holder's sheet
+and puts that milestone straight into its editor.
 
 **XP by chapter** is a separate ledger below the milestones: one income amount
 per character per chapter, recorded on the sheet with that chapter. It is what
@@ -260,6 +261,23 @@ only one amount, so recording the same chapter twice is refused, and a trashed
 chapter keeps its row labelled as such until the chapter is restored or purged.
 Editing or deleting a row is immediate, and the ledger travels in the JSON export
 and import. A chapter that has been purged takes its income rows with it.
+
+**Level growth** sits between the milestones and the XP ledger: what one level
+hands out, kept for the story with a per-character override. A rule is a number of
+points to place at each level plus any stats that rise by themselves (`Strength
++1`), and the level-up creator fills in those automatic rows and says how many
+points are waiting. It is a promise the form reads, never a calculation: no
+command levels anybody up, and every level-up still records only what the author
+says it did. Removing an override puts the character back on the story's rule. A
+story with neither hands out nothing until one is set, and a rule that hands out
+nothing is a valid choice rather than a missing value.
+
+**Awards** are gains that are not level-ups: XP a chapter paid, or a stat point
+handed over by a blessing, a hidden quest or a drop. Adding one applies it — XP
+lands on that chapter's income, a stat point on the sheet — and deleting it takes
+the same amount back out, so the record and the number cannot drift. An XP award
+belongs to a chapter because income is kept per chapter; a stat award's chapter is
+optional. Both travel in the JSON export and import.
 
 **Progression chart and chapter state** — the top of the Characters tab draws a
 power curve from `character_level_milestones` and the XP ledger: the chapters in
@@ -673,7 +691,7 @@ An entry records:
 | Column | Meaning |
 | --- | --- |
 | `story_id` | Which story the change belongs to, so history can be shown per story |
-| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, progress, inventory, currency, relations and faction standings, a `quest` or `quest_reward`, a `node`, `edge` or `chapter_cast` row, or `history` for a step the board could not finish |
+| `entity_type` | `story`, `character`, its stats, attributes, skills, skill events, level milestones, growth rules, awards, progress, inventory, currency, relations and faction standings, a `quest` or `quest_reward`, a `node`, `edge` or `chapter_cast` row, or `history` for a step the board could not finish |
 | `entity_id` | The row that changed |
 | `action` | `create`, `update`, `level_up`, `revert`, `soft_delete`, `restore`, `purge`, `undo_refused`, `redo_refused` or `step_rolled_back` |
 | `field_changed` | Name of the changed field, for updates and reverts |
@@ -970,7 +988,9 @@ page that arrives late, and what it says when a filter matches nothing.
   total.
 - **Progression is recorded, not calculated.** Nothing checks that experience is
   below the target, that a level-up is earned, or that a rank only rises: the
-  fields hold whatever the author typed, and leveling up just adds one. The bar
+  fields hold whatever the author typed, and the level moves only when the author
+  records the level-up that reached it. A growth rule fills in a form; it never
+  awards a level, a point or a rank by itself. The bar
   clamps at 100% when experience passes the target rather than inventing a
   second level, and without a target there is no bar to fill. Level milestones,
   XP income and skill events are also author-recorded: the continuity panel can

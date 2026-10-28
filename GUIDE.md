@@ -195,7 +195,15 @@ src/
 | **quests** | The ledger: quest drafts, reward drafts, the status filter, the apply notices, and the continuity warnings a payout raises | `get_story_quests`, `add_quest`, `update_quest`, `add_quest_reward`, `mark_quest_rewards_applied` |
 | **audit** | One page of history, the entity filter, the extendable window, and the revert notices | `get_audit_history`, `revert_change`, `record_history_event` |
 | **trash** | Both deleted lists (the open story's, and the stories themselves), which row is waiting on a permanent-delete confirmation, and the retention window | `get_trash`, `get_trash_retention`, `set_trash_retention`, `restore_deleted`, `purge_deleted` |
-| **progression** | The power curve: which metric, which cast members are shown, the chapter the sheet is read as of, and the whole sheet — stats, skills and carried items — that chapter opens | `get_story_level_milestones`, `get_story_character_progress`, `get_character_state_at_chapter` |
+| **progression** | The power curve: which metric, which cast members are shown, the chapter the sheet is read as of, the whole sheet — stats, skills and carried items — that chapter opens, what a level hands out, and the gains that skipped a level-up | `get_story_level_milestones`, `get_story_level_growth_rules`, `get_story_character_awards`, `get_story_character_progress`, `get_character_state_at_chapter` |
+
+A level is the one number with a single owner: `characters.level` is a cache the
+database rewrites from the last level-up recorded (`refresh_character_level`), so
+the sheet, the cast rail and the cards cannot disagree with the milestones, and
+`set_character_progress` deliberately has no level argument. Growth rules and
+awards are the other half of the same idea: a rule is a promise the level-up form
+reads, and an award applies its own amount when it is written so the record and the
+sheet or chapter income never drift.
 
 The arrows between domains all pass through `App.tsx`. A chapter card asking for a
 cast member's level reads the rows `App.tsx` already loaded; the quest ledger

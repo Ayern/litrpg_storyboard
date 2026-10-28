@@ -348,6 +348,21 @@ share a chapter without overwriting its one linked cast member; the explicit lis
 travels in export and import. Remaining: a grid entry flow and declared jumps
 allowed. **L**
 
+**9b. A level that explains itself.** **Done.** The level is no longer a field
+anybody types: `characters.level` is rewritten from the last level-up recorded
+(schema v25), so the sheet, the cast rail, search and the cards read one number,
+and `set_character_progress` lost its level argument. The silent **Level up**
+counter is gone; **Record level-up** opens the next milestone in the creator with
+the level already in it. A growth rule (`level_growth_rules` and
+`level_growth_stats`) says what one level hands out — points to place and stats
+that rise on their own — set once for the story with a per-character override,
+read by the level-up form and never applied by itself. `character_awards` records
+the gains that skip a level-up: XP paid into a chapter's income, or a stat point
+put on the sheet, applied and withdrawn in the same step. A skill event may name a
+level-up from another chapter now, because a skill grows on its own clock. All
+three travel in export and import, and a revert of an old typed level is refused
+with a reason rather than desyncing the sheet from its milestones. **M**
+
 ### Phase 3 — the world
 
 **10. Skills.** **Done.** A cast member's skills are rows with a name, an
@@ -631,7 +646,8 @@ Individually shippable, in rough value order, to slot between larger features:
 
 - **Sync, accounts, sharing.** Local-first is the product. Copying the file is
   the sharing story until it stops being true.
-- **A levelling formula or dice engine.** The app records the author's numbers; it
-  does not decide them.
+- **A levelling formula, auto-levelling or dice engine.** A growth rule fills in
+  the level-up form so an author does not retype the same points every level, but
+  nothing awards a level, spends a point or rolls a die on its own.
 - **Reader-facing publishing.** The story bible export covers the hand-off.
 - **A second database or a service.** SQLite, one file, no daemons.

@@ -3463,6 +3463,192 @@ body {
   font-size: 12px;
 }
 
+/* What a level hands out, and the gains that skipped a level-up. Both read as
+   rows of their own, the way the milestones and the XP ledger do. */
+.growth-section,
+.awards-section {
+  margin-bottom: 18px;
+}
+
+.growth-head,
+.awards-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.growth-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #7c9cff;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.growth-scope {
+  min-width: 96px;
+  color: #ddd;
+}
+
+.growth-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #9a9a9a;
+}
+
+.growth-row button,
+.award-row button {
+  margin-left: 0;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.growth-row button:hover,
+.award-row button:hover {
+  background: #37373d;
+  color: #fff;
+}
+
+.growth-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #202020;
+  border: 1px dashed #3c3c3c;
+  border-radius: 4px;
+}
+
+.growth-form input,
+.growth-form select,
+.growth-rate-row input,
+.growth-rate-row select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.growth-rate-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.growth-rate-row input[type='number'] {
+  width: 64px;
+}
+
+.level-growth-hint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+.award-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.award-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #252526;
+  border: 1px solid #333;
+  border-left: 2px solid #c084fc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.award-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.award-amount {
+  color: #ddd;
+  font-variant-numeric: tabular-nums;
+}
+
+.award-chapter {
+  font-size: 10px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+
+.award-note {
+  font-size: 11px;
+  color: #9a9a9a;
+}
+
+.award-creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.award-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: #9a9a9a;
+}
+
+.award-field input,
+.award-field select {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ddd;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.award-field input[type='number'] {
+  width: 72px;
+}
+
+.award-note-field input {
+  width: 160px;
+}
+
+.award-creator button {
+  background: #0e639c;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
 /* A warning opened from the board or the panel marks the exact row to edit. */
 .progression-row-focused {
   outline: 2px solid #f0b429;

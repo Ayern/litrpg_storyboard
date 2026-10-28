@@ -1,15 +1,30 @@
 import { useEffect, useState } from 'react';
 import type { ChapterNode } from '../narrative/chapters';
+import { AwardsSection } from '../progression/AwardsSection';
+import { GrowthSection } from '../progression/GrowthSection';
+import type { GrowthScope } from '../progression/GrowthSection';
 import { StatChangeRows } from '../progression/StatChangeRows';
+import {
+  effectiveGrowthRule,
+  growthRateText,
+  growthStatRows,
+  nextLevelFromMilestones,
+} from '../progression/growth';
 import type { LevelStatChangeDraft } from '../progression/drafts';
 import { blankStatChange, statChangesFromMilestone } from '../progression/drafts';
 import { milestoneStatChanges, statChangeText } from '../progression/helpers';
-import type { ProgressionFocus } from '../progression/types';
+import type {
+  AwardDraft,
+  GrowthRateDraft,
+  ProgressionFocus,
+} from '../progression/types';
 import type {
   Character,
+  CharacterAward,
   CharacterLevelMilestone,
   CharacterProgress,
   CharacterSkill,
+  LevelGrowthRule,
 } from '../shared/types';
 import type { CharacterSkillEvent } from '../skills/types';
 
@@ -32,10 +47,10 @@ import type { CharacterSkillEvent } from '../skills/types';
 // closes the level form, because it holds that character's numbers rather than a
 // row's.
 
-// What the level form hands the app. The numbers stay as typed; the app is the
-// one that decides what a level, an experience total and a target are.
+// What the totals form hands the app. The numbers stay as typed; the app is the
+// one that decides what an experience total and a target are. The level is not
+// in this form at all: it comes from the level-ups, not from a field.
 export interface ProgressDraft {
-  level: string;
   xp: string;
   target: string;
   rank: string;
@@ -73,13 +88,23 @@ export interface ProgressionSectionsProps {
   xpEntries: CharacterProgress[];
   skillEvents: CharacterSkillEvent[];
   skills: CharacterSkill[];
-  // The stat names a milestone's rows can pick from.
+  // What a level hands out, and the gains that skipped a level-up.
+  growthRules: LevelGrowthRule[];
+  awards: CharacterAward[];
+  // The stat names a milestone's rows, a growth rate or an award can pick from.
   statNameOptions: string[];
   focus: ProgressionFocus | null;
 
   onError: (message: string | null) => void;
   onSaveProgress: (draft: ProgressDraft) => Promise<boolean>;
-  onLevelUp: () => Promise<void>;
+  onSaveGrowth: (
+    scope: GrowthScope,
+    pointsPerLevel: string,
+    rates: GrowthRateDraft[]
+  ) => Promise<boolean>;
+  onDeleteGrowth: (rule: LevelGrowthRule) => Promise<void>;
+  onAddAward: (draft: AwardDraft) => Promise<boolean>;
+  onDeleteAward: (award: CharacterAward) => Promise<void>;
   onCreateMilestone: (draft: MilestoneDraft) => Promise<boolean>;
   onSaveMilestone: (
     milestone: CharacterLevelMilestone,
@@ -106,11 +131,16 @@ export function ProgressionSections({
   xpEntries,
   skillEvents,
   skills,
+  growthRules,
+  awards,
   statNameOptions,
   focus,
   onError,
   onSaveProgress,
-  onLevelUp,
+  onSaveGrowth,
+  onDeleteGrowth,
+  onAddAward,
+  onDeleteAward,
   onCreateMilestone,
   onSaveMilestone,
   onDeleteMilestone,
@@ -119,7 +149,6 @@ export function ProgressionSections({
   onDeleteXpEntry,
 }: ProgressionSectionsProps) {
   const [editingProgress, setEditingProgress] = useState(false);
-  const [progressLevelDraft, setProgressLevelDraft] = useState('1');
   const [progressXpDraft, setProgressXpDraft] = useState('0');
   const [progressTargetDraft, setProgressTargetDraft] = useState('');
   const [progressRankDraft, setProgressRankDraft] = useState('');
@@ -148,12 +177,14 @@ export function ProgressionSections({
   const [newXpEntryChapter, setNewXpEntryChapter] = useState('');
   const [newXpEntryXp, setNewXpEntryXp] = useState('');
 
+  // The rule this sheet follows: its own when it has one, the story's otherwise.
+  const growth = effectiveGrowthRule(growthRules, characterId);
+
   // The progression form opens with the stored numbers, so a save can change one
   // field without having to retype the others.
   const startProgressEdit = () => {
     if (!character) return;
 
-    setProgressLevelDraft(String(shownLevel));
     setProgressXpDraft(String(shownXp));
     setProgressTargetDraft(shownTarget ? String(shownTarget) : '');
     setProgressRankDraft(character.rank ?? '');
@@ -163,7 +194,6 @@ export function ProgressionSections({
 
   const saveProgress = async () => {
     const saved = await onSaveProgress({
-      level: progressLevelDraft,
       xp: progressXpDraft,
       target: progressTargetDraft,
       rank: progressRankDraft,
@@ -172,11 +202,33 @@ export function ProgressionSections({
     if (saved) setEditingProgress(false);
   };
 
+  // A level-up is a record in a chapter, so the button opens the creator with
+  // the next level and the rule's automatic gains already in it. Whatever the
+  // rule says, the author still writes the level-up.
+  const startLevelUp = () => {
+    onError(null);
+    setNewMilestoneLevel(String(nextLevelFromMilestones(milestones, characterId)));
+    setNewMilestoneChapter('');
+    setNewMilestoneDebuff(false);
+    setNewMilestoneXp('');
+
+    const rows = growthStatRows(growth);
+    setNewMilestoneStatChanges(rows.length > 0 ? rows : [blankStatChange()]);
+  };
+
   // The level form holds the selected character's numbers rather than a row's, so
   // moving to somebody else closes it: whoever is selected next starts from their
   // own record.
   useEffect(() => {
     setEditingProgress(false);
+  }, [characterId]);
+
+  // The creator opens at the level after the one this character last reached, so
+  // moving to somebody else starts from their record rather than the last
+  // sheet's number. Only a change of character resets it, never a save.
+  useEffect(() => {
+    setNewMilestoneLevel(String(nextLevelFromMilestones(milestones, characterId)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characterId]);
 
   const startMilestoneEdit = (milestone: CharacterLevelMilestone) => {
@@ -311,20 +363,6 @@ export function ProgressionSections({
         {editingProgress ? (
           <div className="progress-form">
             <label>
-              Level
-              <input
-                type="number"
-                min={1}
-                autoFocus
-                value={progressLevelDraft}
-                onChange={(e) => setProgressLevelDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveProgress();
-                  if (e.key === 'Escape') setEditingProgress(false);
-                }}
-              />
-            </label>
-            <label>
               Experience
               <input
                 type="number"
@@ -381,13 +419,13 @@ export function ProgressionSections({
         ) : (
           <div className="progress-actions">
             <button
-              title="Add one level, recorded as a level-up in the audit log"
-              onClick={onLevelUp}
+              title="Record the next level as a level-up in a chapter"
+              onClick={startLevelUp}
             >
-              Level up
+              Record level-up
             </button>
             <button
-              title="Type the level, experience, rank and XP target directly"
+              title="Type the experience, rank and XP target; the level comes from the level-ups"
               onClick={startProgressEdit}
             >
               Edit progression
@@ -560,6 +598,11 @@ export function ProgressionSections({
         </div>
 
         <div className="level-creator">
+          <div className="level-growth-hint">
+            {growth
+              ? `This level hands out: ${growthRateText(growth)}.`
+              : 'No growth rule yet — set one below, or record the gains by hand.'}
+          </div>
           <input
             aria-label="New milestone level"
             type="number"
@@ -617,6 +660,16 @@ export function ProgressionSections({
           </button>
         </div>
       </section>
+
+      <GrowthSection
+        storyRule={growthRules.find(rule => rule.character_id === null) ?? null}
+        characterRule={
+          growthRules.find(rule => rule.character_id === characterId) ?? null
+        }
+        statNameOptions={statNameOptions}
+        onSave={onSaveGrowth}
+        onDelete={onDeleteGrowth}
+      />
 
       {/* Income is what a chapter paid out, kept separate from the
           running total on a milestone so the chart can show either. */}
@@ -756,6 +809,14 @@ export function ProgressionSections({
           </button>
         </div>
       </section>
+
+      <AwardsSection
+        awards={awards}
+        chapters={chapters}
+        statNameOptions={statNameOptions}
+        onAdd={onAddAward}
+        onDelete={onDeleteAward}
+      />
     </>
   );
 }

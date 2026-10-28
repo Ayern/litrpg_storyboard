@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 24;
+const SCHEMA_VERSION: i32 = 25;
 
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -701,7 +701,6 @@ impl Db {
 
         self.set_character_progress(
             &rook.id,
-            4,
             2400,
             Some("Bronze".into()),
             Some(3000),
@@ -709,10 +708,29 @@ impl Db {
         )?;
         self.set_character_progress(
             &mira.id,
-            3,
             1500,
             Some("Bronze".into()),
             Some(2200),
+            user.clone(),
+        )?;
+
+        // The System the demo follows: three points to place at each level, and
+        // Strength and Insight rising on their own. The cast's levels below are
+        // recorded as level-ups, so the sheet's number comes from them.
+        self.save_level_growth_rule(
+            story_id.to_string(),
+            None,
+            3,
+            vec![
+                LevelGrowthStatInput {
+                    stat_name: "Strength".into(),
+                    per_level: 1,
+                },
+                LevelGrowthStatInput {
+                    stat_name: "Insight".into(),
+                    per_level: 1,
+                },
+            ],
             user.clone(),
         )?;
 
@@ -949,6 +967,37 @@ impl Db {
             story_id.to_string(),
             "Halden Vane".into(),
             Some("The Ember Court's clerk, who keeps every debt in his own hand.".into()),
+            user.clone(),
+        )?;
+
+        // Vane grows by a rule of his own, so the demo shows what an exception
+        // looks like: one point to place and nothing that rises by itself.
+        self.save_level_growth_rule(
+            story_id.to_string(),
+            Some(vane.id.clone()),
+            1,
+            Vec::new(),
+            user.clone(),
+        )?;
+
+        // And two gains that are not level-ups: XP the ledger never had a row
+        // for, and a point no level-up awarded.
+        self.add_character_award(
+            vane.id.clone(),
+            Some(first.id.clone()),
+            "xp".into(),
+            None,
+            250,
+            Some("Paid for a name at the toll gate.".into()),
+            user.clone(),
+        )?;
+        self.add_character_award(
+            vane.id.clone(),
+            Some(second.id.clone()),
+            "stat".into(),
+            Some("Insight".into()),
+            1,
+            Some("The Ember Court's ledger opens for him once.".into()),
             user.clone(),
         )?;
 
@@ -3642,11 +3691,684 @@ impl Db {
         Ok(())
     }
 
+    // ===== LEVEL GROWTH =====
+    //
+    // What one level hands out: points the author allocates, and the stats that
+    // rise by themselves. The story owns a default rule and a character may
+    // override it, so a world can have one System and a handful of exceptions.
+    // The rule is read, never enforced: no command levels anybody up, and a
+    // level-up still records what the author says it did.
+
+    pub fn list_story_level_growth_rules(&self, story_id: &str) -> DbResult<Vec<LevelGrowthRule>> {
+        let guard = self.conn()?;
+
+        let mut rules = {
+            let mut stmt = guard.prepare(
+                "SELECT r.id, r.story_id, r.character_id, r.points_per_level, r.created_by,
+                        r.created_at, r.updated_at
+                 FROM level_growth_rules r
+                 JOIN stories st ON st.id = r.story_id
+                 WHERE r.story_id = ?1 AND st.deleted_at IS NULL
+                 ORDER BY r.character_id IS NOT NULL, r.created_at, r.id",
+            )?;
+
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(LevelGrowthRule {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    character_id: row.get(2)?,
+                    points_per_level: row.get(3)?,
+                    stats: Vec::new(),
+                    created_by: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        attach_level_growth_stats(&guard, &mut rules)?;
+
+        Ok(rules)
+    }
+
+    /// Creates the rule for a scope, or rewrites the one already there. One
+    /// command for both, because a rule is one promise rather than a row to add
+    /// and then remember to fill in.
+    pub fn save_level_growth_rule(
+        &self,
+        story_id: String,
+        character_id: Option<String>,
+        points_per_level: i64,
+        stats: Vec<LevelGrowthStatInput>,
+        user: String,
+    ) -> DbResult<LevelGrowthRule> {
+        if !(0..=999).contains(&points_per_level) {
+            return Err(DbError::Invalid(
+                "points per level is a whole number from 0 to 999".to_string(),
+            ));
+        }
+
+        let stats = clean_level_growth_stats(stats)?;
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let live: Option<String> = tx
+            .query_row(
+                "SELECT id FROM stories WHERE id = ?1 AND deleted_at IS NULL",
+                params![&story_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if live.is_none() {
+            return Err(DbError::NotFound("story"));
+        }
+
+        if let Some(id) = character_id.as_deref() {
+            if live_character_story(&tx, id)? != story_id {
+                return Err(DbError::Invalid(
+                    "a character's growth rule belongs to its own story".to_string(),
+                ));
+            }
+        }
+
+        let existing = tx
+            .query_row(
+                "SELECT id, points_per_level, created_by, created_at
+                 FROM level_growth_rules
+                 WHERE story_id = ?1 AND character_id IS ?2",
+                params![&story_id, character_id.as_deref()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let (id, created_by, created_at) = match existing {
+            Some((id, old_points, created_by, created_at)) => {
+                if old_points != points_per_level {
+                    tx.execute(
+                        "UPDATE level_growth_rules SET points_per_level = ?1, updated_at = ?2
+                          WHERE id = ?3",
+                        params![points_per_level, &timestamp, &id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "level_growth_rule",
+                            entity_id: &id,
+                            action: "update",
+                            field_changed: Some("points_per_level"),
+                            old_value: Some(old_points.to_string()),
+                            new_value: Some(points_per_level.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+
+                (id, created_by, created_at)
+            }
+            None => {
+                let id = Uuid::new_v4().to_string();
+
+                tx.execute(
+                    "INSERT INTO level_growth_rules
+                     (id, story_id, character_id, points_per_level, created_by,
+                      created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    params![
+                        &id,
+                        &story_id,
+                        character_id.as_deref(),
+                        points_per_level,
+                        &user,
+                        &timestamp
+                    ],
+                )?;
+
+                log_audit(
+                    &tx,
+                    AuditRecord {
+                        story_id: Some(&story_id),
+                        entity_type: "level_growth_rule",
+                        entity_id: &id,
+                        action: "create",
+                        field_changed: Some("points_per_level"),
+                        old_value: None,
+                        new_value: Some(points_per_level.to_string()),
+                        changed_by: &user,
+                    },
+                )?;
+
+                (id, user.clone(), timestamp.clone())
+            }
+        };
+
+        let existing_stats = load_level_growth_stats(&tx, &id)?;
+
+        for old in &existing_stats {
+            if stats.iter().any(|rate| rate.stat_name == old.stat_name) {
+                continue;
+            }
+
+            tx.execute(
+                "DELETE FROM level_growth_stats WHERE id = ?1",
+                params![&old.id],
+            )?;
+
+            let field = format!("stat:{}", old.stat_name);
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "level_growth_rule",
+                    entity_id: &id,
+                    action: "delete",
+                    field_changed: Some(field.as_str()),
+                    old_value: Some(old.per_level.to_string()),
+                    new_value: None,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        for rate in &stats {
+            if let Some(old) = existing_stats
+                .iter()
+                .find(|old| old.stat_name == rate.stat_name)
+            {
+                if old.per_level == rate.per_level {
+                    continue;
+                }
+
+                tx.execute(
+                    "UPDATE level_growth_stats SET per_level = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![rate.per_level, &timestamp, &old.id],
+                )?;
+
+                let field = format!("stat:{}", rate.stat_name);
+                log_audit(
+                    &tx,
+                    AuditRecord {
+                        story_id: Some(&story_id),
+                        entity_type: "level_growth_rule",
+                        entity_id: &id,
+                        action: "update",
+                        field_changed: Some(field.as_str()),
+                        old_value: Some(old.per_level.to_string()),
+                        new_value: Some(rate.per_level.to_string()),
+                        changed_by: &user,
+                    },
+                )?;
+                continue;
+            }
+
+            tx.execute(
+                "INSERT INTO level_growth_stats
+                 (id, rule_id, stat_name, per_level, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    &id,
+                    &rate.stat_name,
+                    rate.per_level,
+                    &timestamp
+                ],
+            )?;
+
+            let field = format!("stat:{}", rate.stat_name);
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "level_growth_rule",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: Some(field.as_str()),
+                    old_value: None,
+                    new_value: Some(rate.per_level.to_string()),
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        let stored_stats = load_level_growth_stats(&tx, &id)?;
+
+        tx.commit()?;
+
+        Ok(LevelGrowthRule {
+            id,
+            story_id,
+            character_id,
+            points_per_level,
+            stats: stored_stats,
+            created_by,
+            created_at,
+            updated_at: timestamp,
+        })
+    }
+
+    /// Removes an override (or the story default), which puts the character back
+    /// on the story's rule.
+    pub fn delete_level_growth_rule(&self, id: &str, user: String) -> DbResult<()> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT r.story_id, r.points_per_level
+                 FROM level_growth_rules r
+                 JOIN stories st ON st.id = r.story_id
+                 WHERE r.id = ?1 AND st.deleted_at IS NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+
+        let Some((story_id, points)) = existing else {
+            return Ok(());
+        };
+
+        tx.execute("DELETE FROM level_growth_rules WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "level_growth_rule",
+                entity_id: id,
+                action: "delete",
+                field_changed: Some("points_per_level"),
+                old_value: Some(points.to_string()),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    // ===== AWARDS =====
+    //
+    // A gain that is not a level-up: XP paid out in a chapter, or stat points
+    // handed over by a blessing, a hidden quest or a monster drop. Writing one
+    // applies it — the XP lands on the chapter's income and the points on the
+    // sheet — so deleting the award takes the same amount back out and the record
+    // and the number never drift apart.
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_character_award(
+        &self,
+        character_id: String,
+        chapter_id: Option<String>,
+        kind: String,
+        stat_name: Option<String>,
+        amount: i64,
+        note: Option<String>,
+        user: String,
+    ) -> DbResult<CharacterAward> {
+        let (kind, stat_name) = clean_award(&kind, stat_name, amount)?;
+        let note = clean_optional(note);
+        let timestamp = now();
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+        let story_id = live_character_story(&tx, &character_id)?;
+
+        validate_node_reference(&tx, &story_id, chapter_id.as_deref(), "chapter", "chapter")?;
+
+        if kind == "xp" && chapter_id.is_none() {
+            return Err(DbError::Invalid(
+                "XP awarded belongs to a chapter".to_string(),
+            ));
+        }
+
+        if kind == "stat" {
+            let stat_name = stat_name.as_deref().unwrap_or_default();
+            let existing = tx
+                .query_row(
+                    "SELECT id, value FROM character_stats
+                      WHERE character_id = ?1 AND stat_name = ?2",
+                    params![&character_id, stat_name],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+
+            match existing {
+                Some((stat_id, old_value)) => {
+                    let value = old_value + amount;
+                    tx.execute(
+                        "UPDATE character_stats SET value = ?1, updated_at = ?2 WHERE id = ?3",
+                        params![value, &timestamp, &stat_id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_stat",
+                            entity_id: &stat_id,
+                            action: "update",
+                            field_changed: Some("value"),
+                            old_value: Some(old_value.to_string()),
+                            new_value: Some(value.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+                None => {
+                    let stat_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO character_stats
+                         (id, character_id, stat_name, value, notes, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?5)",
+                        params![&stat_id, &character_id, stat_name, amount, &timestamp],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_stat",
+                            entity_id: &stat_id,
+                            action: "create",
+                            field_changed: Some("value"),
+                            old_value: None,
+                            new_value: Some(amount.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+            }
+        } else {
+            let chapter_id = chapter_id.as_deref().unwrap_or_default();
+            let existing = tx
+                .query_row(
+                    "SELECT id, xp_earned FROM character_progress
+                      WHERE character_id = ?1 AND chapter_id = ?2",
+                    params![&character_id, chapter_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+
+            match existing {
+                Some((entry_id, old_xp)) => {
+                    let xp = old_xp + amount;
+                    tx.execute(
+                        "UPDATE character_progress SET xp_earned = ?1, updated_at = ?2
+                          WHERE id = ?3",
+                        params![xp, &timestamp, &entry_id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_progress",
+                            entity_id: &entry_id,
+                            action: "update",
+                            field_changed: Some("xp_earned"),
+                            old_value: Some(old_xp.to_string()),
+                            new_value: Some(xp.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+                None => {
+                    let entry_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO character_progress
+                         (id, character_id, chapter_id, xp_earned, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                        params![&entry_id, &character_id, chapter_id, amount, &timestamp],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_progress",
+                            entity_id: &entry_id,
+                            action: "create",
+                            field_changed: Some("xp_earned"),
+                            old_value: None,
+                            new_value: Some(amount.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+            }
+        }
+
+        let id = Uuid::new_v4().to_string();
+
+        tx.execute(
+            "INSERT INTO character_awards
+             (id, character_id, chapter_id, kind, stat_name, amount, note,
+              created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+            params![
+                &id,
+                &character_id,
+                &chapter_id,
+                &kind,
+                &stat_name,
+                amount,
+                &note,
+                &user,
+                &timestamp
+            ],
+        )?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_award",
+                entity_id: &id,
+                action: "create",
+                field_changed: Some("amount"),
+                old_value: None,
+                new_value: Some(amount.to_string()),
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(CharacterAward {
+            id,
+            character_id,
+            chapter_id,
+            kind,
+            stat_name,
+            amount,
+            note,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    /// Removes an award and takes its amount back out of the sheet or the
+    /// chapter's income, so undoing a hand-out is not a second edit.
+    pub fn delete_character_award(&self, id: &str, user: String) -> DbResult<()> {
+        let timestamp = now();
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let existing = tx
+            .query_row(
+                "SELECT a.character_id, a.chapter_id, a.kind, a.stat_name, a.amount, c.story_id
+                 FROM character_awards a
+                 JOIN characters c ON c.id = a.character_id
+                 JOIN stories st ON st.id = c.story_id
+                 WHERE a.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((character_id, chapter_id, kind, stat_name, amount, story_id)) = existing else {
+            return Ok(());
+        };
+
+        if kind == "stat" {
+            if let Some(stat_name) = stat_name.as_deref() {
+                let stat = tx
+                    .query_row(
+                        "SELECT id, value FROM character_stats
+                          WHERE character_id = ?1 AND stat_name = ?2",
+                        params![&character_id, stat_name],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .optional()?;
+
+                if let Some((stat_id, old_value)) = stat {
+                    let value = old_value - amount;
+                    tx.execute(
+                        "UPDATE character_stats SET value = ?1, updated_at = ?2 WHERE id = ?3",
+                        params![value, &timestamp, &stat_id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_stat",
+                            entity_id: &stat_id,
+                            action: "update",
+                            field_changed: Some("value"),
+                            old_value: Some(old_value.to_string()),
+                            new_value: Some(value.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+            }
+        } else if let Some(chapter_id) = chapter_id.as_deref() {
+            let entry = tx
+                .query_row(
+                    "SELECT id, xp_earned FROM character_progress
+                      WHERE character_id = ?1 AND chapter_id = ?2",
+                    params![&character_id, chapter_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+
+            if let Some((entry_id, old_xp)) = entry {
+                let xp = (old_xp - amount).max(0);
+
+                if xp == 0 {
+                    // A row that the award emptied is the award's own row: it has
+                    // nothing left to say about the chapter.
+                    tx.execute(
+                        "DELETE FROM character_progress WHERE id = ?1",
+                        params![&entry_id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_progress",
+                            entity_id: &entry_id,
+                            action: "delete",
+                            field_changed: Some("xp_earned"),
+                            old_value: Some(old_xp.to_string()),
+                            new_value: None,
+                            changed_by: &user,
+                        },
+                    )?;
+                } else {
+                    tx.execute(
+                        "UPDATE character_progress SET xp_earned = ?1, updated_at = ?2
+                          WHERE id = ?3",
+                        params![xp, &timestamp, &entry_id],
+                    )?;
+
+                    log_audit(
+                        &tx,
+                        AuditRecord {
+                            story_id: Some(&story_id),
+                            entity_type: "character_progress",
+                            entity_id: &entry_id,
+                            action: "update",
+                            field_changed: Some("xp_earned"),
+                            old_value: Some(old_xp.to_string()),
+                            new_value: Some(xp.to_string()),
+                            changed_by: &user,
+                        },
+                    )?;
+                }
+            }
+        }
+
+        tx.execute("DELETE FROM character_awards WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "character_award",
+                entity_id: id,
+                action: "delete",
+                field_changed: Some("amount"),
+                old_value: Some(amount.to_string()),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_story_character_awards(&self, story_id: &str) -> DbResult<Vec<CharacterAward>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT a.id, a.character_id, a.chapter_id, a.kind, a.stat_name, a.amount,
+                    a.note, a.created_by, a.created_at, a.updated_at
+             FROM character_awards a
+             JOIN characters c ON c.id = a.character_id
+             JOIN stories st ON st.id = c.story_id
+             WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+             ORDER BY a.created_at, a.id",
+        )?;
+
+        let rows = stmt.query_map(params![story_id], character_award_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
     // ===== LEVEL MILESTONES =====
     //
-    // A milestone is the level a character had in a chapter, not the character's
-    // current level. The two stay separate so recording where a level was reached
-    // does not rewrite the sheet, and a deliberate penalty can be marked as such.
+    // A milestone records the level a character reached in a chapter, and it is
+    // the only place the sheet's level comes from: recording where a level was
+    // reached is what moves the character on, so the header and the history
+    // cannot say different things.
 
     /// The original milestone shape: no XP and no stat gains. Kept as a
     /// convenience for callers that only record a level.
@@ -3770,6 +4492,9 @@ impl Db {
         }
 
         apply_level_stat_changes(&tx, &id, &story_id, &[], &stat_changes, &timestamp, &user)?;
+
+        // The level-up is the record, so it is what the sheet's level follows.
+        refresh_character_level(&tx, &character_id, &story_id, &timestamp, &user)?;
 
         let stored_changes = load_level_stat_changes(&tx, &id)?;
 
@@ -3993,6 +4718,8 @@ impl Db {
             &user,
         )?;
 
+        refresh_character_level(&tx, &character_id, &story_id, &timestamp, &user)?;
+
         let stored_changes = load_level_stat_changes(&tx, &id)?;
 
         tx.commit()?;
@@ -4016,19 +4743,27 @@ impl Db {
         let mut guard = self.conn()?;
         let tx = guard.transaction()?;
 
+        let timestamp = now();
+
         let existing = tx
             .query_row(
-                "SELECT m.level, c.story_id
+                "SELECT m.level, c.story_id, m.character_id
                  FROM character_level_milestones m
                  JOIN characters c ON c.id = m.character_id
                  JOIN stories st ON st.id = c.story_id
                  WHERE m.id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL",
                 params![id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?;
 
-        let Some((level, story_id)) = existing else {
+        let Some((level, story_id, character_id)) = existing else {
             return Ok(());
         };
 
@@ -4036,6 +4771,10 @@ impl Db {
             "DELETE FROM character_level_milestones WHERE id = ?1",
             params![id],
         )?;
+
+        // Deleting the level-up a level came from takes that level back off the
+        // sheet, so the header never keeps a number no record still says.
+        refresh_character_level(&tx, &character_id, &story_id, &timestamp, &user)?;
 
         log_audit(
             &tx,
@@ -4432,12 +5171,10 @@ impl Db {
             .map(|id| resolve_level_milestone(&tx, id, &character_id))
             .transpose()?;
 
+        // A skill keeps its own clock: an event may name the level-up it came
+        // with and still sit in a chapter of its own, and a level-up's chapter
+        // only fills in one the author left open.
         let chapter_id = match (&chapter_id, &milestone) {
-            (Some(chapter), Some((Some(milestone_chapter), _))) if chapter != milestone_chapter => {
-                return Err(DbError::Invalid(
-                    "a skill change and its level-up must be in the same chapter".to_string(),
-                ));
-            }
             (None, Some((Some(milestone_chapter), _))) => Some(milestone_chapter.clone()),
             _ => chapter_id,
         };
@@ -4575,12 +5312,10 @@ impl Db {
             .map(|(_, label)| label);
         let new_milestone_label = milestone.as_ref().map(|(_, label)| label.clone());
 
+        // A skill keeps its own clock: an event may name the level-up it came
+        // with and still sit in a chapter of its own, and a level-up's chapter
+        // only fills in one the author left open.
         let chapter_id = match (&chapter_id, &milestone) {
-            (Some(chapter), Some((Some(milestone_chapter), _))) if chapter != milestone_chapter => {
-                return Err(DbError::Invalid(
-                    "a skill change and its level-up must be in the same chapter".to_string(),
-                ));
-            }
             (None, Some((Some(milestone_chapter), _))) => Some(milestone_chapter.clone()),
             _ => chapter_id,
         };
@@ -7615,6 +8350,45 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let level_growth_rules = {
+            let mut stmt = guard.prepare(
+                "SELECT r.id, r.story_id, r.character_id, r.points_per_level, r.created_by,
+                        r.created_at, r.updated_at
+                 FROM level_growth_rules r
+                 LEFT JOIN characters c ON c.id = r.character_id
+                 WHERE r.story_id = ?1 AND (r.character_id IS NULL OR c.deleted_at IS NULL)
+                 ORDER BY r.character_id IS NOT NULL, r.created_at, r.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], |row| {
+                Ok(LevelGrowthRule {
+                    id: row.get(0)?,
+                    story_id: row.get(1)?,
+                    character_id: row.get(2)?,
+                    points_per_level: row.get(3)?,
+                    stats: Vec::new(),
+                    created_by: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+            let mut rules = rows.collect::<SqliteResult<Vec<_>>>()?;
+            attach_level_growth_stats(&guard, &mut rules)?;
+            rules
+        };
+
+        let character_awards = {
+            let mut stmt = guard.prepare(
+                "SELECT a.id, a.character_id, a.chapter_id, a.kind, a.stat_name, a.amount,
+                        a.note, a.created_by, a.created_at, a.updated_at
+                 FROM character_awards a
+                 JOIN characters c ON c.id = a.character_id
+                 WHERE c.story_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY a.created_at, a.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], character_award_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let chapter_cast = {
             let mut stmt = guard.prepare(
                 "SELECT cc.id, cc.chapter_id, cc.character_id, cc.created_at, cc.updated_at
@@ -7966,6 +8740,8 @@ impl Db {
             character_skill_events,
             skill_evolutions,
             character_progress,
+            level_growth_rules,
+            character_awards,
             chapter_cast,
             character_inventory,
             character_currency,
@@ -8900,23 +9676,19 @@ impl Db {
         })
     }
 
-    /// Saves progression as its own fields, recording each one that changed.
+    /// Saves the running totals as their own fields, recording each one that
+    /// changed.
     ///
-    /// Nothing is derived: the level, the XP and the target are whatever the
-    /// author typed, and a level is never implied by the XP total.
+    /// The level is deliberately not one of them: it belongs to the milestones,
+    /// so a level is only ever moved by recording the level-up that reached it.
     pub fn set_character_progress(
         &self,
         id: &str,
-        level: i64,
         xp: i64,
         rank: Option<String>,
         xp_to_next: Option<i64>,
         user: String,
     ) -> DbResult<Character> {
-        if level < 1 {
-            return Err(DbError::Invalid("a level starts at 1".to_string()));
-        }
-
         if xp < 0 {
             return Err(DbError::Invalid(
                 "experience cannot be negative".to_string(),
@@ -8961,46 +9733,27 @@ impl Db {
             .optional()?
             .ok_or(DbError::NotFound("character"))?;
 
-        let level_changed = existing.level != level;
         let xp_changed = existing.xp != xp;
         let rank_changed = existing.rank != rank;
         let target_changed = existing.xp_to_next != xp_to_next;
 
-        if !level_changed && !xp_changed && !rank_changed && !target_changed {
+        if !xp_changed && !rank_changed && !target_changed {
             return Ok(existing);
         }
 
         tx.execute(
-            "UPDATE characters SET level = ?1, xp = ?2, rank = ?3, xp_to_next = ?4,
-                    updated_at = ?5
-             WHERE id = ?6",
-            params![level, xp, &rank, xp_to_next, &timestamp, id],
+            "UPDATE characters SET xp = ?1, rank = ?2, xp_to_next = ?3,
+                    updated_at = ?4
+             WHERE id = ?5",
+            params![xp, &rank, xp_to_next, &timestamp, id],
         )?;
 
         // One entry per field, including a rank or target being cleared, which
         // is a change with no value on one side.
         let old_target = existing.xp_to_next.map(|value| value.to_string());
         let new_target = xp_to_next.map(|value| value.to_string());
-        let old_level = existing.level.to_string();
-        let new_level = level.to_string();
         let old_xp = existing.xp.to_string();
         let new_xp = xp.to_string();
-
-        if level_changed {
-            log_audit(
-                &tx,
-                AuditRecord {
-                    story_id: Some(&existing.story_id),
-                    entity_type: "character",
-                    entity_id: id,
-                    action: "update",
-                    field_changed: Some("level"),
-                    old_value: Some(old_level.clone()),
-                    new_value: Some(new_level.clone()),
-                    changed_by: &user,
-                },
-            )?;
-        }
 
         if xp_changed {
             log_audit(
@@ -9053,74 +9806,9 @@ impl Db {
         tx.commit()?;
 
         Ok(Character {
-            level,
             xp,
             rank,
             xp_to_next,
-            updated_at: timestamp,
-            ..existing
-        })
-    }
-
-    /// Adds one level and records it as a level-up event rather than an ordinary
-    /// edit, so the history can say what actually happened.
-    pub fn level_up_character(&self, id: &str, user: String) -> DbResult<Character> {
-        let timestamp = now();
-
-        let mut guard = self.conn()?;
-        let tx = guard.transaction()?;
-
-        let existing = tx
-            .query_row(
-                "SELECT id, story_id, name, description, level, xp, rank, xp_to_next,
-                        created_at, updated_at
-                 FROM characters WHERE id = ?1 AND deleted_at IS NULL",
-                params![id],
-                |row| {
-                    Ok(Character {
-                        id: row.get(0)?,
-                        story_id: row.get(1)?,
-                        name: row.get(2)?,
-                        description: row.get(3)?,
-                        level: row.get(4)?,
-                        xp: row.get(5)?,
-                        rank: row.get(6)?,
-                        xp_to_next: row.get(7)?,
-                        created_at: row.get(8)?,
-                        updated_at: row.get(9)?,
-                    })
-                },
-            )
-            .optional()?
-            .ok_or(DbError::NotFound("character"))?;
-
-        let next = existing.level + 1;
-        let old_level = existing.level.to_string();
-        let new_level = next.to_string();
-
-        tx.execute(
-            "UPDATE characters SET level = ?1, updated_at = ?2 WHERE id = ?3",
-            params![next, &timestamp, id],
-        )?;
-
-        log_audit(
-            &tx,
-            AuditRecord {
-                story_id: Some(&existing.story_id),
-                entity_type: "character",
-                entity_id: id,
-                action: "level_up",
-                field_changed: Some("level"),
-                old_value: Some(old_level),
-                new_value: Some(new_level),
-                changed_by: &user,
-            },
-        )?;
-
-        tx.commit()?;
-
-        Ok(Character {
-            level: next,
             updated_at: timestamp,
             ..existing
         })
@@ -10252,6 +10940,16 @@ impl Db {
             .iter()
             .map(|entry| (entry.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let growth_rules: HashMap<String, String> = export
+            .level_growth_rules
+            .iter()
+            .map(|rule| (rule.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        let awards: HashMap<String, String> = export
+            .character_awards
+            .iter()
+            .map(|award| (award.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let chapter_cast: HashMap<String, String> = export
             .chapter_cast
             .iter()
@@ -10405,6 +11103,72 @@ impl Db {
             }
         }
 
+        for rule in &export.level_growth_rules {
+            if rule.story_id != export.story.id {
+                return Err(DbError::Invalid(
+                    "a growth rule belongs to another story".to_string(),
+                ));
+            }
+
+            if rule
+                .character_id
+                .as_ref()
+                .is_some_and(|id| !characters.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "a growth rule belongs to a character the file does not contain".to_string(),
+                ));
+            }
+
+            clean_level_growth_stats(
+                rule.stats
+                    .iter()
+                    .map(|rate| LevelGrowthStatInput {
+                        stat_name: rate.stat_name.clone(),
+                        per_level: rate.per_level,
+                    })
+                    .collect(),
+            )?;
+        }
+
+        {
+            // One rule per scope, or the unique index would refuse the import
+            // halfway through and take the whole transaction with it.
+            let mut scopes = std::collections::HashSet::new();
+
+            for rule in &export.level_growth_rules {
+                if !scopes.insert(rule.character_id.clone()) {
+                    return Err(DbError::Invalid(
+                        "the file holds two growth rules for the same scope".to_string(),
+                    ));
+                }
+            }
+        }
+
+        for award in &export.character_awards {
+            if !characters.contains_key(&award.character_id) {
+                return Err(DbError::Invalid(
+                    "an award belongs to a character the file does not contain".to_string(),
+                ));
+            }
+
+            if award
+                .chapter_id
+                .as_ref()
+                .is_some_and(|id| !nodes.contains_key(id))
+            {
+                return Err(DbError::Invalid(
+                    "an award points at a chapter the file does not contain".to_string(),
+                ));
+            }
+
+            let (kind, _) = clean_award(&award.kind, award.stat_name.clone(), award.amount)?;
+
+            if kind == "xp" && award.chapter_id.is_none() {
+                return Err(DbError::Invalid("an XP award needs a chapter".to_string()));
+            }
+        }
+
         for event in &export.character_skill_events {
             if !skills.contains_key(&event.skill_id) {
                 return Err(DbError::Invalid(
@@ -10447,15 +11211,9 @@ impl Db {
                     ));
                 }
 
-                if let (Some(event_chapter), Some(milestone_chapter)) =
-                    (&event.chapter_id, &milestone.chapter_id)
-                {
-                    if event_chapter != milestone_chapter {
-                        return Err(DbError::Invalid(
-                            "a skill event and its level-up are in different chapters".to_string(),
-                        ));
-                    }
-                }
+                // The level-up a skill event names is a note about what came
+                // with it, not where it happened: the two may sit in different
+                // chapters, because a skill can grow between level-ups.
             }
         }
 
@@ -11203,6 +11961,60 @@ impl Db {
             )?;
         }
 
+        for rule in &export.level_growth_rules {
+            tx.execute(
+                "INSERT INTO level_growth_rules
+                 (id, story_id, character_id, points_per_level, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &growth_rules[&rule.id],
+                    &story_id,
+                    rule.character_id.as_ref().and_then(|id| characters.get(id)),
+                    rule.points_per_level,
+                    &rule.created_by,
+                    &rule.created_at,
+                    &rule.updated_at
+                ],
+            )?;
+
+            for rate in &rule.stats {
+                tx.execute(
+                    "INSERT INTO level_growth_stats
+                     (id, rule_id, stat_name, per_level, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        &growth_rules[&rule.id],
+                        &rate.stat_name,
+                        rate.per_level,
+                        &rate.created_at,
+                        &rate.updated_at
+                    ],
+                )?;
+            }
+        }
+
+        for award in &export.character_awards {
+            tx.execute(
+                "INSERT INTO character_awards
+                 (id, character_id, chapter_id, kind, stat_name, amount, note,
+                  created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    &awards[&award.id],
+                    &characters[&award.character_id],
+                    award.chapter_id.as_ref().and_then(|id| nodes.get(id)),
+                    &award.kind,
+                    &award.stat_name,
+                    award.amount,
+                    &award.note,
+                    &award.created_by,
+                    &award.created_at,
+                    &award.updated_at
+                ],
+            )?;
+        }
+
         for event in &export.character_skill_events {
             tx.execute(
                 "INSERT INTO character_skill_events
@@ -11298,6 +12110,8 @@ impl Db {
                 "character_skill_event" => skill_events.get(&entry.entity_id).cloned(),
                 "skill_evolution" => evolution_ids.get(&entry.entity_id).cloned(),
                 "character_progress" => character_progress.get(&entry.entity_id).cloned(),
+                "level_growth_rule" => growth_rules.get(&entry.entity_id).cloned(),
+                "character_award" => awards.get(&entry.entity_id).cloned(),
                 "chapter_cast" => chapter_cast.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
                 "character_currency" => currencies.get(&entry.entity_id).cloned(),
@@ -11616,6 +12430,65 @@ pub struct CharacterProgress {
     pub character_id: String,
     pub chapter_id: String,
     pub xp_earned: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What one level hands out. `character_id` is None for the story's default rule
+/// and Some for a character that does not follow it.
+///
+/// The rule is a promise, not a calculation: the app never levels anybody up on
+/// its own. A level-up form reads the rule to say how many points are waiting
+/// and which stats rise by themselves, and the author records the level.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct LevelGrowthRule {
+    pub id: String,
+    pub story_id: String,
+    #[serde(default)]
+    pub character_id: Option<String>,
+    pub points_per_level: i64,
+    #[serde(default)]
+    pub stats: Vec<LevelGrowthStat>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One stat the growth rule raises every level, whether or not anybody chose it.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct LevelGrowthStat {
+    pub id: String,
+    pub rule_id: String,
+    pub stat_name: String,
+    pub per_level: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One growth rate as a form hands it over.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct LevelGrowthStatInput {
+    pub stat_name: String,
+    pub per_level: i64,
+}
+
+/// A gain that is not a level-up: XP a chapter paid, or stat points handed over
+/// by something that happened in it. Writing one applies it, so the record and
+/// the number it changed always travel together.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct CharacterAward {
+    pub id: String,
+    pub character_id: String,
+    #[serde(default)]
+    pub chapter_id: Option<String>,
+    /// `xp` or `stat`.
+    pub kind: String,
+    #[serde(default)]
+    pub stat_name: Option<String>,
+    pub amount: i64,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -12106,6 +12979,11 @@ pub struct StoryExport {
     /// Absent from exports written before schema v18, so they default to empty.
     #[serde(default)]
     pub character_progress: Vec<CharacterProgress>,
+    /// Absent from exports written before schema v25, so they default to empty.
+    #[serde(default)]
+    pub level_growth_rules: Vec<LevelGrowthRule>,
+    #[serde(default)]
+    pub character_awards: Vec<CharacterAward>,
     /// Absent from exports written before schema v16, so they default to empty.
     #[serde(default)]
     pub chapter_cast: Vec<ChapterCastMember>,
@@ -12595,6 +13473,16 @@ fn check_revert(conn: &Connection, entry: &AuditEntry) -> SqliteResult<RevertChe
             "that entry did not record which field changed",
         ));
     };
+
+    // A level is read from the level-ups now, so putting an old number back
+    // would leave a sheet disagreeing with its own record. The edit to make is
+    // on the level-up that wrote it.
+    if entry.entity_type == "character" && field == "level" {
+        return Ok(RevertCheck::blocked(
+            RevertState::ChangedSince,
+            "a level comes from the level-ups now; edit or delete the level-up that recorded it",
+        ));
+    }
 
     let Some(spec) = revert_spec(&entry.entity_type, field) else {
         return Ok(RevertCheck::nothing(format!(
@@ -13413,6 +14301,197 @@ fn live_character_story(conn: &Connection, character_id: &str) -> DbResult<Strin
     .ok_or(DbError::NotFound("character"))
 }
 
+/// Trims the rates a growth rule carries, drops empty rows, and refuses a rate
+/// of zero, a rate nobody could mean, or the same stat twice.
+fn clean_level_growth_stats(
+    stats: Vec<LevelGrowthStatInput>,
+) -> DbResult<Vec<LevelGrowthStatInput>> {
+    let mut cleaned = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for rate in stats {
+        let stat_name = rate.stat_name.trim().to_string();
+
+        if stat_name.is_empty() && rate.per_level == 0 {
+            continue;
+        }
+
+        if stat_name.is_empty() {
+            return Err(DbError::Invalid(
+                "a growth rate needs a stat name".to_string(),
+            ));
+        }
+
+        if rate.per_level == 0 {
+            return Err(DbError::Invalid(format!(
+                "{stat_name} needs a rate other than zero"
+            )));
+        }
+
+        if !(-999..=999).contains(&rate.per_level) {
+            return Err(DbError::Invalid(
+                "a growth rate is a whole number from -999 to 999".to_string(),
+            ));
+        }
+
+        if !seen.insert(stat_name.clone()) {
+            return Err(DbError::Invalid(format!(
+                "{stat_name} grows more than once per level"
+            )));
+        }
+
+        cleaned.push(LevelGrowthStatInput {
+            stat_name,
+            per_level: rate.per_level,
+        });
+    }
+
+    Ok(cleaned)
+}
+
+fn level_growth_stat_row(row: &rusqlite::Row) -> SqliteResult<LevelGrowthStat> {
+    Ok(LevelGrowthStat {
+        id: row.get(0)?,
+        rule_id: row.get(1)?,
+        stat_name: row.get(2)?,
+        per_level: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+fn load_level_growth_stats(conn: &Connection, rule_id: &str) -> DbResult<Vec<LevelGrowthStat>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, rule_id, stat_name, per_level, created_at, updated_at
+         FROM level_growth_stats WHERE rule_id = ?1
+         ORDER BY stat_name COLLATE NOCASE, id",
+    )?;
+
+    let rows = stmt.query_map(params![rule_id], level_growth_stat_row)?;
+
+    Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+}
+
+fn attach_level_growth_stats(conn: &Connection, rules: &mut [LevelGrowthRule]) -> DbResult<()> {
+    for rule in rules {
+        rule.stats = load_level_growth_stats(conn, &rule.id)?;
+    }
+
+    Ok(())
+}
+
+/// What an award is allowed to be: XP a chapter paid, or points on a named
+/// stat. XP only goes up — a penalty is a level drop, not a negative payout —
+/// while a stat point can be taken away as well as given.
+fn clean_award(
+    kind: &str,
+    stat_name: Option<String>,
+    amount: i64,
+) -> DbResult<(String, Option<String>)> {
+    let kind = match kind.trim().to_lowercase().as_str() {
+        "xp" => "xp".to_string(),
+        "stat" => "stat".to_string(),
+        _ => return Err(DbError::Invalid("an award is xp or stat".to_string())),
+    };
+
+    if kind == "xp" {
+        if amount <= 0 {
+            return Err(DbError::Invalid(
+                "XP awarded is a whole number above zero".to_string(),
+            ));
+        }
+
+        return Ok((kind, None));
+    }
+
+    if amount == 0 {
+        return Err(DbError::Invalid(
+            "a stat award is a whole number other than zero".to_string(),
+        ));
+    }
+
+    let stat_name = stat_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty());
+
+    match stat_name {
+        Some(stat_name) => Ok((kind, Some(stat_name))),
+        None => Err(DbError::Invalid(
+            "a stat award needs a stat name".to_string(),
+        )),
+    }
+}
+
+fn character_award_row(row: &rusqlite::Row) -> SqliteResult<CharacterAward> {
+    Ok(CharacterAward {
+        id: row.get(0)?,
+        character_id: row.get(1)?,
+        chapter_id: row.get(2)?,
+        kind: row.get(3)?,
+        stat_name: row.get(4)?,
+        amount: row.get(5)?,
+        note: row.get(6)?,
+        created_by: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+/// The level a character now stands at, taken from the last level-up written and
+/// 1 when no level-up has been recorded. Kept in the character row so cards,
+/// search and exports read one number, and only ever written here, so the header
+/// and the milestones cannot say different things.
+fn refresh_character_level(
+    conn: &Connection,
+    character_id: &str,
+    story_id: &str,
+    timestamp: &str,
+    user: &str,
+) -> DbResult<()> {
+    let latest: Option<i64> = conn
+        .query_row(
+            "SELECT level FROM character_level_milestones
+              WHERE character_id = ?1
+              ORDER BY created_at DESC, id DESC LIMIT 1",
+            params![character_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let level = latest.unwrap_or(1);
+
+    let current: i64 = conn.query_row(
+        "SELECT level FROM characters WHERE id = ?1",
+        params![character_id],
+        |row| row.get(0),
+    )?;
+
+    if current == level {
+        return Ok(());
+    }
+
+    conn.execute(
+        "UPDATE characters SET level = ?1, updated_at = ?2 WHERE id = ?3",
+        params![level, timestamp, character_id],
+    )?;
+
+    log_audit(
+        conn,
+        AuditRecord {
+            story_id: Some(story_id),
+            entity_type: "character",
+            entity_id: character_id,
+            action: "update",
+            field_changed: Some("level"),
+            old_value: Some(current.to_string()),
+            new_value: Some(level.to_string()),
+            changed_by: user,
+        },
+    )?;
+
+    Ok(())
+}
+
 /// XP is an optional running total, but it can never be negative. The stat
 /// changes are cleaned separately because a level-up may award several.
 fn clean_level_xp(xp: Option<i64>) -> DbResult<Option<i64>> {
@@ -14120,6 +15199,10 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
         backfill_skill_definitions(conn)?;
     }
 
+    if version < 25 {
+        conn.execute_batch(MIGRATION_025)?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -14564,6 +15647,78 @@ const MIGRATION_018: &str = "
 /// migration.
 const MIGRATION_024: &str = "\n    CREATE TABLE IF NOT EXISTS skill_definitions (\n        id TEXT PRIMARY KEY,\n        story_id TEXT NOT NULL,\n        name TEXT NOT NULL,\n        description TEXT,\n        node_id TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,\n        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE SET NULL\n    );\n\n    CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_definitions_card\n        ON skill_definitions (node_id)\n        WHERE node_id IS NOT NULL;\n\n    CREATE INDEX IF NOT EXISTS idx_skill_definitions_story\n        ON skill_definitions (story_id);\n";
 
+/// Schema v25: leveling gets a rule, and a gain no longer needs a level-up.
+///
+/// A growth rule says what one level hands out: points the author allocates, and
+/// the stats that rise by themselves every level. The story owns a default rule
+/// (`character_id` is NULL) and a character may override it, so the System can be
+/// one thing for the world and another for the exception.
+///
+/// An award is a gain that is not a level-up: XP paid out, or stat points handed
+/// over by a blessing, a hidden quest or a monster drop. Writing one applies it
+/// to the sheet or the chapter's XP income in the same transaction, so the record
+/// and the number never disagree.
+const MIGRATION_025: &str = "
+    CREATE TABLE IF NOT EXISTS level_growth_rules (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        character_id TEXT,
+        points_per_level INTEGER NOT NULL DEFAULT 0 CHECK (points_per_level >= 0),
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(story_id) REFERENCES stories(id) ON DELETE CASCADE,
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_level_growth_rules_character
+        ON level_growth_rules (character_id)
+        WHERE character_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_level_growth_rules_story
+        ON level_growth_rules (story_id)
+        WHERE character_id IS NULL;
+
+    CREATE TABLE IF NOT EXISTS level_growth_stats (
+        id TEXT PRIMARY KEY,
+        rule_id TEXT NOT NULL,
+        stat_name TEXT NOT NULL,
+        per_level INTEGER NOT NULL CHECK (per_level <> 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(rule_id, stat_name),
+        FOREIGN KEY(rule_id) REFERENCES level_growth_rules(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_level_growth_stats_rule
+        ON level_growth_stats (rule_id);
+
+    CREATE TABLE IF NOT EXISTS character_awards (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        chapter_id TEXT,
+        kind TEXT NOT NULL CHECK (kind IN ('xp', 'stat')),
+        stat_name TEXT,
+        amount INTEGER NOT NULL CHECK (amount <> 0),
+        note TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+            (kind = 'xp' AND stat_name IS NULL)
+            OR (kind = 'stat' AND stat_name IS NOT NULL AND length(trim(stat_name)) > 0)
+        ),
+        FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_character_awards_character
+        ON character_awards (character_id);
+
+    CREATE INDEX IF NOT EXISTS idx_character_awards_chapter
+        ON character_awards (chapter_id);
+";
+
 /// Schema v23: one skill grows from, mutates into or fuses with another.
 ///
 /// Both ends are `character_skills` rows of the same story and are deleted with
@@ -14982,8 +16137,10 @@ mod tests {
             .expect("Ash Step is upgraded in the demo");
         assert_eq!(upgrade.milestone_id.as_deref(), Some(rook_last.id.as_str()));
 
+        // Six chapter incomes across Rook and Mira, plus the row Vane's award
+        // opened for him.
         let progress = db.list_story_character_progress(&story.id).unwrap();
-        assert_eq!(progress.len(), 6);
+        assert_eq!(progress.len(), 7);
         let mira_income: i64 = progress
             .iter()
             .filter(|entry| entry.character_id == mira.id)
@@ -14999,7 +16156,9 @@ mod tests {
 
         assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
-        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+        // Vane's award wrote the stat point it handed him, so his sheet holds one
+        // row more than the cast's five recorded ones.
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 7);
 
         // The board, the ledgers and the trash the guide shows, all of them part
         // of the seed rather than of the screenshot harness.
@@ -15060,8 +16219,10 @@ mod tests {
             "the cut cast member and the cut card are back in the trash"
         );
 
+        // Six chapter incomes across Rook and Mira, plus the row Vane's award
+        // opened for him.
         let progress = db.list_story_character_progress(&story.id).unwrap();
-        assert_eq!(progress.len(), 6);
+        assert_eq!(progress.len(), 7);
         let mira = characters
             .iter()
             .find(|character| character.name == "Mira Sable")
@@ -15076,7 +16237,7 @@ mod tests {
         assert_eq!(db.list_story_level_milestones(&story.id).unwrap().len(), 6);
         assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
-        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 7);
         assert_eq!(db.list_edges(&story.id).unwrap().len(), 10);
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
 
@@ -16385,7 +17546,7 @@ mod tests {
         let version: i32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 24);
+        assert_eq!(version, 25);
 
         let tables: i64 = conn
             .query_row(
@@ -18661,10 +19822,18 @@ mod tests {
             .unwrap();
         db.set_character_progress(
             &rook.id,
-            3,
             250,
             Some("Copper".into()),
             Some(1000),
+            "Ada".into(),
+        )
+        .unwrap();
+        // The level is read from a level-up, so the sheet's number comes from one.
+        db.add_level_milestone(
+            rook.id.clone(),
+            3,
+            Some(opening.id.clone()),
+            false,
             "Ada".into(),
         )
         .unwrap();
@@ -18877,7 +20046,6 @@ mod tests {
         let saved = db
             .set_character_progress(
                 &rook.id,
-                3,
                 250,
                 Some("Copper".into()),
                 Some(1000),
@@ -18885,7 +20053,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(saved.level, 3);
+        assert_eq!(saved.level, 1, "the totals do not set a level");
         assert_eq!(saved.xp, 250);
         assert_eq!(saved.rank.as_deref(), Some("Copper"));
         assert_eq!(saved.xp_to_next, Some(1000));
@@ -18898,60 +20066,277 @@ mod tests {
             .iter()
             .filter_map(|entry| entry.field_changed.as_deref())
             .collect();
-        for field in ["level", "xp", "rank", "xp_to_next"] {
+        for field in ["xp", "rank", "xp_to_next"] {
             assert!(fields.contains(&field), "{field} should be in the history");
         }
+        assert!(!fields.contains(&"level"), "a level is not typed");
 
-        // Progression fields are ordinary recorded edits, so the history can put
-        // them back — including a target that had no value before it was set.
-        let entry_for = |field: &str| {
-            page.entries
-                .iter()
-                .find(|entry| entry.field_changed.as_deref() == Some(field))
-                .unwrap()
-                .id
-                .clone()
-        };
-        let level_entry = entry_for("level");
-        let target_entry = entry_for("xp_to_next");
-        assert!(db.revert_change(&level_entry, "Ada".into()).unwrap());
+        // The totals are ordinary recorded edits, so the history can put them
+        // back — including a target that had no value before it was set.
+        let target_entry = page
+            .entries
+            .iter()
+            .find(|entry| entry.field_changed.as_deref() == Some("xp_to_next"))
+            .unwrap()
+            .id
+            .clone();
         assert!(db.revert_change(&target_entry, "Ada".into()).unwrap());
 
         let reverted = db.list_characters(&story.id).unwrap();
-        assert_eq!(reverted[0].level, 1);
         assert_eq!(reverted[0].xp_to_next, None);
         assert_eq!(reverted[0].rank.as_deref(), Some("Copper"));
 
-        db.set_character_progress(
-            &rook.id,
-            3,
-            250,
-            Some("Copper".into()),
-            Some(1000),
-            "Ada".into(),
-        )
-        .unwrap();
+        // A level comes from the level-up that recorded it, and the sheet follows
+        // the last one written rather than a number typed somewhere else.
+        db.add_level_milestone(rook.id.clone(), 3, None, false, "Ada".into())
+            .unwrap();
+        assert_eq!(db.list_characters(&story.id).unwrap()[0].level, 3);
 
-        let levelled = db.level_up_character(&rook.id, "Ada".into()).unwrap();
+        let levelled = db
+            .add_level_milestone(rook.id.clone(), 4, None, false, "Ada".into())
+            .unwrap();
         assert_eq!(levelled.level, 4);
-        assert_eq!(levelled.xp, 250, "levelling up does not touch XP");
-        assert_eq!(levelled.rank.as_deref(), Some("Copper"));
+        assert_eq!(db.list_characters(&story.id).unwrap()[0].level, 4);
+        assert_eq!(
+            db.list_characters(&story.id).unwrap()[0].xp,
+            250,
+            "a level-up does not touch XP"
+        );
 
         let page = db
             .get_audit_page(Some(&story.id), Some("character"), Some(&rook.id), 50, 0)
             .unwrap();
-        assert_eq!(page.entries[0].action, "level_up");
-        assert_eq!(page.entries[0].new_value.as_deref(), Some("4"));
+        assert!(page
+            .entries
+            .iter()
+            .any(|entry| entry.field_changed.as_deref() == Some("level")
+                && entry.new_value.as_deref() == Some("4")));
+
+        db.delete_level_milestone(&levelled.id, "Ada".into())
+            .unwrap();
+        assert_eq!(
+            db.list_characters(&story.id).unwrap()[0].level,
+            3,
+            "deleting the level-up takes its level back off the sheet"
+        );
 
         // The numbers are the author's, but they still have to make sense.
         assert!(db
-            .set_character_progress(&rook.id, 0, 0, None, None, "Ada".into())
+            .set_character_progress(&rook.id, -5, None, None, "Ada".into())
             .is_err());
         assert!(db
-            .set_character_progress(&rook.id, 1, -5, None, None, "Ada".into())
+            .set_character_progress(&rook.id, 0, None, Some(0), "Ada".into())
+            .is_err());
+    }
+
+    #[test]
+    fn a_growth_rule_says_what_a_level_hands_out() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        assert!(db
+            .list_story_level_growth_rules(&story.id)
+            .unwrap()
+            .is_empty());
+
+        let default_rule = db
+            .save_level_growth_rule(
+                story.id.clone(),
+                None,
+                3,
+                vec![LevelGrowthStatInput {
+                    stat_name: "Strength".into(),
+                    per_level: 1,
+                }],
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(default_rule.points_per_level, 3);
+        assert_eq!(default_rule.stats.len(), 1);
+        assert!(default_rule.character_id.is_none());
+
+        // Saving the same scope again rewrites the rule rather than adding one.
+        let rewritten = db
+            .save_level_growth_rule(
+                story.id.clone(),
+                None,
+                2,
+                vec![
+                    LevelGrowthStatInput {
+                        stat_name: "Strength".into(),
+                        per_level: 2,
+                    },
+                    LevelGrowthStatInput {
+                        stat_name: "Insight".into(),
+                        per_level: 1,
+                    },
+                ],
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(rewritten.id, default_rule.id);
+        assert_eq!(rewritten.points_per_level, 2);
+        assert_eq!(rewritten.stats.len(), 2);
+
+        let override_rule = db
+            .save_level_growth_rule(
+                story.id.clone(),
+                Some(rook.id.clone()),
+                1,
+                Vec::new(),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let rules = db.list_story_level_growth_rules(&story.id).unwrap();
+        assert_eq!(rules.len(), 2, "one story rule and one override");
+        assert_eq!(
+            rules.iter().position(|rule| rule.id == override_rule.id),
+            Some(1),
+            "the story's own rule reads first"
+        );
+
+        // The rule is a promise, not arithmetic: it never moves a sheet.
+        assert_eq!(db.list_characters(&story.id).unwrap()[0].level, 1);
+
+        db.delete_level_growth_rule(&override_rule.id, "Ada".into())
+            .unwrap();
+        assert_eq!(
+            db.list_story_level_growth_rules(&story.id).unwrap().len(),
+            1
+        );
+
+        assert!(db
+            .save_level_growth_rule(story.id.clone(), None, -1, Vec::new(), "Ada".into())
             .is_err());
         assert!(db
-            .set_character_progress(&rook.id, 1, 0, None, Some(0), "Ada".into())
+            .save_level_growth_rule(
+                story.id.clone(),
+                None,
+                1,
+                vec![LevelGrowthStatInput {
+                    stat_name: "Strength".into(),
+                    per_level: 0,
+                }],
+                "Ada".into()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn an_award_applies_itself_and_takes_itself_back() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "One".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.add_or_update_stat(rook.id.clone(), "Strength".into(), 10, None, "Ada".into())
+            .unwrap();
+
+        let stat_award = db
+            .add_character_award(
+                rook.id.clone(),
+                Some(chapter.id.clone()),
+                "stat".into(),
+                Some("Strength".into()),
+                2,
+                Some("A hidden quest paid in muscle.".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(db.list_stats(&rook.id).unwrap()[0].value, 12);
+        assert_eq!(db.list_story_character_awards(&story.id).unwrap().len(), 1);
+
+        let xp_award = db
+            .add_character_award(
+                rook.id.clone(),
+                Some(chapter.id.clone()),
+                "xp".into(),
+                None,
+                250,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let income = db.list_character_progress(&rook.id).unwrap();
+        assert_eq!(income.len(), 1);
+        assert_eq!(income[0].xp_earned, 250);
+
+        // A second award in the same chapter adds to that chapter's income rather
+        // than opening a second row for a pair the table allows once.
+        db.add_character_award(
+            rook.id.clone(),
+            Some(chapter.id.clone()),
+            "xp".into(),
+            None,
+            100,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            db.list_character_progress(&rook.id).unwrap()[0].xp_earned,
+            350
+        );
+
+        db.delete_character_award(&xp_award.id, "Ada".into())
+            .unwrap();
+        // The first row kept the second award's 100, which is what is left once
+        // the 250 it came after is taken back.
+        assert_eq!(
+            db.list_character_progress(&rook.id).unwrap()[0].xp_earned,
+            100
+        );
+
+        db.delete_character_award(&stat_award.id, "Ada".into())
+            .unwrap();
+        assert_eq!(db.list_stats(&rook.id).unwrap()[0].value, 10);
+
+        // XP cannot be the first thing a chapter pays unless it pays something.
+        assert!(db
+            .add_character_award(
+                rook.id.clone(),
+                None,
+                "xp".into(),
+                None,
+                10,
+                None,
+                "Ada".into()
+            )
+            .is_err());
+        assert!(db
+            .add_character_award(
+                rook.id.clone(),
+                None,
+                "stat".into(),
+                Some("Strength".into()),
+                0,
+                None,
+                "Ada".into()
+            )
             .is_err());
     }
 
@@ -18967,10 +20352,22 @@ mod tests {
 
         db.set_character_progress(
             &rook.id,
-            5,
             1200,
             Some("Iron".into()),
             Some(2000),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_level_milestone(rook.id.clone(), 5, None, false, "Ada".into())
+            .unwrap();
+        db.save_level_growth_rule(
+            story.id.clone(),
+            None,
+            2,
+            vec![LevelGrowthStatInput {
+                stat_name: "Strength".into(),
+                per_level: 1,
+            }],
             "Ada".into(),
         )
         .unwrap();
@@ -18984,6 +20381,48 @@ mod tests {
         assert_eq!(characters[0].xp, 1200);
         assert_eq!(characters[0].rank.as_deref(), Some("Iron"));
         assert_eq!(characters[0].xp_to_next, Some(2000));
+
+        // The rule travels with the story, and so does the level it explains.
+        let rules = db.list_story_level_growth_rules(&imported.id).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].points_per_level, 2);
+        assert_eq!(rules[0].stats[0].stat_name, "Strength");
+    }
+
+    #[test]
+    fn awards_travel_with_an_export() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let rook = db
+            .create_character(story.id.clone(), "Rook".into(), None, "Ada".into())
+            .unwrap();
+
+        db.add_character_award(
+            rook.id.clone(),
+            None,
+            "stat".into(),
+            Some("Strength".into()),
+            2,
+            Some("A hidden quest paid.".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        let export = db.export_story(&story.id).unwrap();
+        assert_eq!(export.character_awards.len(), 1);
+
+        let imported = db.import_story(export, "Ada".into()).unwrap();
+        let awards = db.list_story_character_awards(&imported.id).unwrap();
+        let cast = db.list_characters(&imported.id).unwrap();
+
+        assert_eq!(awards.len(), 1);
+        assert_eq!(awards[0].stat_name.as_deref(), Some("Strength"));
+        assert_eq!(awards[0].amount, 2);
+        assert_eq!(awards[0].note.as_deref(), Some("A hidden quest paid."));
+        // The imported award points at the new cast member, not the old one.
+        assert_eq!(awards[0].character_id, cast[0].id);
     }
 
     /// Retention deletes for real, so the launch order matters: the copy taken
@@ -21738,6 +23177,73 @@ mod tests {
         let events = db.list_skill_events(&skill.id).unwrap();
         assert_eq!(events[0].id, event.id);
         assert_eq!(events[0].chapter_id, None);
+    }
+
+    #[test]
+    fn a_skill_keeps_its_own_chapter_when_it_names_a_level_up() {
+        let (db, story, character, first, _) = skill_story();
+        let second = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "Chapter Two".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Fireball".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(first.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let milestone = db
+            .add_level_milestone(
+                character.id.clone(),
+                3,
+                Some(second.id.clone()),
+                false,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        // A skill grows on its own clock: it can be trained in one chapter and
+        // still name the level-up that happened in another.
+        let event = db
+            .add_skill_event(
+                skill.id.clone(),
+                "upgraded".into(),
+                Some(first.id.clone()),
+                Some("Rank 2".into()),
+                Some(milestone.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(event.chapter_id.as_deref(), Some(first.id.as_str()));
+        assert_eq!(event.milestone_id.as_deref(), Some(milestone.id.as_str()));
+
+        // With no chapter of its own an event still takes the level-up's, which is
+        // the convenience that link was always for.
+        let inherited = db
+            .add_skill_event(
+                skill.id.clone(),
+                "used".into(),
+                None,
+                Some("Rank 2".into()),
+                Some(milestone.id.clone()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(inherited.chapter_id.as_deref(), Some(second.id.as_str()));
     }
 
     #[test]

@@ -122,6 +122,44 @@ export interface FactionStanding {
   updated_at: string;
 }
 
+// What one level hands out. `character_id` null is the story's own rule; a row
+// with an id is that character's override. The rule is read by the level-up form,
+// never applied on its own, because the app does not level anybody up.
+export interface LevelGrowthStat {
+  id: string;
+  rule_id: string;
+  stat_name: string;
+  per_level: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LevelGrowthRule {
+  id: string;
+  story_id: string;
+  character_id: string | null;
+  points_per_level: number;
+  stats: LevelGrowthStat[];
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// A gain that is not a level-up: XP a chapter paid, or stat points something in
+// it handed over. Writing one applies it, and deleting it takes it back.
+export interface CharacterAward {
+  id: string;
+  character_id: string;
+  chapter_id: string | null;
+  kind: 'xp' | 'stat';
+  stat_name: string | null;
+  amount: number;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // One chapter's XP income. This is separate from the total XP snapshot on a
 // milestone: one says what was earned there, the other what the running total was.
 export interface CharacterProgress {
