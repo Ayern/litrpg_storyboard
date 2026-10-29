@@ -128,6 +128,13 @@ fn main() {
         "story_chapter_tasks",
         &db.list_story_chapter_tasks(&story_id).unwrap(),
     );
+    // The scene ledger the chapter cards show: XP, learned skills and loot the
+    // demo's scenes handed out.
+    put(
+        &mut root,
+        "story_chapter_events",
+        &db.list_story_chapter_events(&story_id).unwrap(),
+    );
     put(
         &mut root,
         "chapter_cast_states",

@@ -36,6 +36,34 @@ export interface ChapterCastState {
   skills: CharacterChapterSkill[];
 }
 
+// The kinds of progression a chapter card can log.
+export type ChapterEventType =
+  | 'xp_award'
+  | 'skill_learn'
+  | 'skill_rank_up'
+  | 'skill_evolve'
+  | 'skill_sacrifice'
+  | 'item_acquire';
+
+// One thing that happened in a scene, in the order it happened. XP, a learned
+// skill and an acquired item also write their real row onto the sheet; the other
+// kinds are the scene's own record, because the sheet holds those separately.
+export interface ChapterEvent {
+  id: string;
+  chapter_id: string;
+  actor_id: string;
+  event_type: ChapterEventType;
+  details: string;
+  amount: number | null;
+  // The award, skill or item row this event wrote, so deleting the event can
+  // take that row back.
+  source_id: string | null;
+  position: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // One objective on a chapter card: a line the author ticks off as the scene is
 // written. `position` is the order the lines were written in, so ticking one
 // does not move it.

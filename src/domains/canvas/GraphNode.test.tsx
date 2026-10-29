@@ -215,16 +215,16 @@ describe('GraphNode chapter workbench', () => {
     expect(onRemoveChapterCast).toHaveBeenCalledWith('c-2');
   });
 
-  it('pays XP into the chapter from the card, with the reason', async () => {
+  it('logs XP from the card, defaulting to the point of view', async () => {
     const user = userEvent.setup();
-    const onQuickAward = vi.fn(async () => true);
+    const onAddChapterEvent = vi.fn(async () => true);
 
-    renderNode({ onQuickAward });
+    renderNode({ onAddChapterEvent });
 
-    await user.click(screen.getByRole('button', { name: '+ XP' }));
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
 
     expect(
-      screen.getByRole('combobox', { name: 'Who the XP is for in The Ashen Gate' })
+      screen.getByRole('combobox', { name: 'Who the event happens to in The Ashen Gate' })
     ).toHaveValue('c-1');
 
     await user.type(
@@ -232,54 +232,185 @@ describe('GraphNode chapter workbench', () => {
       '250'
     );
     await user.type(
-      screen.getByRole('textbox', { name: 'Why the XP is awarded in The Ashen Gate' }),
+      screen.getByRole('textbox', {
+        name: 'Why the XP was awarded in The Ashen Gate',
+      }),
       'Paid for a name at the toll gate'
     );
-    await user.click(screen.getByRole('button', { name: 'Award' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(onQuickAward).toHaveBeenCalledWith(
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
       'c-1',
-      250,
-      'Paid for a name at the toll gate'
+      'xp_award',
+      'Paid for a name at the toll gate',
+      250
     );
     expect(
-      screen.queryByRole('button', { name: 'Award' })
+      screen.queryByRole('button', { name: 'Save' })
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the record of what the chapter paid out on its face', () => {
+  it('logs a learned skill and an acquired item with their own fields', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_learn'
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Detail of the event in The Ashen Gate' }),
+      'Ember Whisper'
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
+      'c-1',
+      'skill_learn',
+      'Ember Whisper',
+      null
+    );
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'item_acquire'
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Detail of the event in The Ashen Gate' }),
+      'Stolen Ember'
+    );
+    await user.clear(
+      screen.getByRole('spinbutton', { name: 'Quantity in The Ashen Gate' })
+    );
+    await user.type(
+      screen.getByRole('spinbutton', { name: 'Quantity in The Ashen Gate' }),
+      '2'
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
+      'c-1',
+      'item_acquire',
+      'Stolen Ember',
+      2
+    );
+  });
+
+  it('will not log an event without its detail line', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_evolve'
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Add a detail line.');
+  });
+
+  it('renders the scene ledger with an icon and a line per event', () => {
     renderNode({
-      chapterAwards: [
+      chapterEvents: [
         {
-          id: 'a-1',
-          characterId: 'c-2',
-          characterName: 'Rook',
-          kind: 'xp',
-          statName: null,
+          id: 'e-1',
+          chapter_id: 'n-1',
+          actor_id: 'c-2',
+          actorName: 'Rook',
+          event_type: 'xp_award',
+          details: 'Paid for a name at the toll gate',
           amount: 250,
-          note: 'Paid for a name at the toll gate',
-          createdAt: '2026-01-01T00:00:00Z',
+          source_id: 'a-1',
+          position: 0,
+          created_by: 'Ada',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
         },
         {
-          id: 'a-2',
-          characterId: 'c-1',
-          characterName: 'Mira',
-          kind: 'stat',
-          statName: 'Insight',
-          amount: 1,
-          note: null,
-          createdAt: '2026-01-01T00:01:00Z',
+          id: 'e-2',
+          chapter_id: 'n-1',
+          actor_id: 'c-1',
+          actorName: 'Mira',
+          event_type: 'skill_learn',
+          details: 'Ember Whisper',
+          amount: null,
+          source_id: 's-1',
+          position: 1,
+          created_by: 'Ada',
+          created_at: '2026-01-01T00:01:00Z',
+          updated_at: '2026-01-01T00:01:00Z',
+        },
+        {
+          id: 'e-3',
+          chapter_id: 'n-1',
+          actor_id: 'c-2',
+          actorName: 'Rook',
+          event_type: 'skill_sacrifice',
+          details: 'Burned a favour to the Court',
+          amount: null,
+          source_id: null,
+          position: 2,
+          created_by: 'Ada',
+          created_at: '2026-01-01T00:02:00Z',
+          updated_at: '2026-01-01T00:02:00Z',
         },
       ],
     });
 
-    const log = screen.getByRole('group', { name: 'Awards paid in The Ashen Gate' });
+    const ledger = screen.getByRole('group', {
+      name: 'Progression and events in The Ashen Gate',
+    });
 
-    expect(log).toHaveTextContent('Rook');
-    expect(log).toHaveTextContent('+250 XP');
-    expect(log).toHaveTextContent('Paid for a name at the toll gate');
-    expect(log).toHaveTextContent('Mira');
-    expect(log).toHaveTextContent('+1 Insight');
+    expect(ledger).toHaveTextContent('Rook');
+    expect(ledger).toHaveTextContent('+250 XP');
+    expect(ledger).toHaveTextContent('Paid for a name at the toll gate');
+    expect(ledger).toHaveTextContent('Mira');
+    expect(ledger).toHaveTextContent('learns Ember Whisper');
+    expect(ledger).toHaveTextContent('Burned a favour to the Court');
+    expect(ledger).toHaveTextContent('⚡');
+    expect(ledger).toHaveTextContent('🔥');
+    expect(ledger).toHaveTextContent('💀');
+  });
+
+  it('removes one event from the card', async () => {
+    const user = userEvent.setup();
+    const onDeleteChapterEvent = vi.fn();
+
+    renderNode({
+      onDeleteChapterEvent,
+      chapterEvents: [
+        {
+          id: 'e-1',
+          chapter_id: 'n-1',
+          actor_id: 'c-2',
+          actorName: 'Rook',
+          event_type: 'skill_rank_up',
+          details: 'Ash Step → Rank 2',
+          amount: null,
+          source_id: null,
+          position: 0,
+          created_by: 'Ada',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Remove the event: Ash Step → Rank 2' })
+    );
+
+    expect(onDeleteChapterEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'e-1', event_type: 'skill_rank_up' })
+    );
   });
 
   it('can be put away with Done, Escape or a press outside', async () => {
@@ -321,22 +452,22 @@ describe('GraphNode chapter workbench', () => {
     expect(bubble.parentElement).toBe(document.body);
   });
 
-  it('refuses an award that is not a positive whole number', async () => {
+  it('refuses XP that is not a positive whole number', async () => {
     const user = userEvent.setup();
-    const onQuickAward = vi.fn(async () => true);
+    const onAddChapterEvent = vi.fn(async () => true);
 
-    renderNode({ onQuickAward });
+    renderNode({ onAddChapterEvent });
 
-    await user.click(screen.getByRole('button', { name: '+ XP' }));
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
     await user.type(
       screen.getByRole('spinbutton', { name: 'XP to award in The Ashen Gate' }),
       '0'
     );
-    await user.click(screen.getByRole('button', { name: 'Award' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(onQuickAward).not.toHaveBeenCalled();
+    expect(onAddChapterEvent).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'A whole number above zero.'
+      'A whole number of XP above zero.'
     );
   });
 
@@ -344,7 +475,8 @@ describe('GraphNode chapter workbench', () => {
     renderNode({ nodeType: 'character' });
 
     expect(screen.queryByText('Objectives')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Progression/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cast' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '+ XP' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Event' })).not.toBeInTheDocument();
   });
 });

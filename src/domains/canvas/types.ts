@@ -1,4 +1,4 @@
-import type { ChapterTask } from '../narrative/types';
+import type { ChapterEvent, ChapterEventType, ChapterTask } from '../narrative/types';
 import type {
   ChapterContinuityFlag,
   ChapterNote,
@@ -19,17 +19,10 @@ export interface ChapterCastBadge {
 
 // One chapter card's quest badge: which quest, and whether it was accepted or
 // ended there, so the card reads both ends of the contract.
-// One award a chapter paid, as its card reads it: the person, what they got and
-// the author's reason.
-export interface ChapterAwardRow {
-  id: string;
-  characterId: string;
-  characterName: string;
-  kind: 'xp' | 'stat';
-  statName: string | null;
-  amount: number;
-  note: string | null;
-  createdAt: string;
+// One event on a chapter card, with the name of the person it happened to so
+// the row reads without a lookup.
+export interface ChapterEventRow extends ChapterEvent {
+  actorName: string;
 }
 
 export interface QuestBadge {
@@ -93,16 +86,17 @@ export type NodeData = {
   onAddChapterObjective?: (text: string) => Promise<boolean>;
   onToggleChapterObjective?: (task: ChapterTask) => void;
   onRemoveChapterObjective?: (task: ChapterTask) => void;
-  // XP paid into this chapter without opening the sheet, and the reason the
-  // author gave for it.
-  onQuickAward?: (
-    characterId: string,
-    amount: number,
-    note: string | null
+  // The scene's progression ledger, oldest first, and the writes that add to it
+  // or take a line back. XP, a learned skill and an acquired item also touch the
+  // sheet; the other kinds are the scene's own record.
+  chapterEvents?: ChapterEventRow[];
+  onAddChapterEvent?: (
+    actorId: string,
+    eventType: ChapterEventType,
+    details: string,
+    amount: number | null
   ) => Promise<boolean>;
-  // What this chapter has already paid out, oldest first, so the card keeps the
-  // record beside the scene it was paid in.
-  chapterAwards?: ChapterAwardRow[];
+  onDeleteChapterEvent?: (event: ChapterEventRow) => void;
   // The quests accepted or ended in this chapter, and where their badges lead.
   questBadges?: QuestBadge[];
   onOpenQuest?: (questId: string) => void;

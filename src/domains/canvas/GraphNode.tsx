@@ -3,6 +3,8 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { HelpTip } from '../../components/HelpTip';
 import { formatCount } from '../../lib/format';
+import type { ChapterEventRow } from './types';
+import type { ChapterEventType } from '../narrative/types';
 import type { ChapterCastBadge, NodeData } from './types';
 import { isNodeType, NODE_STAT_BADGES, QUEST_BADGES_SHOWN } from './types';
 
@@ -29,17 +31,18 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   // The card's own two small forms, which open over the face rather than in a
   // panel: who is in the scene, and what the scene pays out. Only one is up at a
   // time, because they cover the same corner of the card.
-  const [face, setFace] = useState<'cast' | 'award' | null>(null);
+  const [face, setFace] = useState<'cast' | 'event' | null>(null);
   const [objectiveDraft, setObjectiveDraft] = useState('');
-  const [awardCharacterId, setAwardCharacterId] = useState('');
-  const [awardAmount, setAwardAmount] = useState('');
-  const [awardNote, setAwardNote] = useState('');
-  const [awardError, setAwardError] = useState<string | null>(null);
+  const [eventActorId, setEventActorId] = useState('');
+  const [eventType, setEventType] = useState<ChapterEventType>('xp_award');
+  const [eventDetails, setEventDetails] = useState('');
+  const [eventAmount, setEventAmount] = useState('');
+  const [eventError, setEventError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const chapterAwards = data.chapterAwards ?? [];
+  const events = data.chapterEvents ?? [];
 
-  const awardTarget =
-    awardCharacterId ||
+  const eventTarget =
+    eventActorId ||
     data.chapterPov ||
     chapterCast[0]?.characterId ||
     castChoices[0]?.id ||
@@ -54,27 +57,71 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
     if (added !== false) setObjectiveDraft('');
   };
 
-  const submitAward = async () => {
-    const amount = Number(awardAmount);
+  // The event's own form resets its fields when its kind changes: an item's
+  // quantity is not an XP amount, and a skill's name is not a rank-up line.
+  const chooseEventType = (next: ChapterEventType) => {
+    setEventType(next);
+    setEventDetails('');
+    setEventAmount(next === 'item_acquire' ? '1' : '');
+    setEventError(null);
+  };
 
-    if (!data.onQuickAward || !awardTarget) return;
+  const submitEvent = async () => {
+    if (!data.onAddChapterEvent || !eventTarget) return;
 
-    if (!Number.isInteger(amount) || amount <= 0) {
-      setAwardError('A whole number above zero.');
+    const details = eventDetails.trim();
+    const amount = eventAmount.trim() === '' ? null : Number(eventAmount);
+
+    if (eventType === 'xp_award' && (!Number.isInteger(amount) || Number(amount) <= 0)) {
+      setEventError('A whole number of XP above zero.');
       return;
     }
 
-    setAwardError(null);
-    const awarded = await data.onQuickAward(
-      awardTarget,
-      amount,
-      awardNote.trim() || null
+    if (eventType === 'item_acquire' && (!Number.isInteger(amount) || Number(amount) < 1)) {
+      setEventError('A quantity of at least one.');
+      return;
+    }
+
+    if (eventType !== 'xp_award' && details === '') {
+      setEventError('Add a detail line.');
+      return;
+    }
+
+    setEventError(null);
+    const added = await data.onAddChapterEvent(
+      eventTarget,
+      eventType,
+      details,
+      amount
     );
 
-    if (awarded !== false) {
-      setAwardAmount('');
-      setAwardNote('');
+    if (added !== false) {
+      setEventDetails('');
+      setEventAmount(eventType === 'item_acquire' ? '1' : '');
       setFace(null);
+    }
+  };
+
+  const eventIcon = (type: ChapterEventType) =>
+    ({
+      xp_award: '⚡',
+      skill_learn: '🔥',
+      skill_rank_up: '↑',
+      skill_evolve: '✨',
+      skill_sacrifice: '💀',
+      item_acquire: '🗡️',
+    })[type];
+
+  const eventWhat = (event: ChapterEventRow) => {
+    switch (event.event_type) {
+      case 'xp_award':
+        return `+${formatCount(event.amount ?? 0)} XP`;
+      case 'skill_learn':
+        return `learns ${event.details}`;
+      case 'item_acquire':
+        return `${event.details} ×${event.amount ?? 1}`;
+      default:
+        return event.details;
     }
   };
 
@@ -383,42 +430,85 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           </div>
         </div>
       )}
-      {/* XP paid into this chapter, without opening anyone's sheet: the curve
-          reads it back, so the levels on the board follow in the same render. */}
-      {kind === 'chapter' && castChoices.length > 0 && (
-        <div className="chapter-award">
-          <button
-            type="button"
-            className={`chapter-face-open nodrag nopan${
-              face === 'award' ? ' active' : ''
-            }`}
-            aria-expanded={face === 'award'}
-            title="Pay XP into this chapter without leaving the board"
-            onClick={event => {
-              event.stopPropagation();
-              setAwardError(null);
-              setFace(current => (current === 'award' ? null : 'award'));
-            }}
-          >
-            + XP
-          </button>
+      {/* The scene's progression ledger: one row per event, in the order it was
+          logged. XP, learned skills and acquired items also touch the sheet;
+          rank-ups, evolutions and sacrifices are the scene's record. */}
+      {kind === 'chapter' && (
+        <div
+          className="chapter-events"
+          role="group"
+          aria-label={`Progression and events in ${data.label}`}
+        >
+          <div className="chapter-events-head">
+            <span className="chapter-events-title">Progression &amp; Events</span>
+            {castChoices.length > 0 && (
+              <button
+                type="button"
+                className={`chapter-face-open nodrag nopan${
+                  face === 'event' ? ' active' : ''
+                }`}
+                aria-expanded={face === 'event'}
+                title="Log XP, a learned skill, a rank-up, an evolution, a sacrifice or an item"
+                onClick={event => {
+                  event.stopPropagation();
+                  setEventError(null);
+                  setFace(current => (current === 'event' ? null : 'event'));
+                }}
+              >
+                + Event
+              </button>
+            )}
+          </div>
+
+          {events.length === 0 ? (
+            <p className="chapter-events-empty">
+              Nothing has happened here yet — log the scene’s first event.
+            </p>
+          ) : (
+            <ul className="chapter-events-list">
+              {events.map(row => (
+                <li key={row.id} className={`chapter-event ${row.event_type}`}>
+                  <span className="chapter-event-icon" aria-hidden="true">
+                    {eventIcon(row.event_type)}
+                  </span>
+                  <span className="chapter-event-who">{row.actorName}</span>
+                  <span className="chapter-event-what">{eventWhat(row)}</span>
+                  {row.event_type === 'xp_award' && row.details && (
+                    <span className="chapter-event-note">{row.details}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="chapter-event-remove nodrag nopan"
+                    title={`Remove “${eventWhat(row)}”`}
+                    aria-label={`Remove the event: ${eventWhat(row)}`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      data.onDeleteChapterEvent?.(row);
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
-      {kind === 'chapter' && face === 'award' && (
+      {kind === 'chapter' && face === 'event' && (
         <div
-          className="chapter-popover chapter-award-form nodrag nopan"
+          className="chapter-popover chapter-event-form nodrag nopan"
           role="group"
-          aria-label={`Award XP in ${data.label}`}
+          aria-label={`Log an event in ${data.label}`}
         >
           <label className="chapter-popover-row">
             <span>Who</span>
             <select
               className="nodrag nopan"
-              aria-label={`Who the XP is for in ${data.label}`}
-              value={awardTarget}
+              aria-label={`Who the event happens to in ${data.label}`}
+              value={eventTarget}
               onMouseDown={event => event.stopPropagation()}
               onClick={event => event.stopPropagation()}
-              onChange={event => setAwardCharacterId(event.target.value)}
+              onChange={event => setEventActorId(event.target.value)}
             >
               {castChoices.map(choice => (
                 <option key={choice.id} value={choice.id}>
@@ -428,74 +518,158 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </select>
           </label>
           <label className="chapter-popover-row">
-            <span>XP</span>
-            <input
+            <span>Event</span>
+            <select
               className="nodrag nopan"
-              type="number"
-              min={1}
-              step={1}
-              aria-label={`XP to award in ${data.label}`}
-              placeholder="200"
-              value={awardAmount}
+              aria-label={`Event type in ${data.label}`}
+              value={eventType}
               onMouseDown={event => event.stopPropagation()}
               onClick={event => event.stopPropagation()}
-              onChange={event => setAwardAmount(event.target.value)}
-              onKeyDown={event => {
-                event.stopPropagation();
-                if (event.key === 'Enter') void submitAward();
-                if (event.key === 'Escape') {
-                  setAwardAmount('');
-                  setAwardNote('');
-                  setAwardError(null);
-                  setFace(null);
-                }
-              }}
-            />
+              onChange={event =>
+                chooseEventType(event.target.value as ChapterEventType)
+              }
+            >
+              <option value="xp_award">+ XP</option>
+              <option value="skill_learn">Learn Skill</option>
+              <option value="skill_rank_up">Rank Up</option>
+              <option value="skill_evolve">Evolve</option>
+              <option value="skill_sacrifice">Sacrifice</option>
+              <option value="item_acquire">Acquire Item</option>
+            </select>
           </label>
-          <label className="chapter-popover-row">
-            <span>Why</span>
-            <input
-              className="nodrag nopan"
-              type="text"
-              aria-label={`Why the XP is awarded in ${data.label}`}
-              placeholder="Why this XP"
-              value={awardNote}
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => event.stopPropagation()}
-              onChange={event => setAwardNote(event.target.value)}
-              onKeyDown={event => {
-                event.stopPropagation();
-                if (event.key === 'Enter') void submitAward();
-                if (event.key === 'Escape') {
-                  setAwardAmount('');
-                  setAwardNote('');
-                  setAwardError(null);
-                  setFace(null);
+
+          {eventType === 'xp_award' ? (
+            <label className="chapter-popover-row">
+              <span>XP</span>
+              <input
+                className="nodrag nopan"
+                type="number"
+                min={1}
+                step={1}
+                aria-label={`XP to award in ${data.label}`}
+                placeholder="200"
+                value={eventAmount}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setEventAmount(event.target.value)}
+                onKeyDown={event => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') void submitEvent();
+                  if (event.key === 'Escape') {
+                    setEventAmount('');
+                    setEventDetails('');
+                    setEventError(null);
+                    setFace(null);
+                  }
+                }}
+              />
+            </label>
+          ) : (
+            <label className="chapter-popover-row">
+              <span>
+                {eventType === 'item_acquire'
+                  ? 'Item'
+                  : eventType === 'skill_learn'
+                    ? 'Skill'
+                    : 'Detail'}
+              </span>
+              <input
+                className="nodrag nopan"
+                type="text"
+                aria-label={`Detail of the event in ${data.label}`}
+                placeholder={
+                  eventType === 'item_acquire'
+                    ? 'Stolen Ember'
+                    : eventType === 'skill_learn'
+                      ? 'Ember Whisper'
+                      : 'Ash Step → Rank 2'
                 }
-              }}
-            />
-          </label>
-          {awardError && (
-            <p className="chapter-award-error" role="alert">
-              {awardError}
+                value={eventDetails}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setEventDetails(event.target.value)}
+                onKeyDown={event => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') void submitEvent();
+                  if (event.key === 'Escape') {
+                    setEventAmount('');
+                    setEventDetails('');
+                    setEventError(null);
+                    setFace(null);
+                  }
+                }}
+              />
+            </label>
+          )}
+
+          {eventType === 'item_acquire' && (
+            <label className="chapter-popover-row">
+              <span>Qty</span>
+              <input
+                className="nodrag nopan"
+                type="number"
+                min={1}
+                step={1}
+                aria-label={`Quantity in ${data.label}`}
+                value={eventAmount}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setEventAmount(event.target.value)}
+                onKeyDown={event => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') void submitEvent();
+                }}
+              />
+            </label>
+          )}
+
+          {eventType === 'xp_award' && (
+            <label className="chapter-popover-row">
+              <span>Why</span>
+              <input
+                className="nodrag nopan"
+                type="text"
+                aria-label={`Why the XP was awarded in ${data.label}`}
+                placeholder="Why this XP"
+                value={eventDetails}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setEventDetails(event.target.value)}
+                onKeyDown={event => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') void submitEvent();
+                  if (event.key === 'Escape') {
+                    setEventAmount('');
+                    setEventDetails('');
+                    setEventError(null);
+                    setFace(null);
+                  }
+                }}
+              />
+            </label>
+          )}
+
+          {eventError && (
+            <p className="chapter-event-error" role="alert">
+              {eventError}
             </p>
           )}
           <div className="chapter-award-actions">
             <button
               type="button"
               className="nodrag nopan"
-              disabled={!awardAmount.trim() || !awardTarget}
-              onClick={() => void submitAward()}
+              disabled={!eventTarget}
+              onClick={() => void submitEvent()}
             >
-              Award
+              Save
             </button>
             <button
               type="button"
               className="nodrag nopan"
               onClick={() => {
-                setAwardAmount('');
-                setAwardNote('');
-                setAwardError(null);
+                setEventAmount('');
+                setEventDetails('');
+                setEventError(null);
                 setFace(null);
               }}
             >
@@ -503,8 +677,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </button>
           </div>
           <p className="chapter-popover-hint">
-            XP is paid into this chapter’s income, so the level it buys and the
-            stats that level hands out follow from one write. Undo takes it back.
+            XP pays into this chapter’s income. A learned skill and an acquired
+            item are written on the sheet. Rank-ups, evolutions and sacrifices
+            stay the scene’s record.
           </p>
         </div>
       )}
@@ -776,41 +951,6 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </span>
           )}
         </span>
-      )}
-      {/* What this chapter has already paid out, kept on its face: who got it,
-          how much, and the reason the author wrote down. */}
-      {kind === 'chapter' && chapterAwards.length > 0 && (
-        <div
-          className="chapter-awards"
-          role="group"
-          aria-label={`Awards paid in ${data.label}`}
-        >
-          <span className="chapter-awards-title">Paid out</span>
-          <ul className="chapter-awards-list">
-            {chapterAwards.map(award => (
-              <li key={award.id} className="chapter-award-row">
-                <span className="chapter-award-who">{award.characterName}</span>
-                <span
-                  className={`chapter-award-amount ${award.kind}`}
-                  title={
-                    award.kind === 'stat'
-                      ? `${award.amount} ${award.statName ?? 'stat points'} to ${
-                          award.characterName
-                        }`
-                      : `${formatCount(award.amount)} XP to ${award.characterName}`
-                  }
-                >
-                  {award.kind === 'stat'
-                    ? `+${award.amount} ${award.statName ?? 'stat'}`
-                    : `+${formatCount(award.amount)} XP`}
-                </span>
-                {award.note && (
-                  <span className="chapter-award-note">{award.note}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} />
     </div>

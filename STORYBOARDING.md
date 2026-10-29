@@ -143,12 +143,18 @@ can stay on the board:
 - **Cast** on the card opens the roster right there: a **Point of view** choice and
   a checkbox for everyone else in the scene. The POV is always present and its box
   is locked, because the POV is not a cast row.
-- **+ XP** pays experience into that chapter for one character. The curve, the
-  level it buys and the stats that level hands out all follow from the one write,
-  so the badges on every card update immediately.
+- **Progression & Events** on the card is the scene's ledger, listed in the order
+  you logged it: `⚡ +250 XP · Paid for a name at the toll gate`. **+ Event** opens a
+  short form: who it happened to (the point of view by default) and what kind of
+  event it was — **+ XP**, **Learn Skill**, **Rank Up**, **Evolve**, **Sacrifice**
+  or **Acquire Item** — with the reason or detail line, and a quantity for an
+  item. XP pays into that chapter's income, so the curve, the level it buys and the
+  stats that level hands out all follow from the one write. A learned skill and an
+  acquired item are written on the sheet and in the inventory; a rank-up, an
+  evolution and a sacrifice stay the scene's record.
 - Every one of those clicks is one **Undo** step: the added line disappears, the
-  ticked line reopens, the name leaves the roster, the XP comes back off the
-  ledger.
+  ticked line reopens, the name leaves the roster, and the event comes back off the
+  ledger with the award, skill or item it wrote.
 
 ![The board with chapter notes shown](screenshots/canvas-notes.png)
 

@@ -25,7 +25,21 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 32;
+const SCHEMA_VERSION: i32 = 33;
+
+/// The progression events a chapter card can log. XP pays into the chapter's
+/// income, a learned skill and an acquired item are written onto the sheet, and
+/// a rank-up, an evolution or a sacrifice is the scene's own record: the sheet
+/// already holds those, so the ledger names what happened without writing a
+/// second copy of it.
+const CHAPTER_EVENT_TYPES: [&str; 6] = [
+    "xp_award",
+    "skill_learn",
+    "skill_rank_up",
+    "skill_evolve",
+    "skill_sacrifice",
+    "item_acquire",
+];
 
 /// The step a level costs when nothing says otherwise: 100 XP between the first
 /// levels, which is the smallest curve an author is likely to want and the one a
@@ -1006,14 +1020,14 @@ impl Db {
         )?;
 
         // And two gains that are not level-ups: XP the ledger never had a row
-        // for, and a point no level-up awarded.
-        self.add_character_award(
+        // for, and a point no level-up awarded. The XP is logged as the scene's
+        // event, which is also what pays it into the chapter.
+        self.add_chapter_event(
+            first.id.clone(),
             vane.id.clone(),
-            Some(first.id.clone()),
-            "xp".into(),
-            None,
-            250,
-            Some("Paid for a name at the toll gate.".into()),
+            "xp_award".into(),
+            "Paid for a name at the toll gate.".into(),
+            Some(250),
             user.clone(),
         )?;
         self.add_character_award(
@@ -1023,6 +1037,26 @@ impl Db {
             Some("Insight".into()),
             1,
             Some("The Ember Court's ledger opens for him once.".into()),
+            user.clone(),
+        )?;
+
+        // Two more of the scene's events, so a card shows the log-only kinds as
+        // well: the rank-up the curve already recorded, and a sacrifice nothing
+        // on a sheet can hold.
+        self.add_chapter_event(
+            third.id.clone(),
+            rook.id.clone(),
+            "skill_rank_up".into(),
+            "Ash Step → Rank 2".into(),
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            third.id.clone(),
+            mira.id.clone(),
+            "skill_sacrifice".into(),
+            "The stolen ember, spent to buy Rook's exit.".into(),
+            None,
             user.clone(),
         )?;
 
@@ -6788,6 +6822,289 @@ impl Db {
         Ok(())
     }
 
+    /// Every recorded event on every live chapter, in reading order and then in
+    /// the order the scene's events were logged.
+    pub fn list_story_chapter_events(&self, story_id: &str) -> DbResult<Vec<ChapterEvent>> {
+        let guard = self.conn()?;
+        let mut stmt = guard.prepare(
+            "SELECT e.id, e.chapter_id, e.actor_id, e.event_type, e.details, e.amount,
+                    e.source_id, e.position, e.created_by, e.created_at, e.updated_at
+               FROM chapter_events e
+               JOIN nodes n ON n.id = e.chapter_id
+               JOIN stories st ON st.id = n.story_id
+              WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+                AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+              ORDER BY n.chapter_seq, e.position, e.created_at, e.id",
+        )?;
+        let rows = stmt.query_map(params![story_id], chapter_event_row)?;
+
+        Ok(rows.collect::<SqliteResult<Vec<_>>>()?)
+    }
+
+    /// Logs one event on a chapter card, applying it where the event has a real
+    /// effect: XP pays into the chapter's income, a learned skill and an acquired
+    /// item are written onto the sheet. A rank-up, an evolution and a sacrifice
+    /// are the scene's record only, because the sheet already holds them.
+    pub fn add_chapter_event(
+        &self,
+        chapter_id: String,
+        actor_id: String,
+        event_type: String,
+        details: String,
+        amount: Option<i64>,
+        user: String,
+    ) -> DbResult<ChapterEvent> {
+        let event_type = event_type.trim().to_string();
+
+        if !CHAPTER_EVENT_TYPES.contains(&event_type.as_str()) {
+            return Err(DbError::Invalid("that is not a chapter event".to_string()));
+        }
+
+        let details = details.trim().to_string();
+        let mut amount = amount;
+
+        match event_type.as_str() {
+            "xp_award" => {
+                if amount.unwrap_or(0) <= 0 {
+                    return Err(DbError::Invalid(
+                        "an XP award is a whole number above zero".to_string(),
+                    ));
+                }
+            }
+            "item_acquire" => {
+                let quantity = amount.unwrap_or(1);
+
+                if quantity < 1 {
+                    return Err(DbError::Invalid(
+                        "an acquired item is at least one".to_string(),
+                    ));
+                }
+
+                amount = Some(quantity);
+            }
+            _ => {
+                if details.is_empty() {
+                    return Err(DbError::Invalid("an event needs a detail line".to_string()));
+                }
+
+                amount = None;
+            }
+        }
+
+        // The chapter and the actor have to be live in the same story, so an
+        // event cannot name a person who is not in it.
+        let story_id = {
+            let guard = self.conn()?;
+            let story_id = live_character_story(&guard, &actor_id)?;
+            validate_node_reference(&guard, &story_id, Some(&chapter_id), "chapter", "chapter")?
+                .ok_or_else(|| {
+                    DbError::Invalid("an event belongs to a live chapter".to_string())
+                })?;
+            story_id
+        };
+
+        // XP, a learned skill and an acquired item go through the commands the
+        // sheets already use, so the ledger and the sheet cannot disagree.
+        let source_id = match event_type.as_str() {
+            "xp_award" => Some(
+                self.add_character_award(
+                    actor_id.clone(),
+                    Some(chapter_id.clone()),
+                    "xp".into(),
+                    None,
+                    amount.unwrap_or(0),
+                    if details.is_empty() {
+                        None
+                    } else {
+                        Some(details.clone())
+                    },
+                    user.clone(),
+                )?
+                .id,
+            ),
+            "skill_learn" => Some(
+                self.add_skill(
+                    actor_id.clone(),
+                    details.clone(),
+                    None,
+                    None,
+                    Some(chapter_id.clone()),
+                    None,
+                    user.clone(),
+                )?
+                .id,
+            ),
+            "item_acquire" => Some(
+                self.add_inventory_item(
+                    actor_id.clone(),
+                    details.clone(),
+                    None,
+                    amount.unwrap_or(1),
+                    None,
+                    Some(chapter_id.clone()),
+                    None,
+                    None,
+                    user.clone(),
+                )?
+                .id,
+            ),
+            _ => None,
+        };
+
+        let timestamp = now();
+        let id = Uuid::new_v4().to_string();
+
+        let recorded = (|| -> DbResult<i64> {
+            let mut guard = self.conn()?;
+            let tx = guard.transaction()?;
+            let position: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM chapter_events WHERE chapter_id = ?1",
+                params![&chapter_id],
+                |row| row.get(0),
+            )?;
+
+            tx.execute(
+                "INSERT INTO chapter_events
+                 (id, chapter_id, actor_id, event_type, details, amount, source_id,
+                  position, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                params![
+                    &id,
+                    &chapter_id,
+                    &actor_id,
+                    &event_type,
+                    &details,
+                    amount,
+                    &source_id,
+                    position,
+                    &user,
+                    &timestamp
+                ],
+            )?;
+
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "chapter_event",
+                    entity_id: &id,
+                    action: "create",
+                    field_changed: None,
+                    old_value: None,
+                    new_value: Some(if details.is_empty() {
+                        event_type.clone()
+                    } else {
+                        details.clone()
+                    }),
+                    changed_by: &user,
+                },
+            )?;
+
+            tx.commit()?;
+
+            Ok(position)
+        })();
+
+        let position = match recorded {
+            Ok(position) => position,
+            Err(error) => {
+                // The ledger row could not be written, so the row it was going to
+                // stand for is put back rather than left behind unexplained.
+                if let Some(source) = &source_id {
+                    match event_type.as_str() {
+                        "xp_award" => {
+                            let _ = self.delete_character_award(source, user.clone());
+                        }
+                        "skill_learn" => {
+                            let _ = self.delete_skill(source, user.clone());
+                        }
+                        "item_acquire" => {
+                            let _ = self.delete_inventory_item(source, user.clone());
+                        }
+                        _ => {}
+                    }
+                }
+
+                return Err(error);
+            }
+        };
+
+        Ok(ChapterEvent {
+            id,
+            chapter_id,
+            actor_id,
+            event_type,
+            details,
+            amount,
+            source_id,
+            position,
+            created_by: user,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+
+    /// Removes an event, and with it the award, skill or item it wrote. The list
+    /// itself is history: the line stays in the audit trail.
+    pub fn delete_chapter_event(&self, id: &str, user: String) -> DbResult<()> {
+        let existing = {
+            let guard = self.conn()?;
+            guard
+                .query_row(
+                    "SELECT e.event_type, e.source_id, e.details, n.story_id
+                       FROM chapter_events e
+                       JOIN nodes n ON n.id = e.chapter_id
+                      WHERE e.id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .optional()?
+        };
+
+        let Some((event_type, source_id, details, story_id)) = existing else {
+            return Ok(());
+        };
+
+        if let Some(source) = &source_id {
+            match event_type.as_str() {
+                "xp_award" => self.delete_character_award(source, user.clone())?,
+                "skill_learn" => self.delete_skill(source, user.clone())?,
+                "item_acquire" => self.delete_inventory_item(source, user.clone())?,
+                _ => {}
+            }
+        }
+
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        tx.execute("DELETE FROM chapter_events WHERE id = ?1", params![id])?;
+
+        log_audit(
+            &tx,
+            AuditRecord {
+                story_id: Some(&story_id),
+                entity_type: "chapter_event",
+                entity_id: id,
+                action: "delete",
+                field_changed: None,
+                old_value: Some(details),
+                new_value: None,
+                changed_by: &user,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(())
+    }
+
     fn character_state_at_chapter_on(
         conn: &Connection,
         character_id: &str,
@@ -9183,6 +9500,21 @@ impl Db {
             rows.collect::<SqliteResult<Vec<_>>>()?
         };
 
+        let chapter_events = {
+            let mut stmt = guard.prepare(
+                "SELECT e.id, e.chapter_id, e.actor_id, e.event_type, e.details, e.amount,
+                        e.source_id, e.position, e.created_by, e.created_at, e.updated_at
+                   FROM chapter_events e
+                   JOIN nodes n ON n.id = e.chapter_id
+                   JOIN stories st ON st.id = n.story_id
+                  WHERE n.story_id = ?1 AND n.node_type = 'chapter'
+                    AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+                  ORDER BY n.chapter_seq, e.position, e.created_at, e.id",
+            )?;
+            let rows = stmt.query_map(params![story_id], chapter_event_row)?;
+            rows.collect::<SqliteResult<Vec<_>>>()?
+        };
+
         let mut character_inventory = {
             let mut stmt = guard.prepare(
                 "SELECT i.id, i.character_id, i.name, i.rarity, i.quantity, i.effect,
@@ -9520,6 +9852,7 @@ impl Db {
             character_awards,
             chapter_cast,
             chapter_tasks,
+            chapter_events,
             character_inventory,
             character_currency,
             character_relations,
@@ -11677,6 +12010,11 @@ impl Db {
             .iter()
             .map(|task| (task.id.clone(), Uuid::new_v4().to_string()))
             .collect();
+        let chapter_events: HashMap<String, String> = export
+            .chapter_events
+            .iter()
+            .map(|event| (event.id.clone(), Uuid::new_v4().to_string()))
+            .collect();
         let inventory: HashMap<String, String> = export
             .character_inventory
             .iter()
@@ -12861,6 +13199,55 @@ impl Db {
             )?;
         }
 
+        // A chapter's ledger comes last, because its `source_id` points at the
+        // award, skill or item inserted above. The copy remaps that link too, so
+        // deleting the copied event takes the copied row with it.
+        for event in &export.chapter_events {
+            let Some(chapter_id) = nodes.get(&event.chapter_id) else {
+                return Err(DbError::Invalid(format!(
+                    "the event '{}' belongs to a chapter the file does not contain",
+                    event.id
+                )));
+            };
+            let Some(actor_id) = characters.get(&event.actor_id) else {
+                return Err(DbError::Invalid(format!(
+                    "the event '{}' belongs to a character the file does not contain",
+                    event.id
+                )));
+            };
+
+            let source_id =
+                event
+                    .source_id
+                    .as_ref()
+                    .and_then(|id| match event.event_type.as_str() {
+                        "xp_award" => awards.get(id),
+                        "skill_learn" => skills.get(id),
+                        "item_acquire" => inventory.get(id),
+                        _ => None,
+                    });
+
+            tx.execute(
+                "INSERT INTO chapter_events
+                 (id, chapter_id, actor_id, event_type, details, amount, source_id,
+                  position, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &chapter_events[&event.id],
+                    chapter_id,
+                    actor_id,
+                    &event.event_type,
+                    &event.details,
+                    event.amount,
+                    source_id,
+                    event.position,
+                    &event.created_by,
+                    &event.created_at,
+                    &event.updated_at
+                ],
+            )?;
+        }
+
         // History is restored with its original actor and timestamp. An entry for
         // something deleted before the export keeps its old id, exactly as it does
         // in the database it came from: that history is still history.
@@ -12882,6 +13269,7 @@ impl Db {
                 "character_award" => awards.get(&entry.entity_id).cloned(),
                 "chapter_cast" => chapter_cast.get(&entry.entity_id).cloned(),
                 "chapter_task" => chapter_tasks.get(&entry.entity_id).cloned(),
+                "chapter_event" => chapter_events.get(&entry.entity_id).cloned(),
                 "character_inventory" => inventory.get(&entry.entity_id).cloned(),
                 "character_currency" => currencies.get(&entry.entity_id).cloned(),
                 "node" => nodes.get(&entry.entity_id).cloned(),
@@ -13409,6 +13797,27 @@ pub struct ChapterTask {
     pub updated_at: String,
 }
 
+/// One thing that happened in a scene: XP paid, a skill learned, a rank-up, an
+/// evolution, a sacrifice or an item taken. `details` is the line the author
+/// reads (a name, a target, a reason), `amount` is the XP or the quantity, and
+/// `source_id` names the award, skill or item row the event wrote so deleting
+/// the event can take that row back.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct ChapterEvent {
+    pub id: String,
+    pub chapter_id: String,
+    pub actor_id: String,
+    pub event_type: String,
+    pub details: String,
+    pub amount: Option<i64>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    pub position: i64,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// One change in a skill's life: a rank gained, a use in a chapter, or a
 /// sacrifice. The chapter is optional so an event can be recorded before its
 /// place in the reading order is known.
@@ -13826,6 +14235,10 @@ pub struct StoryExport {
     /// schema v32, so they default to empty.
     #[serde(default)]
     pub chapter_tasks: Vec<ChapterTask>,
+    /// Each scene's progression ledger. Absent from exports written before
+    /// schema v33, so they default to empty.
+    #[serde(default)]
+    pub chapter_events: Vec<ChapterEvent>,
     /// Absent from exports written before schema v13, so they default to empty.
     #[serde(default)]
     pub character_inventory: Vec<InventoryItem>,
@@ -13858,6 +14271,23 @@ fn chapter_task_row(row: &rusqlite::Row) -> SqliteResult<ChapterTask> {
         position: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+    })
+}
+
+/// One stored chapter event, in the column order every query selects.
+fn chapter_event_row(row: &rusqlite::Row) -> SqliteResult<ChapterEvent> {
+    Ok(ChapterEvent {
+        id: row.get(0)?,
+        chapter_id: row.get(1)?,
+        actor_id: row.get(2)?,
+        event_type: row.get(3)?,
+        details: row.get(4)?,
+        amount: row.get(5)?,
+        source_id: row.get(6)?,
+        position: row.get(7)?,
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 //
@@ -16607,6 +17037,38 @@ CREATE INDEX IF NOT EXISTS idx_chapter_tasks_chapter
 
 "#;
 
+/// Schema v33: one ledger of what happened in a scene, in the order it happened.
+///
+/// XP, a skill learned, a rank-up, an evolution, a sacrifice and an item taken
+/// are rows in one table, so a chapter card reads its scene's progression the
+/// way it reads its checklist. `source_id` names the award, skill or inventory
+/// row an event wrote, which is what lets deleting the event take that row with
+/// it; the log-only kinds leave it empty.
+const MIGRATION_033_CHAPTER_EVENTS: &str = r#"
+CREATE TABLE IF NOT EXISTS chapter_events (
+    id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '',
+    amount INTEGER,
+    source_id TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES nodes(id) ON DELETE CASCADE,
+    FOREIGN KEY(actor_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_events_chapter
+    ON chapter_events (chapter_id);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_events_actor
+    ON chapter_events (actor_id);
+
+"#;
+
 fn migrate(conn: &Connection) -> SqliteResult<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
@@ -16829,6 +17291,13 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
     // objectives, so the table starts empty.
     if version < 32 {
         conn.execute_batch(MIGRATION_032_CHAPTER_TASKS)?;
+    }
+
+    // v33 gives a chapter one ledger for its scene's progression. Nothing is
+    // back-filled: the awards, skills and items of an older story are still on
+    // the sheets, and the ledger starts with the scenes written after it.
+    if version < 33 {
+        conn.execute_batch(MIGRATION_033_CHAPTER_EVENTS)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -27092,6 +27561,240 @@ mod tests {
             .conn()
             .unwrap()
             .query_row("SELECT count(*) FROM chapter_tasks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn an_xp_event_pays_the_chapter_and_deleting_it_takes_the_award_back() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "xp_award".into(),
+                "Paid for a name at the gate".into(),
+                Some(250),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(event.amount, Some(250));
+        assert!(
+            event.source_id.is_some(),
+            "the event names the award it wrote"
+        );
+
+        let awards = db.list_story_character_awards(&story.id).unwrap();
+        assert_eq!(awards.len(), 1);
+        assert_eq!(awards[0].amount, 250);
+        assert_eq!(
+            awards[0].note.as_deref(),
+            Some("Paid for a name at the gate"),
+            "the reason travels with the award"
+        );
+
+        let paid: i64 = db
+            .list_story_character_progress(&story.id)
+            .unwrap()
+            .iter()
+            .map(|row| row.xp_earned)
+            .sum();
+        assert_eq!(paid, 250, "the chapter's income is where XP is read");
+
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 1);
+
+        db.delete_chapter_event(&event.id, "Ada".into()).unwrap();
+
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+        assert!(
+            db.list_story_character_awards(&story.id)
+                .unwrap()
+                .is_empty(),
+            "deleting the event deletes the award it wrote"
+        );
+        assert!(db
+            .list_story_character_progress(&story.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn learning_and_acquiring_write_the_sheet_and_come_back_off_it() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        let learned = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_learn".into(),
+                "Ember Whisper".into(),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let acquired = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "item_acquire".into(),
+                "Stolen Ember".into(),
+                Some(2),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "Ember Whisper");
+        assert_eq!(skills[0].character_id, character.id);
+        assert_eq!(skills[0].chapter_id.as_deref(), Some(chapter.id.as_str()));
+
+        let items = db.list_story_inventory(&story.id).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Stolen Ember");
+        assert_eq!(items[0].quantity, 2);
+
+        db.delete_chapter_event(&learned.id, "Ada".into()).unwrap();
+        db.delete_chapter_event(&acquired.id, "Ada".into()).unwrap();
+
+        assert!(db.list_story_skills(&story.id).unwrap().is_empty());
+        assert!(db.list_story_inventory(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_log_only_event_stays_off_the_sheet_and_travels_in_the_export() {
+        let (source, story, character, chapter, _) = skill_story();
+
+        let event = source
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_rank_up".into(),
+                "First Blade → Rank 2".into(),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(event.source_id, None, "a rank-up writes no row of its own");
+        assert!(source.list_story_skills(&story.id).unwrap().is_empty());
+        assert!(source
+            .list_story_character_awards(&story.id)
+            .unwrap()
+            .is_empty());
+
+        let export = source.export_story(&story.id).unwrap();
+        assert_eq!(export.chapter_events.len(), 1);
+
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+        let events = target.list_story_chapter_events(&restored.id).unwrap();
+        let chapters = target.list_nodes(&restored.id).unwrap();
+        let characters = target.list_characters(&restored.id).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].details, "First Blade → Rank 2");
+        assert_ne!(events[0].id, event.id);
+        assert!(
+            chapters.iter().any(|node| node.id == events[0].chapter_id),
+            "the copy's event hangs off the copy's chapter"
+        );
+        assert!(characters.iter().any(|row| row.id == events[0].actor_id));
+    }
+
+    #[test]
+    fn a_chapter_event_refuses_a_bad_type_an_empty_line_or_a_foreign_cast() {
+        let (db, story, character, chapter, card) = skill_story();
+
+        assert!(matches!(
+            db.add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "teleport".into(),
+                "not a kind".into(),
+                None,
+                "Ada".into()
+            ),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(matches!(
+            db.add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_evolve".into(),
+                "   ".into(),
+                None,
+                "Ada".into()
+            ),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(matches!(
+            db.add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "xp_award".into(),
+                String::new(),
+                Some(0),
+                "Ada".into()
+            ),
+            Err(DbError::Invalid(_))
+        ));
+        assert!(matches!(
+            db.add_chapter_event(
+                card.id.clone(),
+                character.id.clone(),
+                "skill_sacrifice".into(),
+                "Ash Step".into(),
+                None,
+                "Ada".into()
+            ),
+            Err(DbError::Invalid(_))
+        ));
+
+        let other = db.create_story("Other".into(), None, "Ada".into()).unwrap();
+        let outsider = db
+            .create_character(other.id.clone(), "Mara".into(), None, "Ada".into())
+            .unwrap();
+
+        assert!(matches!(
+            db.add_chapter_event(
+                chapter.id.clone(),
+                outsider.id.clone(),
+                "skill_evolve".into(),
+                "something".into(),
+                None,
+                "Ada".into()
+            ),
+            Err(DbError::Invalid(_))
+        ));
+
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn purging_a_chapter_takes_its_events_with_it() {
+        let (db, story, character, chapter, _) = skill_story();
+
+        db.add_chapter_event(
+            chapter.id.clone(),
+            character.id.clone(),
+            "skill_evolve".into(),
+            "Ash Step → Cinder Step".into(),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+
+        db.purge_node(&chapter.id, "Ada".into()).unwrap();
+        let remaining: i64 = db
+            .conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM chapter_events", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
     }

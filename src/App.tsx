@@ -81,7 +81,7 @@ import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
   ChapterCastBadge,
   IndexedEdge,
-  ChapterAwardRow,
+  ChapterEventRow,
   IndexedNode,
   NodeData,
   NodeType,
@@ -90,6 +90,8 @@ import type { CharacterCurrency, InventoryItem } from './domains/inventory/types
 import type {
   ChapterCastMember,
   ChapterCastState,
+  ChapterEvent,
+  ChapterEventType,
   ChapterTask,
 } from './domains/narrative/types';
 import { ProgressionSections } from './domains/characters/ProgressionSections';
@@ -421,6 +423,22 @@ function toFlowEdge(row: any): Edge<EdgeData> {
   };
 }
 
+// The short line a history step names a chapter event by.
+function chapterEventLabel(
+  event: Pick<ChapterEvent, 'event_type' | 'details' | 'amount'>
+): string {
+  switch (event.event_type) {
+    case 'xp_award':
+      return `${formatCount(event.amount ?? 0)} XP in this chapter`;
+    case 'skill_learn':
+      return `learning ${event.details}`;
+    case 'item_acquire':
+      return `${event.details} ×${event.amount ?? 1}`;
+    default:
+      return event.details;
+  }
+}
+
 const USER_KEY = 'litrpg.currentUser';
 
 // The key labels the app shows. The help list and any tooltip that names a key
@@ -650,6 +668,11 @@ function App() {
   // The card ticks them off in place, so the list is the board's as well as the
   // database's: a tick is one row and one history step, never a refetch.
   const [storyChapterTasks, setStoryChapterTasks] = useState<ChapterTask[]>([]);
+
+  // The scene's progression ledger, in the order each chapter's events were
+  // logged. XP, learned skills and acquired items also write the sheet; the
+  // rest are the scene's record.
+  const [storyChapterEvents, setStoryChapterEvents] = useState<ChapterEvent[]>([]);
 
   // The live chapters, in reading order. The board says which cards are chapters
   // and the narrative domain says what order they read in; the tab, the cards
@@ -1028,6 +1051,7 @@ function App() {
         noteRows,
         chapterCast,
         chapterTasks,
+        chapterEvents,
         relations,
         standings,
         quests,
@@ -1047,6 +1071,7 @@ function App() {
           narrativeApi.getChapterNotes(story.id),
           narrativeApi.getStoryChapterCast(story.id),
           narrativeApi.getStoryChapterTasks(story.id),
+          narrativeApi.getStoryChapterEvents(story.id),
           relationsApi.getStoryRelations(story.id),
           relationsApi.getStoryFactionStandings(story.id),
           questsApi.getStoryQuests(story.id),
@@ -1065,6 +1090,7 @@ function App() {
       followLoadedNotes(noteRows ?? []);
       setStoryChapterCast(chapterCast ?? []);
       setStoryChapterTasks(chapterTasks ?? []);
+      setStoryChapterEvents(chapterEvents ?? []);
       setStoryRelations(relations ?? []);
       setStoryFactionStandings(standings ?? []);
       setStoryQuests(quests ?? []);
@@ -2184,39 +2210,29 @@ function App() {
     return byChapter;
   }, [storyChapterTasks]);
 
-  // What each chapter has paid out, oldest first. The awards live in the story's
-  // ledgers already; the card is handed them so the record sits beside the scene
-  // that paid it, with the reason the author wrote.
-  const chapterAwardsByChapter = useMemo(() => {
-    const byChapter = new Map<string, ChapterAwardRow[]>();
+  // Each chapter's progression ledger, in the order it was logged, with the
+  // actor's name resolved once so a card row needs no lookup of its own.
+  const chapterEventsByChapter = useMemo(() => {
+    const byChapter = new Map<string, ChapterEventRow[]>();
 
-    for (const award of storyAwards) {
-      if (!award.chapter_id) continue;
-
-      const list = byChapter.get(award.chapter_id) ?? [];
+    for (const event of storyChapterEvents) {
+      const list = byChapter.get(event.chapter_id) ?? [];
       list.push({
-        id: award.id,
-        characterId: award.character_id,
-        characterName:
-          castNames.get(award.character_id) ?? 'Cast member in the trash',
-        kind: award.kind,
-        statName: award.stat_name,
-        amount: award.amount,
-        note: award.note,
-        createdAt: award.created_at,
+        ...event,
+        actorName: castNames.get(event.actor_id) ?? 'Cast member in the trash',
       });
-      byChapter.set(award.chapter_id, list);
+      byChapter.set(event.chapter_id, list);
     }
 
     for (const list of byChapter.values()) {
       list.sort(
         (a, b) =>
-          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+          a.position - b.position || a.created_at.localeCompare(b.created_at)
       );
     }
 
     return byChapter;
-  }, [storyAwards, castNames]);
+  }, [storyChapterEvents, castNames]);
 
   // Everybody a chapter card can name, as the card needs them: an id and a
   // name, not a whole sheet.
@@ -3965,73 +3981,123 @@ function App() {
     }
   };
 
-  // XP is paid into the chapter's income, which is where the curve reads it:
-  // the level, the stats the level hands out and the badges on every card follow
-  // from that one write, so they are read back rather than guessed at.
-  const awardChapterXp = async (
-    chapterId: string,
-    characterId: string,
-    amount: number,
-    note: string | null
-  ): Promise<boolean> => {
-    if (!Number.isInteger(amount) || amount <= 0) {
-      setActionError('Award XP as a whole number above zero.');
-      return false;
+  // A scene's progression is one ledger. XP, a learned skill and an acquired
+  // item write their real row through the same commands the sheets use, so the
+  // income, the curve's levels and the badges follow immediately; a rank-up, an
+  // evolution and a sacrifice are the scene's own record. Each write is one
+  // history step, and the step keeps the live event id so undo after a redo takes
+  // back the row the redo wrote.
+  const refreshAfterChapterEvent = async (event: ChapterEvent) => {
+    if (event.event_type === 'skill_learn' && currentStory) {
+      setStorySkills(await skillsApi.getStorySkills(currentStory.id));
     }
 
-    // Each pay-in is a new row, so the step keeps the id that is live: undo after
-    // a redo takes back the row the redo wrote.
-    let liveId: string | null = null;
+    if (event.event_type === 'item_acquire' && currentStory) {
+      setStoryInventory(await inventoryApi.getStoryInventory(currentStory.id));
+    }
 
-    const pay = async () => {
-      const saved = await progressionApi.addCharacterAward(
-        characterId,
+    if (event.event_type === 'xp_award' || event.event_type === 'skill_learn') {
+      await reloadProgressionNumbers(event.actor_id);
+    }
+  };
+
+  const addChapterEvent = async (
+    chapterId: string,
+    actorId: string,
+    eventType: ChapterEventType,
+    details: string,
+    amount: number | null
+  ): Promise<boolean> => {
+    const write = async () => {
+      const created = await narrativeApi.addChapterEvent(
         chapterId,
-        'xp',
-        null,
+        actorId,
+        eventType,
+        details,
         amount,
-        note,
         actor
       );
 
-      liveId = saved.id;
-      setStoryAwards(previous => [...previous, saved]);
+      setStoryChapterEvents(previous => [...previous, created]);
+      await refreshAfterChapterEvent(created);
 
-      return saved;
+      return created;
     };
 
-    try {
-      await pay();
-      await reloadProgressionNumbers(characterId);
+    let liveId = '';
 
-      const chapterLabel =
-        nodes.find(row => row.id === chapterId)?.data.label ?? 'the chapter';
-      const name =
-        characters.find(character => character.id === characterId)?.name ?? 'the cast';
+    try {
+      const created = await write();
+      liveId = created.id;
 
       recordStep({
-        label: `Award ${formatCount(amount)} XP to ${name} in “${chapterLabel}”`,
+        label: `Log ${chapterEventLabel(created)}`,
         undo: async () => {
           const removing = liveId;
           if (!removing) return;
 
-          await progressionApi.deleteCharacterAward(removing, actor);
-          setStoryAwards(previous =>
-            previous.filter(award => award.id !== removing)
+          await narrativeApi.deleteChapterEvent(removing, actor);
+          setStoryChapterEvents(previous =>
+            previous.filter(event => event.id !== removing)
           );
-          await reloadProgressionNumbers(characterId);
+          await refreshAfterChapterEvent(created);
         },
         redo: async () => {
-          await pay();
-          await reloadProgressionNumbers(characterId);
+          const again = await write();
+          liveId = again.id;
         },
       });
 
       return true;
     } catch (e) {
-      console.error('Failed to award XP:', e);
-      setActionError(`Could not award the XP: ${String(e)}`);
+      console.error('Failed to log a chapter event:', e);
+      setActionError(`Could not log the event: ${String(e)}`);
       return false;
+    }
+  };
+
+  const removeChapterEvent = async (event: ChapterEventRow) => {
+    const remove = async () => {
+      await narrativeApi.deleteChapterEvent(event.id, actor);
+      setStoryChapterEvents(previous =>
+        previous.filter(row => row.id !== event.id)
+      );
+      await refreshAfterChapterEvent(event);
+    };
+
+    try {
+      await remove();
+
+      // A re-add writes a new row, so the step remembers which one is live.
+      let liveId = event.id;
+
+      recordStep({
+        label: `Remove ${chapterEventLabel(event)}`,
+        undo: async () => {
+          const again = await narrativeApi.addChapterEvent(
+            event.chapter_id,
+            event.actor_id,
+            event.event_type,
+            event.details,
+            event.amount,
+            actor
+          );
+          liveId = again.id;
+          setStoryChapterEvents(previous => [...previous, again]);
+          await refreshAfterChapterEvent(again);
+        },
+        redo: async () => {
+          const removing = liveId;
+          await narrativeApi.deleteChapterEvent(removing, actor);
+          setStoryChapterEvents(previous =>
+            previous.filter(row => row.id !== removing)
+          );
+          await refreshAfterChapterEvent(event);
+        },
+      });
+    } catch (e) {
+      console.error('Failed to remove a chapter event:', e);
+      setActionError(`Could not remove the event: ${String(e)}`);
     }
   };
 
@@ -7658,7 +7724,7 @@ function App() {
       const chapterCast = chapterCastByChapter.get(node.id) ?? [];
       const chapterQuests = questBadgesByChapter.get(node.id) ?? [];
       const chapterTasks = chapterTasksByChapter.get(node.id) ?? [];
-      const chapterAwards = chapterAwardsByChapter.get(node.id) ?? [];
+      const chapterEvents = chapterEventsByChapter.get(node.id) ?? [];
       const isChapterCard = node.data.nodeType === 'chapter';
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
@@ -7751,12 +7817,15 @@ function App() {
                   void toggleChapterObjective(task),
                 onRemoveChapterObjective: (task: ChapterTask) =>
                   void removeChapterObjective(task),
-                onQuickAward: (
-                  characterId: string,
-                  amount: number,
-                  note: string | null
-                ) => awardChapterXp(node.id, characterId, amount, note),
-                chapterAwards,
+                chapterEvents,
+                onAddChapterEvent: (
+                  actorId: string,
+                  eventType: ChapterEventType,
+                  details: string,
+                  amount: number | null
+                ) => addChapterEvent(node.id, actorId, eventType, details, amount),
+                onDeleteChapterEvent: (event: ChapterEventRow) =>
+                  void removeChapterEvent(event),
               }
             : {}),
           ...(chapterQuests.length > 0
@@ -7789,7 +7858,7 @@ function App() {
     castStats,
     chapterCastByChapter,
     chapterTasksByChapter,
-    chapterAwardsByChapter,
+    chapterEventsByChapter,
     castChoices,
     dropTargetNodeId,
     searchOpen,
@@ -7808,7 +7877,8 @@ function App() {
     addChapterObjective,
     toggleChapterObjective,
     removeChapterObjective,
-    awardChapterXp,
+    addChapterEvent,
+    removeChapterEvent,
     markItemReturned,
     returningItemId,
     syncMilestoneXp,

@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { IndexedNode } from '../canvas/types';
-import type { ChapterCastMember, ChapterCastState, ChapterTask } from './types';
+import type {
+  ChapterCastMember,
+  ChapterCastState,
+  ChapterEvent,
+  ChapterTask,
+} from './types';
 
 // Chapters, the cast assigned to them and the notes hanging under them. A
 // chapter and a note are both stored as nodes, so the rows that come back are
@@ -89,4 +94,33 @@ export function setChapterTaskDone(id: string, done: boolean, actor: string) {
 
 export function deleteChapterTask(id: string, actor: string) {
   return invoke<void>('delete_chapter_task', { id, user: actor });
+}
+
+// The scene's progression ledger. XP pays into the chapter's income, a learned
+// skill and an acquired item are written onto the sheet, and a rank-up, an
+// evolution or a sacrifice is the scene's own record.
+export function getStoryChapterEvents(storyId: string) {
+  return invoke<ChapterEvent[]>('get_story_chapter_events', { storyId });
+}
+
+export function addChapterEvent(
+  chapterId: string,
+  actorId: string,
+  eventType: string,
+  details: string,
+  amount: number | null,
+  actor: string
+) {
+  return invoke<ChapterEvent>('add_chapter_event', {
+    chapterId,
+    actorId,
+    eventType,
+    details,
+    amount,
+    user: actor,
+  });
+}
+
+export function deleteChapterEvent(id: string, actor: string) {
+  return invoke<void>('delete_chapter_event', { id, user: actor });
 }

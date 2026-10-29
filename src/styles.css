@@ -4565,25 +4565,43 @@ body {
   outline: none;
 }
 
-/* What the chapter paid out, kept on the card so the reason is not lost in a
-   panel the author has to remember to open. */
-.chapter-awards {
+/* The scene's progression ledger: one row per event, in the order it was
+   logged, with the kind of event carried by its icon and its colour. */
+.chapter-events {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid #33402f;
+  border-top: 1px solid #363246;
 }
 
-.chapter-awards-title {
+.chapter-events-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.chapter-events-head .chapter-face-open {
+  margin-top: 0;
+}
+
+.chapter-events-title {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #8fbf8f;
+  color: #a78bfa;
 }
 
-.chapter-awards-list {
+.chapter-events-empty {
+  margin: 0;
+  color: #77738a;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.chapter-events-list {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -4592,7 +4610,7 @@ body {
   list-style: none;
 }
 
-.chapter-award-row {
+.chapter-event {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -4601,30 +4619,69 @@ body {
   line-height: 1.35;
 }
 
-.chapter-award-who {
-  color: #d5e8d5;
+.chapter-event-icon {
+  flex-shrink: 0;
+}
+
+.chapter-event-who {
+  color: #e4e0f0;
   font-weight: 600;
 }
 
-.chapter-award-amount {
-  padding: 0 4px;
-  border-radius: 3px;
-  background: rgba(122, 196, 122, 0.16);
+.chapter-event-what {
+  min-width: 0;
+  color: #c9c4da;
+  overflow-wrap: anywhere;
+}
+
+.chapter-event.xp_award .chapter-event-what {
   color: #9ed59e;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
-.chapter-award-amount.stat {
-  background: rgba(94, 200, 192, 0.14);
-  color: #a9e3de;
+.chapter-event.skill_learn .chapter-event-what {
+  color: #fbbf7c;
 }
 
-.chapter-award-note {
+.chapter-event.skill_rank_up .chapter-event-what {
+  color: #fcd34d;
+}
+
+.chapter-event.skill_evolve .chapter-event-what {
+  color: #d8b4fe;
+}
+
+.chapter-event.skill_sacrifice .chapter-event-what {
+  color: #f0a0a0;
+}
+
+.chapter-event.item_acquire .chapter-event-what {
+  color: #93c5fd;
+}
+
+.chapter-event-note {
   min-width: 0;
   color: #948fa6;
   font-style: italic;
   overflow-wrap: anywhere;
+}
+
+.chapter-event-remove {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 3px;
+  background: transparent;
+  border: 0;
+  color: #6f6a83;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.chapter-event-remove:hover,
+.chapter-event-remove:focus-visible {
+  color: #fca5a5;
+  outline: none;
 }
 
 .chapter-cast-tag {
@@ -4768,21 +4825,6 @@ body {
   cursor: default;
 }
 
-.chapter-award {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 3px;
-}
-
-.chapter-award .chapter-face-open {
-  margin-top: 0;
-}
-
-.chapter-award-form {
-  top: auto;
-  bottom: 8px;
-}
-
 .chapter-award-actions {
   display: flex;
   gap: 5px;
@@ -4814,7 +4856,7 @@ body {
   cursor: default;
 }
 
-.chapter-award-error {
+.chapter-event-error {
   margin: 0;
   color: #fca5a5;
   font-size: 10px;

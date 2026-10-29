@@ -40,6 +40,7 @@ const createStore = () => ({
   notes: clone(fixture.chapter_notes) as Row[],
   chapterCast: clone(fixture.story_chapter_cast) as Row[],
   tasks: clone(fixture.story_chapter_tasks ?? []) as Row[],
+  chapterEvents: clone(fixture.story_chapter_events ?? []) as Row[],
   relations: clone(fixture.story_relations) as Row[],
   standings: clone(fixture.story_faction_standings) as Row[],
   quests: clone(fixture.story_quests) as Row[],
@@ -145,6 +146,16 @@ const chapterOrThrow = (chapterId: string | null) => {
 
   return chapter;
 };
+
+// The kinds of event a chapter card can log, in the order the database allows.
+const CHAPTER_EVENT_TYPES = [
+  'xp_award',
+  'skill_learn',
+  'skill_rank_up',
+  'skill_evolve',
+  'skill_sacrifice',
+  'item_acquire',
+];
 
 // One stat a level raises, added to the sheet: the row is created at the gained
 // value when the sheet has none, which is what the database's post does.
@@ -538,6 +549,7 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_story_chapter_cast: () => store.chapterCast,
   get_story_chapter_cast_states: () => chapterCastStates(),
   get_story_chapter_tasks: () => store.tasks,
+  get_story_chapter_events: () => store.chapterEvents,
 
   get_story_relations: () => store.relations,
   get_story_faction_standings: () => store.standings,
@@ -851,6 +863,108 @@ const writes: Record<string, (args: Row) => unknown> = {
 
   delete_chapter_task: args => {
     drop(store.tasks, args.id);
+    return null;
+  },
+
+  // The scene's progression ledger. XP, a learned skill and an acquired item
+  // write the row they stand for through the same in-memory helpers the sheets
+  // use; a rank-up, an evolution and a sacrifice are the scene's own record.
+  add_chapter_event: args => {
+    const eventType = String(args.eventType);
+    let details = String(args.details ?? '').trim();
+    let amount = args.amount == null ? null : Number(args.amount);
+
+    if (!CHAPTER_EVENT_TYPES.includes(eventType)) {
+      throw new Error('that is not a chapter event');
+    }
+
+    chapterOrThrow(args.chapterId);
+
+    if (!store.characters.some(row => row.id === args.actorId)) {
+      throw new Error('an event names someone in the story');
+    }
+
+    if (eventType === 'xp_award' && (!amount || amount <= 0)) {
+      throw new Error('an XP award is a whole number above zero');
+    }
+
+    if (eventType === 'item_acquire') {
+      amount = amount ?? 1;
+      if (amount < 1) throw new Error('an acquired item is at least one');
+    }
+
+    if (eventType !== 'xp_award' && eventType !== 'item_acquire' && !details) {
+      throw new Error('an event needs a detail line');
+    }
+
+    const timestamp = now();
+    let sourceId: string | null = null;
+
+    if (eventType === 'xp_award') {
+      const award = writes.add_character_award({
+        characterId: args.actorId,
+        chapterId: args.chapterId,
+        kind: 'xp',
+        amount,
+        note: details || null,
+        user: args.user,
+      }) as Row;
+      sourceId = String(award.id);
+    } else if (eventType === 'skill_learn') {
+      const skill = writes.add_skill({
+        characterId: args.actorId,
+        name: details,
+        chapterId: args.chapterId,
+        user: args.user,
+      }) as Row;
+      sourceId = String(skill.id);
+    } else if (eventType === 'item_acquire') {
+      const item = writes.add_inventory_item({
+        characterId: args.actorId,
+        name: details,
+        quantity: amount,
+        chapterId: args.chapterId,
+        user: args.user,
+      }) as Row;
+      sourceId = String(item.id);
+    }
+
+    const position = store.chapterEvents
+      .filter(row => row.chapter_id === args.chapterId)
+      .reduce((next, row) => Math.max(next, Number(row.position) + 1), 0);
+    const row: Row = {
+      id: id('chapter-event'),
+      chapter_id: args.chapterId,
+      actor_id: args.actorId,
+      event_type: eventType,
+      details,
+      amount,
+      source_id: sourceId,
+      position,
+      created_by: args.user ?? 'Ada',
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    store.chapterEvents.push(row);
+    return row;
+  },
+
+  delete_chapter_event: args => {
+    const event = store.chapterEvents.find(row => row.id === args.id);
+    if (!event) return null;
+
+    if (event.source_id) {
+      if (event.event_type === 'xp_award') {
+        writes.delete_character_award({ id: event.source_id, user: args.user });
+      } else if (event.event_type === 'skill_learn') {
+        writes.delete_skill({ id: event.source_id });
+      } else if (event.event_type === 'item_acquire') {
+        writes.delete_inventory_item({ id: event.source_id });
+      }
+    }
+
+    drop(store.chapterEvents, args.id);
     return null;
   },
 

@@ -127,11 +127,12 @@ const cast = [
 // with the linked cast and POV, as the database does.
 let chapterCastRows: any[] = [];
 
-// The checklist rows a chapter card has written, and the awards it has paid.
-// The ids keep counting instead of reusing a freed number, so a rewritten line
-// is a different row — which is what makes the undo/redo test worth writing.
+// The checklist rows and progression events a chapter card has written. The ids
+// keep counting instead of reusing a freed number, so a rewritten line is a
+// different row — which is what makes the undo/redo test worth writing.
 let chapterTasks: any[] = [];
 let taskSeq = 0;
+let chapterEvents: any[] = [];
 let awards: any[] = [];
 
 const nodeRow = (
@@ -194,6 +195,7 @@ beforeEach(() => {
   chapterCastRows = [];
   chapterTasks = [];
   taskSeq = 0;
+  chapterEvents = [];
   awards = [];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
@@ -250,6 +252,49 @@ beforeEach(() => {
       }
       case 'delete_chapter_task':
         chapterTasks = chapterTasks.filter(row => row.id !== args.id);
+        return null;
+      case 'get_story_chapter_events':
+        return chapterEvents.map(row => ({ ...row }));
+      case 'add_chapter_event': {
+        const row = {
+          id: `event-${chapterEvents.length + 1}`,
+          chapter_id: args.chapterId,
+          actor_id: args.actorId,
+          event_type: args.eventType,
+          details: String(args.details ?? ''),
+          amount: args.amount ?? null,
+          source_id: args.eventType === 'xp_award' ? 'award-1' : null,
+          position: chapterEvents.length,
+          created_by: 'Ada',
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+
+        chapterEvents = [...chapterEvents, row];
+
+        if (args.eventType === 'xp_award') {
+          awards = [
+            ...awards,
+            {
+              id: 'award-1',
+              character_id: args.actorId,
+              chapter_id: args.chapterId,
+              kind: 'xp',
+              stat_name: null,
+              amount: args.amount,
+              note: args.details || null,
+              created_by: 'Ada',
+              created_at: '2026-10-22T12:00:00Z',
+              updated_at: '2026-10-22T12:00:00Z',
+            },
+          ];
+        }
+
+        return row;
+      }
+      case 'delete_chapter_event':
+        chapterEvents = chapterEvents.filter(row => row.id !== args.id);
+        awards = awards.filter(row => row.id !== 'award-1');
         return null;
       case 'get_story_character_awards':
         return awards.map(row => ({ ...row }));
@@ -636,16 +681,18 @@ describe('chapter card cast badges', () => {
     });
   });
 
-  it('pays XP into a chapter from the card, as one undoable step', async () => {
+  it('logs XP on a chapter from the card, as one undoable step', async () => {
     const { user, container } = await openGraph();
     const card = cardFor(container, 'n1');
 
-    await user.click(await within(card).findByRole('button', { name: '+ XP' }));
+    await user.click(
+      await within(card).findByRole('button', { name: '+ Event' })
+    );
 
-    // The point of view is the person the card pays by default.
+    // The point of view is the person the card logs by default.
     expect(
       within(card).getByRole('combobox', {
-        name: 'Who the XP is for in Chapter One',
+        name: 'Who the event happens to in Chapter One',
       })
     ).toHaveValue('char-2');
 
@@ -657,21 +704,21 @@ describe('chapter card cast badges', () => {
     );
     await user.type(
       within(card).getByRole('textbox', {
-        name: 'Why the XP is awarded in Chapter One',
+        name: 'Why the XP was awarded in Chapter One',
       }),
       'Paid for the toll gate'
     );
-    await user.click(within(card).getByRole('button', { name: 'Award' }));
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
       expect(
-        invokeMock.mock.calls.find(call => call[0] === 'add_character_award')?.[1]
+        invokeMock.mock.calls.find(call => call[0] === 'add_chapter_event')?.[1]
       ).toMatchObject({
-        characterId: 'char-2',
         chapterId: 'n1',
-        kind: 'xp',
+        actorId: 'char-2',
+        eventType: 'xp_award',
+        details: 'Paid for the toll gate',
         amount: 100,
-        note: 'Paid for the toll gate',
       });
     });
 
@@ -688,12 +735,67 @@ describe('chapter card cast badges', () => {
 
     await waitFor(() => {
       expect(
-        invokeMock.mock.calls.find(call => call[0] === 'delete_character_award')?.[1]
-      ).toMatchObject({ id: 'award-1' });
+        invokeMock.mock.calls.find(call => call[0] === 'delete_chapter_event')?.[1]
+      ).toMatchObject({ id: 'event-1' });
     });
 
     await waitFor(() => {
       expect(within(card).queryByText('+100 XP')).not.toBeInTheDocument();
     });
+
+    // Redo writes the event again and the step keeps the new id, so a second
+    // Undo takes back the row the redo wrote rather than the first one.
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+
+    await waitFor(() => {
+      expect(within(card).getByText('+100 XP')).toBeInTheDocument();
+    });
+    expect(
+      invokeMock.mock.calls.filter(call => call[0] === 'add_chapter_event')
+    ).toHaveLength(2);
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.filter(call => call[0] === 'delete_chapter_event')
+      ).toHaveLength(2);
+    });
+    expect(within(card).queryByText('+100 XP')).not.toBeInTheDocument();
+  });
+
+  it('keeps a rank-up as the scene record without paying it onto a sheet', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(
+      await within(card).findByRole('button', { name: '+ Event' })
+    );
+    await user.selectOptions(
+      within(card).getByRole('combobox', { name: 'Event type in Chapter One' }),
+      'skill_rank_up'
+    );
+    await user.type(
+      within(card).getByRole('textbox', { name: 'Detail of the event in Chapter One' }),
+      'Ash Step → Rank 2'
+    );
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'add_chapter_event')?.[1]
+      ).toMatchObject({
+        chapterId: 'n1',
+        actorId: 'char-2',
+        eventType: 'skill_rank_up',
+        details: 'Ash Step → Rank 2',
+        amount: null,
+      });
+    });
+
+    expect(within(card).getByText('Ash Step → Rank 2')).toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.some(call => call[0] === 'add_character_award')
+    ).toBe(false);
   });
 });

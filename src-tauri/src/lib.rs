@@ -1,6 +1,6 @@
 use litrpg_db::{
-    AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, ChapterTask, Character,
-    CharacterAttribute, CharacterAward, CharacterChapterState, CharacterCurrency,
+    AuditPage, BackupInfo, ChapterCastMember, ChapterCastState, ChapterEvent, ChapterTask,
+    Character, CharacterAttribute, CharacterAward, CharacterChapterState, CharacterCurrency,
     CharacterGrowthPoint, CharacterLevel, CharacterProgress, CharacterRelation, CharacterSkill,
     CharacterSkillEvent, CharacterStat, Db, DeletedItem, Edge, FactionStanding, GrowthPointSpend,
     InventoryItem, LevelGrowthRule, LevelGrowthStatInput, LevelStatChangeInput, Node, Quest,
@@ -809,6 +809,35 @@ fn delete_chapter_task(db: tauri::State<'_, Db>, id: String, user: String) -> Re
 }
 
 #[tauri::command]
+fn get_story_chapter_events(
+    db: tauri::State<'_, Db>,
+    story_id: String,
+) -> Result<Vec<ChapterEvent>, String> {
+    db.list_story_chapter_events(&story_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_chapter_event(
+    db: tauri::State<'_, Db>,
+    chapter_id: String,
+    actor_id: String,
+    event_type: String,
+    details: String,
+    amount: Option<i64>,
+    user: String,
+) -> Result<ChapterEvent, String> {
+    db.add_chapter_event(chapter_id, actor_id, event_type, details, amount, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_chapter_event(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
+    db.delete_chapter_event(&id, user)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_skill_events(
     db: tauri::State<'_, Db>,
     skill_id: String,
@@ -1559,6 +1588,9 @@ pub fn run() {
             add_chapter_task,
             set_chapter_task_done,
             delete_chapter_task,
+            get_story_chapter_events,
+            add_chapter_event,
+            delete_chapter_event,
             get_skill_events,
             get_story_skill_events,
             add_skill_event,

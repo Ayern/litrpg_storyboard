@@ -329,16 +329,22 @@ because a count is not dated.
 **Chapter workbench** — a chapter card on the Graph tab is drawn wider than the
 other cards, because planning a scene happens on it rather than in another tab.
 The face carries the chapter's own summary (the card's note), its roster, its
-checklist and a quick **+ XP** action. **Cast** opens a small popover on the card
-with the point of view as a select and one checkbox per live cast member, so the
-roster is changed where it is read. **Done**, `Escape` or a press off the card
-puts the popover away, and the **?** beside it opens outside the board's zoom
-transform, so the bubble stays under the button at every zoom level. **+ XP** takes
-an amount and an optional **Why**, and the card keeps a **Paid out** log of every
-award in that chapter — who, how much, and the reason — so the record is beside the
-scene that paid it. Every one of those writes is a named history step: **Undo**
-takes the line back off the card, reopens a ticked objective, removes an added
-name, reverses the award and drops its log row.
+checklist and its **Progression & Events** ledger. **Cast** opens a small popover
+on the card with the point of view as a select and one checkbox per live cast
+member, so the roster is changed where it is read. **Done**, `Escape` or a press
+off the card puts the popover away, and the **?** beside it opens outside the
+board's zoom transform, so the bubble stays under the button at every zoom level.
+**+ Event** logs one scene event: who it happened to (the point of view by
+default) and its kind — **+ XP**, **Learn Skill**, **Rank Up**, **Evolve**,
+**Sacrifice** or **Acquire Item** — with the reason, skill name or detail line and
+a quantity where one applies. The rows sit on the card in the order they were
+logged, each with its icon, the character and the line: `⚡ +250 XP · Paid for a
+name at the toll gate`. XP pays into the chapter's income, a learned skill and an
+acquired item are written on the sheet and in the inventory through the same
+commands the sheets use, and a rank-up, evolution or sacrifice is the scene's
+record, because the sheet already holds the change. Every one of those writes is a
+named history step: **Undo** takes the event off the card and removes the award,
+skill or item it wrote, reopens a ticked objective, or removes an added name.
 
 **Chapter cast badges** — a chapter card names everyone present in that chapter:
 the point-of-view character and every cast member ticked as present, from the

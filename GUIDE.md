@@ -241,7 +241,9 @@ her numbers without leaving the canvas.*
 
 *The Graph tab. Three chapter cards along the top, each a workbench: its summary,
 its roster with a level *as of that chapter*, its objective checklist, **Cast** and
-**+ XP**, then the quests that touch it and its own continuity warnings. The cast
+its **Progression & Events** ledger, then the quests that touch it and its own
+continuity warnings. **+ Event** on the card logs one scene event — XP, a learned
+skill, a rank-up, an evolution, a sacrifice or an acquired item. The cast
 rail is on the left, character cards in the middle, skill cards and a faction card
 below. The lines the board is drawn around are solid and named: `next` between
 chapters, `rival` / `enemy` between two characters, `member` into a faction. A line
@@ -254,10 +256,13 @@ step. **Cast** writes a `chapter_cast` row through `add_chapter_cast_member` (or
 takes one back with `remove_chapter_cast_member`), and the point of view is a
 column written with `set_chapter_details`. **Add** and the objective checkboxes
 write `chapter_tasks` rows with `add_chapter_task` / `set_chapter_task_done`.
-**+ XP** calls `add_character_award`, which pays into the chapter's income; the app
-then reads the cast, levels and stats back with `reloadProgressionNumbers`, so the
-badges on every other card follow in the same render. None of these are board-only
-facts: the same rows are what the Chapters tab and the sheet show.
+**+ Event** calls `add_chapter_event`, which writes one `chapter_events` row
+(schema v33) and, for XP, a learned skill or an acquired item, the award, skill or
+inventory row it stands for in the same transaction. The app then reads the cast,
+levels and stats back with `reloadProgressionNumbers`, so the badges on every other
+card follow in the same render. Removing a row calls `delete_chapter_event`, which
+takes its source row with it. None of these are board-only facts: the same rows are
+what the Chapters tab, the inventory and the sheet show.
 
 ### The easy route: drop a cast member on the board
 
