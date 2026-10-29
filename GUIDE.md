@@ -257,12 +257,16 @@ takes one back with `remove_chapter_cast_member`), and the point of view is a
 column written with `set_chapter_details`. **Add** and the objective checkboxes
 write `chapter_tasks` rows with `add_chapter_task` / `set_chapter_task_done`.
 **+ Event** calls `add_chapter_event`, which writes one `chapter_events` row
-(schema v33) and, for XP, a learned skill or an acquired item, the award, skill or
-inventory row it stands for in the same transaction. The app then reads the cast,
-levels and stats back with `reloadProgressionNumbers`, so the badges on every other
-card follow in the same render. Removing a row calls `delete_chapter_event`, which
-takes its source row with it. None of these are board-only facts: the same rows are
-what the Chapters tab, the inventory and the sheet show.
+(schema v34) and, for XP, a learned skill or an acquired item, the award, skill or
+inventory row it stands for. A rank-up, evolution or sacrifice names a
+`character_skills` row: the rank-up raises it and writes an `upgraded` skill event,
+the evolution creates the new skill with an `skill_evolutions` mutation link (and a
+`sacrificed` event for the base when **Keep the base skill** is off), and the
+sacrifice writes a `sacrificed` event or deletes the row. The chapter event keeps
+the ids and the old rank it wrote, so `delete_chapter_event` puts the sheet back.
+The app then reads the skills, cast, levels and stats back, so the badges on every
+other card follow in the same render. None of these are board-only facts: the same
+rows are what the Chapters tab, the skill tree and the sheet show.
 
 ### The easy route: drop a cast member on the board
 

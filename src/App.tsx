@@ -80,8 +80,9 @@ import { CAST_DRAG_TYPE, edgeKindClass, isCanvasCreateKind } from './domains/can
 import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
   ChapterCastBadge,
-  IndexedEdge,
   ChapterEventRow,
+  ChapterSkillChoice,
+  IndexedEdge,
   IndexedNode,
   NodeData,
   NodeType,
@@ -2241,6 +2242,27 @@ function App() {
     [characters]
   );
 
+  // The skills a scene's event can change, grouped by their owner. A chapter
+  // card offers these in its + Event form, so a rank-up or a sacrifice names the
+  // sheet row it acts on rather than a line of free text.
+  const skillsByCharacter = useMemo(() => {
+    const byCharacter: Record<string, ChapterSkillChoice[]> = {};
+
+    for (const skill of storySkills) {
+      (byCharacter[skill.character_id] ??= []).push({
+        id: skill.id,
+        name: skill.name,
+        rank: skill.rank,
+      });
+    }
+
+    for (const list of Object.values(byCharacter)) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return byCharacter;
+  }, [storySkills]);
+
   // The chapters placed on the day, which is the reading order by other means.
   const chapterTimeline = useMemo(() => timelineOrder(chapterNodes), [chapterNodes]);
 
@@ -3988,11 +4010,21 @@ function App() {
   // history step, and the step keeps the live event id so undo after a redo takes
   // back the row the redo wrote.
   const refreshAfterChapterEvent = async (event: ChapterEvent) => {
-    if (event.event_type === 'skill_learn' && currentStory) {
+    if (!currentStory) return;
+
+    if (
+      event.event_type === 'skill_learn' ||
+      event.event_type === 'skill_rank_up' ||
+      event.event_type === 'skill_evolve' ||
+      event.event_type === 'skill_sacrifice'
+    ) {
       setStorySkills(await skillsApi.getStorySkills(currentStory.id));
+      setStorySkillEvents(
+        await skillsApi.getStorySkillEvents(currentStory.id)
+      );
     }
 
-    if (event.event_type === 'item_acquire' && currentStory) {
+    if (event.event_type === 'item_acquire') {
       setStoryInventory(await inventoryApi.getStoryInventory(currentStory.id));
     }
 
@@ -4006,7 +4038,10 @@ function App() {
     actorId: string,
     eventType: ChapterEventType,
     details: string,
-    amount: number | null
+    amount: number | null,
+    skillId: string | null,
+    keepBaseSkill: boolean,
+    keepOnSheet: boolean
   ): Promise<boolean> => {
     const write = async () => {
       const created = await narrativeApi.addChapterEvent(
@@ -4015,6 +4050,9 @@ function App() {
         eventType,
         details,
         amount,
+        skillId,
+        keepBaseSkill,
+        keepOnSheet,
         actor
       );
 
@@ -4080,6 +4118,9 @@ function App() {
             event.event_type,
             event.details,
             event.amount,
+            event.skill_id ?? null,
+            event.keep_base_skill ?? true,
+            event.keep_on_sheet ?? false,
             actor
           );
           liveId = again.id;
@@ -7818,12 +7859,26 @@ function App() {
                 onRemoveChapterObjective: (task: ChapterTask) =>
                   void removeChapterObjective(task),
                 chapterEvents,
+                chapterSkills: skillsByCharacter,
                 onAddChapterEvent: (
                   actorId: string,
                   eventType: ChapterEventType,
                   details: string,
-                  amount: number | null
-                ) => addChapterEvent(node.id, actorId, eventType, details, amount),
+                  amount: number | null,
+                  skillId: string | null,
+                  keepBaseSkill: boolean,
+                  keepOnSheet: boolean
+                ) =>
+                  addChapterEvent(
+                    node.id,
+                    actorId,
+                    eventType,
+                    details,
+                    amount,
+                    skillId,
+                    keepBaseSkill,
+                    keepOnSheet
+                  ),
                 onDeleteChapterEvent: (event: ChapterEventRow) =>
                   void removeChapterEvent(event),
               }
@@ -7860,6 +7915,7 @@ function App() {
     chapterTasksByChapter,
     chapterEventsByChapter,
     castChoices,
+    skillsByCharacter,
     dropTargetNodeId,
     searchOpen,
     searchMatchIds,

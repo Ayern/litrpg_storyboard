@@ -98,7 +98,7 @@ export function deleteChapterTask(id: string, actor: string) {
 
 // The scene's progression ledger. XP pays into the chapter's income, a learned
 // skill and an acquired item are written onto the sheet, and a rank-up, an
-// evolution or a sacrifice is the scene's own record.
+// evolution or a sacrifice changes the skill the event names.
 export function getStoryChapterEvents(storyId: string) {
   return invoke<ChapterEvent[]>('get_story_chapter_events', { storyId });
 }
@@ -109,6 +109,9 @@ export function addChapterEvent(
   eventType: string,
   details: string,
   amount: number | null,
+  skillId: string | null,
+  keepBaseSkill: boolean,
+  keepOnSheet: boolean,
   actor: string
 ) {
   return invoke<ChapterEvent>('add_chapter_event', {
@@ -117,6 +120,9 @@ export function addChapterEvent(
     eventType,
     details,
     amount,
+    skillId,
+    keepBaseSkill,
+    keepOnSheet,
     user: actor,
   });
 }

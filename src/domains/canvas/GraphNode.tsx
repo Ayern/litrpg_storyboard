@@ -37,6 +37,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const [eventType, setEventType] = useState<ChapterEventType>('xp_award');
   const [eventDetails, setEventDetails] = useState('');
   const [eventAmount, setEventAmount] = useState('');
+  const [eventSkillId, setEventSkillId] = useState('');
+  const [keepBaseSkill, setKeepBaseSkill] = useState(true);
+  const [keepOnSheet, setKeepOnSheet] = useState(true);
   const [eventError, setEventError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const events = data.chapterEvents ?? [];
@@ -47,6 +50,18 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
     chapterCast[0]?.characterId ||
     castChoices[0]?.id ||
     '';
+  const actorSkills = data.chapterSkills?.[eventTarget] ?? [];
+  // The first skill is the one the form acts on until the author picks another;
+  // a selection made for a different actor does not carry across.
+  const chosenSkillId =
+    eventSkillId && actorSkills.some(skill => skill.id === eventSkillId)
+      ? eventSkillId
+      : (actorSkills[0]?.id ?? '');
+  const chosenSkill = actorSkills.find(skill => skill.id === chosenSkillId);
+  const skillEvent =
+    eventType === 'skill_rank_up' ||
+    eventType === 'skill_evolve' ||
+    eventType === 'skill_sacrifice';
   const doneObjectives = objectives.filter(task => task.done).length;
 
   const submitObjective = async () => {
@@ -63,6 +78,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
     setEventType(next);
     setEventDetails('');
     setEventAmount(next === 'item_acquire' ? '1' : '');
+    setEventSkillId('');
+    setKeepBaseSkill(true);
+    setKeepOnSheet(true);
     setEventError(null);
   };
 
@@ -82,7 +100,16 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       return;
     }
 
-    if (eventType !== 'xp_award' && details === '') {
+    if (skillEvent && !chosenSkillId) {
+      setEventError('Choose a skill.');
+      return;
+    }
+
+    if (
+      (eventType === 'skill_learn' || eventType === 'skill_evolve' || 
+        eventType === 'item_acquire') &&
+      details === ''
+    ) {
       setEventError('Add a detail line.');
       return;
     }
@@ -92,12 +119,18 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       eventTarget,
       eventType,
       details,
-      amount
+      amount,
+      skillEvent ? chosenSkillId : null,
+      keepBaseSkill,
+      keepOnSheet
     );
 
     if (added !== false) {
       setEventDetails('');
       setEventAmount(eventType === 'item_acquire' ? '1' : '');
+      setEventSkillId('');
+      setKeepBaseSkill(true);
+      setKeepOnSheet(true);
       setFace(null);
     }
   };
@@ -118,6 +151,10 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
         return `+${formatCount(event.amount ?? 0)} XP`;
       case 'skill_learn':
         return `learns ${event.details}`;
+      case 'skill_evolve':
+        return `evolves into ${event.details}`;
+      case 'skill_sacrifice':
+        return `sacrifices ${event.details}`;
       case 'item_acquire':
         return `${event.details} ×${event.amount ?? 1}`;
       default:
@@ -538,6 +575,37 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </select>
           </label>
 
+          {skillEvent && (
+            <label className="chapter-popover-row">
+              <span>Skill</span>
+              <select
+                className="nodrag nopan"
+                aria-label={`Skill the event changes in ${data.label}`}
+                value={chosenSkillId}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setEventSkillId(event.target.value)}
+              >
+                {actorSkills.length === 0 && (
+                  <option value="">No skills yet</option>
+                )}
+                {actorSkills.map(skill => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.rank ? `${skill.name} (${skill.rank})` : skill.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {eventType === 'skill_rank_up' && chosenSkill && (
+            <p className="chapter-popover-hint">
+              {chosenSkill.rank
+                ? `${chosenSkill.name} rises from ${chosenSkill.rank}.`
+                : `${chosenSkill.name} reaches its first rank.`}
+            </p>
+          )}
+
           {eventType === 'xp_award' ? (
             <label className="chapter-popover-row">
               <span>XP</span>
@@ -564,14 +632,14 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 }}
               />
             </label>
-          ) : (
+          ) : eventType === 'skill_rank_up' || eventType === 'skill_sacrifice' ? null : (
             <label className="chapter-popover-row">
               <span>
                 {eventType === 'item_acquire'
                   ? 'Item'
                   : eventType === 'skill_learn'
                     ? 'Skill'
-                    : 'Detail'}
+                    : 'Evolves into'}
               </span>
               <input
                 className="nodrag nopan"
@@ -582,7 +650,7 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                     ? 'Stolen Ember'
                     : eventType === 'skill_learn'
                       ? 'Ember Whisper'
-                      : 'Ash Step → Rank 2'
+                      : 'Cinder Step'
                 }
                 value={eventDetails}
                 onMouseDown={event => event.stopPropagation()}
@@ -599,6 +667,36 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                   }
                 }}
               />
+            </label>
+          )}
+
+          {eventType === 'skill_evolve' && (
+            <label className="chapter-popover-toggle">
+              <input
+                className="nodrag nopan"
+                type="checkbox"
+                aria-label={`Keep the base skill in ${data.label}`}
+                checked={keepBaseSkill}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setKeepBaseSkill(event.target.checked)}
+              />
+              <span>Keep the base skill</span>
+            </label>
+          )}
+
+          {eventType === 'skill_sacrifice' && (
+            <label className="chapter-popover-toggle">
+              <input
+                className="nodrag nopan"
+                type="checkbox"
+                aria-label={`Keep the sacrificed skill in ${data.label}`}
+                checked={keepOnSheet}
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
+                onChange={event => setKeepOnSheet(event.target.checked)}
+              />
+              <span>Keep as a sacrificed record</span>
             </label>
           )}
 
@@ -677,9 +775,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             </button>
           </div>
           <p className="chapter-popover-hint">
-            XP pays into this chapter’s income. A learned skill and an acquired
-            item are written on the sheet. Rank-ups, evolutions and sacrifices
-            stay the scene’s record.
+            XP pays into this chapter’s income. A learned skill, a rank-up, an
+            evolution and an acquired item are written on the sheet. A sacrifice
+            keeps the skill as a record unless you untick it.
           </p>
         </div>
       )}

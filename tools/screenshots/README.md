@@ -85,8 +85,10 @@ chapter the board does not have — both as the database refuses them.
 The chapter card's event ledger is seeded from the demo story's own scene events
 (`story_chapter_events`) and answers **+ Event** the way the database does: an XP
 event pays through the award path, a learned skill writes a skill row, an item
-writes an inventory row, and removing the event removes the row it wrote. A
-rank-up, evolution or sacrifice is the scene's record alone.
+writes an inventory row, a rank-up raises the skill's rank, an evolution creates
+the new skill with its mutation link (retiring the base when the flag is off), and
+a sacrifice marks or removes the skill. Removing the event reverses all of it,
+including a removed skill row, which the event keeps as its snapshot.
 
 The chapter card's cast is worked out the same way, not read from the fixture's
 snapshot: the chapter's point of view and the rows ticked under “Present in this

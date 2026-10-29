@@ -63,6 +63,13 @@ function renderNode(data: Partial<NodeData> = {}) {
       chapterPov: 'c-1',
       chapterCast: cast,
       castChoices: [mira, rook],
+      chapterSkills: {
+        'c-1': [
+          { id: 's-1', name: 'Ember Whisper', rank: 'Rank 1' },
+          { id: 's-2', name: 'Ash Step', rank: 'Rank 3' },
+        ],
+        'c-2': [{ id: 's-3', name: 'Cinder Step', rank: null }],
+      },
       chapterTasks: objectives,
       ...data,
     } as NodeData,
@@ -243,7 +250,10 @@ describe('GraphNode chapter workbench', () => {
       'c-1',
       'xp_award',
       'Paid for a name at the toll gate',
-      250
+      250,
+      null,
+      true,
+      true
     );
     expect(
       screen.queryByRole('button', { name: 'Save' })
@@ -271,7 +281,10 @@ describe('GraphNode chapter workbench', () => {
       'c-1',
       'skill_learn',
       'Ember Whisper',
-      null
+      null,
+      null,
+      true,
+      true
     );
 
     await user.click(screen.getByRole('button', { name: '+ Event' }));
@@ -296,7 +309,10 @@ describe('GraphNode chapter workbench', () => {
       'c-1',
       'item_acquire',
       'Stolen Ember',
-      2
+      2,
+      null,
+      true,
+      true
     );
   });
 
@@ -309,12 +325,136 @@ describe('GraphNode chapter workbench', () => {
     await user.click(screen.getByRole('button', { name: '+ Event' }));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
-      'skill_evolve'
+      'skill_learn'
     );
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onAddChapterEvent).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('Add a detail line.');
+  });
+
+  it('raises the skill the form names, with no detail line to write', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_rank_up'
+    );
+
+    const skill = screen.getByRole('combobox', {
+      name: 'Skill the event changes in The Ashen Gate',
+    });
+    expect(skill).toHaveValue('s-1');
+    expect(skill).toHaveTextContent('Ember Whisper (Rank 1)');
+
+    await user.selectOptions(skill, 's-2');
+    expect(
+      screen.getByText('Ash Step rises from Rank 3.')
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
+      'c-1',
+      'skill_rank_up',
+      '',
+      null,
+      's-2',
+      true,
+      true
+    );
+  });
+
+  it('evolves into a named skill and can retire the base', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_evolve'
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', {
+        name: 'Skill the event changes in The Ashen Gate',
+      }),
+      's-2'
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Detail of the event in The Ashen Gate' }),
+      'Cinder Step'
+    );
+
+    const keepBase = screen.getByRole('checkbox', {
+      name: 'Keep the base skill in The Ashen Gate',
+    });
+    expect(keepBase).toBeChecked();
+    await user.click(keepBase);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
+      'c-1',
+      'skill_evolve',
+      'Cinder Step',
+      null,
+      's-2',
+      false,
+      true
+    );
+  });
+
+  it('sacrifices a skill as a record, or takes it off the sheet', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_sacrifice'
+    );
+
+    const keepRecord = screen.getByRole('checkbox', {
+      name: 'Keep the sacrificed skill in The Ashen Gate',
+    });
+    expect(keepRecord).toBeChecked();
+    await user.click(keepRecord);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).toHaveBeenCalledWith(
+      'c-1',
+      'skill_sacrifice',
+      '',
+      null,
+      's-1',
+      true,
+      false
+    );
+  });
+
+  it('says so when the scene has nobody with a skill to change', async () => {
+    const user = userEvent.setup();
+    const onAddChapterEvent = vi.fn(async () => true);
+
+    renderNode({ onAddChapterEvent, chapterSkills: {} });
+
+    await user.click(screen.getByRole('button', { name: '+ Event' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Event type in The Ashen Gate' }),
+      'skill_sacrifice'
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onAddChapterEvent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose a skill.');
   });
 
   it('renders the scene ledger with an icon and a line per event', () => {

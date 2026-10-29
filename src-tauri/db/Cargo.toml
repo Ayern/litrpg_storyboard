@@ -11,6 +11,9 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 chrono = "0.4.45"
 serde = { version = "1", features = ["derive"] }
+# A chapter event keeps the skill row a sacrifice removed as JSON, so the undo
+# can put the row back exactly as it was.
+serde_json = "1"
 
 [dev-dependencies]
 serde_json = "1"

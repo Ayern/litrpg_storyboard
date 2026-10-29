@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 33;
+const SCHEMA_VERSION: i32 = 34;
 
 /// The progression events a chapter card can log. XP pays into the chapter's
 /// income, a learned skill and an acquired item are written onto the sheet, and
@@ -1028,6 +1028,9 @@ impl Db {
             "xp_award".into(),
             "Paid for a name at the toll gate.".into(),
             Some(250),
+            None,
+            None,
+            None,
             user.clone(),
         )?;
         self.add_character_award(
@@ -1049,6 +1052,9 @@ impl Db {
             "skill_rank_up".into(),
             "Ash Step → Rank 2".into(),
             None,
+            None,
+            None,
+            None,
             user.clone(),
         )?;
         self.add_chapter_event(
@@ -1056,6 +1062,9 @@ impl Db {
             mira.id.clone(),
             "skill_sacrifice".into(),
             "The stolen ember, spent to buy Rook's exit.".into(),
+            None,
+            None,
+            None,
             None,
             user.clone(),
         )?;
@@ -6828,7 +6837,9 @@ impl Db {
         let guard = self.conn()?;
         let mut stmt = guard.prepare(
             "SELECT e.id, e.chapter_id, e.actor_id, e.event_type, e.details, e.amount,
-                    e.source_id, e.position, e.created_by, e.created_at, e.updated_at
+                    e.source_id, e.position, e.created_by, e.created_at, e.updated_at,
+                    e.skill_id, e.skill_event_id, e.new_skill_id, e.evolution_id,
+                    e.previous_rank, e.keep_base_skill, e.keep_on_sheet, e.skill_snapshot
                FROM chapter_events e
                JOIN nodes n ON n.id = e.chapter_id
                JOIN stories st ON st.id = n.story_id
@@ -6843,8 +6854,10 @@ impl Db {
 
     /// Logs one event on a chapter card, applying it where the event has a real
     /// effect: XP pays into the chapter's income, a learned skill and an acquired
-    /// item are written onto the sheet. A rank-up, an evolution and a sacrifice
-    /// are the scene's record only, because the sheet already holds them.
+    /// item are written onto the sheet, and a rank-up, evolution or sacrifice
+    /// changes the skill row the scene names. An event written without a skill id
+    /// is the older log-only record, and stays exactly that.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_chapter_event(
         &self,
         chapter_id: String,
@@ -6852,6 +6865,9 @@ impl Db {
         event_type: String,
         details: String,
         amount: Option<i64>,
+        skill_id: Option<String>,
+        keep_base_skill: Option<bool>,
+        keep_on_sheet: Option<bool>,
         user: String,
     ) -> DbResult<ChapterEvent> {
         let event_type = event_type.trim().to_string();
@@ -6860,8 +6876,11 @@ impl Db {
             return Err(DbError::Invalid("that is not a chapter event".to_string()));
         }
 
-        let details = details.trim().to_string();
+        let mut details = details.trim().to_string();
         let mut amount = amount;
+        let skill_id = clean_optional(skill_id);
+        let keep_base_skill = keep_base_skill.unwrap_or(true);
+        let keep_on_sheet = keep_on_sheet.unwrap_or(true);
 
         match event_type.as_str() {
             "xp_award" => {
@@ -6881,6 +6900,21 @@ impl Db {
                 }
 
                 amount = Some(quantity);
+            }
+            "skill_rank_up" | "skill_evolve" | "skill_sacrifice" => {
+                // A row from before this version names its skill in the detail
+                // line and changes nothing; a new one selects the skill itself.
+                if skill_id.is_none() && details.is_empty() {
+                    return Err(DbError::Invalid("an event needs a detail line".to_string()));
+                }
+
+                if event_type == "skill_evolve" && skill_id.is_some() && details.is_empty() {
+                    return Err(DbError::Invalid(
+                        "an evolution needs the new skill's name".to_string(),
+                    ));
+                }
+
+                amount = None;
             }
             _ => {
                 if details.is_empty() {
@@ -6903,53 +6937,239 @@ impl Db {
             story_id
         };
 
-        // XP, a learned skill and an acquired item go through the commands the
-        // sheets already use, so the ledger and the sheet cannot disagree.
-        let source_id = match event_type.as_str() {
-            "xp_award" => Some(
-                self.add_character_award(
-                    actor_id.clone(),
-                    Some(chapter_id.clone()),
-                    "xp".into(),
-                    None,
-                    amount.unwrap_or(0),
-                    if details.is_empty() {
-                        None
-                    } else {
-                        Some(details.clone())
-                    },
-                    user.clone(),
-                )?
-                .id,
-            ),
-            "skill_learn" => Some(
-                self.add_skill(
-                    actor_id.clone(),
-                    details.clone(),
-                    None,
-                    None,
-                    Some(chapter_id.clone()),
-                    None,
-                    user.clone(),
-                )?
-                .id,
-            ),
-            "item_acquire" => Some(
-                self.add_inventory_item(
-                    actor_id.clone(),
-                    details.clone(),
-                    None,
-                    amount.unwrap_or(1),
-                    None,
-                    Some(chapter_id.clone()),
-                    None,
-                    None,
-                    user.clone(),
-                )?
-                .id,
-            ),
-            _ => None,
+        // The skill a skill event acts on, read once so every branch below works
+        // from the same row and a skill in another story cannot be named.
+        let skill_on_sheet = match &skill_id {
+            Some(id) => {
+                let guard = self.conn()?;
+
+                Some(
+                    guard
+                        .query_row(
+                            "SELECT name, rank, effect, chapter_id, node_id
+                               FROM character_skills
+                              WHERE id = ?1 AND character_id = ?2",
+                            params![id, &actor_id],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, Option<String>>(1)?,
+                                    row.get::<_, Option<String>>(2)?,
+                                    row.get::<_, Option<String>>(3)?,
+                                    row.get::<_, Option<String>>(4)?,
+                                ))
+                            },
+                        )
+                        .optional()?
+                        .ok_or_else(|| {
+                            DbError::Invalid(
+                                "that skill is not on this character's sheet".to_string(),
+                            )
+                        })?,
+                )
+            }
+            None => None,
         };
+
+        let mut source_id: Option<String> = None;
+        let mut skill_event_id: Option<String> = None;
+        let mut new_skill_id: Option<String> = None;
+        let mut evolution_id: Option<String> = None;
+        let mut previous_rank: Option<String> = None;
+        let mut skill_snapshot: Option<String> = None;
+
+        // XP, a learned skill and an acquired item go through the commands the
+        // sheets already use, so the ledger and the sheet cannot disagree. A
+        // skill event changes the row it names, and records on the event what it
+        // must put back.
+        match event_type.as_str() {
+            "xp_award" => {
+                source_id = Some(
+                    self.add_character_award(
+                        actor_id.clone(),
+                        Some(chapter_id.clone()),
+                        "xp".into(),
+                        None,
+                        amount.unwrap_or(0),
+                        if details.is_empty() {
+                            None
+                        } else {
+                            Some(details.clone())
+                        },
+                        user.clone(),
+                    )?
+                    .id,
+                );
+            }
+            "skill_learn" => {
+                source_id = Some(
+                    self.add_skill(
+                        actor_id.clone(),
+                        details.clone(),
+                        None,
+                        None,
+                        Some(chapter_id.clone()),
+                        None,
+                        user.clone(),
+                    )?
+                    .id,
+                );
+            }
+            "item_acquire" => {
+                source_id = Some(
+                    self.add_inventory_item(
+                        actor_id.clone(),
+                        details.clone(),
+                        None,
+                        amount.unwrap_or(1),
+                        None,
+                        Some(chapter_id.clone()),
+                        None,
+                        None,
+                        user.clone(),
+                    )?
+                    .id,
+                );
+            }
+            "skill_rank_up" if skill_on_sheet.is_some() => {
+                let (name, rank, effect, chapter, node) = skill_on_sheet.clone().unwrap();
+                let next_rank = bump_skill_rank(rank.as_deref());
+
+                self.update_skill(
+                    skill_id.clone().unwrap(),
+                    name.clone(),
+                    Some(next_rank.clone()),
+                    effect,
+                    chapter,
+                    node,
+                    user.clone(),
+                )?;
+
+                match self.add_skill_event(
+                    skill_id.clone().unwrap(),
+                    "upgraded".into(),
+                    Some(chapter_id.clone()),
+                    Some(next_rank.clone()),
+                    None,
+                    user.clone(),
+                ) {
+                    Ok(event) => skill_event_id = Some(event.id),
+                    Err(error) => {
+                        // Put the old rank back rather than leave a rise the
+                        // ledger has no line for.
+                        let _ = self.write_skill_rank(&skill_id.clone().unwrap(), rank);
+                        return Err(error);
+                    }
+                }
+
+                previous_rank = rank;
+                details = format!("{name} → {next_rank}");
+            }
+            "skill_evolve" if skill_on_sheet.is_some() => {
+                let (name, _rank, effect, _chapter, node) = skill_on_sheet.clone().unwrap();
+                let base_id = skill_id.clone().unwrap();
+
+                let child = self.add_skill(
+                    actor_id.clone(),
+                    details.clone(),
+                    None,
+                    effect,
+                    Some(chapter_id.clone()),
+                    node,
+                    user.clone(),
+                )?;
+                new_skill_id = Some(child.id.clone());
+
+                match self.add_skill_evolution(
+                    base_id.clone(),
+                    child.id.clone(),
+                    "mutation".into(),
+                    Some(chapter_id.clone()),
+                    None,
+                    Some(format!("“{name}” evolved in a scene.")),
+                    user.clone(),
+                ) {
+                    Ok(link) => evolution_id = Some(link.id),
+                    Err(error) => {
+                        let _ = self.delete_skill(&child.id, user.clone());
+                        return Err(error);
+                    }
+                }
+
+                if !keep_base_skill {
+                    match self.add_skill_event(
+                        base_id.clone(),
+                        "sacrificed".into(),
+                        Some(chapter_id.clone()),
+                        None,
+                        None,
+                        user.clone(),
+                    ) {
+                        Ok(event) => skill_event_id = Some(event.id),
+                        Err(error) => {
+                            let _ = self.delete_skill(&child.id, user.clone());
+                            return Err(error);
+                        }
+                    }
+                }
+
+                details = child.name.clone();
+            }
+            "skill_sacrifice" if skill_on_sheet.is_some() => {
+                let (name, ..) = skill_on_sheet.clone().unwrap();
+                let base_id = skill_id.clone().unwrap();
+
+                if keep_on_sheet {
+                    match self.add_skill_event(
+                        base_id.clone(),
+                        "sacrificed".into(),
+                        Some(chapter_id.clone()),
+                        None,
+                        None,
+                        user.clone(),
+                    ) {
+                        Ok(event) => skill_event_id = Some(event.id),
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    let row: Option<ChapterSkillSnapshot> = {
+                        let guard = self.conn()?;
+                        guard
+                            .query_row(
+                                "SELECT id, character_id, skill_id, name, rank, effect,
+                                        chapter_id, node_id, created_at, updated_at
+                                   FROM character_skills WHERE id = ?1",
+                                params![&base_id],
+                                |row| {
+                                    Ok(ChapterSkillSnapshot {
+                                        id: row.get(0)?,
+                                        character_id: row.get(1)?,
+                                        skill_id: row.get(2)?,
+                                        name: row.get(3)?,
+                                        rank: row.get(4)?,
+                                        effect: row.get(5)?,
+                                        chapter_id: row.get(6)?,
+                                        node_id: row.get(7)?,
+                                        created_at: row.get(8)?,
+                                        updated_at: row.get(9)?,
+                                    })
+                                },
+                            )
+                            .optional()?
+                    };
+
+                    let snapshot = row.ok_or(DbError::NotFound("skill"))?;
+                    skill_snapshot = Some(
+                        serde_json::to_string(&snapshot)
+                            .map_err(|error| DbError::Invalid(error.to_string()))?,
+                    );
+                    self.delete_skill(&base_id, user.clone())?;
+                }
+
+                details = name;
+            }
+            _ => {}
+        }
 
         let timestamp = now();
         let id = Uuid::new_v4().to_string();
@@ -6966,8 +7186,11 @@ impl Db {
             tx.execute(
                 "INSERT INTO chapter_events
                  (id, chapter_id, actor_id, event_type, details, amount, source_id,
+                  skill_id, skill_event_id, new_skill_id, evolution_id, previous_rank,
+                  keep_base_skill, keep_on_sheet, skill_snapshot,
                   position, created_by, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                         ?15, ?16, ?17, ?18, ?18)",
                 params![
                     &id,
                     &chapter_id,
@@ -6976,6 +7199,14 @@ impl Db {
                     &details,
                     amount,
                     &source_id,
+                    &skill_id,
+                    &skill_event_id,
+                    &new_skill_id,
+                    &evolution_id,
+                    &previous_rank,
+                    keep_base_skill,
+                    keep_on_sheet,
+                    &skill_snapshot,
                     position,
                     &user,
                     &timestamp
@@ -7025,6 +7256,36 @@ impl Db {
                     }
                 }
 
+                // A skill event changed the sheet before the ledger row could be
+                // written, so the sheet is put back the same way deleting the row
+                // would put it back.
+                if skill_id.is_some() {
+                    let _ = self.reverse_chapter_skill_event(
+                        &ChapterEvent {
+                            id: id.clone(),
+                            chapter_id: chapter_id.clone(),
+                            actor_id: actor_id.clone(),
+                            event_type: event_type.clone(),
+                            details: details.clone(),
+                            amount,
+                            source_id: source_id.clone(),
+                            position: 0,
+                            created_by: user.clone(),
+                            created_at: timestamp.clone(),
+                            updated_at: timestamp.clone(),
+                            skill_id: skill_id.clone(),
+                            skill_event_id: skill_event_id.clone(),
+                            new_skill_id: new_skill_id.clone(),
+                            evolution_id: evolution_id.clone(),
+                            previous_rank: previous_rank.clone(),
+                            keep_base_skill,
+                            keep_on_sheet,
+                            skill_snapshot: skill_snapshot.clone(),
+                        },
+                        user.clone(),
+                    );
+                }
+
                 return Err(error);
             }
         };
@@ -7041,39 +7302,48 @@ impl Db {
             created_by: user,
             created_at: timestamp.clone(),
             updated_at: timestamp,
+            skill_id,
+            skill_event_id,
+            new_skill_id,
+            evolution_id,
+            previous_rank,
+            keep_base_skill,
+            keep_on_sheet,
+            skill_snapshot,
         })
     }
 
-    /// Removes an event, and with it the award, skill or item it wrote. The list
-    /// itself is history: the line stays in the audit trail.
+    /// Removes an event, and with it the award, skill, item or skill change it
+    /// wrote. The list itself is history: the line stays in the audit trail.
     pub fn delete_chapter_event(&self, id: &str, user: String) -> DbResult<()> {
         let existing = {
             let guard = self.conn()?;
             guard
                 .query_row(
-                    "SELECT e.event_type, e.source_id, e.details, n.story_id
+                    "SELECT e.id, e.chapter_id, e.actor_id, e.event_type, e.details,
+                            e.amount, e.source_id, e.position, e.created_by, e.created_at,
+                            e.updated_at, e.skill_id, e.skill_event_id, e.new_skill_id,
+                            e.evolution_id, e.previous_rank, e.keep_base_skill,
+                            e.keep_on_sheet, e.skill_snapshot, n.story_id
                        FROM chapter_events e
                        JOIN nodes n ON n.id = e.chapter_id
                       WHERE e.id = ?1",
                     params![id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
+                    |row| Ok((chapter_event_row(row)?, row.get::<_, String>(19)?)),
                 )
                 .optional()?
         };
 
-        let Some((event_type, source_id, details, story_id)) = existing else {
+        let Some((event, story_id)) = existing else {
             return Ok(());
         };
 
-        if let Some(source) = &source_id {
-            match event_type.as_str() {
+        if event.skill_id.is_some() {
+            self.reverse_chapter_skill_event(&event, user.clone())?;
+        }
+
+        if let Some(source) = &event.source_id {
+            match event.event_type.as_str() {
                 "xp_award" => self.delete_character_award(source, user.clone())?,
                 "skill_learn" => self.delete_skill(source, user.clone())?,
                 "item_acquire" => self.delete_inventory_item(source, user.clone())?,
@@ -7094,7 +7364,7 @@ impl Db {
                 entity_id: id,
                 action: "delete",
                 field_changed: None,
-                old_value: Some(details),
+                old_value: Some(event.details),
                 new_value: None,
                 changed_by: &user,
             },
@@ -7102,6 +7372,81 @@ impl Db {
 
         tx.commit()?;
 
+        Ok(())
+    }
+
+    /// Puts back what a skill event did to the sheets: the old rank, the evolved
+    /// skill and its link, the sacrifice marker, or the row a sacrifice removed.
+    /// Encoding a deletion in the event is what lets undo be one step without
+    /// keeping a parallel copy of the story.
+    fn reverse_chapter_skill_event(&self, event: &ChapterEvent, user: String) -> DbResult<()> {
+        match event.event_type.as_str() {
+            "skill_rank_up" => {
+                if let Some(skill_id) = &event.skill_id {
+                    self.write_skill_rank(skill_id, event.previous_rank.clone())?;
+                }
+
+                if let Some(skill_event_id) = &event.skill_event_id {
+                    self.delete_skill_event(skill_event_id, user)?;
+                }
+            }
+            "skill_evolve" => {
+                if let Some(evolution_id) = &event.evolution_id {
+                    self.delete_skill_evolution(evolution_id, user.clone())?;
+                }
+
+                if let Some(new_skill_id) = &event.new_skill_id {
+                    self.delete_skill(new_skill_id, user.clone())?;
+                }
+
+                if let Some(skill_event_id) = &event.skill_event_id {
+                    self.delete_skill_event(skill_event_id, user)?;
+                }
+            }
+            "skill_sacrifice" => {
+                if let Some(skill_event_id) = &event.skill_event_id {
+                    self.delete_skill_event(skill_event_id, user)?;
+                }
+
+                if let Some(snapshot) = &event.skill_snapshot {
+                    let row: ChapterSkillSnapshot = serde_json::from_str(snapshot)
+                        .map_err(|error| DbError::Invalid(error.to_string()))?;
+                    let guard = self.conn()?;
+
+                    guard.execute(
+                        "INSERT OR REPLACE INTO character_skills
+                         (id, character_id, skill_id, name, rank, effect, chapter_id,
+                          node_id, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![
+                            &row.id,
+                            &row.character_id,
+                            &row.skill_id,
+                            &row.name,
+                            &row.rank,
+                            &row.effect,
+                            &row.chapter_id,
+                            &row.node_id,
+                            &row.created_at,
+                            &row.updated_at
+                        ],
+                    )?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Writes one rank back onto a skill row. Undo of a rank-up is a rank write
+    /// and nothing else, so it does not need the whole row in hand.
+    fn write_skill_rank(&self, skill_id: &str, rank: Option<String>) -> DbResult<()> {
+        let guard = self.conn()?;
+        guard.execute(
+            "UPDATE character_skills SET rank = ?1, updated_at = ?2 WHERE id = ?3",
+            params![rank, now(), skill_id],
+        )?;
         Ok(())
     }
 
@@ -9503,7 +9848,9 @@ impl Db {
         let chapter_events = {
             let mut stmt = guard.prepare(
                 "SELECT e.id, e.chapter_id, e.actor_id, e.event_type, e.details, e.amount,
-                        e.source_id, e.position, e.created_by, e.created_at, e.updated_at
+                        e.source_id, e.position, e.created_by, e.created_at, e.updated_at,
+                        e.skill_id, e.skill_event_id, e.new_skill_id, e.evolution_id,
+                        e.previous_rank, e.keep_base_skill, e.keep_on_sheet, e.skill_snapshot
                    FROM chapter_events e
                    JOIN nodes n ON n.id = e.chapter_id
                    JOIN stories st ON st.id = n.story_id
@@ -13227,11 +13574,28 @@ impl Db {
                         _ => None,
                     });
 
+            // The skill a scene changed, the change and the evolved skill move
+            // with the rest of the story, so the copied event's undo still finds
+            // the copied rows rather than the ones it came from.
+            let skill_id = event.skill_id.as_ref().and_then(|id| skills.get(id));
+            let new_skill_id = event.new_skill_id.as_ref().and_then(|id| skills.get(id));
+            let skill_event_id = event
+                .skill_event_id
+                .as_ref()
+                .and_then(|id| skill_events.get(id));
+            let evolution_id = event
+                .evolution_id
+                .as_ref()
+                .and_then(|id| evolution_ids.get(id));
+
             tx.execute(
                 "INSERT INTO chapter_events
                  (id, chapter_id, actor_id, event_type, details, amount, source_id,
+                  skill_id, skill_event_id, new_skill_id, evolution_id, previous_rank,
+                  keep_base_skill, keep_on_sheet, skill_snapshot,
                   position, created_by, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                         ?15, ?16, ?17, ?18, ?19)",
                 params![
                     &chapter_events[&event.id],
                     chapter_id,
@@ -13240,6 +13604,14 @@ impl Db {
                     &event.details,
                     event.amount,
                     source_id,
+                    skill_id,
+                    skill_event_id,
+                    new_skill_id,
+                    evolution_id,
+                    &event.previous_rank,
+                    event.keep_base_skill,
+                    event.keep_on_sheet,
+                    &event.skill_snapshot,
                     event.position,
                     &event.created_by,
                     &event.created_at,
@@ -13816,6 +14188,55 @@ pub struct ChapterEvent {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+    /// The character_skills row a rank-up, evolution or sacrifice acts on. Absent
+    /// from events written before schema v34 and from the log-only records of a
+    /// scene, which name their skill in `details` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    /// The character_skill_events row the event wrote — the upgrade or the
+    /// sacrifice — so taking the event back takes that change off the sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_event_id: Option<String>,
+    /// The new skill an evolution created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_skill_id: Option<String>,
+    /// The skill_evolutions link an evolution wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evolution_id: Option<String>,
+    /// The rank the skill held before a rank-up, so undo can put it back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_rank: Option<String>,
+    /// Whether an evolution leaves the base skill on the sheet.
+    #[serde(default = "keep_true")]
+    pub keep_base_skill: bool,
+    /// Whether a sacrifice leaves the skill on the sheet as an inactive record.
+    #[serde(default)]
+    pub keep_on_sheet: bool,
+    /// The skill row a sacrifice removed, kept as JSON so undo can restore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_snapshot: Option<String>,
+}
+
+/// An evolution keeps its base skill unless the author says otherwise, and an
+/// export written before the flag existed cannot have meant to consume it.
+fn keep_true() -> bool {
+    true
+}
+
+/// The columns of a character_skills row, kept whole so a sacrifice that removed
+/// the row can be undone exactly as it was.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct ChapterSkillSnapshot {
+    id: String,
+    character_id: String,
+    skill_id: Option<String>,
+    name: String,
+    rank: Option<String>,
+    effect: Option<String>,
+    chapter_id: Option<String>,
+    node_id: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
 /// One change in a skill's life: a rank gained, a use in a chapter, or a
@@ -14288,6 +14709,14 @@ fn chapter_event_row(row: &rusqlite::Row) -> SqliteResult<ChapterEvent> {
         created_by: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        skill_id: row.get(11)?,
+        skill_event_id: row.get(12)?,
+        new_skill_id: row.get(13)?,
+        evolution_id: row.get(14)?,
+        previous_rank: row.get(15)?,
+        keep_base_skill: row.get(16)?,
+        keep_on_sheet: row.get(17)?,
+        skill_snapshot: row.get(18)?,
     })
 }
 //
@@ -15200,6 +15629,33 @@ fn yes_no(value: bool) -> String {
 
 /// Skill events are deliberately a small vocabulary; anything else is a typo
 /// rather than a new kind of progression.
+/// The rank a skill reaches when it is raised: a trailing number goes up by one,
+/// a rank written only in words gains one, and a skill with no rank yet starts at
+/// Rank 1. The author's own words are kept, so “Master” becomes “Master Rank 2”
+/// rather than losing the name of the rank.
+fn bump_skill_rank(rank: Option<&str>) -> String {
+    let rank = rank.unwrap_or("").trim();
+
+    if rank.is_empty() {
+        return "Rank 1".to_string();
+    }
+
+    let digits = rank
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+
+    if digits == 0 {
+        return format!("{rank} Rank 2");
+    }
+
+    let (head, tail) = rank.split_at(rank.len() - digits);
+    let number = tail.parse::<i64>().unwrap_or(0);
+
+    format!("{head}{}", number + 1)
+}
+
 fn clean_skill_event_kind(value: &str) -> DbResult<String> {
     let kind = value.trim().to_lowercase();
 
@@ -17298,6 +17754,31 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
     // the sheets, and the ledger starts with the scenes written after it.
     if version < 33 {
         conn.execute_batch(MIGRATION_033_CHAPTER_EVENTS)?;
+    }
+
+    // v34 teaches a scene's skill events to change the sheet: the rank-up, the
+    // evolution and the sacrifice name the `character_skills` row they acted on
+    // and the rows they wrote, so deleting the scene's line takes the sheet
+    // change back. A sacrifice that removed the row keeps its columns in
+    // `skill_snapshot` for the undo. The columns are tested one at a time,
+    // because a database part-way through this version has the table but only
+    // some of them, and re-adding a column is an error.
+    for (column, definition) in [
+        ("skill_id", "TEXT"),
+        ("skill_event_id", "TEXT"),
+        ("new_skill_id", "TEXT"),
+        ("evolution_id", "TEXT"),
+        ("previous_rank", "TEXT"),
+        ("keep_base_skill", "INTEGER NOT NULL DEFAULT 1"),
+        ("keep_on_sheet", "INTEGER NOT NULL DEFAULT 0"),
+        ("skill_snapshot", "TEXT"),
+    ] {
+        if version < 34 && !column_exists(conn, "chapter_events", column)? {
+            conn.execute(
+                &format!("ALTER TABLE chapter_events ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -27576,6 +28057,9 @@ mod tests {
                 "xp_award".into(),
                 "Paid for a name at the gate".into(),
                 Some(250),
+                None,
+                None,
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -27631,6 +28115,9 @@ mod tests {
                 "skill_learn".into(),
                 "Ember Whisper".into(),
                 None,
+                None,
+                None,
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -27641,6 +28128,9 @@ mod tests {
                 "item_acquire".into(),
                 "Stolen Ember".into(),
                 Some(2),
+                None,
+                None,
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -27674,6 +28164,9 @@ mod tests {
                 "skill_rank_up".into(),
                 "First Blade → Rank 2".into(),
                 None,
+                None,
+                None,
+                None,
                 "Ada".into(),
             )
             .unwrap();
@@ -27705,6 +28198,336 @@ mod tests {
     }
 
     #[test]
+    fn a_rank_up_raises_the_skill_and_undo_puts_the_rank_back() {
+        let (db, _story, character, chapter, _) = skill_story();
+        let skill = db
+            .add_skill(
+                character.id.clone(),
+                "Ash Step".into(),
+                Some("Rank 1".into()),
+                Some("Walk between flames".into()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_rank_up".into(),
+                String::new(),
+                None,
+                Some(skill.id.clone()),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(event.skill_id.as_deref(), Some(skill.id.as_str()));
+        assert_eq!(event.previous_rank.as_deref(), Some("Rank 1"));
+        assert_eq!(event.details, "Ash Step → Rank 2");
+        assert!(event.skill_event_id.is_some(), "the rise is a skill event");
+
+        let rows = db.list_skills(&character.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].rank.as_deref(), Some("Rank 2"));
+
+        let rises = db.list_skill_events(&skill.id).unwrap();
+        assert_eq!(rises.len(), 1);
+        assert_eq!(rises[0].kind, "upgraded");
+        assert_eq!(rises[0].rank.as_deref(), Some("Rank 2"));
+        assert_eq!(rises[0].chapter_id.as_deref(), Some(chapter.id.as_str()));
+
+        db.delete_chapter_event(&event.id, "Ada".into()).unwrap();
+
+        let rows = db.list_skills(&character.id).unwrap();
+        assert_eq!(rows[0].rank.as_deref(), Some("Rank 1"));
+        assert!(db.list_skill_events(&skill.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rank_up_keeps_the_authors_words_when_the_rank_has_no_number() {
+        assert_eq!(bump_skill_rank(None), "Rank 1");
+        assert_eq!(bump_skill_rank(Some("")), "Rank 1");
+        assert_eq!(bump_skill_rank(Some("Rank 9")), "Rank 10");
+        assert_eq!(bump_skill_rank(Some("Master")), "Master Rank 2");
+        assert_eq!(bump_skill_rank(Some("Master Rank 2")), "Master Rank 3");
+    }
+
+    #[test]
+    fn an_evolution_creates_the_new_skill_and_can_retire_the_base() {
+        let (db, story, character, chapter, _) = skill_story();
+        let base = db
+            .add_skill(
+                character.id.clone(),
+                "Ash Step".into(),
+                Some("Rank 2".into()),
+                Some("Walk between flames".into()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_evolve".into(),
+                "Cinder Step".into(),
+                None,
+                Some(base.id.clone()),
+                Some(false),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert!(event.new_skill_id.is_some());
+        assert!(event.evolution_id.is_some());
+        assert!(
+            event.skill_event_id.is_some(),
+            "a base skill that is not kept is retired with a sacrifice"
+        );
+        assert_eq!(event.details, "Cinder Step");
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(skills.len(), 2);
+        let evolved = skills
+            .iter()
+            .find(|skill| skill.name == "Cinder Step")
+            .unwrap();
+        assert_eq!(evolved.rank, None, "an evolved skill starts unranked");
+        assert_eq!(evolved.effect.as_deref(), Some("Walk between flames"));
+        assert_eq!(evolved.chapter_id.as_deref(), Some(chapter.id.as_str()));
+
+        let links = db.list_story_skill_evolutions(&story.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].parent_skill_id, base.id);
+        assert_eq!(links[0].child_skill_id, evolved.id);
+        assert_eq!(links[0].evolution_type, "mutation");
+
+        assert_eq!(db.list_skill_events(&base.id).unwrap().len(), 1);
+        assert_eq!(
+            db.list_skill_events(&base.id).unwrap()[0].kind,
+            "sacrificed"
+        );
+
+        db.delete_chapter_event(&event.id, "Ada".into()).unwrap();
+
+        let skills = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(
+            skills.len(),
+            1,
+            "the evolved skill comes back off the sheet"
+        );
+        assert_eq!(skills[0].id, base.id);
+        assert!(db
+            .list_story_skill_evolutions(&story.id)
+            .unwrap()
+            .is_empty());
+        assert!(
+            db.list_skill_events(&base.id).unwrap().is_empty(),
+            "the base is active again"
+        );
+    }
+
+    #[test]
+    fn an_evolution_can_leave_the_base_skill_on_the_sheet() {
+        let (db, story, character, chapter, _) = skill_story();
+        let base = db
+            .add_skill(
+                character.id.clone(),
+                "Ash Step".into(),
+                Some("Rank 2".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_evolve".into(),
+                "Cinder Step".into(),
+                None,
+                Some(base.id.clone()),
+                Some(true),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert!(event.skill_event_id.is_none());
+        assert!(db.list_skill_events(&base.id).unwrap().is_empty());
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_sacrifice_keeps_an_inactive_record_or_removes_the_row_and_undo_restores_it() {
+        let (db, story, character, chapter, _) = skill_story();
+        let kept = db
+            .add_skill(
+                character.id.clone(),
+                "Ember Whisper".into(),
+                Some("Rank 3".into()),
+                Some("Ask a flame its name".into()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let removed = db
+            .add_skill(
+                character.id.clone(),
+                "Ash Step".into(),
+                Some("Rank 2".into()),
+                Some("Walk between flames".into()),
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let kept_event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_sacrifice".into(),
+                String::new(),
+                None,
+                Some(kept.id.clone()),
+                None,
+                Some(true),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(kept_event.details, "Ember Whisper");
+        assert!(kept_event.skill_event_id.is_some());
+        assert_eq!(db.list_skills(&character.id).unwrap().len(), 2);
+        assert_eq!(
+            db.list_skill_events(&kept.id).unwrap()[0].kind,
+            "sacrificed"
+        );
+
+        db.delete_chapter_event(&kept_event.id, "Ada".into())
+            .unwrap();
+
+        assert_eq!(db.list_skills(&character.id).unwrap().len(), 2);
+        assert!(db.list_skill_events(&kept.id).unwrap().is_empty());
+
+        let removed_event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_sacrifice".into(),
+                String::new(),
+                None,
+                Some(removed.id.clone()),
+                None,
+                Some(false),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert!(removed_event.skill_snapshot.is_some());
+        let names: Vec<String> = db
+            .list_story_skills(&story.id)
+            .unwrap()
+            .into_iter()
+            .map(|skill| skill.name)
+            .collect();
+        assert_eq!(names, vec!["Ember Whisper".to_string()]);
+
+        db.delete_chapter_event(&removed_event.id, "Ada".into())
+            .unwrap();
+
+        let restored = db
+            .list_story_skills(&story.id)
+            .unwrap()
+            .into_iter()
+            .find(|skill| skill.name == "Ash Step")
+            .expect("the sacrificed skill is put back");
+        assert_eq!(restored.id, removed.id);
+        assert_eq!(restored.rank.as_deref(), Some("Rank 2"));
+        assert_eq!(restored.effect.as_deref(), Some("Walk between flames"));
+        assert_eq!(restored.chapter_id.as_deref(), Some(chapter.id.as_str()));
+    }
+
+    #[test]
+    fn a_skill_event_travels_with_the_story_and_undoes_on_the_copy() {
+        let (source, story, character, chapter, _) = skill_story();
+        let skill = source
+            .add_skill(
+                character.id.clone(),
+                "Ash Step".into(),
+                Some("Rank 1".into()),
+                None,
+                Some(chapter.id.clone()),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let event = source
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_evolve".into(),
+                "Cinder Step".into(),
+                None,
+                Some(skill.id.clone()),
+                Some(false),
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let export = source.export_story(&story.id).unwrap();
+        let target = Db::open_in_memory().unwrap();
+        let restored = target.import_story(export, "Grace".into()).unwrap();
+
+        let events = target.list_story_chapter_events(&restored.id).unwrap();
+        assert_eq!(events.len(), 1);
+        let copied = &events[0];
+        let copied_skills = target.list_story_skills(&restored.id).unwrap();
+        let copied_base = copied_skills
+            .iter()
+            .find(|row| row.name == "Ash Step")
+            .unwrap();
+        let copied_child = copied_skills
+            .iter()
+            .find(|row| row.name == "Cinder Step")
+            .unwrap();
+
+        assert_eq!(copied.skill_id.as_deref(), Some(copied_base.id.as_str()));
+        assert_eq!(
+            copied.new_skill_id.as_deref(),
+            Some(copied_child.id.as_str()),
+            "the copy's event names the copy's evolved skill"
+        );
+        assert_ne!(copied.skill_id, event.skill_id);
+
+        target
+            .delete_chapter_event(&copied.id, "Grace".into())
+            .unwrap();
+
+        let left = target.list_story_skills(&restored.id).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "Ash Step");
+        assert!(target
+            .list_story_skill_events(&copied_base.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn a_chapter_event_refuses_a_bad_type_an_empty_line_or_a_foreign_cast() {
         let (db, story, character, chapter, card) = skill_story();
 
@@ -27715,7 +28538,10 @@ mod tests {
                 "teleport".into(),
                 "not a kind".into(),
                 None,
-                "Ada".into()
+                None,
+                None,
+                None,
+                "Ada".into(),
             ),
             Err(DbError::Invalid(_))
         ));
@@ -27726,7 +28552,10 @@ mod tests {
                 "skill_evolve".into(),
                 "   ".into(),
                 None,
-                "Ada".into()
+                None,
+                None,
+                None,
+                "Ada".into(),
             ),
             Err(DbError::Invalid(_))
         ));
@@ -27737,7 +28566,10 @@ mod tests {
                 "xp_award".into(),
                 String::new(),
                 Some(0),
-                "Ada".into()
+                None,
+                None,
+                None,
+                "Ada".into(),
             ),
             Err(DbError::Invalid(_))
         ));
@@ -27748,7 +28580,10 @@ mod tests {
                 "skill_sacrifice".into(),
                 "Ash Step".into(),
                 None,
-                "Ada".into()
+                None,
+                None,
+                None,
+                "Ada".into(),
             ),
             Err(DbError::Invalid(_))
         ));
@@ -27765,7 +28600,10 @@ mod tests {
                 "skill_evolve".into(),
                 "something".into(),
                 None,
-                "Ada".into()
+                None,
+                None,
+                None,
+                "Ada".into(),
             ),
             Err(DbError::Invalid(_))
         ));
@@ -27782,6 +28620,9 @@ mod tests {
             character.id.clone(),
             "skill_evolve".into(),
             "Ash Step → Cinder Step".into(),
+            None,
+            None,
+            None,
             None,
             "Ada".into(),
         )

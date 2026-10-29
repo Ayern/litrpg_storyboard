@@ -134,6 +134,7 @@ let chapterTasks: any[] = [];
 let taskSeq = 0;
 let chapterEvents: any[] = [];
 let awards: any[] = [];
+let storySkills: any[] = [];
 
 const nodeRow = (
   id: string,
@@ -197,6 +198,32 @@ beforeEach(() => {
   taskSeq = 0;
   chapterEvents = [];
   awards = [];
+  // The skills a scene's event can raise, evolve or sacrifice. The roster's own
+  // tooltips read the cast snapshot, so these are only the sheet rows.
+  storySkills = [
+    {
+      id: 'skill-2',
+      character_id: 'char-2',
+      name: 'Ash Step',
+      rank: 'Rank 1',
+      effect: null,
+      chapter_id: 'n1',
+      node_id: null,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+    {
+      id: 'skill-3',
+      character_id: 'char-2',
+      name: 'Ember Whisper',
+      rank: 'Rank 2',
+      effect: null,
+      chapter_id: 'n1',
+      node_id: null,
+      created_at: '2026-10-22T12:00:00Z',
+      updated_at: '2026-10-22T12:00:00Z',
+    },
+  ];
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string, rawArgs?: unknown) => {
     const args = (rawArgs ?? {}) as Record<string, any>;
@@ -213,7 +240,6 @@ beforeEach(() => {
       case 'get_graph_edges':
       case 'get_story_character_stats':
       case 'get_story_levels':
-      case 'get_story_skills':
       case 'get_story_skill_events':
       case 'get_story_inventory':
       case 'get_chapter_notes':
@@ -226,6 +252,10 @@ beforeEach(() => {
         return [];
       case 'get_characters':
         return args.storyId === story.id ? cast.map(entry => ({ ...entry })) : [];
+      case 'get_story_skills':
+        return storySkills.map(row => ({ ...row }));
+      case 'get_character_skills':
+        return storySkills.filter(row => row.character_id === args.characterId);
       case 'get_story_chapter_cast':
         return chapterCastRows.map(row => ({ ...row }));
       case 'get_story_chapter_tasks':
@@ -264,6 +294,9 @@ beforeEach(() => {
           details: String(args.details ?? ''),
           amount: args.amount ?? null,
           source_id: args.eventType === 'xp_award' ? 'award-1' : null,
+          skill_id: args.skillId ?? null,
+          keep_base_skill: args.keepBaseSkill ?? true,
+          keep_on_sheet: args.keepOnSheet ?? false,
           position: chapterEvents.length,
           created_by: 'Ada',
           created_at: '2026-10-22T12:00:00Z',
@@ -764,7 +797,7 @@ describe('chapter card cast badges', () => {
     expect(within(card).queryByText('+100 XP')).not.toBeInTheDocument();
   });
 
-  it('keeps a rank-up as the scene record without paying it onto a sheet', async () => {
+  it('raises the skill it names from the card, as one undoable step', async () => {
     const { user, container } = await openGraph();
     const card = cardFor(container, 'n1');
 
@@ -775,10 +808,12 @@ describe('chapter card cast badges', () => {
       within(card).getByRole('combobox', { name: 'Event type in Chapter One' }),
       'skill_rank_up'
     );
-    await user.type(
-      within(card).getByRole('textbox', { name: 'Detail of the event in Chapter One' }),
-      'Ash Step → Rank 2'
-    );
+
+    const skill = await within(card).findByRole('combobox', {
+      name: 'Skill the event changes in Chapter One',
+    });
+    expect(skill).toHaveTextContent('Ash Step (Rank 1)');
+    await user.selectOptions(skill, 'skill-2');
     await user.click(within(card).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -788,14 +823,103 @@ describe('chapter card cast badges', () => {
         chapterId: 'n1',
         actorId: 'char-2',
         eventType: 'skill_rank_up',
-        details: 'Ash Step → Rank 2',
+        details: '',
         amount: null,
+        skillId: 'skill-2',
+        keepBaseSkill: true,
+        keepOnSheet: true,
       });
     });
 
-    expect(within(card).getByText('Ash Step → Rank 2')).toBeInTheDocument();
-    expect(
-      invokeMock.mock.calls.some(call => call[0] === 'add_character_award')
-    ).toBe(false);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'delete_chapter_event')?.[1]
+      ).toMatchObject({ id: 'event-1' });
+    });
+  });
+
+  it('evolves a skill into a new name and can retire the base', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(
+      await within(card).findByRole('button', { name: '+ Event' })
+    );
+    await user.selectOptions(
+      within(card).getByRole('combobox', { name: 'Event type in Chapter One' }),
+      'skill_evolve'
+    );
+    await user.selectOptions(
+      within(card).getByRole('combobox', {
+        name: 'Skill the event changes in Chapter One',
+      }),
+      'skill-2'
+    );
+    await user.type(
+      within(card).getByRole('textbox', { name: 'Detail of the event in Chapter One' }),
+      'Cinder Step'
+    );
+    await user.click(
+      within(card).getByRole('checkbox', {
+        name: 'Keep the base skill in Chapter One',
+      })
+    );
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'add_chapter_event')?.[1]
+      ).toMatchObject({
+        chapterId: 'n1',
+        actorId: 'char-2',
+        eventType: 'skill_evolve',
+        details: 'Cinder Step',
+        skillId: 'skill-2',
+        keepBaseSkill: false,
+      });
+    });
+  });
+
+  it('sacrifices a skill, keeping it as a record or taking it off the sheet', async () => {
+    const { user, container } = await openGraph();
+    const card = cardFor(container, 'n1');
+
+    await user.click(
+      await within(card).findByRole('button', { name: '+ Event' })
+    );
+    await user.selectOptions(
+      within(card).getByRole('combobox', { name: 'Event type in Chapter One' }),
+      'skill_sacrifice'
+    );
+    await user.selectOptions(
+      within(card).getByRole('combobox', {
+        name: 'Skill the event changes in Chapter One',
+      }),
+      'skill-3'
+    );
+
+    const keep = within(card).getByRole('checkbox', {
+      name: 'Keep the sacrificed skill in Chapter One',
+    });
+    expect(keep).toBeChecked();
+    await user.click(keep);
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.find(call => call[0] === 'add_chapter_event')?.[1]
+      ).toMatchObject({
+        chapterId: 'n1',
+        actorId: 'char-2',
+        eventType: 'skill_sacrifice',
+        skillId: 'skill-3',
+        keepOnSheet: false,
+      });
+    });
   });
 });

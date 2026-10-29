@@ -25,6 +25,14 @@ export interface ChapterEventRow extends ChapterEvent {
   actorName: string;
 }
 
+// One skill the event popover can act on: the sheet row's id and the words the
+// author gave it. A skill in the trash or on somebody else's sheet is not offered.
+export interface ChapterSkillChoice {
+  id: string;
+  name: string;
+  rank: string | null;
+}
+
 export interface QuestBadge {
   questId: string;
   title: string;
@@ -94,9 +102,15 @@ export type NodeData = {
     actorId: string,
     eventType: ChapterEventType,
     details: string,
-    amount: number | null
+    amount: number | null,
+    skillId: string | null,
+    keepBaseSkill: boolean,
+    keepOnSheet: boolean
   ) => Promise<boolean>;
   onDeleteChapterEvent?: (event: ChapterEventRow) => void;
+  // Everybody's skill rows, by character, so the card can offer the skills of
+  // whichever member the event is for without reading a sheet itself.
+  chapterSkills?: Record<string, ChapterSkillChoice[]>;
   // The quests accepted or ended in this chapter, and where their badges lead.
   questBadges?: QuestBadge[];
   onOpenQuest?: (questId: string) => void;

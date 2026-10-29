@@ -341,10 +341,17 @@ a quantity where one applies. The rows sit on the card in the order they were
 logged, each with its icon, the character and the line: `⚡ +250 XP · Paid for a
 name at the toll gate`. XP pays into the chapter's income, a learned skill and an
 acquired item are written on the sheet and in the inventory through the same
-commands the sheets use, and a rank-up, evolution or sacrifice is the scene's
-record, because the sheet already holds the change. Every one of those writes is a
-named history step: **Undo** takes the event off the card and removes the award,
-skill or item it wrote, reopens a ticked objective, or removes an added name.
+commands the sheets use, and a rank-up, evolution or sacrifice changes the skill
+the form names. **Skill** lists that character's own rows, so the event edits the
+sheet rather than describing it: a rank-up raises the row's rank by one and
+records the upgrade (a rank ending in a number counts up; a word keeps its words,
+“Master” becoming “Master Rank 2”), an evolution creates the new skill, links it
+as a mutation of the base and leaves the base active unless **Keep the base
+skill** is unticked, and a sacrifice marks the row sacrificed — or deletes it when
+**Keep as a sacrificed record** is unticked. The skill events, links and removed
+rows are recorded on the chapter event (`chapter_events`, schema v34), so **Undo**
+puts the old rank back, removes the evolved skill and its link, or restores the
+deleted row exactly as it was, along with the award, skill or item the event wrote.
 
 **Chapter cast badges** — a chapter card names everyone present in that chapter:
 the point-of-view character and every cast member ticked as present, from the

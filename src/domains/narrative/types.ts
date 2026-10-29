@@ -46,8 +46,8 @@ export type ChapterEventType =
   | 'item_acquire';
 
 // One thing that happened in a scene, in the order it happened. XP, a learned
-// skill and an acquired item also write their real row onto the sheet; the other
-// kinds are the scene's own record, because the sheet holds those separately.
+// skill, an acquired item and a rank-up, evolution or sacrifice all write their
+// real row onto the sheet; an event with no skill is the older record-only line.
 export interface ChapterEvent {
   id: string;
   chapter_id: string;
@@ -62,6 +62,15 @@ export interface ChapterEvent {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // The skill a rank-up, evolution or sacrifice changed, and the rows it wrote.
+  skill_id?: string | null;
+  skill_event_id?: string | null;
+  new_skill_id?: string | null;
+  evolution_id?: string | null;
+  previous_rank?: string | null;
+  keep_base_skill?: boolean;
+  keep_on_sheet?: boolean;
+  skill_snapshot?: string | null;
 }
 
 // One objective on a chapter card: a line the author ticks off as the scene is

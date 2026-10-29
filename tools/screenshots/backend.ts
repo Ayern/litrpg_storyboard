@@ -147,6 +147,16 @@ const chapterOrThrow = (chapterId: string | null) => {
   return chapter;
 };
 
+// The rank a skill reaches when a scene raises it: the same arithmetic as the
+// database's bump_skill_rank, so a preview click answers like the app.
+const bumpRank = (rank: string | null | undefined) => {
+  const text = String(rank ?? '').trim();
+  if (!text) return 'Rank 1';
+  const digits = /(\d+)$/.exec(text);
+  if (!digits) return `${text} Rank 2`;
+  return `${text.slice(0, digits.index)}${Number(digits[1]) + 1}`;
+};
+
 // The kinds of event a chapter card can log, in the order the database allows.
 const CHAPTER_EVENT_TYPES = [
   'xp_award',
@@ -893,12 +903,45 @@ const writes: Record<string, (args: Row) => unknown> = {
       if (amount < 1) throw new Error('an acquired item is at least one');
     }
 
-    if (eventType !== 'xp_award' && eventType !== 'item_acquire' && !details) {
+    const skillEvent =
+      eventType === 'skill_rank_up' ||
+      eventType === 'skill_evolve' ||
+      eventType === 'skill_sacrifice';
+    const skillId = args.skillId ? String(args.skillId) : null;
+    const keepBaseSkill = args.keepBaseSkill !== false;
+    const keepOnSheet = args.keepOnSheet !== false;
+
+    if (skillEvent && skillId && eventType === 'skill_evolve' && !details) {
+      throw new Error('an evolution needs the new skill\'s name');
+    }
+
+    // A skill event written without a skill id is the older record-only line,
+    // exactly as the database accepts it.
+    if (!skillEvent && eventType !== 'xp_award' && eventType !== 'item_acquire' && !details) {
       throw new Error('an event needs a detail line');
+    }
+
+    if (skillEvent && !skillId && !details) {
+      throw new Error('an event needs a detail line');
+    }
+
+    const baseSkill = skillEvent
+      ? store.skills.find(
+          row => row.id === skillId && row.character_id === args.actorId
+        )
+      : null;
+
+    if (skillEvent && skillId && !baseSkill) {
+      throw new Error("that skill is not on this character's sheet");
     }
 
     const timestamp = now();
     let sourceId: string | null = null;
+    let skillEventId: string | null = null;
+    let newSkillId: string | null = null;
+    let evolutionId: string | null = null;
+    let previousRank: string | null = null;
+    let skillSnapshot: string | null = null;
 
     if (eventType === 'xp_award') {
       const award = writes.add_character_award({
@@ -927,6 +970,64 @@ const writes: Record<string, (args: Row) => unknown> = {
         user: args.user,
       }) as Row;
       sourceId = String(item.id);
+    } else if (eventType === 'skill_rank_up' && baseSkill) {
+      previousRank = baseSkill.rank ?? null;
+      const nextRank = bumpRank(baseSkill.rank);
+      baseSkill.rank = nextRank;
+      baseSkill.updated_at = timestamp;
+      const rise = writes.add_skill_event({
+        skillId: baseSkill.id,
+        kind: 'upgraded',
+        chapterId: args.chapterId,
+        rank: nextRank,
+        user: args.user,
+      }) as Row;
+      skillEventId = String(rise.id);
+      details = `${baseSkill.name} → ${nextRank}`;
+    } else if (eventType === 'skill_evolve' && baseSkill) {
+      const child = writes.add_skill({
+        characterId: args.actorId,
+        name: details,
+        effect: baseSkill.effect ?? null,
+        chapterId: args.chapterId,
+        nodeId: baseSkill.node_id ?? null,
+        user: args.user,
+      }) as Row;
+      newSkillId = String(child.id);
+      const link = writes.add_skill_evolution({
+        parentSkillId: baseSkill.id,
+        childSkillId: child.id,
+        evolutionType: 'mutation',
+        chapterId: args.chapterId,
+        notes: `“${baseSkill.name}” evolved in a scene.`,
+        user: args.user,
+      }) as Row;
+      evolutionId = String(link.id);
+
+      if (!keepBaseSkill) {
+        const retired = writes.add_skill_event({
+          skillId: baseSkill.id,
+          kind: 'sacrificed',
+          chapterId: args.chapterId,
+          user: args.user,
+        }) as Row;
+        skillEventId = String(retired.id);
+      }
+    } else if (eventType === 'skill_sacrifice' && baseSkill) {
+      if (keepOnSheet) {
+        const retired = writes.add_skill_event({
+          skillId: baseSkill.id,
+          kind: 'sacrificed',
+          chapterId: args.chapterId,
+          user: args.user,
+        }) as Row;
+        skillEventId = String(retired.id);
+      } else {
+        skillSnapshot = JSON.stringify({ ...baseSkill });
+        writes.delete_skill({ id: baseSkill.id });
+      }
+
+      details = baseSkill.name;
     }
 
     const position = store.chapterEvents
@@ -940,6 +1041,14 @@ const writes: Record<string, (args: Row) => unknown> = {
       details,
       amount,
       source_id: sourceId,
+      skill_id: skillId,
+      skill_event_id: skillEventId,
+      new_skill_id: newSkillId,
+      evolution_id: evolutionId,
+      previous_rank: previousRank,
+      keep_base_skill: keepBaseSkill,
+      keep_on_sheet: keepOnSheet,
+      skill_snapshot: skillSnapshot,
       position,
       created_by: args.user ?? 'Ada',
       created_at: timestamp,
@@ -953,6 +1062,32 @@ const writes: Record<string, (args: Row) => unknown> = {
   delete_chapter_event: args => {
     const event = store.chapterEvents.find(row => row.id === args.id);
     if (!event) return null;
+
+    if (event.skill_id) {
+      if (event.event_type === 'skill_rank_up') {
+        const skill = store.skills.find(row => row.id === event.skill_id);
+        if (skill) {
+          skill.rank = event.previous_rank ?? null;
+          skill.updated_at = now();
+        }
+      } else if (event.event_type === 'skill_evolve') {
+        if (event.evolution_id) {
+          store.evolutions = store.evolutions.filter(
+            row => row.id !== event.evolution_id
+          );
+        }
+        if (event.new_skill_id) writes.delete_skill({ id: event.new_skill_id });
+      } else if (event.event_type === 'skill_sacrifice' && event.skill_snapshot) {
+        const restored = JSON.parse(String(event.skill_snapshot)) as Row;
+        store.skills.push(restored);
+      }
+
+      if (event.skill_event_id) {
+        store.skillEvents = store.skillEvents.filter(
+          row => row.id !== event.skill_event_id
+        );
+      }
+    }
 
     if (event.source_id) {
       if (event.event_type === 'xp_award') {

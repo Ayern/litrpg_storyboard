@@ -4485,6 +4485,21 @@ body {
   letter-spacing: 0.05em;
 }
 
+/* A flag on the event form, such as whether an evolution keeps its base skill. */
+.chapter-popover-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #c9c4dc;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.chapter-popover-toggle input[type='checkbox'] {
+  margin: 0;
+  accent-color: #a78bfa;
+}
+
 .chapter-popover select,
 .chapter-popover input[type='number'],
 .chapter-popover input[type='text'],

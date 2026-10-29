@@ -818,6 +818,7 @@ fn get_story_chapter_events(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn add_chapter_event(
     db: tauri::State<'_, Db>,
     chapter_id: String,
@@ -825,10 +826,23 @@ fn add_chapter_event(
     event_type: String,
     details: String,
     amount: Option<i64>,
+    skill_id: Option<String>,
+    keep_base_skill: Option<bool>,
+    keep_on_sheet: Option<bool>,
     user: String,
 ) -> Result<ChapterEvent, String> {
-    db.add_chapter_event(chapter_id, actor_id, event_type, details, amount, user)
-        .map_err(|e| e.to_string())
+    db.add_chapter_event(
+        chapter_id,
+        actor_id,
+        event_type,
+        details,
+        amount,
+        skill_id,
+        keep_base_skill,
+        keep_on_sheet,
+        user,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
