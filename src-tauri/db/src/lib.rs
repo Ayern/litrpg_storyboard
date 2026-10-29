@@ -7426,6 +7426,12 @@ impl Db {
                    WHERE sn.deleted_at IS NOT NULL
                      AND (s.id = e.source_id OR s.id = e.skill_id
                           OR s.id = e.new_skill_id))
+                -- The same for an item: an acquisition that named a trashed
+                -- item card is a hold nobody has while the card is away.
+                AND NOT EXISTS (
+                  SELECT 1 FROM character_inventory i
+                    JOIN nodes i_n ON i_n.id = i.node_id
+                   WHERE i_n.deleted_at IS NOT NULL AND i.id = e.source_id)
               ORDER BY n.chapter_seq, e.position, e.created_at, e.id",
         )?;
         let rows = stmt.query_map(params![story_id], chapter_event_row)?;
@@ -8775,6 +8781,13 @@ impl Db {
              JOIN characters c ON c.id = i.character_id
              JOIN stories st ON st.id = c.story_id
              WHERE i.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+               -- An item card is the item's identity, the way a skill card is a
+               -- skill's: while the card is in the trash the item is off the
+               -- sheet, and restoring the card puts the row back with its
+               -- quantity, effect and chapter.
+               AND (i.node_id IS NULL
+                    OR EXISTS (SELECT 1 FROM nodes n
+                                WHERE n.id = i.node_id AND n.deleted_at IS NULL))
              ORDER BY i.name COLLATE NOCASE",
         )?;
 
@@ -8795,6 +8808,11 @@ impl Db {
              JOIN characters c ON c.id = i.character_id
              JOIN stories st ON st.id = c.story_id
              WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+               -- An item whose card is in the trash is off its sheets until the
+               -- card comes back, exactly as the character's own read has it.
+               AND (i.node_id IS NULL
+                    OR EXISTS (SELECT 1 FROM nodes n
+                                WHERE n.id = i.node_id AND n.deleted_at IS NULL))
              ORDER BY i.name COLLATE NOCASE",
         )?;
 
@@ -12395,10 +12413,11 @@ impl Db {
             )?;
         }
 
-        // A skill card takes its skills with it now that it is gone for good. On
-        // the way to the trash they only left the sheets; a purge is the end of
-        // them, so nothing is left pointing at a card that no longer exists.
-        purge_skill_cards(&tx, id)?;
+        // A skill card takes its skills and an item card its items with it now
+        // that it is gone for good. On the way to the trash they only left the
+        // sheets; a purge is the end of them, so nothing is left pointing at a
+        // card that no longer exists.
+        purge_card_rows(&tx, id)?;
 
         // The chapter is gone, so its notes go with it rather than lingering in
         // the trash with nothing left to attach to.
@@ -12579,10 +12598,10 @@ impl Db {
                     },
                 )?;
 
-                // A card purged for good takes the skills it named with it: on
-                // the way to the trash they only left the sheets.
+                // A card purged for good takes the skills or items it named
+                // with it: on the way to the trash they only left the reads.
                 if table == "nodes" {
-                    purge_skill_cards(&tx, &id)?;
+                    purge_card_rows(&tx, &id)?;
                 }
 
                 // `table` is one of our own literals, never user input.
@@ -18722,11 +18741,18 @@ fn expired_rows(
     rows.collect()
 }
 
-/// Removes the skills a skill card owned, for the purge that deletes the card for
-/// good. While the card sits in the trash its skills are only off the sheets, so
-/// restoring it brings them back; a purge has nothing left to restore them to.
-/// The chapter rows that named the skills go first, because they are plain text
-/// references rather than foreign keys.
+/// Removes every row a card owned, for the purge that deletes the card for good.
+/// A node is one kind, so asking for each kind is harmless and leaves one place
+/// to add the next one. While the card sits in the trash its rows are only off
+/// the read paths, so restoring it brings them back; a purge has nothing left to
+/// restore them to.
+fn purge_card_rows(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResult<()> {
+    purge_skill_cards(tx, node_id)?;
+    purge_item_cards(tx, node_id)
+}
+
+/// Removes the skills a skill card owned. The chapter rows that named the skills
+/// go first, because they are plain text references rather than foreign keys.
 fn purge_skill_cards(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResult<()> {
     let skill_ids = {
         let mut stmt = tx.prepare("SELECT id FROM character_skills WHERE node_id = ?1")?;
@@ -18744,6 +18770,31 @@ fn purge_skill_cards(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteRes
         tx.execute(
             "DELETE FROM character_skills WHERE id = ?1",
             params![&skill_id],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Removes the items an item card owned, on the same terms as a skill card's
+/// skills: off the sheets while it sits in the trash, gone with the card when it
+/// is purged. The scene rows that named the items go first, again because they
+/// are plain text references rather than foreign keys.
+fn purge_item_cards(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResult<()> {
+    let item_ids = {
+        let mut stmt = tx.prepare("SELECT id FROM character_inventory WHERE node_id = ?1")?;
+        let rows = stmt.query_map(params![node_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<SqliteResult<Vec<_>>>()?
+    };
+
+    for item_id in item_ids {
+        tx.execute(
+            "DELETE FROM chapter_events WHERE source_id = ?1",
+            params![&item_id],
+        )?;
+        tx.execute(
+            "DELETE FROM character_inventory WHERE id = ?1",
+            params![&item_id],
         )?;
     }
 
@@ -30788,6 +30839,139 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_trashed_item_card_takes_the_item_off_the_sheet_and_the_scene() {
+        let (db, story, character, chapter, card) = inventory_story();
+
+        // The scene's acquisition writes the item, and the card is then given its
+        // identity by pointing the row at it, which is what the sheet does when
+        // an author picks the card an item came from.
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "item_acquire".into(),
+                "Iron Sword".into(),
+                Some(2),
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let item_id = event.source_id.clone().unwrap();
+        db.update_inventory_item(
+            item_id.clone(),
+            "Iron Sword".into(),
+            Some("Rare".into()),
+            2,
+            None,
+            Some(chapter.id.clone()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+        // An item with no card is typed straight onto a sheet and never moves.
+        let loose = db
+            .add_inventory_item(
+                character.id.clone(),
+                "Torch".into(),
+                None,
+                1,
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        assert_eq!(db.list_inventory(&character.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_inventory(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 1);
+
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+
+        // The card is the item's identity: while it is in the trash neither the
+        // sheet nor the chapter ledger is showing a hold nobody has.
+        let sheet = db.list_inventory(&character.id).unwrap();
+        assert_eq!(sheet.len(), 1);
+        assert_eq!(sheet[0].id, loose.id);
+        assert_eq!(db.list_story_inventory(&story.id).unwrap().len(), 1);
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+
+        db.restore_node(&card.id, "Ada".into()).unwrap();
+
+        // Restoring the card puts the same row back, quantity and chapter intact.
+        let sheet = db.list_inventory(&character.id).unwrap();
+        assert_eq!(sheet.len(), 2);
+        let back = sheet.iter().find(|row| row.id == item_id).unwrap();
+        assert_eq!(back.quantity, 2);
+        assert_eq!(back.rarity.as_deref(), Some("Rare"));
+        assert_eq!(back.chapter_id.as_deref(), Some(chapter.id.as_str()));
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn purging_an_item_card_deletes_its_items_for_good() {
+        let (db, story, character, chapter, card) = inventory_story();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "item_acquire".into(),
+                "Iron Sword".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let item_id = event.source_id.clone().unwrap();
+        db.update_inventory_item(
+            item_id.clone(),
+            "Iron Sword".into(),
+            None,
+            1,
+            None,
+            Some(chapter.id.clone()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+        db.purge_node(&card.id, "Ada".into()).unwrap();
+
+        // Nothing is left to restore, so the rows are gone rather than waiting
+        // to reappear, blank, if a card with that id ever came back.
+        let guard = db.conn().unwrap();
+        let items: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM character_inventory WHERE id = ?1",
+                params![&item_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let events: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM chapter_events WHERE source_id = ?1",
+                params![&item_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(guard);
+
+        assert_eq!(items, 0);
+        assert_eq!(events, 0);
+        assert!(db.list_story_inventory(&story.id).unwrap().is_empty());
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
     }
 
     #[test]

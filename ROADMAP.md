@@ -244,6 +244,29 @@ transaction, leaving each holder's rank and chapter alone. A rename that would
 collide with another skill on a holder's sheet is refused as a whole, and the
 open board and sheet follow the save without reopening the story. **S–M**
 
+**4e. A card's life governs what it named.** **Done.** A skill row that names a
+card is only read while that card is live: `list_skills` and `list_story_skills`
+join to a card with no `deleted_at`, and `list_story_chapter_events` drops any
+event naming a skill whose card is in the Trash, so a held skill and the chapter
+that granted it arrive and leave together. An item row follows the same rule: a
+sheet keeps an `item` card's item only while the card is live, and the scene that
+announced the acquisition leaves the ledger with it, so both kinds of card that
+name a row answer the Trash the same way. A skill or item typed straight onto a
+sheet has no card and is never affected. Nothing is copied or rewritten on the
+way down, so restoring the card — Undo, or Trash → **Restore** — brings the same
+rows back with their rank or quantity, chapter and history, and no second undo
+step. A purge is the end of it: `purge_card_rows` runs before the node row goes
+and removes the chapter rows naming those skills and items, then the rows
+themselves, so a purged card cannot leave anything pointing at a node that is
+gone. The board, the open sheet and the ledgers re-read on delete, undo, redo and
+restore rather than waiting for a tab switch. Remaining is the same question for
+the other card kinds: a `quest` card and its contract are separate rows that
+never ask about each other, `faction` standings are deliberately read with
+trashed cards included so a standing outlives a card, and a `character` card is
+only a shortcut to a cast member expected to outlive it. A card copied off the
+rail starts with no owner and no chapter, so it owns nothing to lose until an
+author gives it a holder. **M**
+
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a
 confirmation. The chosen file is copied to a staging file, opened and migrated

@@ -489,6 +489,14 @@ an effect and the chapters they were acquired and lost in, and **Currency** is a
 separate named ledger — marks, credits, mana crystals — with an amount and no
 exchange rate. Nothing here does arithmetic between currencies, on purpose.
 
+A row can also name the **item card** it belongs to, which is how one card says who
+carries it. A card's life is the item's life, the way a skill card's is a skill's:
+delete the card on the board and the item leaves every sheet that carries it and the
+scene that announced it, waiting in the Trash until **Undo**, or **Restore** in the
+Trash tab, brings it back with its quantity, rarity and chapters as they were.
+**Delete** there for good takes the item with it. An item typed straight onto a
+sheet has no card and never moves.
+
 ## 9. What a line between two cards means
 
 Click any line on the board and it opens for editing.

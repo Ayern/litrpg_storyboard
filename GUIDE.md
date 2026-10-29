@@ -558,23 +558,27 @@ A cast chip is the one entry that is not a copy: dragging one creates a node alr
 linked to that person, or relinks the card it is dropped on. That difference is why
 the cast sits in its own section rather than among the tiles.
 
-### A skill card owns its skills
+### A card owns what it named
 
 Deleting a node is still only a soft delete: `delete_node` stamps `deleted_at` and
-nothing else. For a skill card that is enough to take the skill with it, because the
-reads that feed the sheets and the ledger join the card back to a live node —
-`list_skills` and `list_story_skills` keep a row only while `s.node_id` is null (a
-skill typed on a sheet) or its card is live, and `list_story_chapter_events` drops an
-event that names a skill whose card is in the trash. A restore in the Trash tab (or
-an **Undo**) clears `deleted_at`, the joins find the card again, and the holder comes
-back with its rank, chapter and history untouched. Nothing is copied and no second
-undo step is needed.
+nothing else. For a skill card, and for an item card, that is enough to take its rows
+with it, because the reads that feed the sheets and the ledger join the card back to
+a live node. `list_skills` and `list_story_skills` keep a row only while `s.node_id`
+is null (a skill typed on a sheet) or its card is live; `list_inventory` and
+`list_story_inventory` keep an item the same way; and `list_story_chapter_events`
+drops an event that names a skill whose card is in the trash, or an acquisition whose
+`source_id` is an item on a trashed card. A restore in the Trash tab (or an
+**Undo**) clears `deleted_at`, the joins find the card again, and the holder comes
+back with its rank or quantity, chapter and history untouched. Nothing is copied and
+no second undo step is needed.
 
-A purge is the end of that: `purge_skill_cards` deletes the chapter rows that named
-the skills, then the skills themselves (their events and evolution links cascade),
-so a purged card cannot leave rows pointing at a node that no longer exists. The
-same helper runs from `purge_node` and from the retention sweep in
-`purge_expired`. The screenshot harness mirrors these rules in
+A purge is the end of that: `purge_card_rows` asks `purge_skill_cards` and
+`purge_item_cards` for whatever the card owned, deleting the chapter rows that named
+the skills or items first and then the rows themselves (a skill's events and
+evolution links cascade), so a purged card cannot leave anything pointing at a node
+that no longer exists. The same helper runs from `purge_node` and from the retention
+sweep in `purge_expired`, and it is the one place to add the next kind of card that
+names a row. The screenshot harness mirrors these rules in
 `tools/screenshots/backend.ts`, so the preview shows the same sheets the app does.
 
 ---

@@ -1131,23 +1131,30 @@ function App() {
     }
   }, [setNodes, setEdges]);
 
-  // A skill card is the skill's identity, so a card leaving the board takes its
-  // skills off the sheets and out of the scenes, and puts them back when the
-  // card returns. Both reads are refreshed wherever the board is re-read, so the
-  // sheet and the chapter card never show a skill the board has taken away.
-  const refreshSkillRows = useCallback(
+  // A skill card is the skill's identity and an item card is the item's, so a
+  // card leaving the board takes its skills and items off the sheets and out of
+  // the scenes, and puts them back when the card returns. Every read is
+  // refreshed wherever the board is re-read, so the sheet and the chapter card
+  // never show a hold the board has taken away.
+  const refreshCardRows = useCallback(
     async (storyId: string) => {
-      const [skills, chapterEvents] = await Promise.all([
+      const [skills, chapterEvents, inventory] = await Promise.all([
         skillsApi.getStorySkills(storyId),
         narrativeApi.getStoryChapterEvents(storyId),
+        inventoryApi.getStoryInventory(storyId),
       ]);
 
       setStorySkills(skills ?? []);
       setStoryChapterEvents(chapterEvents ?? []);
+      setStoryInventory(inventory ?? []);
 
       if (selectedCharacterId) {
-        const rows = await skillsApi.getCharacterSkills(selectedCharacterId);
-        setCharacterSkills(rows ?? []);
+        const [skillRows, itemRows] = await Promise.all([
+          skillsApi.getCharacterSkills(selectedCharacterId),
+          inventoryApi.getCharacterInventory(selectedCharacterId),
+        ]);
+        setCharacterSkills(skillRows ?? []);
+        setCharacterInventory(itemRows ?? []);
       }
     },
     [selectedCharacterId]
@@ -1171,10 +1178,10 @@ function App() {
       // author has not saved; undo does not touch unsaved text.
       followStoredRows({ nodes: dbNodes, edges: dbEdges });
 
-      // A card that came back from the trash brings its skills with it.
-      await refreshSkillRows(storyId);
+      // A card that came back from the trash brings its skills and items with it.
+      await refreshCardRows(storyId);
     },
-    [setNodes, setEdges, followStoredRows, refreshSkillRows]
+    [setNodes, setEdges, followStoredRows, refreshCardRows]
   );
 
   // This session's undo and redo stacks live in the history domain. What a walk
@@ -1719,10 +1726,10 @@ function App() {
     if (currentStory) {
       await loadStory(currentStory);
 
-      // A restored skill card brings its skills back onto the sheets, and a
+      // A restored card brings its skills and items back onto the sheets, and a
       // purged one takes them away for good: the open sheet is read again either
       // way rather than left showing the list it had a moment ago.
-      await refreshSkillRows(currentStory.id);
+      await refreshCardRows(currentStory.id);
 
       const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
       setCharacters(loaded);
@@ -1743,7 +1750,7 @@ function App() {
   const purgedFromTrash = async (item: DeletedItem) => {
     if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
       await loadStory(currentStory);
-      await refreshSkillRows(currentStory.id);
+      await refreshCardRows(currentStory.id);
     }
   };
 
@@ -5382,9 +5389,9 @@ function App() {
           await canvasApi.deleteNode(node.id, actor);
         }
 
-        // A skill card takes its skills off the sheets with it, so those lists
-        // are read again rather than left naming a skill nobody holds now.
-        await refreshSkillRows(currentStory.id);
+        // A skill or item card takes its rows off the sheets with it, so those
+        // lists are read again rather than left naming a hold nobody has now.
+        await refreshCardRows(currentStory.id);
 
         recordStep({
           label:
@@ -5416,7 +5423,7 @@ function App() {
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, edges, loadStory, setEdges, recordStep, refreshSkillRows]
+    [currentStory, actor, edges, loadStory, setEdges, recordStep, refreshCardRows]
   );
 
   const removeEdges = useCallback(

@@ -112,13 +112,27 @@ const skillIsOnTheBoard = (skill: Row) =>
 const hiddenSkillIds = () =>
   new Set(store.skills.filter(skill => !skillIsOnTheBoard(skill)).map(skill => skill.id));
 
-const chapterEventIsShown = (event: Row) => {
-  const hidden = hiddenSkillIds();
-  if (hidden.size === 0) return true;
+// An item follows the same rule: an item card is the item's identity, so a card
+// in the trash takes the item off the sheet and out of the scene that named it.
+const itemIsOnTheBoard = (item: Row) =>
+  !item.node_id || store.nodes.some(node => node.id === item.node_id);
 
-  return ![event.source_id, event.skill_id, event.new_skill_id].some(
-    skillId => typeof skillId === 'string' && hidden.has(skillId)
-  );
+const hiddenItemIds = () =>
+  new Set(store.inventory.filter(item => !itemIsOnTheBoard(item)).map(item => item.id));
+
+const chapterEventIsShown = (event: Row) => {
+  const skills = hiddenSkillIds();
+  const items = hiddenItemIds();
+
+  if (
+    [event.source_id, event.skill_id, event.new_skill_id].some(
+      skillId => typeof skillId === 'string' && skills.has(skillId)
+    )
+  ) {
+    return false;
+  }
+
+  return !(typeof event.source_id === 'string' && items.has(event.source_id));
 };
 
 const characterState = (characterId: string, chapterId: string): Row =>
@@ -573,9 +587,13 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_character_state_at_chapter: args =>
     characterState(args.characterId, args.chapterId),
 
-  get_story_inventory: () => store.inventory,
+  // The same rule for an item card: the item is off the sheets while its card
+  // sits in the trash, exactly as the database reads it.
+  get_story_inventory: () => store.inventory.filter(itemIsOnTheBoard),
   get_character_inventory: args =>
-    store.inventory.filter(row => row.character_id === args.characterId),
+    store.inventory.filter(
+      row => row.character_id === args.characterId && itemIsOnTheBoard(row)
+    ),
   get_character_currency: args => store.currency[args.characterId] ?? [],
   get_character_attributes: args => store.attributes[args.characterId] ?? [],
 

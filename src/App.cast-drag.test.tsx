@@ -699,3 +699,30 @@ describe('deleting a skill card', () => {
     );
   });
 });
+
+describe('deleting an item card', () => {
+  beforeEach(() => {
+    rows = [
+      ...rows,
+      { id: 'n-item', label: 'Tooth key', type: 'item', characterId: null },
+    ];
+  });
+
+  it('reads the sheets again, so the item leaves them with the card', async () => {
+    const user = userEvent.setup();
+    await canvasAndRail();
+
+    const readsBefore = calls.filter(call => call.command === 'get_story_inventory').length;
+
+    await user.click(screen.getByRole('button', { name: 'delete n-item' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_node')).toEqual({ id: 'n-item', user: 'You' })
+    );
+    await waitFor(() =>
+      expect(
+        calls.filter(call => call.command === 'get_story_inventory').length
+      ).toBe(readsBefore + 1)
+    );
+  });
+});
