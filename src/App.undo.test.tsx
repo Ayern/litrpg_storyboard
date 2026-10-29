@@ -605,7 +605,9 @@ describe('undo and redo', () => {
 
     await user.type(screen.getByPlaceholderText('Node label'), 'Epilogue');
     await user.click(screen.getByRole('button', { name: 'Add Node' }));
-    expect(screen.getByRole('button', { name: 'Epilogue' })).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('canvas')).getByRole('button', { name: 'Epilogue' })
+    ).toBeInTheDocument();
 
     await user.click(undoButton());
 
@@ -613,7 +615,9 @@ describe('undo and redo', () => {
       expect(lastCall('delete_node')).toEqual({ id: 'n-new', user: 'You' })
     );
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Epilogue' })).not.toBeInTheDocument()
+      expect(
+        within(screen.getByTestId('canvas')).queryByRole('button', { name: 'Epilogue' })
+      ).not.toBeInTheDocument()
     );
 
     await user.click(screen.getByRole('button', { name: 'connect two cards' }));

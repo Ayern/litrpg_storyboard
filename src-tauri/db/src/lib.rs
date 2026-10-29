@@ -2942,6 +2942,12 @@ impl Db {
              JOIN characters c ON c.id = s.character_id
              JOIN stories st ON st.id = c.story_id
              WHERE s.character_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+               -- A skill card is the skill's identity: while the card is in the
+               -- trash the skill is off the sheets, and restoring the card puts
+               -- it back whole, with its rank, chapter and history.
+               AND (s.node_id IS NULL
+                    OR EXISTS (SELECT 1 FROM nodes n
+                                WHERE n.id = s.node_id AND n.deleted_at IS NULL))
              ORDER BY s.name COLLATE NOCASE",
         )?;
 
@@ -2961,6 +2967,11 @@ impl Db {
              JOIN characters c ON c.id = s.character_id
              JOIN stories st ON st.id = c.story_id
              WHERE c.story_id = ?1 AND c.deleted_at IS NULL AND st.deleted_at IS NULL
+               -- A skill whose card is in the trash is off its sheets until the
+               -- card comes back, exactly as the character's own read has it.
+               AND (s.node_id IS NULL
+                    OR EXISTS (SELECT 1 FROM nodes n
+                                WHERE n.id = s.node_id AND n.deleted_at IS NULL))
              ORDER BY s.name COLLATE NOCASE",
         )?;
 
@@ -7406,6 +7417,15 @@ impl Db {
                JOIN stories st ON st.id = n.story_id
               WHERE n.story_id = ?1 AND n.node_type = 'chapter'
                 AND n.deleted_at IS NULL AND st.deleted_at IS NULL
+                -- An event that names a skill whose card is in the trash is not
+                -- on the scene any more: the sheet does not hold the skill, so
+                -- the ledger would be claiming something nobody has.
+                AND NOT EXISTS (
+                  SELECT 1 FROM character_skills s
+                    JOIN nodes sn ON sn.id = s.node_id
+                   WHERE sn.deleted_at IS NOT NULL
+                     AND (s.id = e.source_id OR s.id = e.skill_id
+                          OR s.id = e.new_skill_id))
               ORDER BY n.chapter_seq, e.position, e.created_at, e.id",
         )?;
         let rows = stmt.query_map(params![story_id], chapter_event_row)?;
@@ -12375,6 +12395,11 @@ impl Db {
             )?;
         }
 
+        // A skill card takes its skills with it now that it is gone for good. On
+        // the way to the trash they only left the sheets; a purge is the end of
+        // them, so nothing is left pointing at a card that no longer exists.
+        purge_skill_cards(&tx, id)?;
+
         // The chapter is gone, so its notes go with it rather than lingering in
         // the trash with nothing left to attach to.
         tx.execute("DELETE FROM nodes WHERE parent_node_id = ?1", params![id])?;
@@ -12553,6 +12578,12 @@ impl Db {
                         changed_by: RETENTION_ACTOR,
                     },
                 )?;
+
+                // A card purged for good takes the skills it named with it: on
+                // the way to the trash they only left the sheets.
+                if table == "nodes" {
+                    purge_skill_cards(&tx, &id)?;
+                }
 
                 // `table` is one of our own literals, never user input.
                 tx.execute(&format!("DELETE FROM {table} WHERE id = ?1"), params![&id])?;
@@ -18689,6 +18720,34 @@ fn expired_rows(
         Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     })?;
     rows.collect()
+}
+
+/// Removes the skills a skill card owned, for the purge that deletes the card for
+/// good. While the card sits in the trash its skills are only off the sheets, so
+/// restoring it brings them back; a purge has nothing left to restore them to.
+/// The chapter rows that named the skills go first, because they are plain text
+/// references rather than foreign keys.
+fn purge_skill_cards(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResult<()> {
+    let skill_ids = {
+        let mut stmt = tx.prepare("SELECT id FROM character_skills WHERE node_id = ?1")?;
+        let rows = stmt.query_map(params![node_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<SqliteResult<Vec<_>>>()?
+    };
+
+    for skill_id in skill_ids {
+        tx.execute(
+            "DELETE FROM chapter_events
+              WHERE source_id = ?1 OR skill_id = ?1 OR new_skill_id = ?1",
+            params![&skill_id],
+        )?;
+        // The skill's own history and evolution links cascade with the row.
+        tx.execute(
+            "DELETE FROM character_skills WHERE id = ?1",
+            params![&skill_id],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn table_exists(conn: &Connection, table: &str) -> SqliteResult<bool> {
@@ -25733,6 +25792,116 @@ mod tests {
         let board = db.list_story_skills(&story.id).unwrap();
         assert_eq!(board.len(), 1);
         assert_eq!(board[0].character_id, character.id);
+    }
+
+    #[test]
+    fn a_trashed_skill_card_takes_the_skill_off_the_sheet_and_the_scene() {
+        let (db, story, character, chapter, card) = skill_story();
+
+        // The scene's learn event writes the skill, and the card is then given
+        // its identity by pointing the row at it, which is what the board does
+        // when a holder is added from a card.
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_learn".into(),
+                "Fireball".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill_id = event.source_id.clone().unwrap();
+        db.update_skill(
+            skill_id.clone(),
+            "Fireball".into(),
+            Some("Rank 2".into()),
+            None,
+            Some(chapter.id.clone()),
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 1);
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 1);
+
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+
+        // The card is the skill's identity: while it is in the trash neither the
+        // sheet nor the chapter ledger is showing a skill nobody holds.
+        assert!(db.list_story_skills(&story.id).unwrap().is_empty());
+        assert!(db.list_skills(&character.id).unwrap().is_empty());
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+
+        db.restore_node(&card.id, "Ada".into()).unwrap();
+
+        // Restoring the card puts the same row back, rank and chapter intact.
+        let skills = db.list_story_skills(&story.id).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, skill_id);
+        assert_eq!(skills[0].rank.as_deref(), Some("Rank 2"));
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn purging_a_skill_card_deletes_its_skills_for_good() {
+        let (db, story, character, chapter, card) = skill_story();
+
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "skill_learn".into(),
+                "Fireball".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let skill_id = event.source_id.clone().unwrap();
+        db.update_skill(
+            skill_id.clone(),
+            "Fireball".into(),
+            None,
+            None,
+            Some(chapter.id.clone()),
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+        db.purge_node(&card.id, "Ada".into()).unwrap();
+
+        // Nothing is left to restore, so the rows are gone rather than waiting
+        // to reappear, blank, when the card is purged.
+        let guard = db.conn().unwrap();
+        let skills: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM character_skills WHERE id = ?1",
+                params![&skill_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let events: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM chapter_events WHERE source_id = ?1",
+                params![&skill_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(guard);
+
+        assert_eq!(skills, 0);
+        assert_eq!(events, 0);
+        assert!(db.list_story_skills(&story.id).unwrap().is_empty());
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
     }
 
     #[test]

@@ -11,7 +11,7 @@ import { GraphTab } from './GraphTab';
 import type { GraphTabProps } from './GraphTab';
 import { allLayers, CHAPTER_SPINE_LAYERS } from './layers';
 import type { GraphLayers } from './layers';
-import { CAST_DRAG_TYPE, NODE_STAT_BADGES, edgeKindClass } from './types';
+import { CARD_DRAG_TYPE, CAST_DRAG_TYPE, NODE_STAT_BADGES, edgeKindClass } from './types';
 import type { EdgeData, NodeData, NodeType } from './types';
 
 // The Graph tab renders what the app holds and hands every keystroke back
@@ -35,6 +35,15 @@ vi.mock('reactflow', async () => {
     React.createElement('div', null, children as React.ReactNode);
   const Board = (props: Record<string, unknown>) => {
     boardProps.current = props;
+
+    // The one thing only the library can hand over: the instance a drop asks for
+    // the board's own coordinates. An unzoomed board maps screen to itself.
+    React.useEffect(() => {
+      (props.onInit as ((instance: unknown) => void) | undefined)?.({
+        screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+      });
+    }, [props.onInit]);
+
     return React.createElement('div', null, props.children as React.ReactNode);
   };
 
@@ -155,6 +164,7 @@ function canvasSpies() {
     setDropTargetNodeId: vi.fn(),
     nodeUnderPointer: vi.fn(() => null),
     dropCastMember: vi.fn(),
+    copyCardFromRail: vi.fn(),
     closeEdge: vi.fn(),
     saveEdge: vi.fn(),
     closeNodeInspector: vi.fn(),
@@ -247,6 +257,7 @@ function props(spies: Spies, start: Start = {}, overrides: Partial<GraphTabProps
     draggingCastId: null,
     setDraggingCastId: spies.setDraggingCastId,
     setDropTargetNodeId: spies.setDropTargetNodeId,
+    copyCardFromRail: spies.copyCardFromRail,
     nodeUnderPointer: spies.nodeUnderPointer,
     dropCastMember: spies.dropCastMember,
 
@@ -645,6 +656,88 @@ describe('the graph tab', () => {
       open({ characters: [mira], draggingCastId: mira.id });
 
       expect(document.querySelector('.graph-canvas.drop-ready')).not.toBeNull();
+    });
+  });
+
+  describe('the cards list', () => {
+    const item = node('n-item', 'Tooth key', 'item');
+
+    it('names the story’s cards once, however many copies are on the board', () => {
+      open({
+        nodes: [
+          item,
+          node('n-item-2', 'Tooth key', 'item'),
+          node('n-loc', 'The Vault', 'location'),
+        ],
+      });
+
+      const items = screen.getByRole('region', { name: 'Items' });
+      expect(within(items).getAllByText('Tooth key')).toHaveLength(1);
+      expect(screen.getByRole('region', { name: 'Locations' })).toBeInTheDocument();
+    });
+
+    it('accepts the drag as a copy, so the browser lets the card land', () => {
+      open({ nodes: [item] });
+
+      const canvas = document.querySelector('.graph-canvas') as HTMLElement;
+      const dataTransfer = {
+        types: [CARD_DRAG_TYPE],
+        effectAllowed: 'copy',
+        dropEffect: 'none',
+        getData: () => '',
+        setData: () => {},
+      };
+      const dragOver = new MouseEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(dragOver, 'dataTransfer', { value: dataTransfer });
+      fireEvent(canvas, dragOver);
+
+      // The tile offers a copy, so the board asks for a copy: a board asking for
+      // a move refuses a drag that only offers to copy it.
+      expect(dragOver.defaultPrevented).toBe(true);
+      expect(dataTransfer.dropEffect).toBe('copy');
+    });
+
+    it('asks for a copy at the point the tile was let go', () => {
+      const spies = open({ nodes: [item] });
+      const tile = screen.getByTitle('Drag another Tooth key card onto the board');
+      const payload: Record<string, string> = {};
+
+      fireEvent.dragStart(tile, {
+        dataTransfer: {
+          types: [],
+          setData: (type: string, value: string) => {
+            payload[type] = value;
+          },
+          getData: (type: string) => payload[type] ?? '',
+          effectAllowed: '',
+          dropEffect: '',
+        },
+      });
+
+      expect(payload[CARD_DRAG_TYPE]).toBe(item.id);
+
+      const canvas = document.querySelector('.graph-canvas') as HTMLElement;
+      const drop = new MouseEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 240,
+        clientY: 120,
+      });
+      Object.defineProperty(drop, 'dataTransfer', {
+        value: {
+          types: [CARD_DRAG_TYPE],
+          getData: (type: string) => payload[type] ?? '',
+          effectAllowed: '',
+          dropEffect: '',
+        },
+      });
+      fireEvent(canvas, drop);
+
+      // The board's own coordinates, so it lands under the pointer at any zoom.
+      expect(spies.copyCardFromRail).toHaveBeenCalledWith(item.id, { x: 240, y: 120 });
     });
   });
 

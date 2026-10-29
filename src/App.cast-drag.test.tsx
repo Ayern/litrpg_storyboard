@@ -21,13 +21,30 @@ vi.mock('reactflow', async () => {
   interface CanvasProps {
     nodes?: { id: string; data: unknown; className?: string }[];
     nodeTypes?: Record<string, React.ComponentType<Record<string, unknown>>>;
+    onInit?: (instance: unknown) => void;
+    onNodesDelete?: (nodes: unknown[]) => void;
     children?: unknown;
   }
 
   // The wrapper mirrors React Flow's own: the drop handler reads a node's id
-  // from it, and a relink target is marked with a class on it.
-  const Canvas = ({ nodes = [], nodeTypes = {}, children }: CanvasProps) => {
+  // from it, and a relink target is marked with a class on it. `onInit` hands the
+  // app the one method a drop asks for, so a placement lands where the pointer
+  // was; the board is unzoomed here, so screen and board coordinates agree. The
+  // delete button stands in for React Flow's Delete key.
+  const Canvas = ({
+    nodes = [],
+    nodeTypes = {},
+    onInit,
+    onNodesDelete,
+    children,
+  }: CanvasProps) => {
     const Card = nodeTypes.default;
+
+    React.useEffect(() => {
+      onInit?.({
+        screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+      });
+    }, [onInit]);
 
     return React.createElement(
       'div',
@@ -52,6 +69,16 @@ vi.mock('reactflow', async () => {
                 dragging: false,
               })
             : null
+        )
+      ),
+      nodes.map(node =>
+        React.createElement(
+          'button',
+          {
+            key: `delete-${node.id}`,
+            onClick: () => onNodesDelete?.([node]),
+          },
+          `delete ${node.id}`
         )
       ),
       children as React.ReactNode
@@ -156,9 +183,9 @@ function lastCall(command: string) {
 
 // jsdom has no DataTransfer, so the drag payload is a plain object with the two
 // methods the app uses.
-function dragPayload(id?: string) {
+function dragPayload(id?: string, type = 'application/x-litrpg-character') {
   const store: Record<string, string> = {};
-  if (id) store['application/x-litrpg-character'] = id;
+  if (id) store[type] = id;
 
   return {
     types: Object.keys(store),
@@ -308,7 +335,7 @@ beforeEach(() => {
 async function canvasAndRail() {
   const { container } = render(<App />);
   await screen.findAllByText('Ledger');
-  const rail = await screen.findByRole('complementary', { name: 'Cast' });
+  const rail = await screen.findByRole('complementary', { name: 'Cards' });
   return { container, rail, canvas: container.querySelector('.graph-canvas') as HTMLElement };
 }
 
@@ -337,7 +364,7 @@ describe('dragging a cast member onto the canvas', () => {
 
     expect(within(rail).getByText('Rook')).toBeInTheDocument();
     expect(within(rail).getByText('HP 20 · Level 4')).toBeInTheDocument();
-    expect(rail.querySelectorAll('[draggable="true"]')).toHaveLength(2);
+    expect(rail.querySelectorAll('.cast-chip[draggable="true"]')).toHaveLength(2);
   });
 
   it('drops one as a linked node that carries its live badges', async () => {
@@ -546,5 +573,129 @@ describe('dragging a cast member onto the canvas', () => {
     fireEvent.drop(canvas, { dataTransfer: dragPayload('char-gone') });
 
     expect(lastCall('create_graph_node')).toBeUndefined();
+  });
+});
+
+describe('dragging a card out of a section', () => {
+  beforeEach(() => {
+    rows = [
+      ...rows,
+      // A card the story already holds, with somebody bound to it.
+      { id: 'n-item', label: 'Tooth key', type: 'item', characterId: 'char-1' },
+    ];
+  });
+
+  it('copies the card where it is dropped instead of moving the one on the board', async () => {
+    const { container, rail, canvas } = await canvasAndRail();
+
+    const tile = rail.querySelector('.card-tile.item') as HTMLElement;
+    expect(tile).toHaveTextContent('Tooth key');
+
+    const entities = screen.getByRole('button', { name: 'Entities' });
+    const payload = dragPayload('n-item', 'application/x-litrpg-card');
+
+    fireEvent.dragStart(tile, { dataTransfer: payload });
+    expect(payload.getData('application/x-litrpg-card')).toBe('n-item');
+
+    // The tile offers a copy and the board asks for a copy. Asking for a move
+    // instead is a drop the browser refuses, which is what “not allowed” means.
+    fireEvent.dragOver(canvas, { dataTransfer: payload });
+    expect(payload.dropEffect).toBe('copy');
+
+    dropOn(canvas, payload, 240, 120);
+
+    await waitFor(() =>
+      expect(lastCall('create_graph_node')).toEqual({
+        storyId: story.id,
+        nodeType: 'item',
+        label: 'Tooth key',
+        content: null,
+        posX: 240,
+        posY: 120,
+        createdBy: 'You',
+      })
+    );
+
+    // Nobody is bound to the copy and no chapter is its own: those are the
+    // author's next clicks, on that card alone.
+    expect((lastCall('create_graph_node') as any).characterId).toBeUndefined();
+
+    // The card already on the board was not moved.
+    expect(lastCall('update_graph_node_position')).toBeUndefined();
+
+    // Its layer comes back with it, and both cards are drawn.
+    expect(entities).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() =>
+      expect(container.querySelectorAll('.graph-node.item')).toHaveLength(2)
+    );
+  });
+
+  it('takes the copy away again with one undo', async () => {
+    const user = userEvent.setup();
+    const { canvas } = await canvasAndRail();
+
+    dropOn(canvas, dragPayload('n-item', 'application/x-litrpg-card'), 40, 60);
+    await waitFor(() => expect(lastCall('create_graph_node')).toBeDefined());
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_node')).toEqual({ id: 'n-dropped', user: 'You' })
+    );
+  });
+
+  it('keeps the list entry when the copy is deleted from the board', async () => {
+    const user = userEvent.setup();
+    const { rail, canvas } = await canvasAndRail();
+
+    dropOn(canvas, dragPayload('n-item', 'application/x-litrpg-card'), 40, 60);
+    await waitFor(() => expect(lastCall('create_graph_node')).toBeDefined());
+
+    await user.click(screen.getByRole('button', { name: 'delete n-dropped' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_node')).toEqual({ id: 'n-dropped', user: 'You' })
+    );
+
+    // One card was a use of the trinket; the trinket is still in the story, so
+    // the list still names it.
+    expect(within(rail).getByText('Tooth key')).toBeInTheDocument();
+  });
+
+  it('opens a card from its tile, bringing its layer with it', async () => {
+    const user = userEvent.setup();
+    const { rail } = await canvasAndRail();
+    const entities = screen.getByRole('button', { name: 'Entities' });
+
+    await user.click(rail.querySelector('.card-tile.item') as HTMLElement);
+
+    expect(entities).toHaveAttribute('aria-pressed', 'true');
+    expect(within(drawer()).getByLabelText('Label')).toHaveValue('Tooth key');
+  });
+});
+describe('deleting a skill card', () => {
+  beforeEach(() => {
+    rows = [
+      ...rows,
+      { id: 'n-skill', label: 'Brine-Lung', type: 'skill', characterId: null },
+    ];
+  });
+
+  it('reads the sheets again, so the skill leaves them with the card', async () => {
+    const user = userEvent.setup();
+    await canvasAndRail();
+
+    const readsBefore = calls.filter(call => call.command === 'get_story_skills').length;
+
+    await user.click(screen.getByRole('button', { name: 'delete n-skill' }));
+
+    await waitFor(() =>
+      expect(lastCall('delete_node')).toEqual({ id: 'n-skill', user: 'You' })
+    );
+    await waitFor(() =>
+      expect(calls.filter(call => call.command === 'get_story_skills').length).toBe(
+        readsBefore + 1
+      )
+    );
   });
 });

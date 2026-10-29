@@ -508,6 +508,29 @@ describe('useCanvasDrafts layers', () => {
     expect(result.current.graphLayers.entities).toBe(false);
   });
 
+  it('reveals the layer of a card the author has just made', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.revealGraphType('idea'));
+
+    // The new card's layer comes back, and only that one.
+    expect(result.current.graphLayers.entities).toBe(true);
+    expect(result.current.graphLayers.arcs).toBe(false);
+
+    act(() => result.current.revealGraphType('quest'));
+    expect(result.current.graphLayers.arcs).toBe(true);
+  });
+
+  it('leaves the layers alone for a card whose layer is already drawn', () => {
+    const { result } = open(layered);
+    const before = result.current.graphLayers;
+
+    act(() => result.current.revealGraphType('chapter'));
+
+    // The same object, so nothing re-renders for a layer that never went away.
+    expect(result.current.graphLayers).toBe(before);
+  });
+
   it('closes a card whose layer is switched off, keeping the typing', () => {
     const { result } = open(layered);
 

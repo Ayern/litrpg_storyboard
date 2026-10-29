@@ -103,6 +103,24 @@ const nodeLabel = (nodeId: string | null) =>
   store.notes.find(note => note.id === nodeId)?.label ??
   null;
 
+// Whether a skill is on a sheet right now: a row with no card at all belongs to
+// the sheet alone, and a row with a card belongs to it only while the card is
+// live. A card in the trash takes its skills off every sheet until it is back.
+const skillIsOnTheBoard = (skill: Row) =>
+  !skill.node_id || store.nodes.some(node => node.id === skill.node_id);
+
+const hiddenSkillIds = () =>
+  new Set(store.skills.filter(skill => !skillIsOnTheBoard(skill)).map(skill => skill.id));
+
+const chapterEventIsShown = (event: Row) => {
+  const hidden = hiddenSkillIds();
+  if (hidden.size === 0) return true;
+
+  return ![event.source_id, event.skill_id, event.new_skill_id].some(
+    skillId => typeof skillId === 'string' && hidden.has(skillId)
+  );
+};
+
 const characterState = (characterId: string, chapterId: string): Row =>
   store.chapterStates[`${characterId}|${chapterId}`] ?? {
     character_id: characterId,
@@ -534,8 +552,14 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_story_character_stats: () => store.stats,
   get_character_stats: args => store.stats.filter(row => row.character_id === args.characterId),
 
-  get_story_skills: () => store.skills,
-  get_character_skills: args => store.skills.filter(row => row.character_id === args.characterId),
+  // A skill card is the skill's identity: while the card is in the trash the
+  // skill is off the sheets, and the chapter rows that name it are off the
+  // ledger, exactly as the database reads them.
+  get_story_skills: () => store.skills.filter(skillIsOnTheBoard),
+  get_character_skills: args =>
+    store.skills.filter(
+      row => row.character_id === args.characterId && skillIsOnTheBoard(row)
+    ),
   get_story_skill_events: () => store.skillEvents,
   get_story_skill_evolutions: () => store.evolutions,
 
@@ -559,7 +583,7 @@ const reads: Record<string, (args: Row) => unknown> = {
   get_story_chapter_cast: () => store.chapterCast,
   get_story_chapter_cast_states: () => chapterCastStates(),
   get_story_chapter_tasks: () => store.tasks,
-  get_story_chapter_events: () => store.chapterEvents,
+  get_story_chapter_events: () => store.chapterEvents.filter(chapterEventIsShown),
 
   get_story_relations: () => store.relations,
   get_story_faction_standings: () => store.standings,

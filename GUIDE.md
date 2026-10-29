@@ -517,9 +517,65 @@ The switch is held by `useCanvasDrafts` rather than by `App.tsx`, because that i
 where a card is opened: `openNode` reveals the layer of the card it is given — by
 its `nodeType` where the caller knows it and by the board's own row otherwise — and
 switching a layer off closes a drawer that would otherwise be editing a card nobody
-can see, keeping the half-written draft for when the layer comes back. A layer is a
-view of the same rows: no command runs, no audit entry is written, and nothing
-travels in an export.
+can see, keeping the half-written draft for when the layer comes back. A card the
+author has just made comes back the same way: `App.tsx` puts every card it creates
+on the board through one `addBoardNode`, which asks the hook's `revealGraphType`
+for the new card's layer first, so an **Add Node** on the spine is never a click
+that leaves nothing on screen. A layer is a view of the same rows: no command
+runs, no audit entry is written, and nothing travels in an export.
+
+### The lists down the left edge
+
+`src/domains/canvas/CardSections.tsx` is the panel beside the board. It renders the
+cast from the props the board already holds and then one section per node type
+(`CARD_SECTIONS`, the same list minus `chapter` and `character`), each listing the
+`nodes` array the app has in memory — hidden ones included, because a card the
+layer is not drawing is exactly the card an author needs to find. `catalogue()`
+collapses a section to one tile per name, because the tile stands for the thing,
+not for the number of cards of it the board happens to hold.
+
+Dragging a tile carries one card's id under `CARD_DRAG_TYPE`
+(`application/x-litrpg-card`), a distinct type from the cast chip's, so a drop can
+tell the two gestures apart before React state catches up. The canvas's drop handler
+asks React Flow for the board coordinates and calls `copyCardFromRail`, which lives
+in `App.tsx` beside the board's other writes: it rounds the point, asks the hook's
+`revealGraphType` for the card's layer, and writes a **new** node of that kind,
+label and notes through `create_graph_node` — with no `character_id`, so nobody is
+bound to the copy, and no chapter of its own. That is what lets two people hold one
+skill and one place be visited in two chapters without the cards overwriting each
+the other. The step it records undoes to `delete_node` and redoes to
+`restoreDeleted`, the same pair a card made by **Add Node** uses. The original node
+is never touched: no position write, no new edge, nothing.
+
+Clicking a tile opens the card through the same `selectNode` a click on the board
+uses — which is what brings the layer back. A tile has no delete of its own; a card
+is removed where it is, on the board, and the Trash keeps it. Because the list is a
+catalogue, deleting one card of a name leaves the entry standing while any other
+card of that name — the original, or a copy in another chapter — is still in the
+story.
+
+A cast chip is the one entry that is not a copy: dragging one creates a node already
+linked to that person, or relinks the card it is dropped on. That difference is why
+the cast sits in its own section rather than among the tiles.
+
+### A skill card owns its skills
+
+Deleting a node is still only a soft delete: `delete_node` stamps `deleted_at` and
+nothing else. For a skill card that is enough to take the skill with it, because the
+reads that feed the sheets and the ledger join the card back to a live node —
+`list_skills` and `list_story_skills` keep a row only while `s.node_id` is null (a
+skill typed on a sheet) or its card is live, and `list_story_chapter_events` drops an
+event that names a skill whose card is in the trash. A restore in the Trash tab (or
+an **Undo**) clears `deleted_at`, the joins find the card again, and the holder comes
+back with its rank, chapter and history untouched. Nothing is copied and no second
+undo step is needed.
+
+A purge is the end of that: `purge_skill_cards` deletes the chapter rows that named
+the skills, then the skills themselves (their events and evolution links cascade),
+so a purged card cannot leave rows pointing at a node that no longer exists. The
+same helper runs from `purge_node` and from the retention sweep in
+`purge_expired`. The screenshot harness mirrors these rules in
+`tools/screenshots/backend.ts`, so the preview shows the same sheets the app does.
 
 ---
 
@@ -627,7 +683,7 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | # | Anchor point | Workflow | File |
 | --- | --- | --- | --- |
 | 1 | First-run welcome card | Mental model | [`screenshots/onboarding-welcome.png`](screenshots/onboarding-welcome.png) |
-| 2 | Graph tab: cards, labels, cast rail, legend, the sheet-tagged ledger rows | C | [`screenshots/canvas-board.png`](screenshots/canvas-board.png) |
+| 2 | Graph tab: cards, labels, the cast and card lists, legend, the sheet-tagged ledger rows | C | [`screenshots/canvas-board.png`](screenshots/canvas-board.png) |
 | 3 | Node inspector drawer, with the skill holder form | A, B | [`screenshots/card-inspector.png`](screenshots/card-inspector.png) |
 | 4 | Holder form filled in on a skill card | B | [`screenshots/skill-holder-form.png`](screenshots/skill-holder-form.png) |
 | 5 | Connection editor for a drawn line | A | [`screenshots/connection-editor.png`](screenshots/connection-editor.png) |
@@ -646,6 +702,8 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | 18 | Board with chapter notes shown | C | [`screenshots/canvas-notes.png`](screenshots/canvas-notes.png) |
 | 19 | Chapter card's + Event form: skill picker, evolved name, keep-base toggle | B, C | [`screenshots/chapter-event-evolve.png`](screenshots/chapter-event-evolve.png) |
 | 20 | The same form on a sacrifice, with the keep-as-record toggle | C | [`screenshots/chapter-event-sacrifice.png`](screenshots/chapter-event-sacrifice.png) |
+| 21 | The whole web at once, with every layer drawn | C | [`screenshots/canvas-web.png`](screenshots/canvas-web.png) |
+| 22 | The same board zoomed to a scale the cards can be read at | C | [`screenshots/canvas-layers.png`](screenshots/canvas-layers.png) |
 
 An anchor point with no picture, and why: **a drag in progress** — a cast name held
 over the board, or a connection being pulled out of a card's handle. A screenshot

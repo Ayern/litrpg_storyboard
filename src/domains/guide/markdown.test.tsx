@@ -83,6 +83,25 @@ describe('the renderer', () => {
     expect(container.querySelector('hr')).toBeInTheDocument();
   });
 
+  it('keeps a button name bold inside an italic caption', () => {
+    const container = draw('*The **Show all** chip drew the rest of the web.*');
+
+    const caption = container.querySelector('em');
+    expect(caption).toHaveTextContent('The Show all chip drew the rest of the web.');
+    expect(caption?.querySelector('strong')).toHaveTextContent('Show all');
+    // The marker stars are syntax, not text.
+    expect(container.textContent).not.toContain('*');
+  });
+
+  it('renders a caption that opens bold inside its italics', () => {
+    const container = draw('***Show notes** pins the first notes under their chapters.*');
+
+    const caption = container.querySelector('em');
+    expect(caption).toHaveTextContent('Show notes pins the first notes under their chapters.');
+    expect(caption?.querySelector('strong')).toHaveTextContent('Show notes');
+    expect(container.textContent).not.toContain('*');
+  });
+
   it('renders a table with its header and rows', () => {
     const container = draw(
       ['| Command | What it does |', '| --- | --- |', '| `npm test` | the suite |'].join('\n')

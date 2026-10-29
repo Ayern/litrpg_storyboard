@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Regenerates the guide's sample story and re-shoots every picture in it.
 //
-//   npm run screenshots                 # the fixture, then all twenty-one images
+//   npm run screenshots                 # the fixture, then all twenty-two images
 //   npm run screenshots -- --no-fixture # images only, from the fixture on disk
 //   npm run fixture                     # the fixture only, no images
 //
 // The pictures are of the app, so this drives the app: it starts the harness
 // server (the real `src/App.tsx`, Tauri's commands answered from
-// `backend.ts`), walks the twenty-one anchor states in order, and writes each one
+// `backend.ts`), walks the twenty-two anchor states in order, and writes each one
 // into `screenshots/`. A step that cannot be reached fails the run rather than
 // quietly writing a picture of the wrong screen.
 //
@@ -41,6 +41,9 @@ const argv = new Set(process.argv.slice(2));
 const port = Number(process.env.SCREENSHOTS_PORT ?? 5188);
 const base = `http://127.0.0.1:${port}/`;
 const viewport = { width: 1600, height: 1000 };
+// The zoom the whole-web picture is taken at: near the scale the board is drawn
+// at, so the names inside the cards can be read in the picture.
+const READABLE_ZOOM = 0.7;
 
 const log = message => console.log(message);
 const fail = message => {
@@ -170,6 +173,42 @@ async function launchBrowser() {
 
 // ---- the walk through the app -------------------------------------------
 
+// The scale React Flow is drawing at, read off the viewport it transforms, so a
+// step can ask for a zoom rather than count clicks whose ratio could change.
+async function boardZoom(page) {
+  return page.evaluate(() => {
+    const viewport = document.querySelector('.react-flow__viewport');
+    if (!viewport) return 0;
+
+    return new DOMMatrixReadOnly(getComputedStyle(viewport).transform).a;
+  });
+}
+
+// Zooms in on a named card, where the pointer is: the board grows around the
+// point under the cursor, so the card stays where it is on screen while the rest
+// of the web opens out below and to the right of it. That is how a person frames
+// a picture of one corner of the board, and it needs no panning.
+async function zoomOnCard(page, cardId, target, anchor = { x: 12, y: 12 }) {
+  const card = await page.locator(`.react-flow__node[data-id="${cardId}"]`).boundingBox();
+  if (!card) fail('the card the layers picture is framed on is not on the board');
+
+  // The point that does not move while the board grows: down and in from the
+  // card's corner, which opens the picture out to the right and leaves the card
+  // near the top of it.
+  await page.mouse.move(Math.round(card.x + anchor.x), Math.round(card.y + anchor.y));
+
+  for (let step = 0; step < 60; step += 1) {
+    if ((await boardZoom(page)) >= target) return;
+
+    await page.mouse.wheel(0, -100);
+    await page.waitForTimeout(60);
+  }
+
+  if ((await boardZoom(page)) < target) {
+    fail('the board would not zoom in far enough to read the cards in the picture');
+  }
+}
+
 async function capture(page, name) {
   await page.screenshot({ path: path.join(outDir, name) });
   written.add(name);
@@ -269,11 +308,26 @@ async function shoot(page, fixture) {
   await page.waitForTimeout(600);
   await page.getByRole('button', { name: 'fit view' }).click();
   await page.waitForTimeout(600);
-  // One step back from the frame, so the whole map sits inside the picture with
-  // the corner key beside it rather than over the cards at the bottom of it.
+
+  // Two pictures of the same board, because the two things a reader needs from
+  // it cannot be in one: the whole web at once is a map, and at that scale the
+  // words inside a card are four pixels tall and nothing can be read. So the map
+  // first, with every tier inside the frame, one step back from the frame so the
+  // corner key sits beside the cards at the bottom rather than over them...
   await page.getByRole('button', { name: 'zoom out' }).click();
   await page.waitForTimeout(500);
+  await capture(page, 'canvas-web.png');
+
+  // ...and then the top of the same board the way somebody would look at it,
+  // zoomed until the cards can be read, with the lower tiers off the picture.
+  await zoomOnCard(page, node('The Low Tide', 'chapter'), READABLE_ZOOM, { x: 100, y: 20 });
+  await page.waitForTimeout(600);
   await capture(page, 'canvas-layers.png');
+
+  // Back to the frame for the rest of the walk: every later step clicks a card,
+  // and a card off the picture cannot be clicked.
+  await page.getByRole('button', { name: 'fit view' }).click();
+  await page.waitForTimeout(600);
 
   // 3. A skill card's drawer, opened by clicking its card.
   await page.locator(`.react-flow__node[data-id="${node('Brine-Lung', 'skill')}"]`).click();

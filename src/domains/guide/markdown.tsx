@@ -261,7 +261,9 @@ function renderInline(text: string, options: GuideRenderOptions, keyPrefix: stri
       continue;
     }
 
-    if (rest.startsWith('**')) {
+    // Three stars open bold *inside* italics, so they belong to the italics
+    // branch below rather than to this one.
+    if (rest.startsWith('**') && !rest.startsWith('***')) {
       const end = rest.indexOf('**', 2);
 
       if (end > 1) {
@@ -276,9 +278,27 @@ function renderInline(text: string, options: GuideRenderOptions, keyPrefix: stri
     }
 
     if (rest[0] === '*') {
-      const end = rest.indexOf('*', 1);
+      // The star that closes the italics is the first one that is not part of a
+      // bold run, so a caption can name a button in bold inside its italics.
+      // Without that, `*The **Show all** chip …*` closes at the first star of
+      // the bold and leaves the rest of the sentence outside the emphasis.
+      let end = 1;
 
-      if (end > 0) {
+      while (end < rest.length) {
+        if (rest.startsWith('**', end)) {
+          const bold = rest.indexOf('**', end + 2);
+
+          if (bold === -1) break;
+
+          end = bold + 2;
+          continue;
+        }
+
+        if (rest[end] === '*') break;
+        end += 1;
+      }
+
+      if (end < rest.length && rest[end] === '*') {
         push(
           <em key={`${keyPrefix}-em-${key++}`}>
             {renderInline(rest.slice(1, end), options, `${keyPrefix}-e${key}`)}

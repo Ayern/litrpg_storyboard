@@ -75,44 +75,10 @@ nothing anywhere.
 
 ![The Graph tab with the demo story on it, drawn as the chapter spine](screenshots/canvas-board.png)
 
-*The board as a story opens on it, its cast rail on the left and the legend of card
-types on the right. The six chapter cards are numbered `Ch. 1` to `Ch. 6` and run
-left to right, one clean line; the boxes on the lines are the words you gave those
-connections.*
-
-## 2a. Which cards the board draws
-
-A story opens on the **chapter spine**: the reading order, left to right, and
-nothing else. Everything the story is made of is still there — it is just on a
-layer the board is not drawing yet. The **Layers** chips on the toolbar decide
-which ones are on screen:
-
-| chip | what it draws |
-| --- | --- |
-| **Chapter spine** | the chapter cards, and the lines between them |
-| **Arcs & quests** | the `plot` and `quest` cards |
-| **Entities** | the cast, the skills, the items, the places, the faction and the System, the events, the ideas, the misc cards |
-
-**Show all** switches every layer on at once; **Chapters only** puts the board back
-to the spine. Hiding a layer hides its cards and the lines that end on them, and
-changes nothing else: positions, notes and connections are exactly where you left
-them, and the cards come back the moment you switch the layer on again. A card you
-open from somewhere else — a sheet's **Card:** link, a skill row's chapter, a search
-result, a new card — brings its own layer back with it, so there is never a drawer
-open behind an invisible card.
-
-![The same board with every layer drawn](screenshots/canvas-layers.png)
-
-*The whole web: the chapters along the top, the cast and the quests under them, then
-the skills and the Choir, then the places and the plots, then the odds and ends.
-Nothing moved between this picture and the one above — **Show all** drew what was
-already there, and **Chapters only** puts it away again.*
-
-Keep to the spine while you plan. A chapter card holds its summary, its roster, its
-checklist and its progression events, so a scene is planned without leaving the
-board; the layers underneath are for checking the shape of the whole story — who is
-where, what was learned, which quest started when — rather than for planning a
-scene.
+*The board as a story opens on it, its cards down the left edge and the legend of
+card types on the right. The six chapter cards are numbered `Ch. 1` to `Ch. 6` and
+run left to right, one clean line; the boxes on the lines are the words you gave
+those connections.*
 
 To connect two cards, drag from the small circle on the side of one card onto the
 other. The label on the new line defaults to what the line means — `next` between
@@ -133,6 +99,81 @@ Two more moves worth trying:
 - **Select a card or a line and press Delete** (or `Backspace`) to remove it. The
   card's lines go with it, and everything lands in the Trash, where **Undo** or
   **Restore** can bring it back.
+
+## 2a. Which cards the board draws
+
+A story opens on the **chapter spine**: the reading order, left to right, and
+nothing else. Everything the story is made of is still there — it is just on a
+layer the board is not drawing yet. The **Layers** chips on the toolbar decide
+which ones are on screen:
+
+| chip | what it draws |
+| --- | --- |
+| **Chapter spine** | the chapter cards, and the lines between them |
+| **Arcs & quests** | the `plot` and `quest` cards |
+| **Entities** | the cast, the skills, the items, the places, the faction and the System, the events, the ideas, the misc cards |
+
+**Show all** switches every layer on at once; **Chapters only** puts the board back
+to the spine. Hiding a layer hides its cards and the lines that end on them, and
+changes nothing else: positions, notes and connections are exactly where you left
+them, and the cards come back the moment you switch the layer on again. A card you
+make, or open from somewhere else — a sheet's **Card:** link, a skill row's chapter,
+a search result — brings its own layer back with it, so **Add Node** on the spine
+puts the new card in view, and there is never a drawer open behind an invisible
+card.
+
+Two pictures, of the same board: first the web as a whole, then one part of it close
+enough to read.
+
+![The whole web at once, with every layer drawn](screenshots/canvas-web.png)
+
+*The whole web: the six chapters along the top, the cast and the quests under them,
+then the skills and the Choir, then the places and the plots, then the odds and
+ends. Nothing moved between this picture and the one before it — **Show all** drew
+what was already there, and **Chapters only** puts it away again. A map rather than
+a page: at this size you can see where everything sits, but not read what a card
+says.*
+
+![The top of the same board, at a zoom the cards can be read at](screenshots/canvas-layers.png)
+
+*The same board, close enough to read. The chapters, and under them the cast and the
+quests; the tiers below — the skills and the Choir, the places and the plots, the
+odds and ends — carry on past the bottom of the picture. That is the trade the two
+pictures make between them: **fit view**, or zooming out, is how you see the shape of
+the whole story, and zooming in is how you check one part of it.*
+
+### The lists down the left edge
+
+Missing a card is not losing it, and the lists down the left edge are how you find
+one. **Cast** is at the top — the people in the story, with their level and first
+two numbers. Under it comes one section for each kind of thing the story holds —
+**Items**, **Skills**, **Locations**, **Quests**, **Factions**, **Plots**,
+**Events**, **Ideas**, **System**, **Misc** — each with a count. A kind with nothing
+in the story gets no section, so the list is only as long as the story is. Click a
+section's name to fold it away while you work; it opens again on your next click.
+
+The sections are a catalogue, not the cards: each name appears once, however many
+cards of it are on the board. That is the point of the two gestures a tile has.
+
+- **Drag it onto the board.** A *new* card of that name lands where you let go, and
+  its layer comes back with it. The copy starts blank — nobody is bound to it and
+  it has no chapter of its own — so the same skill can be learned by two people in
+  two places, and the same tavern can be visited in chapter two and again in
+  chapter five, without either card overwriting the other. The card already on the
+  board does not move, and one **Undo** takes the copy away again.
+- **Click it.** The card in the story opens, wherever it is, with its layer
+  switched back on so you can see it — the way a click on the board works.
+
+A person is the one entry that is not a copy. Drag a name from **Cast** onto empty
+canvas and the app makes a card already pointing at them; drop it on a card to
+point that card at them instead. Chapters are not listed, because the spine is the
+board.
+
+Keep to the spine while you plan. A chapter card holds its summary, its roster, its
+checklist and its progression events, so a scene is planned without leaving the
+board; the layers underneath are for checking the shape of the whole story — who is
+where, what was learned, which quest started when — rather than for planning a
+scene.
 
 ## 3. Chapters are the spine
 
@@ -227,7 +268,7 @@ everything else in the next three sections. Type a name and press **Add
 character**; the list shows what each person is (their level, and their rank if you
 gave them one).
 
-On the Graph tab, the **cast rail** is the same list. Drag a name onto the board
+On the Graph tab, **Cast** down the left edge is the same list. Drag a name onto the board
 and you get a `character` card already linked to them; drop it onto another card
 instead and that card is re-pointed at the cast member, keeping its label, notes
 and type. A chapter card is the exception: dropping somebody on it adds them to
@@ -371,6 +412,14 @@ holds it.*
 *Rank and chapter are per holder; the name and effect come from the card. Type them
 and press **Add holder** (or drag a line from the card to a character, which is the
 same write without the form).*
+
+Because the card is the skill's identity, the card's life is the skill's life.
+Delete the card on the board and the skill leaves every sheet that holds it and
+every chapter ledger that named it — the character's **Skills** list and the
+chapter's **Progression & events** stop claiming something nobody has — and the card
+waits in the Trash. **Undo**, or **Restore** in the Trash tab, brings the card back
+with its holders, ranks and chapters exactly as they were. **Delete** there for good
+is the end of the skill too.
 
 ![The Skill trees view](screenshots/skill-tree.png)
 

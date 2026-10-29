@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -112,8 +112,10 @@ function node(id: string, label: string, nodeType: string) {
 
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockImplementation(async (command: string) => {
+  invokeMock.mockImplementation(async (command: string, args: Record<string, any>) => {
     switch (command) {
+      case 'create_graph_node':
+        return node('n-new', args.label, args.nodeType);
       case 'get_all_stories':
         return [story];
       case 'get_graph_nodes':
@@ -166,7 +168,11 @@ describe('the graph canvas', () => {
     const { container } = render(<App />);
 
     await screen.findAllByText('Ledger');
-    await screen.findByText('System notice');
+    // The card's label is also in the side list, so the board is the thing waited
+    // for: every card is drawn, its layer just hides some of them.
+    await waitFor(() =>
+      expect(container.querySelector('.graph-node.system')).not.toBeNull()
+    );
 
     const cards: [string, string][] = [
       ['system', 'System notice'],
@@ -237,6 +243,25 @@ describe('the graph canvas', () => {
     expect(drawn('n1')).toBe('false');
     expect(drawn('n2')).toBe('true');
     expect(drawn('n7')).toBe('true');
+  });
+
+  it('brings a new card’s layer back with the card', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await screen.findAllByText('Ledger');
+    await screen.findByText('Opening');
+
+    // A story opens on the spine, and the picker already says “idea”.
+    const entities = screen.getByRole('button', { name: 'Entities' });
+    expect(entities).toHaveAttribute('aria-pressed', 'false');
+
+    await user.type(screen.getByTitle('Label for the new node'), 'A stray idea');
+    await user.click(screen.getByRole('button', { name: 'Add Node' }));
+
+    // The card the author just made is on the board, so its layer is on too.
+    await waitFor(() => expect(entities).toHaveAttribute('aria-pressed', 'true'));
+    expect(container.querySelector('.graph-node.idea')).toHaveTextContent('A stray idea');
   });
 
   it('keeps the legend in step with the types the cards use', async () => {

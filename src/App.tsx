@@ -821,6 +821,7 @@ function App() {
     showAllGraphLayers,
     showChapterSpine,
     resetGraphLayers,
+    revealGraphType,
     nodeTypeIsHidden,
   } = useCanvasDrafts({ nodes, edges });
 
@@ -1130,6 +1131,28 @@ function App() {
     }
   }, [setNodes, setEdges]);
 
+  // A skill card is the skill's identity, so a card leaving the board takes its
+  // skills off the sheets and out of the scenes, and puts them back when the
+  // card returns. Both reads are refreshed wherever the board is re-read, so the
+  // sheet and the chapter card never show a skill the board has taken away.
+  const refreshSkillRows = useCallback(
+    async (storyId: string) => {
+      const [skills, chapterEvents] = await Promise.all([
+        skillsApi.getStorySkills(storyId),
+        narrativeApi.getStoryChapterEvents(storyId),
+      ]);
+
+      setStorySkills(skills ?? []);
+      setStoryChapterEvents(chapterEvents ?? []);
+
+      if (selectedCharacterId) {
+        const rows = await skillsApi.getCharacterSkills(selectedCharacterId);
+        setCharacterSkills(rows ?? []);
+      }
+    },
+    [selectedCharacterId]
+  );
+
   // After an undo the board is read back rather than patched from memory: a
   // restored node brings its connections with it, and a move lives only in the
   // database. Open editors follow the stored values unless they hold unsaved
@@ -1147,8 +1170,11 @@ function App() {
       // An open editor follows what the row now says, unless it holds typing the
       // author has not saved; undo does not touch unsaved text.
       followStoredRows({ nodes: dbNodes, edges: dbEdges });
+
+      // A card that came back from the trash brings its skills with it.
+      await refreshSkillRows(storyId);
     },
-    [setNodes, setEdges, followStoredRows]
+    [setNodes, setEdges, followStoredRows, refreshSkillRows]
   );
 
   // This session's undo and redo stacks live in the history domain. What a walk
@@ -1693,6 +1719,11 @@ function App() {
     if (currentStory) {
       await loadStory(currentStory);
 
+      // A restored skill card brings its skills back onto the sheets, and a
+      // purged one takes them away for good: the open sheet is read again either
+      // way rather than left showing the list it had a moment ago.
+      await refreshSkillRows(currentStory.id);
+
       const loaded: Character[] = await charactersApi.getCharacters(currentStory.id);
       setCharacters(loaded);
       setSelectedCharacterId(previous => {
@@ -1712,6 +1743,7 @@ function App() {
   const purgedFromTrash = async (item: DeletedItem) => {
     if ((item.kind === 'character' || item.kind === 'node') && currentStory) {
       await loadStory(currentStory);
+      await refreshSkillRows(currentStory.id);
     }
   };
 
@@ -1785,6 +1817,56 @@ function App() {
     }
   };
 
+  // A card that has just been made goes on the board, and its layer comes with
+  // it: adding a card to a layer the author had switched off would be a click
+  // with nothing on screen to show for it.
+  const addBoardNode = (node: Node<NodeData>) => {
+    revealGraphType(node.data.nodeType);
+    setNodes(previous => [...previous, node]);
+  };
+
+  // A card dragged out of a section is a second card of that name, not the one
+  // already on the board moved somewhere else. A skill can be held by several
+  // people and a place can be visited in several chapters, so the copy starts
+  // blank: the same kind, the same label and the same notes, with nobody bound
+  // to it and no chapter of its own. Whatever the table below is written for is
+  // then the author's next click, on that copy alone. It lands where it was let
+  // go, as one step Undo takes away again.
+  const copyCardFromRail = (nodeId: string, position: { x: number; y: number }) => {
+    const card = nodes.find(node => node.id === nodeId);
+    if (!card || !currentStory) return;
+
+    const point = { x: Math.round(position.x), y: Math.round(position.y) };
+
+    revealGraphType(card.data.nodeType);
+
+    void (async () => {
+      try {
+        const created: any = await canvasApi.createGraphNode(
+          currentStory.id,
+          card.data.nodeType,
+          card.data.label,
+          card.data.content?.trim() ? card.data.content : null,
+          point.x,
+          point.y,
+          actor,
+          null
+        );
+
+        addBoardNode(toFlowNode(created));
+
+        recordStep({
+          label: `Place “${created.label}” on the board`,
+          undo: () => canvasApi.deleteNode(created.id, actor),
+          redo: () => trashApi.restoreDeleted(created.id, 'node', actor),
+        });
+      } catch (e) {
+        console.error('Failed to copy a card onto the board:', e);
+        setActionError(`Could not place “${card.data.label}” on the board: ${String(e)}`);
+      }
+    })();
+  };
+
   const addNewNode = async () => {
     if (!currentStory || !newNodeLabel.trim()) return;
 
@@ -1822,7 +1904,7 @@ function App() {
         },
       };
 
-      setNodes(nds => [...nds, flowNode]);
+      addBoardNode(flowNode);
       setNewNodeLabel('');
 
       recordStep({
@@ -1932,7 +2014,7 @@ function App() {
         );
 
         setCharacters(previous => [...previous, created]);
-        setNodes(nds => [...nds, toFlowNode(node)]);
+        addBoardNode(toFlowNode(node));
 
         recordStep({
           label: `Add “${name}”`,
@@ -1977,7 +2059,7 @@ function App() {
         );
 
         setStoryQuests(previous => [...previous, { ...quest, rewards: quest.rewards ?? [] }]);
-        setNodes(nds => [...nds, toFlowNode(node)]);
+        addBoardNode(toFlowNode(node));
 
         // Quests are deleted for good rather than trashed, so a redo records a
         // fresh quest with the same facts and remembers its new id for the next
@@ -2047,7 +2129,7 @@ function App() {
         null
       );
 
-      setNodes(nds => [...nds, toFlowNode(created)]);
+      addBoardNode(toFlowNode(created));
       onCreated(created.id);
     } catch (e) {
       console.error('Failed to create a faction:', e);
@@ -3671,7 +3753,7 @@ function App() {
         null
       );
 
-      setNodes(previous => [...previous, toFlowNode(created)]);
+      addBoardNode(toFlowNode(created));
       setNewChapterTitle('');
 
       recordStep({
@@ -4831,6 +4913,285 @@ function App() {
         return;
       }
 
+      // An item card is one identity, like a skill card, so a line means
+      // something: to a character, that they carry it; to a chapter, that it was
+      // picked up there. Either way the row on a sheet points at the card, so
+      // the two name the same thing.
+      const itemNode =
+        sourceNode?.data.nodeType === 'item'
+          ? sourceNode
+          : targetNode?.data.nodeType === 'item'
+            ? targetNode
+            : null;
+
+      if (itemNode && characterNode) {
+        const characterId = characterNode.data.characterId;
+        const fromNodeId: string = params.source;
+        const toNodeId: string = params.target;
+        const itemLabel = itemNode.data.label;
+
+        if (!characterId) {
+          setActionError(
+            'Link this character card to a cast member before giving them an item.'
+          );
+          return;
+        }
+
+        const alreadyCarried = storyInventory.find(
+          row => row.node_id === itemNode.id && row.character_id === characterId
+        );
+
+        if (alreadyCarried) {
+          setActionError(
+            `${characterNode.data.label} already carries ${itemLabel}.`
+          );
+          return;
+        }
+
+        const existingEdge = edges.find(
+          candidate =>
+            (candidate.source === fromNodeId && candidate.target === toNodeId) ||
+            (candidate.source === toNodeId && candidate.target === fromNodeId)
+        );
+
+        const carry = () =>
+          inventoryApi.addInventoryItem(
+            characterId,
+            itemLabel,
+            null,
+            1,
+            itemNode.data.content?.trim() || null,
+            null,
+            null,
+            itemNode.id,
+            actor
+          );
+
+        try {
+          let liveRow = await carry();
+          applyReturnedItem(liveRow);
+
+          let liveEdge: any = existingEdge ?? null;
+
+          if (!existingEdge) {
+            try {
+              liveEdge = await canvasApi.createGraphEdge(
+                currentStory.id,
+                fromNodeId,
+                toNodeId,
+                'item',
+                'item',
+                actor
+              );
+            } catch (e) {
+              // The line is what the author drew, so a row it could not keep is
+              // taken back off the sheet rather than left behind by itself.
+              await inventoryApi.deleteInventoryItem(liveRow.id, actor).catch(() => {});
+              setStoryInventory(previous => previous.filter(row => row.id !== liveRow.id));
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Put back — ${characterNode.data.label} carrying ${itemLabel}: the connection could not be saved (${String(
+                  e
+                )}), so the item is not on their sheet.`
+              );
+              throw e;
+            }
+
+            closeEdge();
+            setEdges(eds =>
+              addEdge(
+                {
+                  id: liveEdge.id,
+                  source: fromNodeId,
+                  target: toNodeId,
+                  className: edgeKindClass('item'),
+                  label: 'item',
+                  data: { createdBy: actor, label: 'item', relationType: 'item' },
+                },
+                eds
+              )
+            );
+          }
+
+          recordStep({
+            label: `${characterNode.data.label} carries ${itemLabel}`,
+            undo: async () => {
+              await inventoryApi.deleteInventoryItem(liveRow.id, actor);
+              setStoryInventory(previous => previous.filter(row => row.id !== liveRow.id));
+              if (liveEdge) await canvasApi.deleteEdge(liveEdge.id, actor);
+            },
+            redo: async () => {
+              liveRow = await carry();
+              applyReturnedItem(liveRow);
+              if (liveEdge) await trashApi.restoreDeleted(liveEdge.id, 'edge', actor);
+            },
+          });
+        } catch (e) {
+          console.error('Failed to give a character an item:', e);
+          setActionError(
+            `Could not give ${characterNode.data.label} ${itemLabel}: ${String(e)}`
+          );
+        }
+
+        return;
+      }
+
+      if (itemNode && chapterNode) {
+        const chapterId = chapterNode.id;
+        const chapterLabel = chapterNode.data.label;
+        const itemLabel = itemNode.data.label;
+        const fromNodeId: string = params.source;
+        const toNodeId: string = params.target;
+
+        const holders = storyInventory.filter(row => row.node_id === itemNode.id);
+
+        if (holders.length > 1) {
+          setActionError(
+            `${itemLabel} is carried by ${holders.length} characters — set the chapter on one of their sheets instead.`
+          );
+          return;
+        }
+
+        const before = holders[0] ?? null;
+        const recipientId = before?.character_id ?? chapterNode.data.chapterPov ?? null;
+
+        if (!recipientId) {
+          setActionError(
+            'Give this chapter a point of view, or link the item to the character who carries it.'
+          );
+          return;
+        }
+
+        const existingEdge = edges.find(
+          candidate =>
+            (candidate.source === fromNodeId && candidate.target === toNodeId) ||
+            (candidate.source === toNodeId && candidate.target === fromNodeId)
+        );
+
+        const save = () =>
+          before
+            ? inventoryApi.updateInventoryItem(
+                before.id,
+                before.name,
+                before.rarity,
+                before.quantity,
+                before.effect,
+                chapterId,
+                before.lost_chapter_id,
+                before.node_id,
+                actor
+              )
+            : inventoryApi.addInventoryItem(
+                recipientId,
+                itemLabel,
+                null,
+                1,
+                itemNode.data.content?.trim() || null,
+                chapterId,
+                null,
+                itemNode.id,
+                actor
+              );
+
+        try {
+          let liveRow: InventoryItem = await save();
+          applyReturnedItem(liveRow);
+
+          let liveEdge: any = existingEdge ?? null;
+
+          if (!existingEdge) {
+            try {
+              liveEdge = await canvasApi.createGraphEdge(
+                currentStory.id,
+                fromNodeId,
+                toNodeId,
+                'item',
+                'item',
+                actor
+              );
+            } catch (e) {
+              if (before) {
+                const back = await inventoryApi.updateInventoryItem(
+                  before.id,
+                  before.name,
+                  before.rarity,
+                  before.quantity,
+                  before.effect,
+                  before.chapter_id,
+                  before.lost_chapter_id,
+                  before.node_id,
+                  actor
+                );
+                applyReturnedItem(back);
+              } else {
+                await inventoryApi.deleteInventoryItem(liveRow.id, actor).catch(() => {});
+                setStoryInventory(previous => previous.filter(row => row.id !== liveRow.id));
+              }
+
+              await recordHistoryEvent(
+                'step_rolled_back',
+                `Put back — ${itemLabel} in ${chapterLabel}: the connection could not be saved (${String(
+                  e
+                )}), so the item's chapter is as it was.`
+              );
+              throw e;
+            }
+
+            closeEdge();
+            setEdges(eds =>
+              addEdge(
+                {
+                  id: liveEdge.id,
+                  source: fromNodeId,
+                  target: toNodeId,
+                  className: edgeKindClass('item'),
+                  label: 'item',
+                  data: { createdBy: actor, label: 'item', relationType: 'item' },
+                },
+                eds
+              )
+            );
+          }
+
+          recordStep({
+            label: `${itemLabel} acquired in ${chapterLabel}`,
+            undo: async () => {
+              if (before) {
+                const back = await inventoryApi.updateInventoryItem(
+                  before.id,
+                  before.name,
+                  before.rarity,
+                  before.quantity,
+                  before.effect,
+                  before.chapter_id,
+                  before.lost_chapter_id,
+                  before.node_id,
+                  actor
+                );
+                applyReturnedItem(back);
+              } else {
+                await inventoryApi.deleteInventoryItem(liveRow.id, actor);
+                setStoryInventory(previous => previous.filter(row => row.id !== liveRow.id));
+              }
+
+              if (liveEdge) await canvasApi.deleteEdge(liveEdge.id, actor);
+            },
+            redo: async () => {
+              liveRow = await save();
+              applyReturnedItem(liveRow);
+              if (liveEdge) await trashApi.restoreDeleted(liveEdge.id, 'edge', actor);
+            },
+          });
+        } catch (e) {
+          console.error('Failed to set where an item was acquired:', e);
+          setActionError(
+            `Could not set ${itemLabel}'s chapter to ${chapterLabel}: ${String(e)}`
+          );
+        }
+
+        return;
+      }
+
       try {
         const newDbEdge: any = await canvasApi.createGraphEdge(
           currentStory.id,
@@ -5012,9 +5373,7 @@ function App() {
       );
       const strandedConnections = edges.filter(
         edge => chapterIds.has(edge.source) || chapterIds.has(edge.target)
-      ).length;
-
-      setEdges(eds =>
+      ).length;        setEdges(eds =>
         eds.filter(edge => !removedIds.has(edge.source) && !removedIds.has(edge.target))
       );
 
@@ -5022,6 +5381,10 @@ function App() {
         for (const node of deleted) {
           await canvasApi.deleteNode(node.id, actor);
         }
+
+        // A skill card takes its skills off the sheets with it, so those lists
+        // are read again rather than left naming a skill nobody holds now.
+        await refreshSkillRows(currentStory.id);
 
         recordStep({
           label:
@@ -5053,7 +5416,7 @@ function App() {
         await loadStory(currentStory);
       }
     },
-    [currentStory, actor, edges, loadStory, setEdges, recordStep]
+    [currentStory, actor, edges, loadStory, setEdges, recordStep, refreshSkillRows]
   );
 
   const removeEdges = useCallback(
@@ -5750,7 +6113,7 @@ function App() {
         null
       );
 
-      setNodes(nds => [...nds, toFlowNode(node)]);
+      addBoardNode(toFlowNode(node));
 
       recordStep({
         label: `Add the “${label}” card`,
@@ -9260,6 +9623,7 @@ function App() {
             setDropTargetNodeId={setDropTargetNodeId}
             nodeUnderPointer={nodeUnderPointer}
             dropCastMember={dropCastMember}
+            copyCardFromRail={copyCardFromRail}
             selectedEdgeId={selectedEdgeId}
             closeEdge={closeEdge}
             selectedEdge={selectedEdge}

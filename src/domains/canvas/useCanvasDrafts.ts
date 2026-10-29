@@ -269,6 +269,18 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
     setGraphLayers(next);
   }, []);
 
+  // A card the author has just made belongs on the board, so its layer comes back
+  // with it: adding a card to a layer that is switched off would be a click with
+  // nothing on screen to show for it.
+  const revealGraphType = useCallback((nodeType: string) => {
+    const next = revealNodeType(layersRef.current, nodeType);
+
+    if (next === layersRef.current) return;
+
+    layersRef.current = next;
+    setGraphLayers(next);
+  }, []);
+
   // Whether a card of this type is off the board, which the app answers when it
   // puts the hidden flag on the cards and their lines.
   const nodeTypeIsHidden = useCallback(
@@ -400,6 +412,7 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
     showAllGraphLayers,
     showChapterSpine,
     resetGraphLayers,
+    revealGraphType,
     nodeTypeIsHidden,
   };
 }

@@ -223,6 +223,11 @@ export interface EdgeData {
 // id, is what tells a drop that the drag is ours even before state catches up.
 export const CAST_DRAG_TYPE = 'application/x-litrpg-character';
 
+// What a card dragged out of a section carries: the id of the card that is
+// already on the board, hidden or not. A drop places that same card rather than
+// writing a second one.
+export const CARD_DRAG_TYPE = 'application/x-litrpg-card';
+
 // Suggested relation types for a connection. The field stays free text, because
 // a story's own verbs matter more than a fixed list.
 export const edgeRelationTypes = ['unlocks', 'requires', 'rewards'] as const;

@@ -18,12 +18,13 @@ import type { GraphLayer, GraphLayers } from './layers';
 import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { flowNodeTypes } from './GraphNode';
+import { CardSections } from './CardSections';
 import {
+  CARD_DRAG_TYPE,
   CAST_DRAG_TYPE,
   canvasCreateNodeTypes,
   edgeRelationTypes,
   isCanvasCreateKind,
-  NODE_STAT_BADGES,
   nodeTypes,
 } from './types';
 import type { EdgeData, NodeData, NodeType } from './types';
@@ -89,6 +90,9 @@ export interface GraphTabProps {
   setDropTargetNodeId: React.Dispatch<React.SetStateAction<string | null>>;
   nodeUnderPointer: (event: React.DragEvent<HTMLDivElement>) => string | null;
   dropCastMember: (event: React.DragEvent<HTMLDivElement>) => void;
+  // A card dragged out of a section is copied where it lands: a second card of
+  // that name, with its layer switched back on.
+  copyCardFromRail: (id: string, position: { x: number; y: number }) => void;
 
   // The connection editor.
   selectedEdgeId: string | null;
@@ -204,6 +208,7 @@ export function GraphTab({
   setDropTargetNodeId,
   nodeUnderPointer,
   dropCastMember,
+  copyCardFromRail,
   selectedEdgeId,
   closeEdge,
   selectedEdge,
@@ -309,6 +314,29 @@ export function GraphTab({
       )
     : [];
 
+  // A card out of a section lands where the pointer is, and it lands as a new
+  // card rather than as the one that was dragged: the list names the skill, the
+  // place or the trinket, and each card is one use of it. The point is asked
+  // for in the board's own coordinates, so it lands under the pointer at
+  // whatever zoom and pan the board is at.
+  const dropCardOnBoard = (event: React.DragEvent<HTMLDivElement>) => {
+    const id = event.dataTransfer.getData(CARD_DRAG_TYPE);
+
+    if (!id) return;
+
+    event.preventDefault();
+
+    const instance = flowRef.current;
+    const point = instance?.screenToFlowPosition
+      ? instance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : instance?.project?.({
+          x: event.clientX - event.currentTarget.getBoundingClientRect().left,
+          y: event.clientY - event.currentTarget.getBoundingClientRect().top,
+        });
+
+    if (point) copyCardFromRail(id, point);
+  };
+
   return (
     <div className="graph-container">
       {!story ? (
@@ -413,7 +441,7 @@ export function GraphTab({
                 Chapters only
               </button>
             </span>
-            <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
+            <span className="hint">Drag a dot to connect cards</span>
             <HelpTip label="drawing connections">
               Drag from a card’s dot onto another card to draw a connection.
               Let go over empty canvas and a new card is created there, already
@@ -424,67 +452,44 @@ export function GraphTab({
             </HelpTip>
           </div>
           <div className="graph-body">
-            <aside className="cast-rail" aria-label="Cast">
-              <div className="cast-rail-title">Cast</div>
-  
-              {characters.length === 0 ? (
-                <p className="cast-rail-hint">
-                  No cast yet — add someone on the Characters tab.
-                </p>
-              ) : (
-                <>
-                  {characters.map(character => (
-                    <div
-                      key={character.id}
-                      className={`cast-chip ${
-                        draggingCastId === character.id ? 'dragging' : ''
-                      }`}
-                      draggable
-                      title={`Drag ${character.name} onto the canvas`}
-                      onDragStart={event => {
-                        event.dataTransfer.setData(CAST_DRAG_TYPE, character.id);
-                        event.dataTransfer.effectAllowed = 'copy';
-                        setDraggingCastId(character.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggingCastId(null);
-                        setDropTargetNodeId(null);
-                      }}
-                    >
-                      <span className="cast-chip-name">{character.name}</span>
-                      <span className="cast-chip-stats">
-                        {[
-                          // A character read from an older story may have no
-                          // level yet; the chip then shows only its numbers.
-                          ...(character.level != null
-                            ? [`Lv ${character.level}`]
-                            : []),
-                          ...(castStats[character.id] ?? [])
-                            .slice(0, NODE_STAT_BADGES)
-                            .map(stat => `${stat.stat_name} ${stat.value}`),
-                        ].join(' · ')}
-                      </span>
-                    </div>
-                  ))}
-                  <p className="cast-rail-hint">
-                    Drag a cast member onto the canvas to make a linked node.
-                  </p>
-                </>
-              )}
-            </aside>
+            <CardSections
+              characters={characters}
+              castStats={castStats}
+              nodes={nodes}
+              draggingCastId={draggingCastId}
+              setDraggingCastId={setDraggingCastId}
+              setDropTargetNodeId={setDropTargetNodeId}
+              onOpenCard={id => {
+                const card = nodes.find(node => node.id === id);
+
+                if (card) selectNode({} as React.MouseEvent, card);
+              }}
+            />
             <div
               className={`graph-canvas${draggingCastId ? ' drop-ready' : ''}`}
               onDragOver={event => {
                 // The payload type says what is in the air even if the state
                 // update from the drag has not landed yet.
+                const carryingCard = event.dataTransfer.types.includes(CARD_DRAG_TYPE);
+
                 if (
+                  !carryingCard &&
                   !draggingCastId &&
                   !event.dataTransfer.types.includes(CAST_DRAG_TYPE)
                 ) {
                   return;
                 }
+
                 event.preventDefault();
+                // A card taken out of a list is copied, so the drop effect has to
+                // agree with the drag's `effectAllowed` of `copy`: a drag that
+                // offers a copy and a board that asks for a move is a drop the
+                // browser refuses, with the pointer saying so.
                 event.dataTransfer.dropEffect = 'copy';
+
+                // A card being placed is going to a point, not onto another
+                // card, so nothing is outlined under the pointer for it.
+                if (carryingCard) return;
   
                 const next = nodeUnderPointer(event);
                 setDropTargetNodeId(current => (current === next ? current : next));
@@ -497,7 +502,14 @@ export function GraphTab({
                   setDropTargetNodeId(null);
                 }
               }}
-              onDrop={dropCastMember}
+              onDrop={event => {
+                if (event.dataTransfer.types.includes(CARD_DRAG_TYPE)) {
+                  dropCardOnBoard(event);
+                  return;
+                }
+
+                dropCastMember(event);
+              }}
             >
             {renderSearchPalette('overlay')}
             <ReactFlow
