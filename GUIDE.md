@@ -373,8 +373,10 @@ effect being typed, puts the card on the board and selects it in the picker; the
 write is its own history step, `Add the "<name>" card`, so linking the skill to it
 stays a separate step and Undo can take the card back without touching the sheet.
 A skill that already has a card says **Card: Ash Step** on its row, and clicking
-that link is a way back: `openSkillCard` switches to the Graph tab, opens the
-card's drawer and centres the board on it, exactly as a search result does. Boards
+that link is a way back: `openCardOnBoard` switches to the Graph tab, opens the
+card's drawer and centres the board on it, exactly as a search result does. The
+**Learned in <chapter>** line on the row is the same call with the chapter node's
+id, so the chapter card opens the same way. Boards
 that already hold skill cards still draw them, open their holders and take
 connections; the card is a shortcut to a skill's identity, never the place a skill
 is born.

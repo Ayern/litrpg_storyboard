@@ -7286,10 +7286,11 @@ function App() {
     [openNode]
   );
 
-  // The card a skill row names opens on the board the same way a search result
+  // A card named on a skill row opens on the board the same way a search result
   // does: the Graph tab comes up, the card's drawer opens and the view centres on
-  // it. A card in the trash has no row left to open.
-  const openSkillCard = (cardId: string) => {
+  // it. That is the skill's own card and the chapter it was learned in. A card in
+  // the trash has no row left to open.
+  const openCardOnBoard = (cardId: string) => {
     const node = nodes.find(candidate => candidate.id === cardId);
 
     if (!node) return;
@@ -9516,7 +9517,7 @@ function App() {
               onCreate={addSkill}
               onSave={saveSkill}
               onCreateCard={createSkillCard}
-              onOpenCard={openSkillCard}
+              onOpenCard={openCardOnBoard}
               onDelete={removeSkill}
               onSaveEvent={saveSkillEvent}
               onDeleteEvent={removeSkillEvent}

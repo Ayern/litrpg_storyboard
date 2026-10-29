@@ -313,7 +313,9 @@ the history, so **Ctrl+Z** takes back the card and leaves the skill as it was.
 
 Once a skill has a card, its row says **Card: Ash Step** — click it and the board
 opens with that card in the inspector, so the link works from the sheet to the
-canvas as well as the other way round.
+canvas as well as the other way round. **Learned in The Ashen Gate** on the same
+row does the same for the chapter card, so a skill's row is a way around the whole
+story without a trip to the Graph tab first.
 
 The board itself no longer makes skill cards: a new skill belongs on a sheet, and
 the chapter it names shows it in that chapter's ledger straight away. A card put on

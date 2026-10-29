@@ -81,7 +81,8 @@ export function SkillsSection({
   // no cards yet, and this form is where a skill starts, so the card can be made
   // here rather than sending the author to the board first.
   onCreateCard: (name: string, effect: string | null) => Promise<SkillOption | null>;
-  // Opens the card a skill points at on the board, so the link reads both ways.
+  // Opens a card on the board: the skill's own, or the chapter it was learned in.
+  // A link on the sheet is a way onto the canvas as well as into the sheet.
   onOpenCard: (cardId: string) => void;
   onDelete: (skill: CharacterSkill) => Promise<boolean>;
   onSaveEvent: (
@@ -566,11 +567,20 @@ export function SkillsSection({
                       <span className="skill-effect">{skill.effect}</span>
                     )}
                     <span className="skill-chapter">
-                      {chapter
-                        ? `Learned in ${chapter.label}`
-                        : skill.chapter_id
-                          ? 'Chapter in the trash'
-                          : 'Chapter not recorded'}
+                      {chapter ? (
+                        <button
+                          type="button"
+                          className="skill-chapter-link"
+                          title={`Open the “${chapter.label}” card on the board`}
+                          onClick={() => onOpenCard(chapter.id)}
+                        >
+                          Learned in {chapter.label}
+                        </button>
+                      ) : skill.chapter_id ? (
+                        'Chapter in the trash'
+                      ) : (
+                        'Chapter not recorded'
+                      )}
                     </span>
                     {card && (
                       <button

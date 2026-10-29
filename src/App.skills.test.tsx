@@ -307,6 +307,18 @@ describe('skills on the character sheet', () => {
     expect(within(drawer).getByText('skill')).toHaveClass('legend', 'skill');
   });
 
+  it('opens the chapter a skill was learned in on the board, from the row', async () => {
+    const user = await openSheet();
+
+    await user.click(
+      skillRow('Fireball').getByRole('button', { name: 'Learned in Chapter One' })
+    );
+
+    const drawer = await screen.findByRole('complementary', { name: 'Node inspector' });
+    expect(within(drawer).getByLabelText('Label')).toHaveValue('Chapter One');
+    expect(within(drawer).getByText('chapter')).toHaveClass('legend', 'chapter');
+  });
+
   it('makes a skill card from the form that adds the skill', async () => {
     const user = await openSheet();
 
