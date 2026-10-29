@@ -311,6 +311,10 @@ still have them, without leaving the sheet. Typing the skill across two rows?
 **New card** works the same way on the edit form. The card is a step of its own in
 the history, so **Ctrl+Z** takes back the card and leaves the skill as it was.
 
+Once a skill has a card, its row says **Card: Ash Step** — click it and the board
+opens with that card in the inspector, so the link works from the sheet to the
+canvas as well as the other way round.
+
 The board itself no longer makes skill cards: a new skill belongs on a sheet, and
 the chapter it names shows it in that chapter's ledger straight away. A card put on
 a board in an earlier version still opens, still lists its holders and still takes a

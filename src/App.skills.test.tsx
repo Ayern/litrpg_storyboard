@@ -295,6 +295,18 @@ describe('skills on the character sheet', () => {
     ).toBeInTheDocument();
   });
 
+  it('opens the card a skill names on the board, from the row', async () => {
+    const user = await openSheet();
+
+    await user.click(skillRow('Fireball').getByRole('button', { name: 'Card: Fireball' }));
+
+    // The board comes up with that card open in the inspector, so the link from
+    // the sheet to the card works the other way too.
+    const drawer = await screen.findByRole('complementary', { name: 'Node inspector' });
+    expect(within(drawer).getByLabelText('Label')).toHaveValue('Fireball');
+    expect(within(drawer).getByText('skill')).toHaveClass('legend', 'skill');
+  });
+
   it('makes a skill card from the form that adds the skill', async () => {
     const user = await openSheet();
 

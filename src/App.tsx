@@ -7286,6 +7286,20 @@ function App() {
     [openNode]
   );
 
+  // The card a skill row names opens on the board the same way a search result
+  // does: the Graph tab comes up, the card's drawer opens and the view centres on
+  // it. A card in the trash has no row left to open.
+  const openSkillCard = (cardId: string) => {
+    const node = nodes.find(candidate => candidate.id === cardId);
+
+    if (!node) return;
+
+    setSelectedTab('graph');
+    setRenameOffer(null);
+    openNode({ id: node.id, label: node.data.label, content: node.data.content });
+    panCanvas(node.position.x, node.position.y);
+  };
+
   const selectEdge = useCallback(
     (_event: React.MouseEvent, edge: Edge<EdgeData>) => {
       openEdge({
@@ -9502,6 +9516,7 @@ function App() {
               onCreate={addSkill}
               onSave={saveSkill}
               onCreateCard={createSkillCard}
+              onOpenCard={openSkillCard}
               onDelete={removeSkill}
               onSaveEvent={saveSkillEvent}
               onDeleteEvent={removeSkillEvent}

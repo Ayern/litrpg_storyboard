@@ -3122,6 +3122,27 @@ body {
   white-space: nowrap;
 }
 
+/* The card named on a skill row is a way onto the board, not a form button. */
+.skill-row button.skill-card-link {
+  margin-left: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #9a8fb8;
+  font-family: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.skill-row button.skill-card-link:hover,
+.skill-row button.skill-card-link:focus-visible {
+  color: #d8cffb;
+  text-decoration: underline;
+  outline: none;
+}
+
 .skill-row button {
   margin-left: auto;
   background: transparent;

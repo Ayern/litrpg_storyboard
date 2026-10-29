@@ -55,6 +55,7 @@ export function SkillsSection({
   onCreate,
   onSave,
   onCreateCard,
+  onOpenCard,
   onDelete,
   onSaveEvent,
   onDeleteEvent,
@@ -80,6 +81,8 @@ export function SkillsSection({
   // no cards yet, and this form is where a skill starts, so the card can be made
   // here rather than sending the author to the board first.
   onCreateCard: (name: string, effect: string | null) => Promise<SkillOption | null>;
+  // Opens the card a skill points at on the board, so the link reads both ways.
+  onOpenCard: (cardId: string) => void;
   onDelete: (skill: CharacterSkill) => Promise<boolean>;
   onSaveEvent: (
     skillId: string,
@@ -570,9 +573,14 @@ export function SkillsSection({
                           : 'Chapter not recorded'}
                     </span>
                     {card && (
-                      <span className="skill-card-link">
+                      <button
+                        type="button"
+                        className="skill-card-link"
+                        title={`Open the “${card.label}” card on the board`}
+                        onClick={() => onOpenCard(card.id)}
+                      >
                         Card: {card.label}
-                      </span>
+                      </button>
                     )}
                     {(prerequisites.length > 0 || outcomes.length > 0) && (
                       <div className="skill-evolution-links">
