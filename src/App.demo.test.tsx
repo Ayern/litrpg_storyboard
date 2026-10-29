@@ -77,8 +77,8 @@ vi.mock('reactflow', async () => {
 
 const demoStory = {
   id: 'demo-1',
-  title: 'The Ember Ledger (Demo)',
-  description: 'A prepared story for trying the progression tools.',
+  title: 'The Ninth Bell (Demo)',
+  description: 'A prepared story for trying the whole board.',
   created_at: '2026-10-24T12:00:00Z',
   updated_at: '2026-10-24T12:00:00Z',
 };
@@ -111,31 +111,34 @@ const chapter = (
 });
 
 const chapters = [
-  chapter('demo-ch-1', 'The Ashen Gate', 1, 140),
-  chapter('demo-ch-2', 'A Ledger of Cinders', 2, 500),
-  chapter('demo-ch-3', 'The Ember Court', 3, 860),
+  chapter('demo-ch-1', 'The Low Tide', 1, 80),
+  chapter('demo-ch-2', 'Nine Minutes', 2, 460),
+  chapter('demo-ch-3', 'The Drowned Stair', 3, 840),
+  chapter('demo-ch-4', 'The Tally', 4, 840),
+  chapter('demo-ch-5', 'The Ninth Bell', 5, 460),
+  chapter('demo-ch-6', 'After the Bell', 6, 80),
 ];
 
 const cast = [
   {
-    id: 'demo-rook',
+    id: 'demo-ivy',
     story_id: demoStory.id,
-    name: 'Rook Valebright',
+    name: 'Ivy Marrow',
     description: null,
     level: 4,
-    xp: 2400,
+    xp: 1850,
     rank: 'Bronze',
     xp_to_next: 3000,
     created_at: '2026-10-24T12:00:00Z',
     updated_at: '2026-10-24T12:00:00Z',
   },
   {
-    id: 'demo-mira',
+    id: 'demo-tamsin',
     story_id: demoStory.id,
-    name: 'Mira Sable',
+    name: 'Tamsin Quill',
     description: null,
     level: 3,
-    xp: 1500,
+    xp: 1450,
     rank: 'Bronze',
     xp_to_next: 2200,
     created_at: '2026-10-24T12:00:00Z',
@@ -193,11 +196,19 @@ describe('demo story', () => {
     ).toBe(true);
 
     await waitFor(() =>
-      expect(screen.getAllByText('The Ember Ledger (Demo)').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('The Ninth Bell (Demo)').length).toBeGreaterThan(0)
     );
-    expect(await screen.findByRole('button', { name: 'The Ashen Gate' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'A Ledger of Cinders' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'The Ember Court' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'The Low Tide' })).toBeInTheDocument();
+
+    for (const label of [
+      'Nine Minutes',
+      'The Drowned Stair',
+      'The Tally',
+      'The Ninth Bell',
+      'After the Bell',
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
   });
 
   it('resets the open demo in place after confirmation', async () => {
@@ -238,10 +249,10 @@ describe('demo story', () => {
     );
 
     expect(
-      await screen.findByText(/Rebuilt "The Ember Ledger \(Demo\)" with its original sample data/)
+      await screen.findByText(/Rebuilt "The Ninth Bell \(Demo\)" with its original sample data/)
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText('The Ember Ledger (Demo)').length
+      screen.getAllByText('The Ninth Bell (Demo)').length
     ).toBeGreaterThan(0);
   });
 });

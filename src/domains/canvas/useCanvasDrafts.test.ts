@@ -425,3 +425,130 @@ describe('useCanvasDrafts', () => {
     expect(result.current.nodeContentDraft).toBe('Renamed');
   });
 });
+
+// The board draws three layers of card, and a story opens on the reading order
+// alone. The hook owns that because it is where a card is opened, which is the
+// moment a hidden layer has to come back.
+describe('useCanvasDrafts layers', () => {
+  function card(id: string, label: string, nodeType: string): Node<NodeData> {
+    return {
+      id,
+      type: 'default',
+      position: { x: 0, y: 0 },
+      data: { label, nodeType, createdBy: 'author' },
+    };
+  }
+
+  const layered: CanvasDraftsOptions = {
+    nodes: [
+      card('ch-1', 'The Low Tide', 'chapter'),
+      card('sk-1', 'Brine-Lung', 'skill'),
+      card('q-1', 'The Ninth Bell', 'quest'),
+    ],
+    edges: [],
+  };
+
+  it('starts on the chapter spine', () => {
+    const { result } = open(layered);
+
+    expect(result.current.graphLayers).toEqual({
+      chapters: true,
+      arcs: false,
+      entities: false,
+    });
+    expect(result.current.nodeTypeIsHidden('chapter')).toBe(false);
+    expect(result.current.nodeTypeIsHidden('skill')).toBe(true);
+    expect(result.current.nodeTypeIsHidden('quest')).toBe(true);
+  });
+
+  it('switches a layer on and off again', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.toggleGraphLayer('entities'));
+    expect(result.current.nodeTypeIsHidden('skill')).toBe(false);
+    expect(result.current.nodeTypeIsHidden('quest')).toBe(true);
+
+    act(() => result.current.toggleGraphLayer('entities'));
+    expect(result.current.nodeTypeIsHidden('skill')).toBe(true);
+  });
+
+  it('shows the whole web, and the spine alone, on request', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.showAllGraphLayers());
+    expect(result.current.graphLayers).toEqual({ chapters: true, arcs: true, entities: true });
+
+    act(() => result.current.showChapterSpine());
+    expect(result.current.graphLayers).toEqual({ chapters: true, arcs: false, entities: false });
+  });
+
+  it('reveals the layer of a card the author opens', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.openNode({ id: 'sk-1', label: 'Brine-Lung' }));
+
+    // Clicking a card the board drew at that moment still catches the type; a
+    // card opened from a sheet arrives with its type on the request.
+    expect(result.current.nodeTypeIsHidden('skill')).toBe(false);
+    expect(result.current.selectedNodeId).toBe('sk-1');
+  });
+
+  it('reveals a card the board does not hold yet', () => {
+    const { result } = open(layered);
+
+    act(() =>
+      result.current.openNode({
+        id: 'q-new',
+        label: 'Bring the clapper back',
+        nodeType: 'quest',
+      })
+    );
+
+    expect(result.current.graphLayers.arcs).toBe(true);
+    expect(result.current.graphLayers.entities).toBe(false);
+  });
+
+  it('closes a card whose layer is switched off, keeping the typing', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.openNode({ id: 'sk-1', label: 'Brine-Lung' }));
+    act(() => {
+      result.current.setNodeContentDraft('Breath enough for nine minutes under.');
+      result.current.rememberNodeDraft('sk-1', {
+        label: 'Brine-Lung',
+        content: 'Breath enough for nine minutes under.',
+      });
+    });
+
+    act(() => result.current.toggleGraphLayer('entities'));
+
+    // Nothing is on screen to write it back onto, so the drawer goes without
+    // asking; the draft is remembered for when the layer comes back.
+    expect(result.current.selectedNodeId).toBeNull();
+    expect(result.current.closePrompt).toBe(false);
+
+    act(() => result.current.toggleGraphLayer('entities'));
+    act(() => result.current.openNode({ id: 'sk-1', label: 'Brine-Lung' }));
+
+    expect(result.current.nodeContentDraft).toBe('Breath enough for nine minutes under.');
+  });
+
+  it('keeps a card in a layer that is still drawn', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.openNode({ id: 'ch-1', label: 'The Low Tide' }));
+    act(() => result.current.toggleGraphLayer('entities'));
+
+    expect(result.current.selectedNodeId).toBe('ch-1');
+  });
+
+  it('goes back to the spine when a story is opened', () => {
+    const { result } = open(layered);
+
+    act(() => result.current.showAllGraphLayers());
+    expect(result.current.graphLayers.entities).toBe(true);
+
+    act(() => result.current.resetGraphLayers());
+    expect(result.current.graphLayers).toEqual({ chapters: true, arcs: false, entities: false });
+  });
+});

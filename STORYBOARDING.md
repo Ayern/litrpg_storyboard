@@ -5,10 +5,10 @@ storyboard you can draft from. It builds one story from an empty shelf to an
 export, and every picture in it is of this app.
 
 You can follow it on a story that already exists. Press **Load demo story** in the
-sidebar and the board in these pictures appears: *The Ember Ledger*, three
-chapters, three people, their numbers, two quests and a little trash. Every step
-below names the same people and chapters, so you can look at the demo, then do it
-on a story of your own.
+sidebar and the board in these pictures appears: *The Ninth Bell*, six chapters, a
+cast of three, their numbers, four skill cards, two quests, a faction and a little
+trash. Every step below names the same people and chapters, so you can look at the
+demo, then do it on a story of your own.
 
 This document lives in the app — it is what the header's **Guide** button opens.
 If you would rather know how the thing works underneath (which part of the code
@@ -19,6 +19,7 @@ owns what, and what happens between a click and a row on disk), that is
 
 1. [Get a story open](#1-get-a-story-open)
 2. [Lay out the plot on the board](#2-lay-out-the-plot-on-the-board)
+   - [Which cards the board draws](#2a-which-cards-the-board-draws)
 3. [Chapters are the spine](#3-chapters-are-the-spine)
 4. [The cast, and who is in which chapter](#4-the-cast-and-who-is-in-which-chapter)
 5. [A sheet that holds the numbers](#5-a-sheet-that-holds-the-numbers)
@@ -72,12 +73,46 @@ ledger by itself. Skill cards that are already on a board still draw, open their
 holders and take connections; the board just no longer starts one that recorded
 nothing anywhere.
 
-![The Graph tab with the demo story on it](screenshots/canvas-board.png)
+![The Graph tab with the demo story on it, drawn as the chapter spine](screenshots/canvas-board.png)
 
-*The board, its cast rail on the left and the legend of card types on the right.
-Chapter cards are numbered, `Ch. 1` to `Ch. 3`; the boxes on the lines are the
-words you gave those connections. The faint dashed threads are casts and skill
-holds, which the badges and the sheets already say.*
+*The board as a story opens on it, its cast rail on the left and the legend of card
+types on the right. The six chapter cards are numbered `Ch. 1` to `Ch. 6` and run
+left to right, one clean line; the boxes on the lines are the words you gave those
+connections.*
+
+## 2a. Which cards the board draws
+
+A story opens on the **chapter spine**: the reading order, left to right, and
+nothing else. Everything the story is made of is still there — it is just on a
+layer the board is not drawing yet. The **Layers** chips on the toolbar decide
+which ones are on screen:
+
+| chip | what it draws |
+| --- | --- |
+| **Chapter spine** | the chapter cards, and the lines between them |
+| **Arcs & quests** | the `plot` and `quest` cards |
+| **Entities** | the cast, the skills, the items, the places, the faction and the System, the events, the ideas, the misc cards |
+
+**Show all** switches every layer on at once; **Chapters only** puts the board back
+to the spine. Hiding a layer hides its cards and the lines that end on them, and
+changes nothing else: positions, notes and connections are exactly where you left
+them, and the cards come back the moment you switch the layer on again. A card you
+open from somewhere else — a sheet's **Card:** link, a skill row's chapter, a search
+result, a new card — brings its own layer back with it, so there is never a drawer
+open behind an invisible card.
+
+![The same board with every layer drawn](screenshots/canvas-layers.png)
+
+*The whole web: the chapters along the top, the cast and the quests under them, then
+the skills and the Choir, then the places and the plots, then the odds and ends.
+Nothing moved between this picture and the one above — **Show all** drew what was
+already there, and **Chapters only** puts it away again.*
+
+Keep to the spine while you plan. A chapter card holds its summary, its roster, its
+checklist and its progression events, so a scene is planned without leaving the
+board; the layers underneath are for checking the shape of the whole story — who is
+where, what was learned, which quest started when — rather than for planning a
+scene.
 
 To connect two cards, drag from the small circle on the side of one card onto the
 other. The label on the new line defaults to what the line means — `next` between
@@ -101,8 +136,8 @@ Two more moves worth trying:
 
 ## 3. Chapters are the spine
 
-Everything else hangs off the reading order. The **Chapters** tab lists every
-chapter card in order, numbered from 1.
+Everything else hangs off the reading order, which is why the board opens on it.
+The **Chapters** tab lists every chapter card in order, numbered from 1.
 
 ![The Chapters tab: the reading order, the timeline and the continuity flags](screenshots/chapters-tab.png)
 
@@ -150,9 +185,10 @@ can stay on the board:
   a checkbox for everyone else in the scene. The POV is always present and its box
   is locked, because the POV is not a cast row.
 - **Progression & Events** on the card is the scene's ledger, listed in the order
-  you logged it: `⚡ +250 XP · Paid for a name at the toll gate`. Under those lines
+  you logged it: `⚡ +650 XP · Brings the clapper up out of the flooded stair`.
+  Under those lines
   the card also shows the skills the sheets place in this chapter, marked **sheet**
-  — `🔥 Rook has Ash Step (Rank 1)`. You never type those twice: adding, renaming,
+  — `🔥 Ivy has Brine-Lung (Rank 1)`. You never type those twice: adding, renaming,
   re-ranking or deleting a skill on a character's sheet (or giving it a different
   chapter) changes that line at once, and it has no **×** because the sheet is where
   it is changed. A scene event that already names the skill takes the line over, so
@@ -278,8 +314,8 @@ What the numbers mean, and what they do not:
   from a blessing or a hidden quest. Adding one applies it, and deleting it takes it
   back out. A skill keeps its own clock too — its rank can rise in a chapter where
   nobody levelled.
-- **Attributes** are the free text a stat cannot hold — `Class: Delver`,
-  `Homeland: Ashfall`.
+- **Attributes** are the free text a stat cannot hold — `Class: Salvage diver`,
+  `Gear: Clapper's rope`.
 
 The Chapters tab compares milestones across the reading order, so a level that goes
 backwards without a penalty flag, a skill used before it was learned, a stat whose
@@ -287,7 +323,7 @@ sheet value no longer matches the last level-up that recorded it, or a level
 recorded at a total other than the one the rule puts that level on shows up as a
 continuity warning with a link to the exact row to fix. When there is only one
 number to choose between, the warning also carries the fix itself: **Set to 12**
-writes the level-up's value onto the sheet, and **Sync to 1,400 XP** writes the
+writes the level-up's value onto the sheet, and **Sync to 1,200 XP** writes the
 rule's step for that level onto the row. Either one is a single undoable step.
 
 Names are matched the way you would match them by eye: capitals and stray spaces do
@@ -311,9 +347,9 @@ still have them, without leaving the sheet. Typing the skill across two rows?
 **New card** works the same way on the edit form. The card is a step of its own in
 the history, so **Ctrl+Z** takes back the card and leaves the skill as it was.
 
-Once a skill has a card, its row says **Card: Ash Step** — click it and the board
+Once a skill has a card, its row says **Card: Brine-Lung** — click it and the board
 opens with that card in the inspector, so the link works from the sheet to the
-canvas as well as the other way round. **Learned in The Ashen Gate** on the same
+canvas as well as the other way round. **Learned in The Low Tide** on the same
 row does the same for the chapter card, so a skill's row is a way around the whole
 story without a trip to the Graph tab first.
 
@@ -516,6 +552,8 @@ Your work lives in a single file on your own machine (`Data location` in
 | --- | --- |
 | Start a story, or load the demo | Sidebar: **New story title** → **Create**, or **Load demo story** |
 | Add a card for anything | Graph toolbar: pick the type, type a label, **Add Node** |
+| See every card in the story | Graph toolbar: **Show all** in the **Layers** chips |
+| Go back to the chapters alone | Graph toolbar: **Chapters only** |
 | Add a person or a quest | Pick `character` or `quest` and **Add Node** for the full form |
 | Give somebody a skill | Their sheet: **Add skill**, with the chapter it was learned in |
 | Put a skill on the board | On that skill's form, **New card** beside the card picker |

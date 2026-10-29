@@ -9,6 +9,8 @@ import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { GraphTab } from './GraphTab';
 import type { GraphTabProps } from './GraphTab';
+import { allLayers, CHAPTER_SPINE_LAYERS } from './layers';
+import type { GraphLayers } from './layers';
 import { CAST_DRAG_TYPE, NODE_STAT_BADGES, edgeKindClass } from './types';
 import type { EdgeData, NodeData, NodeType } from './types';
 
@@ -166,6 +168,9 @@ function canvasSpies() {
     onOpenChapter: vi.fn(),
     setSkillHolderError: vi.fn(),
     addSkillHolder: vi.fn(),
+    toggleGraphLayer: vi.fn(),
+    showAllGraphLayers: vi.fn(),
+    showChapterSpine: vi.fn(),
     startInspectorStat: vi.fn(),
     saveInspectorStat: vi.fn(),
     startInspectorAttribute: vi.fn(),
@@ -178,10 +183,10 @@ type Spies = ReturnType<typeof canvasSpies>;
 // The drafts the app owns and the tab types into. A test that types needs those
 // setState calls to go somewhere real, so the harness holds state for them and
 // hands them down; everything else passes through as it was given.
-interface Start {
-  newNodeType?: NodeType;
-  newNodeLabel?: string;
-  showChapterNotes?: boolean;
+interface Start {    newNodeType?: NodeType;
+    newNodeLabel?: string;
+    showChapterNotes?: boolean;
+    graphLayers?: GraphLayers;
   edgeLabelDraft?: string;
   edgeRelationDraft?: string;
   nodeLabelDraft?: string;
@@ -215,6 +220,10 @@ function props(spies: Spies, start: Start = {}, overrides: Partial<GraphTabProps
 
     showChapterNotes: start.showChapterNotes ?? false,
     setShowChapterNotes: vi.fn(),
+    graphLayers: start.graphLayers ?? { ...CHAPTER_SPINE_LAYERS },
+    toggleGraphLayer: spies.toggleGraphLayer,
+    showAllGraphLayers: spies.showAllGraphLayers,
+    showChapterSpine: spies.showChapterSpine,
     nodes: [],
     canvasNodes: [],
     edges: [],
@@ -384,6 +393,71 @@ function open(overrides: Partial<GraphTabProps> = {}, start: Start = {}) {
   render(<Harness spies={spies} start={start} overrides={overrides} />);
   return spies;
 }
+
+describe('the layers', () => {
+  // A board with every card on it is a good place to look and a poor place to
+  // start, so the chips say what is drawn and one click changes it.
+  it('opens with the chapter spine on and the other two off', () => {
+    open();
+
+    const chips = screen.getByRole('group', { name: 'Layers' });
+
+    expect(within(chips).getByRole('button', { name: 'Chapter spine' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(within(chips).getByRole('button', { name: 'Arcs & quests' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(within(chips).getByRole('button', { name: 'Entities' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+
+    // Something is hidden, so the whole web is one press away.
+    expect(within(chips).getByRole('button', { name: 'Show all' })).toBeEnabled();
+  });
+
+  it('switches the layer the chip names', async () => {
+    const spies = open();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Entities' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Arcs & quests' }));
+
+    expect(spies.toggleGraphLayer).toHaveBeenNthCalledWith(1, 'entities');
+    expect(spies.toggleGraphLayer).toHaveBeenNthCalledWith(2, 'arcs');
+  });
+
+  it('takes the chips and the presets from the layers the app holds', async () => {
+    const spies = open({}, { graphLayers: allLayers() });
+    const chips = screen.getByRole('group', { name: 'Layers' });
+
+    expect(within(chips).getByRole('button', { name: 'Entities' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    // Everything is already drawn, so there is nothing for Show all to do.
+    expect(within(chips).getByRole('button', { name: 'Show all' })).toBeDisabled();
+
+    await userEvent.click(within(chips).getByRole('button', { name: 'Chapters only' }));
+
+    expect(spies.showChapterSpine).toHaveBeenCalledTimes(1);
+  });
+
+  it('says what each chip hides in its tooltip', () => {
+    open();
+
+    expect(screen.getByRole('button', { name: 'Entities' })).toHaveAttribute(
+      'title',
+      expect.stringContaining('Click to show')
+    );
+    expect(screen.getByRole('button', { name: 'Chapter spine' })).toHaveAttribute(
+      'title',
+      expect.stringContaining('Click to hide')
+    );
+  });
+});
 
 describe('connection kinds', () => {
   // The board draws two kinds of line. A cast or skill line repeats what a

@@ -1086,6 +1086,62 @@ body {
   cursor: pointer;
 }
 
+/* The board's layers: which kinds of card are drawn. The chips sit beside the
+   notes toggle rather than in a menu, because looking at the whole web and
+   coming back to the reading order is something a person does while thinking. */
+.graph-layers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid #3c3c3c;
+}
+
+.graph-layers-label {
+  color: #777;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+
+.graph-toolbar .layer-toggle {
+  background: #333;
+  color: #aaa;
+  border: 1px solid #3c3c3c;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.graph-toolbar .layer-toggle:hover:not(:disabled) {
+  background: #3c3c3c;
+  color: #ddd;
+}
+
+.graph-toolbar .layer-toggle.active {
+  background: #0e639c;
+  border-color: #1177bb;
+  color: #fff;
+}
+
+.graph-toolbar .layer-preset {
+  background: transparent;
+  color: #8ab4d4;
+  font-size: 12px;
+  padding: 3px 4px;
+  text-decoration: underline dotted;
+}
+
+.graph-toolbar .layer-preset:hover:not(:disabled) {
+  color: #cfe6f5;
+}
+
+.graph-toolbar .layer-preset:disabled {
+  color: #555;
+  text-decoration: none;
+  cursor: default;
+}
+
 .hint {
   color: #666;
   font-size: 12px;
@@ -1854,6 +1910,12 @@ body {
 .chapter-continuity-sync:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* The key is reading material, not a control: a click that lands inside it
+   belongs to the card underneath. */
+.node-legend-panel {
+  pointer-events: none;
 }
 
 .node-legend {
@@ -4293,7 +4355,13 @@ body {
 }
 
 /* React Flow customizations */
+
+/* The wrapper is measured, not the card: React Flow fits the board and anchors
+   a connection to the box it measured, so a wrapper narrower than the card it
+   holds would frame the board short of its right-hand cards and stop a line
+   halfway across a chapter's face. It takes its size from the card itself. */
 .react-flow__node {
+  width: max-content;
   background: transparent;
   border: none;
   padding: 0;

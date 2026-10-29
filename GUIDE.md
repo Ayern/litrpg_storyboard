@@ -137,7 +137,7 @@ connections with it — a fact no local patch can know.
 
 Undo is a stack of steps, not a stack of rows. `src/domains/history/useHistory.ts`
 holds the two stacks and each step is `{ label, undo, redo }` — a label for the
-notice ("Add holder", "Relink 'The Ashen Gate'") and the two writes that walk it
+notice ("Add holder", "Relink 'The Low Tide'") and the two writes that walk it
 back and forward. The rules that make it feel reliable:
 
 - **A step is recorded only after the write succeeded.** A refused write leaves
@@ -234,24 +234,27 @@ can be tested without a window:
 
 ## 4. Workflow A — a cast member, a card, and their numbers
 
-*Goal: get Mira onto the board as a card that is linked to her sheet, then read
+*Goal: get Ivy onto the board as a card that is linked to her sheet, then read
 her numbers without leaving the canvas.*
 
 ![The Graph tab with the sample story](screenshots/canvas-board.png)
 
-*The Graph tab. Three chapter cards along the top, each a workbench: its summary,
-its roster with a level *as of that chapter*, its objective checklist, **Cast** and
-its **Progression & Events** ledger, then the quests that touch it and its own
+*The Graph tab, on the demo: six chapter cards in reading order, each one a
+workbench with its summary, its roster with a level *as of that chapter*, its
+objective checklist, **Cast** and its **Progression & Events** ledger, then its own
 continuity warnings. **+ Event** on the card logs one scene event — XP, a learned
 skill, a rank-up, an evolution, a sacrifice or an acquired item — and under those
 lines the ledger mirrors the skills the sheets place in the chapter, each tagged
-**sheet**. The cast
-rail is on the left, character cards in the middle, skill cards and a faction card
-below. The lines the board is drawn around are solid and named: `next` between
-chapters, `rival` / `enemy` between two characters, `member` into a faction. A line
-that only repeats what a badge or a sheet already holds — a cast assignment, a
-skill hold — is the faint dashed thread with no verb, still clickable when the
-wiring itself is what you came to change.*
+**sheet**. The cast rail is on the left; the three character cards sit under the
+chapters, and around them is one card of every other type the canvas draws: four
+skills, two quests, a faction, three locations, two items, two plot cards, the
+System, an event, two ideas and a note card. The lines are named: `next` between
+chapters, `ally` / `rival` / `owes` between two characters, `serves` into the
+faction, `quest` from the chapter that took one on, `happens in` from a scene to
+its place, `holds` from a character to the item they carry. A line that only
+repeats what a badge or a sheet already holds — a cast assignment, a skill hold —
+is the faint dashed thread with no verb, still clickable when the wiring itself is
+what you came to change.*
 
 Every write on that card face leaves through `App.tsx` and records one history
 step. **Cast** writes a `chapter_cast` row through `add_chapter_cast_member` (or
@@ -304,7 +307,7 @@ relation first:
 
 ![The relation dialog opened by dragging between two character cards](screenshots/relation-popover.png)
 
-*Dragging from Mira's handle to Halden Vane's opens the relation form. The dialog
+*Dragging from Ivy's handle to Tamsin's opens the relation form. The dialog
 says what is about to be true — "the relation is recorded on both sheets, and the
 card keeps the connection" — because two rows are about to be written.*
 
@@ -319,7 +322,7 @@ linked cast member's level, XP and stats, and lets them be edited in place:
 
 ![The inspector drawer beside the board](screenshots/card-inspector.png)
 
-*The inspector for the **Ash Step** skill card: label and notes, the cast member
+*The inspector for the **Brine-Lung** skill card: label and notes, the cast member
 the card is linked to, and — because this is a skill card — the holders it already
 has and the form that adds one.*
 
@@ -372,7 +375,7 @@ made there recorded nothing on any chapter. The sheet is where one is made inste
 effect being typed, puts the card on the board and selects it in the picker; the
 write is its own history step, `Add the "<name>" card`, so linking the skill to it
 stays a separate step and Undo can take the card back without touching the sheet.
-A skill that already has a card says **Card: Ash Step** on its row, and clicking
+A skill that already has a card says **Card: Brine-Lung** on its row, and clicking
 that link is a way back: `openCardOnBoard` switches to the Graph tab, opens the
 card's drawer and centres the board on it, exactly as a search result does. The
 **Learned in <chapter>** line on the row is the same call with the chapter node's
@@ -393,7 +396,7 @@ holder:
 
 ![The holder form on a skill card, filled in](screenshots/skill-holder-form.png)
 
-*Adding a second holder to **Ash Step**: choose the character, give them a rank,
+*Adding a second holder to **Brine-Lung**: choose the character, give them a rank,
 say which chapter they learned it in. The card's own notes supply the effect, so
 the form never asks for the skill's words — the card is where those live.*
 
@@ -406,16 +409,16 @@ the sheet the same thing:
 - the sheet shows them under **Skills**, with the card's name as a link back to the
   board.
 
-![Mira's sheet, lower half](screenshots/character-sheet-detail.png)
+![Ivy's sheet, lower half](screenshots/character-sheet-detail.png)
 
-*Mira's sheet: XP by chapter, attributes, the skill she holds with the event that
+*Ivy's sheet: XP by chapter, attributes, the skills she holds with the event that
 used it and the card it came from, what she carries, and her currency. Each row is
 editable in place, and every write answers whether the row was written — so a form
 closes only on a save that happened.*
 
 ### The cascade, and why it is one step
 
-Renaming the **Ash Step** card rewrites the name on Rook's own skill row, because a
+Renaming the **Brine-Lung** card rewrites the name on Ivy's own skill row, because a
 card is the shared identity. On the Rust side that is `sync_skill_card_holders`,
 called from `update_node` inside the same transaction as the card's own update —
 and re-run when a *revert* puts an old label back, so a sheet can never keep a
@@ -496,6 +499,28 @@ A note is stored as a node with `parent_node_id` pointing at its chapter, which 
 why deleting one is the board's own `delete_node` — it goes to the trash like a
 card, and the panel can drop the row knowing the database has not forgotten it.
 
+### Layers
+
+The board draws three layers of card, defined in `src/domains/canvas/layers.ts`:
+`chapters`, `arcs` (the plot and quest cards) and `entities` (everything else, each
+type in exactly one layer, which a test pins down). A story opens on the spine, so
+the first render is the reading order.
+
+Nothing is filtered out of state to do it. `App.tsx` puts `hidden: true` on the
+cards whose layer is switched off in the `canvasNodes` memo, and React Flow draws
+nothing for a hidden card while leaving it in `nodes`, in `fitView`'s way (it skips
+hidden cards) and in the app's own bookkeeping. React Flow does not hide the edges
+that end on a hidden card, so `drawnEdges` marks those hidden itself. The flags are
+applied in those two memos, which is why a toggle re-runs them and nothing else.
+
+The switch is held by `useCanvasDrafts` rather than by `App.tsx`, because that is
+where a card is opened: `openNode` reveals the layer of the card it is given — by
+its `nodeType` where the caller knows it and by the board's own row otherwise — and
+switching a layer off closes a drawer that would otherwise be editing a card nobody
+can see, keeping the half-written draft for when the layer comes back. A layer is a
+view of the same rows: no command runs, no audit entry is written, and nothing
+travels in an export.
+
 ---
 
 ## 7. Workflow D — history, the audit log and the trash
@@ -559,6 +584,7 @@ its name behind, not its description.
 | Add a card type, colour or caption | `src/domains/canvas/types.ts` (`nodeTypes`) and `.graph-node` rules in `src/styles.css` |
 | Change what a connection does | `onConnect` / `onConnectEnd` / `dropCastMember` in `src/App.tsx`, then the api function it calls |
 | Change what a card's drawer shows | `src/domains/canvas/GraphTab.tsx`, and `GraphNode.tsx` for the card itself |
+| Change which cards the board draws | `src/domains/canvas/layers.ts`, and the `canvasNodes` / `drawnEdges` memos in `src/App.tsx` |
 | Move state out of `App.tsx` | The `src/domains/<domain>/` folder for that tab, following `useChapterWorkspace` or `useCanvasDrafts` |
 | Add, rename or re-shape a command | `src/domains/<domain>/api.ts` and its `#[tauri::command]` wrapper in `src-tauri/src/lib.rs` |
 | Change a query, a cascade or an audit entry | `src-tauri/db/src/lib.rs`, in the `Db` method that owns it |

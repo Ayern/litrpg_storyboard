@@ -38,10 +38,11 @@ fn main() {
     let db = Db::open(&db_path).expect("open a scratch database");
     let user = USER.to_string();
 
-    // The prepared demo story, complete: the cast and the three chapters, the
-    // skills with their history, the levels, the deliberate 100 XP gap
-    // in Mira's ledger that the continuity panel is meant to find, and the cards,
-    // connections, quests, loot, notes and trash the guide's pictures show.
+    // The prepared demo story, complete: the cast and the six chapters, the
+    // skills with their history, the levels, the one level row that disagrees
+    // with the story's rule and that the continuity panel is meant to find, and
+    // the cards, connections, quests, loot, notes and trash the guide's pictures
+    // show.
     let story = db
         .create_demo_story(user.clone())
         .expect("seed the prepared demo story");
@@ -50,10 +51,13 @@ fn main() {
     let characters = db.list_characters(&story_id).expect("read the cast");
     let nodes = db.list_nodes(&story_id).expect("read the board");
 
-    let ashen_gate = node_id(&nodes, "The Ashen Gate");
-    let ledger = node_id(&nodes, "A Ledger of Cinders");
-    let ember_court = node_id(&nodes, "The Ember Court");
-    let chapters = [&ashen_gate, &ledger, &ember_court];
+    // Every chapter, in reading order, because the sheet's "as of" read is
+    // answered per chapter and the board has six of them.
+    let mut chapters: Vec<&Node> = nodes
+        .iter()
+        .filter(|node| node.node_type == "chapter")
+        .collect();
+    chapters.sort_by_key(|chapter| chapter.chapter_seq);
 
     let mut root = Map::new();
     root.insert("storyId".into(), Value::String(story_id.clone()));
@@ -219,11 +223,11 @@ fn main() {
 
     let mut states = Map::new();
     for character in &characters {
-        for chapter in chapters {
+        for chapter in &chapters {
             states.insert(
-                format!("{}|{}", character.id, chapter),
+                format!("{}|{}", character.id, chapter.id),
                 json_of(
-                    &db.character_state_at_chapter(&character.id, chapter)
+                    &db.character_state_at_chapter(&character.id, &chapter.id)
                         .unwrap(),
                 ),
             );
@@ -247,13 +251,4 @@ fn put<T: Serialize>(root: &mut Map<String, Value>, key: &str, value: &T) {
 
 fn json_of<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("serialise a row")
-}
-
-fn node_id(nodes: &[Node], label: &str) -> String {
-    nodes
-        .iter()
-        .find(|node| node.label == label)
-        .unwrap_or_else(|| panic!("no card labelled {label}"))
-        .id
-        .clone()
 }

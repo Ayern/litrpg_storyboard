@@ -20,7 +20,7 @@ change keeps, are in [ROADMAP.md](ROADMAP.md).
 ## Features
 
 **Stories** — create, rename and delete. The sidebar orders them by most recently
-touched.**Load demo story** builds a prepared three-chapter story with three cast members, stats, skills, relations and faction standings, chapter cast, chapter objectives, level and stat milestones, and XP income rows. Its board is already drawn — the three chapter cards, cards for each cast member, an item card, a faction card, a quest card, two skill cards, and the connections between them — and its ledgers are filled: one finished quest with its four rewards, one still open, two chapter notes, an inventory and two currency rows. A cut cast member, a cut card and a scratch story wait in the trash, so restoring something can be tried without deleting anything of your own. Everything the guide documents is this story: the app builds it, and so do the pictures in [`GUIDE.md`](GUIDE.md). Its last chapter deliberately leaves Mira's ledger 100 XP short of her total, so the continuity warning and chapter-card badge can be tried without touching a real story. While it keeps its prepared title and the demo is
+touched.**Load demo story** builds *The Ninth Bell*, a prepared six-chapter story that uses every part of the board at least once: three cast members with sheets, stats, skills, relations and faction standings; a story growth rule (600 XP a level, four points to place, a point each of Insight and Agility) with a per-character override for one of them; level records, XP income, an award and placed growth points; chapter cast, objectives and a scene ledger with all six event kinds on it, including a skill learned, ranked up, evolved with its base kept, evolved with its base given up, and sacrificed; two quests with rewards (one finished, one open), a faction, three locations, two items, two plots, the System, an event, two ideas, a note card and a misc card, with 31 named connections between them; and an inventory, currency, attributes and two chapter notes. A cut cast member, a cut card and a scratch story wait in the trash, so restoring something can be tried without deleting anything of your own. Everything the guide documents is this story: the app builds it, and so do the pictures in [`GUIDE.md`](GUIDE.md). One row is deliberately wrong — Tamsin's third level is recorded at 1,350 XP where the story's rule puts it at 1,200 — so the continuity warning, its one-click **Sync to 1,200 XP** fix and the chapter-card badges can be tried without touching a real story. While it keeps its prepared title and the demo is
 selected, **Reset demo story** replaces its chapters, cast, progression and
 history in place with a fresh copy of the sample data, so a walkthrough can be
 repeated without piling up demo stories. It is an ordinary story otherwise:
@@ -128,6 +128,23 @@ and a second `Escape` dismisses the question and leaves the editor as it was.
 Closing the app window asks before either a chapter or a note draft goes, with
 **Keep working** focused; `Escape` dismisses that question too and puts the
 keyboard back in the field.
+
+**Which cards the board draws** — the canvas is grouped into three layers, and the
+**Layers** chips on the Graph toolbar switch each one: **Chapter spine** draws the
+chapter cards and the lines between them, **Arcs & quests** draws the `plot` and
+`quest` cards, and **Entities** draws the cast, skills, items, locations, factions,
+the System, events, ideas and misc cards. A story opens on the spine alone, so the
+first thing seen is the reading order; **Show all** draws the whole web and
+**Chapters only** puts it back. A layer is a view, not a change: a hidden card keeps
+its position, its notes and its connections, and the lines that end on it are hidden
+with it. Opening a card from anywhere else — a sheet's **Card:** link, a skill row's
+chapter, a search result, a drop, a freshly created card — reveals that card's layer,
+so its drawer never opens behind an invisible card; a card whose layer is switched
+off while its drawer is open closes the drawer without losing the half-written text.
+A card type the build does not recognise is drawn rather than hidden, since an
+unknown card is more likely a newer story than an unwanted one. Switching story
+returns the board to the spine, while a write that reloads the same story leaves the
+layers as they were.
 
 **Editing a node** — click a node and an inspector drawer slides in beside the
 canvas, which gives up the width rather than hiding the node being edited. Reword
@@ -344,7 +361,7 @@ default) and its kind — **+ XP**, **Learn Skill**, **Rank Up**, **Evolve**,
 **Sacrifice** or **Acquire Item** — with the reason, skill name or detail line and
 a quantity where one applies. The rows sit on the card in the order they were
 logged, each with its icon, the character and the line: `⚡ +250 XP · Paid for a
-name at the toll gate`. XP pays into the chapter's income, a learned skill and an
+out of the flooded stair`. XP pays into the chapter's income, a learned skill and an
 acquired item are written on the sheet and in the inventory through the same
 commands the sheets use, and a rank-up, evolution or sacrifice changes the skill
 the form names. **Skill** lists that character's own rows, so the event edits the
@@ -363,7 +380,7 @@ the point-of-view character and every cast member ticked as present, from the
 card's own **Cast** popover or from the same picker on the Chapters tab. There is
 no single linked character on a chapter: that link was folded into cast rows in
 schema v31, so the roster has one source. Each name gets a compact level badge
-from the chapter snapshot, so "Rook (Lv 12)" is the level Rook had when the story
+from the chapter snapshot, so "Ivy (Lv 4)" is the level Ivy had when the story
 reached that chapter, not the level on the sheet today. Hovering or focusing a
 badge lists that character's active skills and their ranks; clicking it opens the
 character sheet as of that chapter. A character with no level yet keeps the name
@@ -443,7 +460,7 @@ prerequisites and outcomes and offers **Add prerequisite** or **Add outcome**;
 clicking a line shows its chapter, required rank and notes with **Delete link**.
 The link form says which loop it would close while the other end is being
 chosen — it walks the links forward from the skill that would become the child
-and names the chain, such as *Ember → Flame → Ember*, and **Add link** stays
+and names the chain, such as *Brine-Lung → Salt-Sight → Brine-Lung*, and **Add link** stays
 disabled until a later skill is picked. The chain is drawn on the tree too: its
 skills take a red edge and background, and the links between them turn red and
 dash-drawn, so the warning points at the picture and not only at the panel. A loop
@@ -1130,7 +1147,7 @@ a recorded upgrade rank ignoring case, so “Rank 2” and “rank 2” are the 
 while “Second rank” is not. A link with no chapter or no required rank cannot be
 placed in the reading order, so it is never flagged on timing.
 - **Search is a plain substring match.** Case is ignored, but `rk` does not find
-  `Rook`. Results are ranked into two bands — a name or title match first, then
+  `Ivy`. Results are ranked into two bands — a name or title match first, then
   everything found by its notes, description, relation or cast member — and
   inside a band they keep the order they were gathered in: the open story first
   (nodes, chapter notes, cast, connections), then the other stories, each

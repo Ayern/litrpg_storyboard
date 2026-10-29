@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Edge, Node } from 'reactflow';
+import {
+  allLayers,
+  chapterSpine,
+  isNodeTypeDrawn,
+  revealNodeType,
+  toggleLayer,
+} from './layers';
+import type { GraphLayer, GraphLayers } from './layers';
 import type { EdgeData, NodeData } from './types';
 
 // What the author is editing on the canvas: which card or connection is open,
@@ -61,6 +69,10 @@ export interface OpenNodeRequest {
   id: string;
   label: string;
   content?: string | null;
+  // The kind of card, when the caller knows it for a card the board does not
+  // hold yet. It is what reveals the layer the card is drawn in, so a card made
+  // from a form or a search result is on screen when its drawer opens.
+  nodeType?: string | null;
 }
 
 export interface OpenEdgeRequest {
@@ -86,6 +98,25 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
   // Unsaved label and notes, per card, for this session. Closing or switching
   // away no longer has to discard them: reopening the card offers the text back.
   const rememberedRef = useRef<Record<string, NodeDraft>>({});
+
+  // Which layers the board is drawing. It lives here because it is the board's
+  // view of the story rather than the story itself: the cards, their positions
+  // and their connections are untouched by it, and the hook is where a card is
+  // opened, which is when a hidden layer has to be switched back on.
+  const [graphLayers, setGraphLayers] = useState<GraphLayers>(chapterSpine);
+  const layersRef = useRef(graphLayers);
+  // The board as the handlers below see it. A card opened from a search result
+  // or a drop has not reached the state yet, so the request's own type is used
+  // first and this is the fallback for a click on a card already drawn.
+  const nodesRef = useRef(nodes);
+
+  useEffect(() => {
+    layersRef.current = graphLayers;
+  }, [graphLayers]);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   const selectedNode = nodes.find(node => node.id === selectedNodeId) ?? null;
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId) ?? null;
@@ -156,9 +187,24 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
   }, []);
 
   // Opening a card is the same gesture whether it was just created or relinked,
-  // and it is where a half-written draft comes back.
+  // and it is where a half-written draft comes back. It is also where a layer
+  // the author had switched off comes back: a card's drawer opening behind a
+  // hidden card would be an editor with nothing to edit.
   const openNode = useCallback((node: OpenNodeRequest) => {
     const draft = rememberedRef.current[node.id];
+    const nodeType =
+      node.nodeType ??
+      nodesRef.current.find(candidate => candidate.id === node.id)?.data.nodeType ??
+      null;
+
+    if (nodeType) {
+      const next = revealNodeType(layersRef.current, nodeType);
+
+      if (next !== layersRef.current) {
+        layersRef.current = next;
+        setGraphLayers(next);
+      }
+    }
 
     // Picking a card closes the connection editor, because both occupy the same
     // corner of the canvas.
@@ -169,6 +215,66 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
     setNodeContentDraft(draft?.content ?? node.content ?? '');
     setClosePrompt(false);
   }, []);
+
+  // A card whose layer is switched off is no longer on the board, so the card
+  // cannot stay open: the drawer closes without asking, because there is nothing
+  // on screen to write it back onto. The remembered draft keeps the typing for
+  // when the layer comes back.
+  const closeHiddenCard = useCallback((layers: GraphLayers) => {
+    const open = live.current.nodeId;
+    if (!open) return;
+
+    const node = nodesRef.current.find(candidate => candidate.id === open);
+    if (!node) return;
+
+    if (!isNodeTypeDrawn(node.data.nodeType, layers)) {
+      setSelectedNodeId(null);
+      setClosePrompt(false);
+    }
+  }, []);
+
+  const toggleGraphLayer = useCallback(
+    (layer: GraphLayer) => {
+      const next = toggleLayer(layersRef.current, layer);
+
+      layersRef.current = next;
+      setGraphLayers(next);
+      closeHiddenCard(next);
+    },
+    [closeHiddenCard]
+  );
+
+  // Two ways to stop choosing: the whole web, and the reading order alone.
+  const showAllGraphLayers = useCallback(() => {
+    const next = allLayers();
+
+    layersRef.current = next;
+    setGraphLayers(next);
+  }, []);
+
+  const showChapterSpine = useCallback(() => {
+    const next = chapterSpine();
+
+    layersRef.current = next;
+    setGraphLayers(next);
+    closeHiddenCard(next);
+  }, [closeHiddenCard]);
+
+  // A story of one's own opens the way the last one did not: the board starts on
+  // the reading order, so the first thing anybody sees is the spine.
+  const resetGraphLayers = useCallback(() => {
+    const next = chapterSpine();
+
+    layersRef.current = next;
+    setGraphLayers(next);
+  }, []);
+
+  // Whether a card of this type is off the board, which the app answers when it
+  // puts the hidden flag on the cards and their lines.
+  const nodeTypeIsHidden = useCallback(
+    (nodeType: string) => !isNodeTypeDrawn(nodeType, graphLayers),
+    [graphLayers]
+  );
 
   const openEdge = useCallback((edge: OpenEdgeRequest) => {
     setEdgeEditError(null);
@@ -289,5 +395,11 @@ export function useCanvasDrafts({ nodes, edges }: CanvasDraftsOptions) {
     forgetNodeDraft,
     forgetRememberedDrafts,
     followStoredRows,
+    graphLayers,
+    toggleGraphLayer,
+    showAllGraphLayers,
+    showChapterSpine,
+    resetGraphLayers,
+    nodeTypeIsHidden,
   };
 }

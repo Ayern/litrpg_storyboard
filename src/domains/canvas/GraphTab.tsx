@@ -13,6 +13,8 @@ import type {
 } from 'reactflow';
 import { HelpTip } from '../../components/HelpTip';
 import type { CharacterAttribute } from '../characters/types';
+import { everyLayerShown, GRAPH_LAYERS } from './layers';
+import type { GraphLayer, GraphLayers } from './layers';
 import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { flowNodeTypes } from './GraphNode';
@@ -55,6 +57,12 @@ export interface GraphTabProps {
   // The board and the notes toggle.
   showChapterNotes: boolean;
   setShowChapterNotes: React.Dispatch<React.SetStateAction<boolean>>;
+  // Which kinds of card the board draws. A story opens on the chapter spine, so
+  // a first look is the reading order rather than everything at once.
+  graphLayers: GraphLayers;
+  toggleGraphLayer: (layer: GraphLayer) => void;
+  showAllGraphLayers: () => void;
+  showChapterSpine: () => void;
   nodes: Node<NodeData>[];
   canvasNodes: Node<NodeData>[];
   edges: Edge<EdgeData>[];
@@ -168,6 +176,10 @@ export function GraphTab({
   historyDepth,
   showChapterNotes,
   setShowChapterNotes,
+  graphLayers,
+  toggleGraphLayer,
+  showAllGraphLayers,
+  showChapterSpine,
   nodes,
   canvasNodes,
   edges,
@@ -364,6 +376,43 @@ export function GraphTab({
             >
               {showChapterNotes ? 'Hide notes' : 'Show notes'}
             </button>
+            <span className="graph-layers" role="group" aria-label="Layers">
+              <span className="graph-layers-label">Layers</span>
+              {GRAPH_LAYERS.map(option => {
+                const drawn = graphLayers[option.key];
+
+                return (
+                  <button
+                    key={option.key}
+                    className={`layer-toggle${drawn ? ' active' : ''}`}
+                    aria-pressed={drawn}
+                    title={`${option.hint}. ${drawn ? 'Click to hide' : 'Click to show'} them.`}
+                    onClick={() => toggleGraphLayer(option.key)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+              <button
+                className="layer-preset"
+                title={
+                  everyLayerShown(graphLayers)
+                    ? 'Every layer is already on'
+                    : 'Draw every card on the board, the whole web at once'
+                }
+                onClick={showAllGraphLayers}
+                disabled={everyLayerShown(graphLayers)}
+              >
+                Show all
+              </button>
+              <button
+                className="layer-preset"
+                title="Draw the chapters again and hide everything else"
+                onClick={showChapterSpine}
+              >
+                Chapters only
+              </button>
+            </span>
             <span className="hint">Drag nodes • Connect nodes by dragging from a handle</span>
             <HelpTip label="drawing connections">
               Drag from a card’s dot onto another card to draw a connection.
@@ -476,11 +525,15 @@ export function GraphTab({
               onEdgeClick={selectEdge}
               onNodesDelete={removeNodes}
               onEdgesDelete={removeEdges}
+              minZoom={0.25}
               fitView
             >
               <Controls />
               <Background />
-              <Panel position="top-right">
+              {/* The key sits in the corner the cards leave alone, and never takes
+                  a click: it is a legend, not a control, and the writer clicking
+                  the card underneath it means the card. */}
+              <Panel position="bottom-right" className="node-legend-panel">
                 <div className="node-legend">
                   {nodeTypes.map(t => (
                     <span

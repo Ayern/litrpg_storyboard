@@ -113,9 +113,9 @@ fn backup_stamp(name: &str, prefix: &str) -> (String, u64) {
 /// The prepared story's title, used to create it and to recognise it when its
 /// contents are rebuilt in place. A demo that has been renamed is an ordinary
 /// story and is not reset behind the author's back.
-const DEMO_STORY_TITLE: &str = "The Ember Ledger (Demo)";
+const DEMO_STORY_TITLE: &str = "The Ninth Bell (Demo)";
 
-const DEMO_STORY_DESCRIPTION: &str = "A prepared story for trying cast badges, milestones, stat snapshots, XP income and continuity. Mira's ledger is intentionally 100 XP short in Chapter Three.";
+const DEMO_STORY_DESCRIPTION: &str = "A prepared story for trying the whole board: six chapters, a cast whose levels come from what happens in each scene, skills that evolve and are given up, growth points to place, quests, a faction, items, notes and history. Tamsin's third level is recorded at 1,350 XP where the rule says 1,200, so the continuity check has one real disagreement to settle.";
 
 /// Owns the single SQLite connection and hands it out under a lock.
 ///
@@ -600,11 +600,11 @@ impl Db {
         })
     }
 
-    /// Builds a small, ready-to-explore story for trying the progression tools.
+    /// Builds a small, ready-to-explore story for trying the whole board.
     ///
     /// The data is deliberately hand-written rather than generated from the
-    /// current date, so a walkthrough is repeatable. Mira's ledger is one
-    /// hundred XP short in the last chapter, which gives the continuity check
+    /// current date, so a walkthrough is repeatable. One level row disagrees
+    /// with the story's own growth rule, which gives the continuity check
     /// something real to find while the rest of the story stays consistent.
     pub fn create_demo_story(&self, user: String) -> DbResult<Story> {
         let story = self.create_story(
@@ -706,58 +706,97 @@ impl Db {
         })
     }
 
+    /// Builds the demo story: a small, finished storyboard that uses every part
+    /// of the board at least once.
+    ///
+    /// Veymouth is a harbour town where the tide goes out for nine minutes and
+    /// the Salt Choir owns the bell that calls it. Six chapters, three cast,
+    /// four skill cards, quests, a faction, items, notes, a relation map and a
+    /// trash that is not empty.
+    ///
+    /// The numbers are deliberate. A level costs 600 XP and hands out four
+    /// points to place plus a point each of Insight and Agility, and every XP
+    /// row is a scene event, so a chapter's ledger is what pays a level in. One
+    /// row disagrees with the rule — Tamsin's third level is recorded at 1,350
+    /// XP where the rule says 1,200 — because the continuity check should have
+    /// something real to find in a story that is otherwise consistent.
     fn seed_demo_story(&self, story_id: &str, user: &str) -> DbResult<()> {
         let user = user.to_string();
 
-        let rook = self.create_character(
+        // ---- the cast --------------------------------------------------------
+
+        let ivy = self.create_character(
             story_id.to_string(),
-            "Rook Valebright".into(),
-            Some("A debt-bound delver who reads the System like a ledger.".into()),
+            "Ivy Marrow".into(),
+            Some("A salvage diver who can hold her breath longer than the bell.".into()),
             user.clone(),
         )?;
-        let mira = self.create_character(
+        let tamsin = self.create_character(
             story_id.to_string(),
-            "Mira Sable".into(),
-            Some("A courier with a stolen ember and a talent for exits.".into()),
+            "Tamsin Quill".into(),
+            Some("The Salt Choir's tide-clerk, who reads the season out of the water.".into()),
+            user.clone(),
+        )?;
+        let bram = self.create_character(
+            story_id.to_string(),
+            "Bram Ockley".into(),
+            Some("A bell-ringer's son who wrecks what the Choir will not pay for.".into()),
             user.clone(),
         )?;
 
-        self.set_character_progress(&rook.id, Some("Bronze".into()), user.clone())?;
-        self.set_character_progress(&mira.id, Some("Bronze".into()), user.clone())?;
+        self.set_character_progress(&ivy.id, Some("Salt-sworn".into()), user.clone())?;
+        self.set_character_progress(&tamsin.id, Some("Tide-clerk".into()), user.clone())?;
+        self.set_character_progress(&bram.id, Some("Wrecker".into()), user.clone())?;
 
-        // The System the demo follows: a level costs 700 XP, and it hands out
-        // three points to place, with Strength and Insight rising on their own.
-        // 700 is what the demo's own cast levels at, so Rook's 2,400 XP stands at
-        // level 4 and Mira's 1,400 at level 3 without a number being typed.
+        // What a level costs and hands out. Four points to place is the pool the
+        // sheet shows as a tally; the two rates rise by themselves when a level
+        // lands, which is why no level-up form has to be filled in by hand.
         self.save_level_growth_rule(
             story_id.to_string(),
             None,
-            3,
-            700,
+            4,
+            600,
             0,
             vec![
                 LevelGrowthStatInput {
-                    stat_name: "Strength".into(),
+                    stat_name: "Insight".into(),
                     per_level: 1,
                 },
                 LevelGrowthStatInput {
-                    stat_name: "Insight".into(),
+                    stat_name: "Agility".into(),
                     per_level: 1,
                 },
             ],
             user.clone(),
         )?;
 
-        // The sheets hold what the rule's own gains add up to, so no stat is a
-        // number the timeline has to explain. Rook stands on 18 Strength and 12
-        // Insight after three levels at +1 each; Mira on 9 and 16 after two.
+        // Bram grows under a rule of his own: two points a level and no rates,
+        // because the Choir pays the bell-ringers in nothing but weight.
+        self.save_level_growth_rule(
+            story_id.to_string(),
+            Some(bram.id.clone()),
+            2,
+            600,
+            0,
+            Vec::new(),
+            user.clone(),
+        )?;
+
+        // What each sheet holds at level 1, before a level or a placed point has
+        // touched it. The rule's rates and the points placed below are what turn
+        // these into the numbers the sheets stand on.
         for (character_id, stat_name, value) in [
-            (&rook.id, "Strength", 18),
-            (&rook.id, "Agility", 14),
-            (&rook.id, "Insight", 12),
-            (&mira.id, "Agility", 17),
-            (&mira.id, "Insight", 16),
-            (&mira.id, "Strength", 9),
+            (&ivy.id, "Strength", 11),
+            (&ivy.id, "Agility", 10),
+            (&ivy.id, "Insight", 12),
+            (&ivy.id, "Wits", 13),
+            (&tamsin.id, "Strength", 7),
+            (&tamsin.id, "Agility", 10),
+            (&tamsin.id, "Insight", 12),
+            (&tamsin.id, "Wits", 8),
+            (&bram.id, "Strength", 12),
+            (&bram.id, "Agility", 9),
+            (&bram.id, "Wits", 8),
         ] {
             self.add_or_update_stat(
                 character_id.clone(),
@@ -768,93 +807,148 @@ impl Db {
             )?;
         }
 
-        let first = self.create_node_with_character(
+        // ---- the chapters ----------------------------------------------------
+
+        let low_tide = self.create_node_with_character(
             story_id.to_string(),
             "chapter".into(),
-            "The Ashen Gate".into(),
-            Some("Rook buys a place at the gate with a debt he cannot name.".into()),
-            140.0,
-            120.0,
-            user.clone(),
-            // A chapter names its people through its point of view and its cast,
-            // never through a link of its own.
-            None,
-        )?;
-        let second = self.create_node_with_character(
-            story_id.to_string(),
-            "chapter".into(),
-            "A Ledger of Cinders".into(),
-            Some("Mira offers the ember to the clerk who wrote Rook's debt.".into()),
-            500.0,
-            120.0,
+            "The Low Tide".into(),
+            Some(
+                "Ivy brings the bell's clapper up out of the flooded stair, and \
+                 Tamsin is there to write down what she saw."
+                    .into(),
+            ),
+            80.0,
+            60.0,
             user.clone(),
             None,
         )?;
-        let third = self.create_node_with_character(
+        let nine_minutes = self.create_node_with_character(
             story_id.to_string(),
             "chapter".into(),
-            "The Ember Court".into(),
-            Some("The debt comes due in a room where every flame remembers.".into()),
-            860.0,
-            120.0,
+            "Nine Minutes".into(),
+            Some(
+                "The tide goes out for nine minutes. Bram rings through all of \
+                 them; Ivy swims the arcade underneath."
+                    .into(),
+            ),
+            460.0,
+            60.0,
+            user.clone(),
+            None,
+        )?;
+        let drowned_stair = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "The Drowned Stair".into(),
+            Some("Ivy finds the stair the tide charts leave out, and swears to it.".into()),
+            840.0,
+            60.0,
+            user.clone(),
+            None,
+        )?;
+        let tally = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "The Tally".into(),
+            Some(
+                "Tamsin reads the season out to the Choir and puts her own name \
+                 under the numbers."
+                    .into(),
+            ),
+            1220.0,
+            60.0,
+            user.clone(),
+            None,
+        )?;
+        let ninth_bell = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "The Ninth Bell".into(),
+            Some(
+                "The bell comes down in the dark, and everyone at the stair is \
+                 paid for what they carried."
+                    .into(),
+            ),
+            1600.0,
+            60.0,
+            user.clone(),
+            None,
+        )?;
+        let after_bell = self.create_node_with_character(
+            story_id.to_string(),
+            "chapter".into(),
+            "After the Bell".into(),
+            Some("Ivy names what the bell was paid, out loud, in front of the Choir.".into()),
+            1980.0,
+            60.0,
             user.clone(),
             None,
         )?;
 
-        self.set_chapter_details(
-            &first.id,
-            Some("Arrival".into()),
-            Some(2200),
-            Some(2500),
-            Some(rook.id.clone()),
-            Some(1),
-            Some("Dusk".into()),
-            user.clone(),
-        )?;
-        self.set_chapter_details(
-            &second.id,
-            Some("Bargain".into()),
-            Some(2600),
-            Some(3000),
-            Some(mira.id.clone()),
-            Some(2),
-            Some("Morning".into()),
-            user.clone(),
-        )?;
-        self.set_chapter_details(
-            &third.id,
-            Some("Confrontation".into()),
-            Some(3200),
-            Some(3000),
-            Some(rook.id.clone()),
-            Some(3),
-            Some("Night".into()),
-            user.clone(),
-        )?;
+        for (chapter, arc, words, target, pov, day, time) in [
+            (&low_tide, "Arrival", 1800, 2500, &ivy, 1, "Low tide"),
+            (
+                &nine_minutes,
+                "Arrival",
+                1600,
+                2200,
+                &bram,
+                1,
+                "Nine minutes",
+            ),
+            (&drowned_stair, "Descent", 2100, 2400, &ivy, 2, "Low tide"),
+            (&tally, "Turn", 1900, 2400, &tamsin, 3, "Morning"),
+            (&ninth_bell, "Turn", 2600, 3000, &bram, 3, "Night"),
+            (&after_bell, "Aftermath", 1100, 2000, &ivy, 4, "Dawn"),
+        ] {
+            self.set_chapter_details(
+                &chapter.id,
+                Some(arc.into()),
+                Some(words),
+                Some(target),
+                Some(pov.id.clone()),
+                Some(day),
+                Some(time.into()),
+                user.clone(),
+            )?;
+        }
 
-        self.add_chapter_cast_member(first.id.clone(), mira.id.clone(), user.clone())?;
-        self.add_chapter_cast_member(second.id.clone(), rook.id.clone(), user.clone())?;
-        self.add_chapter_cast_member(third.id.clone(), mira.id.clone(), user.clone())?;
+        for (chapter, character) in [
+            (&low_tide, &tamsin),
+            (&nine_minutes, &ivy),
+            (&nine_minutes, &tamsin),
+            (&drowned_stair, &bram),
+            (&drowned_stair, &tamsin),
+            (&tally, &ivy),
+            (&ninth_bell, &ivy),
+            (&ninth_bell, &tamsin),
+            (&after_bell, &tamsin),
+            (&after_bell, &bram),
+        ] {
+            self.add_chapter_cast_member(chapter.id.clone(), character.id.clone(), user.clone())?;
+        }
 
-        // The demo's scenes are planned on its chapter cards, so the pictures
-        // show a checklist with something already ticked off rather than four
-        // empty boards.
+        // The scenes' objectives, ticked off where the scene already did them,
+        // so the cards open on a checklist rather than on empty boards.
         for (chapter, text, done) in [
+            (&low_tide, "Ivy brings the clapper up", true),
+            (&low_tide, "Establish the nine-minute tide", true),
+            (&low_tide, "Bram hears the bell from the arcade", false),
+            (&nine_minutes, "Bram rings the whole nine minutes", true),
+            (&nine_minutes, "The arcade floods on cue", true),
             (
-                &first,
-                "Rook reaches the Court with the summons still sealed",
-                true,
+                &nine_minutes,
+                "Ivy loses the rope and keeps the clapper",
+                false,
             ),
-            (&first, "Mira lifts the ember from the toll gate", false),
-            (&first, "Vane writes the debt down in his own hand", false),
-            (
-                &second,
-                "Vane names his price without naming the debt",
-                true,
-            ),
-            (&second, "Rook's sigil answers before he does", false),
-            (&third, "Every flame in the room is paid at once", false),
-            (&third, "Mira takes the exit Rook cannot follow", false),
+            (&drowned_stair, "Find the stair the charts leave out", true),
+            (&drowned_stair, "Ivy refuses the Choir's first offer", false),
+            (&tally, "Tamsin reads the season out", true),
+            (&tally, "Ivy signs the tally as herself", false),
+            (&ninth_bell, "The bell comes down", false),
+            (&ninth_bell, "Bram keeps the clapper", false),
+            (&after_bell, "Ivy names what the bell was paid", false),
         ] {
             let task = self.add_chapter_task(chapter.id.clone(), text.into(), user.clone())?;
 
@@ -863,93 +957,390 @@ impl Db {
             }
         }
 
-        let ash_step = self.add_skill(
-            rook.id.clone(),
-            "Ash Step".into(),
+        // ---- what happens in each chapter ------------------------------------
+        //
+        // Every row here is a scene in the ledger on the chapter card: an XP
+        // award pays the character it names, a learned skill lands on their
+        // sheet in this chapter, and a rank-up, evolution or sacrifice changes
+        // the skill row itself. Nothing below types a number onto a sheet.
+
+        self.add_chapter_event(
+            low_tide.id.clone(),
+            ivy.id.clone(),
+            "xp_award".into(),
+            "Brings the clapper up out of the flooded stair.".into(),
+            Some(650),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            low_tide.id.clone(),
+            tamsin.id.clone(),
+            "xp_award".into(),
+            "Files the season's tide-marks before the water comes in.".into(),
+            Some(700),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            low_tide.id.clone(),
+            ivy.id.clone(),
+            "skill_learn".into(),
+            "Brine-Lung".into(),
+            None,
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            low_tide.id.clone(),
+            tamsin.id.clone(),
+            "skill_learn".into(),
+            "Tide-Read".into(),
+            None,
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            low_tide.id.clone(),
+            ivy.id.clone(),
+            "item_acquire".into(),
+            "Chalked Key".into(),
+            Some(1),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        let brine = demo_skill_id(&self.list_skills(&ivy.id)?, "Brine-Lung")?;
+        let tide_read = demo_skill_id(&self.list_skills(&tamsin.id)?, "Tide-Read")?;
+
+        self.add_chapter_event(
+            nine_minutes.id.clone(),
+            bram.id.clone(),
+            "xp_award".into(),
+            "Rings the whole nine minutes and lives.".into(),
+            Some(620),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            nine_minutes.id.clone(),
+            ivy.id.clone(),
+            "xp_award".into(),
+            "Swims the flooded arcade with the clapper between her teeth.".into(),
+            Some(300),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            nine_minutes.id.clone(),
+            bram.id.clone(),
+            "skill_learn".into(),
+            "Bell-Tongue".into(),
+            None,
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            nine_minutes.id.clone(),
+            bram.id.clone(),
+            "item_acquire".into(),
+            "Wrecker's Hook".into(),
+            Some(1),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        let bell_tongue = demo_skill_id(&self.list_skills(&bram.id)?, "Bell-Tongue")?;
+
+        self.add_chapter_event(
+            drowned_stair.id.clone(),
+            ivy.id.clone(),
+            "xp_award".into(),
+            "Finds the stair the tide charts leave out.".into(),
+            Some(350),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            drowned_stair.id.clone(),
+            tamsin.id.clone(),
+            "xp_award".into(),
+            "Rows out to see what the divers found.".into(),
+            Some(200),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            drowned_stair.id.clone(),
+            ivy.id.clone(),
+            "skill_rank_up".into(),
+            String::new(),
+            None,
+            Some(brine.clone()),
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            drowned_stair.id.clone(),
+            ivy.id.clone(),
+            "item_acquire".into(),
+            "Brine Lantern".into(),
+            Some(2),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        self.add_chapter_event(
+            tally.id.clone(),
+            tamsin.id.clone(),
+            "xp_award".into(),
+            "Reads the season out to the Choir and is paid for it.".into(),
+            Some(300),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            tally.id.clone(),
+            ivy.id.clone(),
+            "xp_award".into(),
+            "Swears to the tally under her own name.".into(),
+            Some(250),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            tally.id.clone(),
+            tamsin.id.clone(),
+            "skill_learn".into(),
+            "Ledger Sight".into(),
+            None,
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        // Ivy keeps what she was: the base skill stays on her sheet beside the
+        // one it became, which is the toggle an author gets to choose.
+        self.add_chapter_event(
+            tally.id.clone(),
+            ivy.id.clone(),
+            "skill_evolve".into(),
+            "Salt-Sight".into(),
+            None,
+            Some(brine.clone()),
+            Some(true),
+            None,
+            user.clone(),
+        )?;
+
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            bram.id.clone(),
+            "xp_award".into(),
+            "Breaks the clapper free and takes the Choir's toll.".into(),
+            Some(650),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            ivy.id.clone(),
+            "xp_award".into(),
+            "Holds the stair while the bell comes down.".into(),
+            Some(300),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            tamsin.id.clone(),
+            "xp_award".into(),
+            "Signs the Choir's bell away.".into(),
+            Some(250),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+        // Bram's evolution consumes the skill it grew out of, so his sheet has
+        // one row where Ivy's has two.
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            bram.id.clone(),
+            "skill_evolve".into(),
+            "Deep Bell".into(),
+            None,
+            Some(bell_tongue.clone()),
+            Some(false),
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            tamsin.id.clone(),
+            "skill_sacrifice".into(),
+            String::new(),
+            None,
+            Some(tide_read.clone()),
+            None,
+            Some(true),
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            tamsin.id.clone(),
+            "skill_rank_up".into(),
+            String::new(),
+            None,
+            Some(demo_skill_id(
+                &self.list_skills(&tamsin.id)?,
+                "Ledger Sight",
+            )?),
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            ninth_bell.id.clone(),
+            ivy.id.clone(),
+            "item_acquire".into(),
+            "Bell Fragment".into(),
+            Some(1),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        self.add_chapter_event(
+            after_bell.id.clone(),
+            ivy.id.clone(),
+            "skill_rank_up".into(),
+            String::new(),
+            None,
+            Some(demo_skill_id(&self.list_skills(&ivy.id)?, "Salt-Sight")?),
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_chapter_event(
+            after_bell.id.clone(),
+            tamsin.id.clone(),
+            "item_acquire".into(),
+            "Tally Seal".into(),
+            Some(1),
+            None,
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        // A few uses of a skill, so the tree view and the sheet's history have
+        // something other than changes on them.
+        self.add_skill_event(
+            brine.clone(),
+            "used".into(),
+            Some(drowned_stair.id.clone()),
             Some("Rank 2".into()),
-            Some("A short step through smoke that leaves a grey afterimage.".into()),
-            Some(first.id.clone()),
-            None,
-            user.clone(),
-        )?;
-        let ember_whisper = self.add_skill(
-            mira.id.clone(),
-            "Ember Whisper".into(),
-            Some("Rank 1".into()),
-            Some("Reads the last emotion a flame touched.".into()),
-            Some(first.id.clone()),
-            None,
-            user.clone(),
-        )?;
-
-        self.add_skill_event(
-            ash_step.id.clone(),
-            "used".into(),
-            Some(second.id.clone()),
-            Some("Rank 1".into()),
             None,
             user.clone(),
         )?;
         self.add_skill_event(
-            ember_whisper.id.clone(),
+            demo_skill_id(&self.list_skills(&bram.id)?, "Deep Bell")?,
             "used".into(),
-            Some(second.id.clone()),
-            Some("Rank 1".into()),
+            Some(ninth_bell.id.clone()),
+            None,
+            None,
+            user.clone(),
+        )?;
+        self.add_skill_event(
+            demo_skill_id(&self.list_skills(&tamsin.id)?, "Ledger Sight")?,
+            "used".into(),
+            Some(after_bell.id.clone()),
+            Some("Rank 2".into()),
             None,
             user.clone(),
         )?;
 
-        // A level-up awards more than one stat at a time, so each milestone below
-        // carries every stat it changed. The skill upgrade is grouped with the
-        // level-up it came with.
+        // ---- the levels ------------------------------------------------------
         //
-        // Each row states the total the rule puts its level at, and hands out the
-        // rule's own gains: +1 Strength and +1 Insight for every level. A row that
-        // recorded some other number would be the timeline arguing with the System
-        // it belongs to, which is the disagreement the continuity check exists to
-        // name.
-        //
-        // Mira's third level is the demo's one deliberate disagreement: her ledger
-        // pays 1,400 XP into that level and the row says 1,500, so the panel has a
-        // real total to settle instead of a demo that only ever agrees with itself.
+        // Every row states the total the rule puts its level at and hands out
+        // the rule's own gains, so the timeline and the curve agree. Tamsin's
+        // third level is the demo's one deliberate disagreement: her ledger
+        // pays 1,200 XP into that level and the row says 1,350.
         for (character, level, xp, changes, chapter) in [
             (
-                &rook,
+                &ivy,
                 2,
-                700,
-                vec![stat_gain("Strength", 1, 16), stat_gain("Insight", 1, 10)],
-                &second,
+                600,
+                vec![stat_gain("Insight", 1, 13), stat_gain("Agility", 1, 11)],
+                &low_tide,
             ),
             (
-                &rook,
+                &ivy,
                 3,
-                1400,
-                vec![stat_gain("Strength", 1, 17), stat_gain("Insight", 1, 11)],
-                &second,
+                1200,
+                vec![stat_gain("Insight", 1, 14), stat_gain("Agility", 1, 12)],
+                &drowned_stair,
             ),
             (
-                &rook,
+                &ivy,
                 4,
-                2100,
-                vec![stat_gain("Strength", 1, 18), stat_gain("Insight", 1, 12)],
-                &third,
+                1800,
+                vec![stat_gain("Insight", 1, 15), stat_gain("Agility", 1, 13)],
+                &ninth_bell,
             ),
             (
-                &mira,
+                &tamsin,
                 2,
-                700,
-                vec![stat_gain("Strength", 1, 8), stat_gain("Insight", 1, 15)],
-                &second,
+                600,
+                vec![stat_gain("Insight", 1, 13), stat_gain("Agility", 1, 11)],
+                &low_tide,
             ),
             (
-                &mira,
+                &tamsin,
                 3,
-                1500,
-                vec![stat_gain("Strength", 1, 9), stat_gain("Insight", 1, 16)],
-                &third,
+                1350,
+                vec![stat_gain("Insight", 1, 14), stat_gain("Agility", 1, 12)],
+                &tally,
             ),
+            (&bram, 2, 600, Vec::new(), &nine_minutes),
+            (&bram, 3, 1200, Vec::new(), &ninth_bell),
         ] {
-            let milestone = self.add_character_level_with_changes(
+            self.add_character_level_with_changes(
                 character.id.clone(),
                 level,
                 Some(chapter.id.clone()),
@@ -958,372 +1349,378 @@ impl Db {
                 changes,
                 user.clone(),
             )?;
-
-            if level == 4 && character.id == rook.id {
-                self.add_skill_event(
-                    ash_step.id.clone(),
-                    "upgraded".into(),
-                    Some(third.id.clone()),
-                    Some("Rank 2".into()),
-                    Some(milestone.id.clone()),
-                    user.clone(),
-                )?;
-            }
         }
 
-        for (character, amount, chapter) in [
-            (&rook, 600, &first),
-            (&rook, 900, &second),
-            (&rook, 900, &third),
-            (&mira, 200, &first),
-            (&mira, 600, &second),
-            // Mira's total says 1,500 here; this row deliberately leaves the
-            // ledger 100 short so the continuity panel has a real mismatch.
-            (&mira, 600, &third),
+        // One gain that is not a level-up: the Choir pays its clerk in a point
+        // of Insight, which lands on the sheet and is counted against the
+        // recorded value rather than read as drift.
+        self.add_character_award(
+            tamsin.id.clone(),
+            Some(tally.id.clone()),
+            "stat".into(),
+            Some("Insight".into()),
+            1,
+            Some("Paid in a point of Insight when the season balanced.".into()),
+            user.clone(),
+        )?;
+
+        // And the points to place. Ivy has twelve and places ten, so her sheet
+        // keeps a tally to show; Tamsin and Bram place all of theirs.
+        for (character, stat_name, amount, note) in [
+            (
+                &ivy,
+                "Strength",
+                6,
+                "The clapper makes her stronger than she was.",
+            ),
+            (
+                &ivy,
+                "Wits",
+                4,
+                "Nine minutes of tide is a lot of counting.",
+            ),
+            (
+                &tamsin,
+                "Agility",
+                4,
+                "A clerk who can still outrun the water.",
+            ),
+            (&tamsin, "Wits", 4, "The season is read from the numbers."),
+            (
+                &bram,
+                "Strength",
+                3,
+                "Ringing the bell is a whole-body trade.",
+            ),
+            (&bram, "Wits", 1, "One point spent on not being caught."),
         ] {
-            self.add_character_progress(
+            self.spend_growth_point(
                 character.id.clone(),
-                chapter.id.clone(),
+                stat_name.into(),
                 amount,
+                Some(note.into()),
                 user.clone(),
             )?;
         }
 
-        // ---- the story the guide documents -----------------------------------
+        // ---- the cards on the board ------------------------------------------
         //
-        // The rest of the demo is not decoration: this is the story `GUIDE.md`
-        // walks through and the story the pictures in `screenshots/` show, so
-        // its cards, connections, ledgers and trash rows are built here rather
-        // than in the screenshot harness. Loading the demo in the app, resetting
-        // it, and re-shooting the guide all build the same story, because there
-        // is one place that builds it.
+        // The board is a story map rather than a second copy of the ledgers, and
+        // it is laid out in the three layers the toolbar switches. The six
+        // chapters run left to right along the top as one clean line, because
+        // that is the view a story opens on; everything else is stacked below in
+        // tiers - the cast and the quests, then the skills and the Choir, then
+        // the places and the plots, then the odds and ends - so switching the
+        // layers on gives a map rather than a spiderweb. Positions are the
+        // demo's layout, and the guide's pictures show this board, so a card
+        // that moves here moves in the guide too.
 
-        // A third cast member, so the rail, the relations map and the quest
-        // ledger have somebody on the other side of the debt.
-        let vane = self.create_character(
-            story_id.to_string(),
-            "Halden Vane".into(),
-            Some("The Ember Court's clerk, who keeps every debt in his own hand.".into()),
-            user.clone(),
-        )?;
-
-        // Vane grows by a rule of his own, so the demo shows what an exception
-        // looks like: one point to place and nothing that rises by itself.
-        self.save_level_growth_rule(
-            story_id.to_string(),
-            Some(vane.id.clone()),
-            1,
-            700,
-            0,
-            Vec::new(),
-            user.clone(),
-        )?;
-
-        // And two gains that are not level-ups: XP the ledger never had a row
-        // for, and a point no level-up awarded. The XP is logged as the scene's
-        // event, which is also what pays it into the chapter.
-        self.add_chapter_event(
-            first.id.clone(),
-            vane.id.clone(),
-            "xp_award".into(),
-            "Paid for a name at the toll gate.".into(),
-            Some(250),
-            None,
-            None,
-            None,
-            user.clone(),
-        )?;
-        self.add_character_award(
-            vane.id.clone(),
-            Some(second.id.clone()),
-            "stat".into(),
-            Some("Insight".into()),
-            1,
-            Some("The Ember Court's ledger opens for him once.".into()),
-            user.clone(),
-        )?;
-
-        // Two more of the scene's events, so a card shows the log-only kinds as
-        // well: the rank-up the curve already recorded, and a sacrifice nothing
-        // on a sheet can hold.
-        self.add_chapter_event(
-            third.id.clone(),
-            rook.id.clone(),
-            "skill_rank_up".into(),
-            "Ash Step → Rank 2".into(),
-            None,
-            None,
-            None,
-            None,
-            user.clone(),
-        )?;
-        self.add_chapter_event(
-            third.id.clone(),
-            mira.id.clone(),
-            "skill_sacrifice".into(),
-            "The stolen ember, spent to buy Rook's exit.".into(),
-            None,
-            None,
-            None,
-            None,
-            user.clone(),
-        )?;
-
-        // The cards the board draws. Their positions are the demo's layout, and
-        // the guide's pictures show this board, so a card that moves here moves
-        // in the guide too.
-        let rook_card = demo_card(
+        let ivy_card = demo_card(
             self,
             story_id,
             "character",
-            "Rook Valebright",
-            "Reads the System like a ledger and owes the Court a debt he cannot name.",
-            200.0,
-            580.0,
-            Some(rook.id.clone()),
-            &user,
-        )?;
-        let mira_card = demo_card(
-            self,
-            story_id,
-            "character",
-            "Mira Sable",
-            "A courier with a stolen ember and a talent for exits.",
-            620.0,
-            580.0,
-            Some(mira.id.clone()),
-            &user,
-        )?;
-        let vane_card = demo_card(
-            self,
-            story_id,
-            "character",
-            "Halden Vane",
-            "The clerk who wrote the debt down, and who intends to collect it.",
+            "Ivy Marrow",
+            "Holds her breath longer than the bell and keeps what she carries.",
+            80.0,
             1040.0,
-            580.0,
-            Some(vane.id.clone()),
+            Some(ivy.id.clone()),
             &user,
         )?;
-        let court_card = demo_card(
+        let tamsin_card = demo_card(
+            self,
+            story_id,
+            "character",
+            "Tamsin Quill",
+            "The Choir's tide-clerk: reads the season out and writes it down.",
+            420.0,
+            1040.0,
+            Some(tamsin.id.clone()),
+            &user,
+        )?;
+        let bram_card = demo_card(
+            self,
+            story_id,
+            "character",
+            "Bram Ockley",
+            "A bell-ringer's son who takes the toll when the Choir will not pay it.",
+            760.0,
+            1040.0,
+            Some(bram.id.clone()),
+            &user,
+        )?;
+
+        let brine_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Brine-Lung",
+            "Breath enough for nine minutes under, and a voice that carries through water.",
+            80.0,
+            1360.0,
+            None,
+            &user,
+        )?;
+        let salt_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Salt-Sight",
+            "Everything the tide has touched reads as if it is still wet.",
+            420.0,
+            1360.0,
+            None,
+            &user,
+        )?;
+        let ledger_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Ledger Sight",
+            "Sees what a season cost, written in the air over the water.",
+            760.0,
+            1360.0,
+            None,
+            &user,
+        )?;
+        let deep_card = demo_card(
+            self,
+            story_id,
+            "skill",
+            "Deep Bell",
+            "One note that the whole harbour hears, and the tide obeys.",
+            1100.0,
+            1360.0,
+            None,
+            &user,
+        )?;
+
+        let choir_card = demo_card(
             self,
             story_id,
             "faction",
-            "The Ember Court",
-            "Every flame in this room remembers what it was paid.",
+            "The Salt Choir",
+            "They own the bell, the tide-mark and the tally, in that order.",
+            1440.0,
+            1360.0,
+            None,
+            &user,
+        )?;
+        let bell_quest_card = demo_card(
+            self,
+            story_id,
+            "quest",
+            "The Ninth Bell",
+            "Find the bell the Choir rings once a season and learn what it is paid.",
+            1100.0,
             1040.0,
-            880.0,
             None,
             &user,
         )?;
-        let ash_card = demo_card(
+        let stair_quest_card = demo_card(
             self,
             story_id,
-            "skill",
-            "Ash Step",
-            "A short step through smoke that leaves a grey afterimage.",
-            200.0,
-            880.0,
+            "quest",
+            "Find the Drowned Stair",
+            "The tide charts leave one stair out. Bram wants to know why.",
+            1440.0,
+            1040.0,
             None,
             &user,
         )?;
-        let ember_card = demo_card(
+
+        let gate_card = demo_card(
             self,
             story_id,
-            "skill",
-            "Ember Whisper",
-            "Reads the last emotion a flame touched.",
-            620.0,
-            880.0,
+            "location",
+            "The Low Tide Gate",
+            "The harbour's one gate that stands open when the water is out.",
+            80.0,
+            1680.0,
             None,
             &user,
         )?;
-        let toll_card = demo_card(
+        let room_card = demo_card(
+            self,
+            story_id,
+            "location",
+            "The Tally Room",
+            "Where the season is read out and the numbers are signed.",
+            420.0,
+            1680.0,
+            None,
+            &user,
+        )?;
+        let tower_card = demo_card(
+            self,
+            story_id,
+            "location",
+            "The Ninth Bell Tower",
+            "Nine floors, one bell, and a stair that only shows at the low tide.",
+            760.0,
+            1680.0,
+            None,
+            &user,
+        )?;
+        let key_card = demo_card(
+            self,
+            story_id,
+            "item",
+            "Chalked Key",
+            "A key drawn in chalk on a wet door: it works exactly once.",
+            80.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let fragment_card = demo_card(
+            self,
+            story_id,
+            "item",
+            "Bell Fragment",
+            "A piece of the clapper, still warm, still ringing if nobody holds it.",
+            420.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+
+        let debt_card = demo_card(
+            self,
+            story_id,
+            "plot",
+            "Bram's debt comes due",
+            "Every bell he rang for the Choir is owed back, with interest.",
+            1100.0,
+            1680.0,
+            None,
+            &user,
+        )?;
+        let choir_plot_card = demo_card(
+            self,
+            story_id,
+            "plot",
+            "The Choir wants the bell back",
+            "Including the part of it that is currently in Ivy's pack.",
+            1440.0,
+            1680.0,
+            None,
+            &user,
+        )?;
+        let system_card = demo_card(
+            self,
+            story_id,
+            "system",
+            "The Tidal Ledger",
+            "A level costs 600 XP, four points to place, and a point each of Insight and Agility. What the tide takes is written down as spent.",
+            760.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let sea_card = demo_card(
             self,
             story_id,
             "idea",
-            "Cut: the toll bell",
-            "Dropped from chapter two; kept on the board in case the gate needs it again.",
-            1380.0,
-            880.0,
+            "What if the sea keeps what you spend?",
+            "Points placed into a stat come back as something the water wants.",
+            1440.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let memory_card = demo_card(
+            self,
+            story_id,
+            "idea",
+            "What if a level costs a memory?",
+            "The tally would be paid in the clerk's own chapters, not in XP.",
+            1780.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let event_card = demo_card(
+            self,
+            story_id,
+            "event",
+            "Nine minutes of no water",
+            "The tide goes out, the arcade opens, and the bell has to cover the gap.",
+            1100.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let tidemark_card = demo_card(
+            self,
+            story_id,
+            "misc",
+            "Tide-mark: the city's unit of memory",
+            "One tide-mark is one month of the harbour, signed and stamped.",
+            2120.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        let cut_card = demo_card(
+            self,
+            story_id,
+            "idea",
+            "Cut: the glass choir",
+            "Dropped from chapter four; kept here in case the tally needs a choir again.",
+            80.0,
+            2320.0,
             None,
             &user,
         )?;
 
-        // The demo's own skill rows are pointed at the cards that now stand for
-        // them, which is what makes the holder list on a skill card real.
-        self.update_skill(
-            ash_step.id.clone(),
-            "Ash Step".into(),
-            Some("Rank 2".into()),
-            Some("A short step through smoke that leaves a grey afterimage.".into()),
-            Some(first.id.clone()),
-            Some(ash_card.clone()),
-            user.clone(),
-        )?;
-        self.update_skill(
-            ember_whisper.id.clone(),
-            "Ember Whisper".into(),
-            Some("Rank 1".into()),
-            Some("Reads the last emotion a flame touched.".into()),
-            Some(first.id.clone()),
-            Some(ember_card.clone()),
-            user.clone(),
-        )?;
+        // Each skill row is pointed at the card that stands for it, which is what
+        // makes the sheet's link open the card and the card list its holders.
+        for (character_id, name, card) in [
+            (&ivy.id, "Brine-Lung", &brine_card),
+            (&ivy.id, "Salt-Sight", &salt_card),
+            (&tamsin.id, "Ledger Sight", &ledger_card),
+            (&bram.id, "Deep Bell", &deep_card),
+        ] {
+            let skills = self.list_skills(character_id.as_str())?;
+            let skill = skills
+                .iter()
+                .find(|skill| skill.name == name)
+                .ok_or_else(|| DbError::Invalid(format!("the demo has no skill named {name}")))?;
 
-        // A skill a sheet holds without a card of its own, and the evolution
-        // link between the two, so the tree view draws a parent and a child.
-        let cinder_step = self.add_skill(
-            rook.id.clone(),
-            "Cinder Step".into(),
-            Some("Rank 1".into()),
-            Some("The step carries heat once the ember answers.".into()),
-            Some(third.id.clone()),
-            None,
-            user.clone(),
-        )?;
-        self.add_skill_evolution(
-            ash_step.id.clone(),
-            cinder_step.id.clone(),
-            "upgrade".into(),
-            Some(third.id.clone()),
-            Some("Rank 2".into()),
-            Some("Learned when the debt came due and the ember answered.".into()),
-            user.clone(),
-        )?;
+            self.update_skill(
+                skill.id.clone(),
+                skill.name.clone(),
+                skill.rank.clone(),
+                skill.effect.clone(),
+                skill.chapter_id.clone(),
+                Some(card.clone()),
+                user.clone(),
+            )?;
+        }
 
-        // ---- the board's connections ----------------------------------------
+        // ---- the ledgers behind the cards ------------------------------------
 
-        // The reading order, and each chapter's cast.
-        self.create_edge(
+        let bell_quest = self.add_quest(
             story_id.to_string(),
-            first.id.clone(),
-            second.id.clone(),
-            Some("next".into()),
-            Some("next".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            second.id.clone(),
-            third.id.clone(),
-            Some("next".into()),
-            Some("next".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            first.id.clone(),
-            mira_card.clone(),
-            Some("cast".into()),
-            Some("cast".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            second.id.clone(),
-            rook_card.clone(),
-            Some("cast".into()),
-            Some("cast".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            third.id.clone(),
-            mira_card.clone(),
-            Some("cast".into()),
-            Some("cast".into()),
-            user.clone(),
-        )?;
-
-        // A skill card to each character who holds it.
-        self.create_edge(
-            story_id.to_string(),
-            rook_card.clone(),
-            ash_card.clone(),
-            Some("skill".into()),
-            Some("skill".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            mira_card.clone(),
-            ember_card.clone(),
-            Some("skill".into()),
-            Some("skill".into()),
-            user.clone(),
-        )?;
-
-        // A bond and a grudge, drawn exactly as the canvas draws them.
-        self.create_edge(
-            story_id.to_string(),
-            rook_card.clone(),
-            mira_card.clone(),
-            Some("rival".into()),
-            Some("rival".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            rook_card.clone(),
-            vane_card.clone(),
-            Some("enemy".into()),
-            Some("enemy".into()),
-            user.clone(),
-        )?;
-        self.create_edge(
-            story_id.to_string(),
-            vane_card.clone(),
-            court_card.clone(),
-            Some("serves".into()),
-            Some("serves".into()),
-            user.clone(),
-        )?;
-
-        // ---- the ledgers behind the cards -----------------------------------
-
-        self.add_relation(
-            rook.id.clone(),
-            mira.id.clone(),
-            "rival".into(),
-            Some("Two couriers who keep meeting at the same locked door.".into()),
-            Some(second.id.clone()),
-            None,
-            user.clone(),
-        )?;
-        self.add_relation(
-            rook.id.clone(),
-            vane.id.clone(),
-            "enemy".into(),
-            Some("The debt Rook cannot name is the one Vane wrote down.".into()),
-            Some(first.id.clone()),
-            None,
-            user.clone(),
-        )?;
-
-        // A finished contract with its rewards, and one still open, so the
-        // ledger has both states to filter.
-        let debt = self.add_quest(
-            story_id.to_string(),
-            "Pay the Ember Debt".into(),
-            Some(vane.id.clone()),
-            Some(court_card.clone()),
-            first.id.clone(),
-            Some(third.id.clone()),
+            "The Ninth Bell".into(),
+            Some(tamsin.id.clone()),
+            Some(choir_card.clone()),
+            low_tide.id.clone(),
+            Some(ninth_bell.id.clone()),
             "completed".into(),
-            Some("The debt comes due in a room where every flame remembers.".into()),
-            Some("Settled with the ledger Rook was never meant to read.".into()),
+            Some("Find the bell the Choir rings once a season, and learn what it is paid.".into()),
+            Some("Done: the clapper came up in chapter five, and Tamsin signed it away.".into()),
             user.clone(),
         )?;
 
         for (reward_type, target, details) in [
-            ("xp", rook.id.clone(), "1200"),
-            ("item", rook.id.clone(), "Sealed Ledger"),
-            ("stat", rook.id.clone(), "Insight +2"),
-            ("faction_standing", court_card.clone(), "cleared"),
+            ("xp", ivy.id.clone(), "600"),
+            ("item", ivy.id.clone(), "Bell Fragment"),
+            ("stat", tamsin.id.clone(), "Insight +1"),
+            ("faction_standing", choir_card.clone(), "elevated"),
         ] {
             self.add_quest_reward(
-                debt.id.clone(),
+                bell_quest.id.clone(),
                 reward_type.into(),
                 Some(target),
                 Some(details.into()),
@@ -1331,48 +1728,43 @@ impl Db {
             )?;
         }
 
-        self.add_quest(
+        let stair_quest = self.add_quest(
             story_id.to_string(),
-            "Find the Cinder Road".into(),
-            Some(mira.id.clone()),
+            "Find the Drowned Stair".into(),
+            Some(bram.id.clone()),
             None,
-            second.id.clone(),
+            drowned_stair.id.clone(),
             None,
             "active".into(),
-            Some("Mira needs the road that only burns for people who owe nothing.".into()),
-            Some("Open: the gate only answers at dusk.".into()),
+            Some("The tide charts leave one stair out. Bram wants to know why.".into()),
+            Some("Open: the stair only shows for nine minutes at a time.".into()),
+            user.clone(),
+        )?;
+        self.add_quest_reward(
+            stair_quest.id.clone(),
+            "item".into(),
+            Some(bram.id.clone()),
+            Some("A chart with the stair drawn back in".into()),
             user.clone(),
         )?;
 
-        for (character, name, rarity, quantity, effect, chapter, lost) in [
+        for (character, name, rarity, quantity, effect, chapter) in [
             (
-                &rook,
-                "Sealed Ledger",
+                &ivy,
+                "Rope of Nine Knots",
+                Some("Uncommon"),
+                1,
+                Some("One knot for each minute the water is out."),
+                &nine_minutes,
+            ),
+            (
+                &tamsin,
+                "Salt Ledger",
                 Some("Rare"),
                 1,
-                Some("Every name in it reads as a number the reader cannot forget."),
-                Some(&first),
-                None,
+                Some("Every season the Choir has balanced, in her own hand."),
+                &low_tide,
             ),
-            (
-                &rook,
-                "Cinder Key",
-                Some("Uncommon"),
-                2,
-                Some("Opens a door that has been paid for."),
-                Some(&third),
-                None,
-            ),
-            (
-                &mira,
-                "Stolen Ember",
-                Some("Legendary"),
-                1,
-                Some("Warm to the touch, warmer when somebody lies."),
-                Some(&first),
-                Some(&third),
-            ),
-            (&mira, "Courier's Cache", None, 1, None, Some(&second), None),
         ] {
             self.add_inventory_item(
                 character.id.clone(),
@@ -1380,22 +1772,25 @@ impl Db {
                 rarity.map(str::to_string),
                 quantity,
                 effect.map(str::to_string),
-                chapter.map(|node| node.id.clone()),
-                lost.map(|node| node.id.clone()),
+                Some(chapter.id.clone()),
+                None,
                 None,
                 user.clone(),
             )?;
         }
 
-        self.add_currency(rook.id.clone(), "Marks".into(), 420, user.clone())?;
-        self.add_currency(rook.id.clone(), "Ember Script".into(), 3, user.clone())?;
-        self.add_currency(mira.id.clone(), "Marks".into(), 95, user.clone())?;
+        self.add_currency(ivy.id.clone(), "Tide-marks".into(), 480, user.clone())?;
+        self.add_currency(ivy.id.clone(), "Salt Script".into(), 12, user.clone())?;
+        self.add_currency(tamsin.id.clone(), "Tide-marks".into(), 120, user.clone())?;
+        self.add_currency(bram.id.clone(), "Tide-marks".into(), 24, user.clone())?;
 
         for (character, name, value) in [
-            (&rook, "Class", "Delver"),
-            (&rook, "Homeland", "Ashfall"),
-            (&mira, "Class", "Courier"),
-            (&mira, "Notable", "Never caught twice"),
+            (&ivy, "Class", "Salvage diver"),
+            (&ivy, "Gear", "Clapper's rope"),
+            (&tamsin, "Class", "Tide-clerk"),
+            (&tamsin, "Post", "The Tally Room"),
+            (&bram, "Class", "Wrecker"),
+            (&bram, "Debt", "Nine bells of Choir silver"),
         ] {
             self.add_or_update_attribute(
                 character.id.clone(),
@@ -1408,62 +1803,228 @@ impl Db {
         // Two notes under their chapters, so the Notes button, the board's
         // pinned cards and the story bible have something to show.
         self.add_chapter_note(
-            &second.id,
-            "Rook's debt is named for the first time in this chapter, and he still \
-             cannot repeat it out loud."
+            &nine_minutes.id,
+            "Bram rings for nine minutes — check this against the flood in \
+             chapter one before the timeline is fixed."
                 .into(),
             user.clone(),
         )?;
         self.add_chapter_note(
-            &third.id,
-            "Check the candle count against chapter two before the confrontation \
-             is revised."
+            &ninth_bell.id,
+            "The Choir's tally says nine bells; only one is ever rung. Decide \
+             whether that is a lie or a translation."
                 .into(),
             user.clone(),
         )?;
 
-        for (character, standing, note) in [
+        for (character, standing, note, since) in [
             (
-                &rook,
-                "wary",
-                Some("Known to the Court by debt rather than by name."),
+                &ivy,
+                "bound",
+                Some("Bound to the Choir by the clapper she brought up."),
+                &low_tide,
             ),
             (
-                &mira,
+                &tamsin,
+                "member",
+                Some("Keeps the tally, and is kept by it."),
+                &low_tide,
+            ),
+            (
+                &bram,
                 "wanted",
-                Some("The stolen ember is still on the Court's ledger."),
+                Some("Wanted for the toll he took off the bell."),
+                &ninth_bell,
             ),
         ] {
             self.add_faction_standing(
                 character.id.clone(),
-                Some(court_card.clone()),
+                Some(choir_card.clone()),
                 standing.into(),
                 note.map(str::to_string),
-                first.id.clone(),
+                since.id.clone(),
                 None,
+                user.clone(),
+            )?;
+        }
+
+        self.add_relation(
+            ivy.id.clone(),
+            tamsin.id.clone(),
+            "ally".into(),
+            Some(
+                "Tamsin writes down what Ivy brings up; Ivy brings up what Tamsin \n                 cannot ask for."
+                    .into(),
+            ),
+            Some(low_tide.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        self.add_relation(
+            ivy.id.clone(),
+            bram.id.clone(),
+            "rival".into(),
+            Some(
+                "Two people who both want the clapper and only one of whom can \n                 swim."
+                    .into(),
+            ),
+            Some(nine_minutes.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        self.add_relation(
+            tamsin.id.clone(),
+            bram.id.clone(),
+            "owes".into(),
+            Some("Nine bells of silver, and the Choir has started counting.".into()),
+            Some(ninth_bell.id.clone()),
+            None,
+            user.clone(),
+        )?;
+
+        // ---- the board's connections -----------------------------------------
+
+        // The reading order, chapter to chapter.
+        for (from, to) in [
+            (&low_tide, &nine_minutes),
+            (&nine_minutes, &drowned_stair),
+            (&drowned_stair, &tally),
+            (&tally, &ninth_bell),
+            (&ninth_bell, &after_bell),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                from.id.clone(),
+                to.id.clone(),
+                Some("next".into()),
+                Some("next".into()),
+                user.clone(),
+            )?;
+        }
+
+        // A few cast threads, kept quiet so the reading order stays the line the
+        // eye follows.
+        for (chapter, card) in [
+            (&low_tide, &ivy_card),
+            (&tally, &tamsin_card),
+            (&ninth_bell, &bram_card),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                chapter.id.clone(),
+                card.clone(),
+                Some("cast".into()),
+                Some("cast".into()),
+                user.clone(),
+            )?;
+        }
+
+        // A skill card to each character who holds it.
+        for (card, skill_card) in [
+            (&ivy_card, &brine_card),
+            (&ivy_card, &salt_card),
+            (&tamsin_card, &ledger_card),
+            (&bram_card, &deep_card),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                card.clone(),
+                skill_card.clone(),
+                Some("skill".into()),
+                Some("skill".into()),
+                user.clone(),
+            )?;
+        }
+
+        // A bond, a grudge and a debt, drawn exactly as the canvas draws them.
+        for (from, to, kind) in [
+            (&ivy_card, &tamsin_card, "ally"),
+            (&ivy_card, &bram_card, "rival"),
+            (&tamsin_card, &bram_card, "owes"),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                from.clone(),
+                to.clone(),
+                Some(kind.into()),
+                Some(kind.into()),
+                user.clone(),
+            )?;
+        }
+
+        // Serving the Choir, and owing it.
+        for (card, kind) in [(&tamsin_card, "serves"), (&bram_card, "owes")] {
+            self.create_edge(
+                story_id.to_string(),
+                card.clone(),
+                choir_card.clone(),
+                Some(kind.into()),
+                Some(kind.into()),
+                user.clone(),
+            )?;
+        }
+
+        // The two quests, each hanging off the chapter that took them on.
+        for (chapter, card) in [
+            (&low_tide, &bell_quest_card),
+            (&drowned_stair, &stair_quest_card),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                chapter.id.clone(),
+                card.clone(),
+                Some("quest".into()),
+                Some("quest".into()),
+                user.clone(),
+            )?;
+        }
+
+        // Where each scene happens, what it is set on, and what the board is
+        // holding for the cast. The ends are ids rather than nodes here, because
+        // these lines join a chapter to a card as often as a card to a card.
+        for (from, to, kind) in [
+            (low_tide.id.clone(), gate_card.clone(), "happens in"),
+            (tally.id.clone(), room_card.clone(), "happens in"),
+            (ninth_bell.id.clone(), tower_card.clone(), "happens in"),
+            (debt_card.clone(), nine_minutes.id.clone(), "seeds"),
+            (choir_plot_card.clone(), after_bell.id.clone(), "seeds"),
+            (system_card.clone(), low_tide.id.clone(), "rules"),
+            (ivy_card.clone(), key_card.clone(), "holds"),
+            (ivy_card.clone(), fragment_card.clone(), "holds"),
+            (event_card.clone(), nine_minutes.id.clone(), "happens in"),
+            (memory_card.clone(), tally.id.clone(), "could seed"),
+            (sea_card.clone(), after_bell.id.clone(), "could seed"),
+            (tidemark_card.clone(), tally.id.clone(), "defines"),
+        ] {
+            self.create_edge(
+                story_id.to_string(),
+                from,
+                to,
+                Some(kind.into()),
+                Some(kind.into()),
                 user.clone(),
             )?;
         }
 
         // ---- something in the trash -----------------------------------------
 
-        // A cut scene and a cut cast member, so the trash is not empty on a
-        // fresh demo. Both are written and then deleted through the ordinary
-        // commands, which is what puts them in the history as well.
-        let cut = self.create_character(
+        // A cut cast member and a cut card, so the trash is not empty on a fresh
+        // demo. Both are written and then deleted through the ordinary commands,
+        // which is what puts them in the history as well.
+        let cut_cast = self.create_character(
             story_id.to_string(),
-            "Wren Ashgrove".into(),
+            "Wren Halloway".into(),
             Some("Cut in the second draft; kept here so the deletion can be undone.".into()),
             user.clone(),
         )?;
-        self.delete_character(&cut.id, user.clone())?;
-        self.delete_node(&toll_card, user.clone())?;
+        self.delete_character(&cut_cast.id, user.clone())?;
+        self.delete_node(&cut_card, user.clone())?;
 
         // A whole story in the trash too, since the shelf has a section for
         // those. A previous demo's scratch story is left as it is rather than
         // answered with a second copy: the story is not the demo's to delete,
         // and a reset would otherwise drop one more into the trash each time.
-        let scratch_title = "Scratch: gate variants";
+        let scratch_title = "Scratch: bell variants";
         let already_in_the_trash = self
             .list_deleted(None)?
             .iter()
@@ -1472,7 +2033,7 @@ impl Db {
         if !already_in_the_trash {
             let scratch = self.create_story(
                 scratch_title.into(),
-                Some("Two drafts of the gate scene, kept for a week and then let go.".into()),
+                Some("Two drafts of the bell scene, kept for a week and then let go.".into()),
                 user.clone(),
             )?;
             self.delete_story(&scratch.id, user.clone())?;
@@ -16744,11 +17305,24 @@ fn clean_level_xp(xp: Option<i64>) -> DbResult<Option<i64>> {
 /// Creates one of the demo story's cards, optionally already linked to a cast
 /// member, and hands back its id.
 ///
-/// Kept beside the seed rather than inside it so the seven cards of the guide's
-/// board read as a list. The positions are that board's layout: the three
-/// chapters in a row along the top, the cast below them, the two skill cards
-/// under that. `GUIDE.md` and the pictures in `screenshots/` show this board, so
-/// a card that moves here moves in the guide too.
+/// Kept beside the seed rather than inside it so the cards of the guide's board
+/// read as a list. The positions are that board's layout: the chapters in a row
+/// along the top, and the cast, the skills, the quests, the places and the rest
+/// in tiers below them. `GUIDE.md` and the pictures in `screenshots/` show this
+/// board, so a card that moves here moves in the guide too.
+/// The id of one of the demo's skills, looked up on its owner's sheet by name.
+///
+/// The seed learns skills as scene events, so the row an event writes is the one
+/// the next chapter's rank-up has to name; the id is read back rather than
+/// invented, and a name the sheet does not hold is an error in the seed.
+fn demo_skill_id(skills: &[CharacterSkill], name: &str) -> DbResult<String> {
+    skills
+        .iter()
+        .find(|skill| skill.name == name)
+        .map(|skill| skill.id.clone())
+        .ok_or_else(|| DbError::Invalid(format!("the demo has no skill named {name}")))
+}
+
 fn demo_card(
     db: &Db,
     story_id: &str,
@@ -18871,173 +19445,216 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_demo_story_arrives_with_a_cast_and_an_intentional_xp_gap() {
+    fn a_demo_story_arrives_ready_for_the_whole_board() {
         let db = Db::open_in_memory().unwrap();
 
         let story = db.create_demo_story("Ada".into()).unwrap();
 
-        assert_eq!(story.title, "The Ember Ledger (Demo)");
+        assert_eq!(story.title, "The Ninth Bell (Demo)");
         assert!(story
             .description
             .as_deref()
-            .is_some_and(|description| description.contains("intentionally 100 XP short")));
+            .is_some_and(|description| description.contains("1,350 XP")));
 
-        // The demo is also the story the guide documents, so its cast is the
-        // three the pictures name. Wren Ashgrove is not among them: the seed
-        // writes that one and deletes it, which is how the trash is filled.
+        // Three cast on the rail, and a fourth in the trash: the seed writes
+        // Wren Halloway and deletes her, which is how the trash is filled.
         let characters = db.list_characters(&story.id).unwrap();
         assert_eq!(characters.len(), 3);
-        assert!(characters
-            .iter()
-            .any(|character| character.name == "Halden Vane"));
-        let rook = characters
-            .iter()
-            .find(|character| character.name == "Rook Valebright")
-            .expect("Rook is in the demo cast");
-        let mira = characters
-            .iter()
-            .find(|character| character.name == "Mira Sable")
-            .expect("Mira is in the demo cast");
+        let find = |name: &str| {
+            characters
+                .iter()
+                .find(|character| character.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the demo cast"))
+                .clone()
+        };
+        let ivy = find("Ivy Marrow");
+        let tamsin = find("Tamsin Quill");
+        let bram = find("Bram Ockley");
 
-        let chapters: Vec<_> = db
+        // Six chapters, in reading order, each with the point of view its cast
+        // badges are read from.
+        let mut chapters: Vec<_> = db
             .list_nodes(&story.id)
             .unwrap()
             .into_iter()
             .filter(|node| node.node_type == "chapter")
             .collect();
-        assert_eq!(chapters.len(), 3);
+        chapters.sort_by_key(|chapter| chapter.chapter_seq);
+
+        assert_eq!(chapters.len(), 6);
         assert_eq!(
             chapters
                 .iter()
                 .map(|chapter| chapter.chapter_seq)
                 .collect::<Vec<_>>(),
-            vec![Some(1), Some(2), Some(3)]
+            vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)]
         );
-        assert_eq!(chapters[0].chapter_pov.as_deref(), Some(rook.id.as_str()));
-        assert_eq!(chapters[1].chapter_pov.as_deref(), Some(mira.id.as_str()));
-        assert_eq!(chapters[2].chapter_pov.as_deref(), Some(rook.id.as_str()));
-        assert_eq!(chapters[2].chapter_arc.as_deref(), Some("Confrontation"));
-
-        // Three levels for Rook and two for Mira, each recorded at the step the
-        // story's rule puts it on; the only row that disagrees with the rule is
-        // Mira's last one, which is the demo's deliberate gap.
-        let milestones = db.list_story_levels(&story.id).unwrap();
-        assert_eq!(milestones.len(), 5);
-        let mira_total = milestones
-            .iter()
-            .find(|milestone| {
-                milestone.character_id == mira.id
-                    && milestone.chapter_id.as_deref() == Some(chapters[2].id.as_str())
-            })
-            .expect("Mira's last total is recorded");
-        assert_eq!(mira_total.xp, Some(1500));
-
-        // A demo level-up carries every stat it awarded, not one summary row.
-        let rook_last = milestones
-            .iter()
-            .find(|milestone| {
-                milestone.character_id == rook.id
-                    && milestone.chapter_id.as_deref() == Some(chapters[2].id.as_str())
-            })
-            .expect("Rook's last level is recorded");
-        assert_eq!(rook_last.level, 4);
         assert_eq!(
-            rook_last.stat_changes.len(),
+            chapters
+                .iter()
+                .map(|chapter| chapter.chapter_pov.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some(ivy.id.as_str()),
+                Some(bram.id.as_str()),
+                Some(ivy.id.as_str()),
+                Some(tamsin.id.as_str()),
+                Some(bram.id.as_str()),
+                Some(ivy.id.as_str()),
+            ]
+        );
+        assert_eq!(chapters[3].chapter_arc.as_deref(), Some("Turn"));
+        assert_eq!(chapters[5].chapter_arc.as_deref(), Some("Aftermath"));
+
+        // The board holds every card type the canvas draws, which is what makes
+        // the demo a tour of the app rather than a sample of one tab.
+        // The card list is the canvas's, so the two note cards that hang under
+        // their chapters are counted with the notes rather than with the board.
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert_eq!(nodes.len(), 28);
+
+        for kind in [
+            "chapter",
+            "character",
+            "skill",
+            "quest",
+            "faction",
+            "location",
+            "plot",
+            "system",
+            "event",
+            "idea",
+            "item",
+            "misc",
+        ] {
+            assert!(
+                nodes.iter().any(|node| node.node_type == kind),
+                "the demo has no {kind} card"
+            );
+        }
+
+        // Seven levels, each recorded at the step the story's rule puts it on.
+        // Tamsin's third is the one row that disagrees: her ledger pays 1,200 XP
+        // into it and the row says 1,350, so the continuity check has a real
+        // total to settle.
+        let levels = db.list_story_levels(&story.id).unwrap();
+        assert_eq!(levels.len(), 7);
+
+        let tamsin_third = levels
+            .iter()
+            .find(|level| level.character_id == tamsin.id && level.level == 3)
+            .expect("Tamsin's third level is the demo's deliberate gap");
+        assert_eq!(tamsin_third.xp, Some(1350));
+        assert_eq!(
+            tamsin_third.chapter_id.as_deref(),
+            Some(chapters[3].id.as_str())
+        );
+
+        let ivy_last = levels
+            .iter()
+            .find(|level| level.character_id == ivy.id && level.level == 4)
+            .expect("Ivy's fourth level is recorded");
+        assert_eq!(ivy_last.xp, Some(1800));
+        assert_eq!(
+            ivy_last.chapter_id.as_deref(),
+            Some(chapters[4].id.as_str())
+        );
+        assert_eq!(
+            ivy_last.stat_changes.len(),
             2,
             "the rule hands out two stats a level"
         );
-        assert!(rook_last
-            .stat_changes
-            .iter()
-            .any(|change| change.stat_name == "Strength"
-                && change.amount == Some(1)
-                && change.value_after == Some(18)));
-        assert!(rook_last
+        assert!(ivy_last
             .stat_changes
             .iter()
             .any(|change| change.stat_name == "Insight"
                 && change.amount == Some(1)
-                && change.value_after == Some(12)));
+                && change.value_after == Some(15)));
+        assert!(ivy_last
+            .stat_changes
+            .iter()
+            .any(|change| change.stat_name == "Agility"
+                && change.amount == Some(1)
+                && change.value_after == Some(13)));
 
-        // The demo's readings agree with its sheets: every stat a character
-        // holds was recorded by a level-up, the last value recorded is the one
-        // on the sheet, and no level-up awards a stat the sheet has lost. The
-        // guide reads sheets as of a chapter, so a demo that disagreed with
-        // itself would look like a bug in the readout.
-        for character in [&rook, &mira] {
-            let sheet = db.list_stats(&character.id).unwrap();
-            let read = db
-                .character_state_at_chapter(&character.id, &chapters[2].id)
-                .unwrap();
+        // Bram's own rule raises nothing by itself, so his levels carry no stat
+        // rows at all.
+        let bram_levels: Vec<_> = levels
+            .iter()
+            .filter(|level| level.character_id == bram.id)
+            .collect();
+        assert_eq!(bram_levels.len(), 2);
+        assert!(bram_levels
+            .iter()
+            .all(|level| level.stat_changes.is_empty()));
 
-            assert_eq!(sheet.len(), 3);
-            assert_eq!(read.stats.len(), sheet.len());
+        // Every XP row is a scene event, so what a sheet is paid is what its
+        // chapters say happened.
+        let income = db.list_story_character_progress(&story.id).unwrap();
+        assert_eq!(income.len(), 11);
+        let total = |id: &str| {
+            income
+                .iter()
+                .filter(|entry| entry.character_id == id)
+                .map(|entry| entry.xp_earned)
+                .sum::<i64>()
+        };
+        assert_eq!(total(&ivy.id), 1850);
+        assert_eq!(total(&tamsin.id), 1450);
+        assert_eq!(total(&bram.id), 1270);
 
-            for stat in &sheet {
-                let recorded = read
-                    .stats
-                    .iter()
-                    .find(|entry| entry.stat_name == stat.stat_name)
-                    .unwrap_or_else(|| {
-                        panic!("{} has no recorded {}", character.name, stat.stat_name)
-                    });
+        // The chapter cards carry a log with every kind of event on it.
+        let events = db.list_story_chapter_events(&story.id).unwrap();
+        assert_eq!(events.len(), 26);
 
-                // A stat the rule never raises is listed as unrecorded rather
-                // than guessed at, so it has nothing to disagree with.
-                if recorded.value.is_none() {
-                    continue;
-                }
-
-                assert_eq!(
-                    recorded.value,
-                    Some(stat.value),
-                    "{}'s {} disagrees with the sheet",
-                    character.name,
-                    stat.stat_name
-                );
-            }
+        for kind in [
+            "xp_award",
+            "skill_learn",
+            "skill_rank_up",
+            "skill_evolve",
+            "skill_sacrifice",
+            "item_acquire",
+        ] {
+            assert!(
+                events.iter().any(|event| event.event_type == kind),
+                "the demo has no {kind} event"
+            );
         }
 
-        let upgrade = db
-            .list_story_skill_events(&story.id)
+        // Six skill rows: Ivy keeps the skill she evolved from beside the one it
+        // became, and so does Bram, whose evolution marks the base as given up
+        // rather than taking it off his sheet.
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_skill_evolutions(&story.id).unwrap().len(), 2);
+
+        let skill_events = db.list_story_skill_events(&story.id).unwrap();
+        assert!(skill_events.iter().any(|event| event.kind == "sacrificed"));
+        assert!(skill_events.iter().any(|event| event.kind == "upgraded"));
+        assert!(skill_events.iter().any(|event| event.kind == "used"));
+
+        // Six points placed in all. Ivy's levels hand out twelve and she places
+        // ten, so her sheet has a tally of two to show.
+        assert_eq!(db.list_story_growth_points(&story.id).unwrap().len(), 6);
+
+        let ivy_stats: Vec<_> = db
+            .list_story_stats(&story.id)
             .unwrap()
             .into_iter()
-            .find(|event| event.kind == "upgraded")
-            .expect("Ash Step is upgraded in the demo");
-        assert_eq!(
-            upgrade.level_record_id.as_deref(),
-            Some(rook_last.id.as_str())
-        );
-
-        // Six chapter incomes across Rook and Mira, plus the row Vane's award
-        // opened for him.
-        let progress = db.list_story_character_progress(&story.id).unwrap();
-        assert_eq!(progress.len(), 7);
-        let mira_income: i64 = progress
+            .filter(|stat| stat.character_id == ivy.id)
+            .collect();
+        assert_eq!(ivy_stats.len(), 4);
+        assert!(ivy_stats
             .iter()
-            .filter(|entry| entry.character_id == mira.id)
-            .map(|entry| entry.xp_earned)
-            .sum();
-        assert_eq!(mira_income, 1400, "the demo leaves a 100 XP mismatch");
-        let rook_income: i64 = progress
-            .iter()
-            .filter(|entry| entry.character_id == rook.id)
-            .map(|entry| entry.xp_earned)
-            .sum();
-        assert_eq!(rook_income, 2400);
+            .any(|stat| stat.stat_name == "Strength" && stat.value == 17));
 
-        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
-        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
-        // Vane's award wrote the stat point it handed him, so his sheet holds one
-        // row more than the cast's five recorded ones.
-        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 7);
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 10);
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 11);
 
-        // The board, the ledgers and the trash the guide shows, all of them part
-        // of the seed rather than of the screenshot harness.
-        assert_eq!(db.list_nodes(&story.id).unwrap().len(), 9);
-        assert_eq!(db.list_edges(&story.id).unwrap().len(), 10);
+        // The board, the ledgers and the trash the guide documents, all of them
+        // part of the seed rather than of the screenshot harness.
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
-        assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 2);
+        assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_chapter_notes(&story.id).unwrap().len(), 2);
         assert_eq!(db.list_deleted(Some(&story.id)).unwrap().len(), 2);
     }
@@ -19079,7 +19696,7 @@ mod tests {
         assert!(reset
             .description
             .as_deref()
-            .is_some_and(|description| description.contains("intentionally 100 XP short")));
+            .is_some_and(|description| description.contains("1,350 XP")));
 
         let characters = db.list_characters(&story.id).unwrap();
         assert_eq!(characters.len(), 3);
@@ -19088,7 +19705,7 @@ mod tests {
             .all(|character| character.name != "Trespasser"));
 
         let nodes = db.list_nodes(&story.id).unwrap();
-        assert_eq!(nodes.len(), 9, "three chapters and the six live cards");
+        assert_eq!(nodes.len(), 28, "six chapters and the live cards");
         assert!(nodes.iter().all(|node| node.label != "Stray chapter"));
         assert_eq!(
             db.list_deleted(Some(&story.id)).unwrap().len(),
@@ -19096,26 +19713,26 @@ mod tests {
             "the cut cast member and the cut card are back in the trash"
         );
 
-        // Six chapter incomes across Rook and Mira, plus the row Vane's award
-        // opened for him.
-        let progress = db.list_story_character_progress(&story.id).unwrap();
-        assert_eq!(progress.len(), 7);
-        let mira = characters
+        let ivy = characters
             .iter()
-            .find(|character| character.name == "Mira Sable")
-            .expect("Mira is back in the demo cast");
-        let mira_income: i64 = progress
+            .find(|character| character.name == "Ivy Marrow")
+            .expect("Ivy is back in the demo cast");
+        let income = db.list_story_character_progress(&story.id).unwrap();
+        assert_eq!(income.len(), 11);
+        let ivy_income: i64 = income
             .iter()
-            .filter(|entry| entry.character_id == mira.id)
+            .filter(|entry| entry.character_id == ivy.id)
             .map(|entry| entry.xp_earned)
             .sum();
-        assert_eq!(mira_income, 1400, "the intentional XP gap is back");
+        assert_eq!(ivy_income, 1850, "the deliberate gap is back");
 
-        assert_eq!(db.list_story_levels(&story.id).unwrap().len(), 5);
-        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 3);
-        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 3);
-        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 7);
-        assert_eq!(db.list_edges(&story.id).unwrap().len(), 10);
+        assert_eq!(db.list_story_levels(&story.id).unwrap().len(), 7);
+        assert_eq!(db.list_story_skills(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_chapter_events(&story.id).unwrap().len(), 26);
+        assert_eq!(db.list_story_growth_points(&story.id).unwrap().len(), 6);
+        assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 10);
+        assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 11);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
 
         // The trial run's history went with the data it described, and the reset

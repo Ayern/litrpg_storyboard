@@ -556,7 +556,7 @@ function statsByCharacter(stats: CharacterStat[]): Record<string, CharacterStat[
 
 // The prepared story's title. It is how the sidebar knows that a reset would
 // replace sample data rather than a story the author has made their own.
-const DEMO_STORY_TITLE = 'The Ember Ledger (Demo)';
+const DEMO_STORY_TITLE = 'The Ninth Bell (Demo)';
 
 function App() {
   const [stories, setStories] = useState<Story[]>([]);
@@ -816,7 +816,26 @@ function App() {
     forgetNodeDraft,
     forgetRememberedDrafts,
     followStoredRows,
+    graphLayers,
+    toggleGraphLayer,
+    showAllGraphLayers,
+    showChapterSpine,
+    resetGraphLayers,
+    nodeTypeIsHidden,
   } = useCanvasDrafts({ nodes, edges });
+
+  // A different story starts on the reading order, whatever the last one was
+  // being looked at through. Reloading the same story keeps the layers as they
+  // are, because that is a write landing rather than a fresh look.
+  const layersStoryRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const id = currentStory?.id ?? null;
+
+    if (id === layersStoryRef.current) return;
+    layersStoryRef.current = id;
+    resetGraphLayers();
+  }, [currentStory?.id, resetGraphLayers]);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -7801,6 +7820,9 @@ function App() {
 
     return nodes.map(node => {
       const characterId = node.data.characterId;
+      // A card whose layer is switched off keeps its position, its lines and
+      // its place in the story; the board simply does not draw it.
+      const isHidden = nodeTypeIsHidden(node.data.nodeType);
       const notes = showChapterNotes ? notesByChapter.get(node.id) ?? [] : [];
       const noteCards = notes.slice(0, NOTE_CARDS_SHOWN);
       const hiddenNotes = notes.length - noteCards.length;
@@ -7824,6 +7846,7 @@ function App() {
         .join(' ');
 
       if (
+        !isHidden &&
         !characterId &&
         !classes &&
         !isChapterCard &&
@@ -7839,6 +7862,8 @@ function App() {
 
       return {
         ...node,
+        hidden: isHidden || undefined,
+        selected: isHidden ? false : node.selected,
         className: classes || undefined,
         // Without this the node wrapper's name is the whole card plus every note
         // under it, since React Flow labels the wrapper from its contents.
@@ -7988,7 +8013,27 @@ function App() {
     syncingXpMilestoneId,
     syncSheetStat,
     syncingStatKey,
+    nodeTypeIsHidden,
   ]);
+
+  // A line is drawn only when both of the cards it runs between are. React Flow
+  // hides a card without hiding the lines that end on it, so the board is given
+  // the lines of the layers on screen instead of the whole set.
+  const drawnEdges = useMemo(() => {
+    const offBoard = new Set(
+      nodes
+        .filter(node => nodeTypeIsHidden(node.data.nodeType))
+        .map(node => node.id)
+    );
+
+    if (offBoard.size === 0) return edges;
+
+    return edges.map(edge =>
+      offBoard.has(edge.source) || offBoard.has(edge.target)
+        ? { ...edge, hidden: true }
+        : edge
+    );
+  }, [edges, nodes, nodeTypeIsHidden]);
 
   // The chapter a skill was learned in, offered in reading order. Skill cards
   // are the optional other end of the link, so a skill can name the card that
@@ -9189,7 +9234,11 @@ function App() {
             setShowChapterNotes={setShowChapterNotes}
             nodes={nodes}
             canvasNodes={canvasNodes}
-            edges={edges}
+            edges={drawnEdges}
+            graphLayers={graphLayers}
+            toggleGraphLayer={toggleGraphLayer}
+            showAllGraphLayers={showAllGraphLayers}
+            showChapterSpine={showChapterSpine}
             flowRef={flowRef}
             pendingPanRef={pendingPanRef}
             panCanvas={panCanvas}

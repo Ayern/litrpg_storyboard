@@ -676,10 +676,10 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                 aria-label={`Detail of the event in ${data.label}`}
                 placeholder={
                   eventType === 'item_acquire'
-                    ? 'Stolen Ember'
+                    ? 'Brine Lantern'
                     : eventType === 'skill_learn'
-                      ? 'Ember Whisper'
-                      : 'Cinder Step'
+                      ? 'Tide-Read'
+                      : 'Salt-Sight'
                 }
                 value={eventDetails}
                 onMouseDown={event => event.stopPropagation()}
