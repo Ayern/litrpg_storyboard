@@ -110,7 +110,11 @@ import type {
 } from './domains/progression/types';
 import type { Quest, QuestWarning } from './domains/quests/types';
 import { SkillsSection } from './domains/skills/SkillsSection';
-import type { SkillDraft, SkillEventDraft } from './domains/skills/SkillsSection';
+import type {
+  SkillDraft,
+  SkillEventDraft,
+  SkillOption,
+} from './domains/skills/SkillsSection';
 import type { CharacterSkillEvent, SkillEvolutionInput } from './domains/skills/types';
 import type {
   ChapterContinuityFlag,
@@ -5696,6 +5700,57 @@ function App() {
     }
   };
 
+  // A skill card made from the sheet. A fresh story has none, and the form where
+  // a skill starts is where an author looks, so the card is placed from there;
+  // it is its own history step, and linking the skill to it stays a second,
+  // separate write.
+  const createSkillCard = async (
+    name: string,
+    effect: string | null
+  ): Promise<SkillOption | null> => {
+    if (!currentStory) return null;
+
+    const label = name.trim();
+    if (!label) return null;
+
+    setCharacterError(null);
+
+    try {
+      const position = {
+        x: 120 + Math.random() * 360,
+        y: 120 + Math.random() * 240,
+      };
+      const node: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        'skill',
+        label,
+        effect,
+        position.x,
+        position.y,
+        actor,
+        null
+      );
+
+      setNodes(nds => [...nds, toFlowNode(node)]);
+
+      recordStep({
+        label: `Add the “${label}” card`,
+        undo: async () => {
+          await canvasApi.deleteNode(node.id, actor);
+        },
+        redo: async () => {
+          await trashApi.restoreDeleted(node.id, 'node', actor);
+        },
+      });
+
+      return { id: node.id, label };
+    } catch (e) {
+      console.error('Failed to make a skill card:', e);
+      setCharacterError(`Could not make a skill card: ${String(e)}`);
+      return null;
+    }
+  };
+
   const addSkill = async (input: SkillDraft): Promise<boolean> => {
     if (!selectedCharacterId) return false;
 
@@ -9446,6 +9501,7 @@ function App() {
               onError={setCharacterError}
               onCreate={addSkill}
               onSave={saveSkill}
+              onCreateCard={createSkillCard}
               onDelete={removeSkill}
               onSaveEvent={saveSkillEvent}
               onDeleteEvent={removeSkillEvent}

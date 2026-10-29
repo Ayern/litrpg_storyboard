@@ -304,11 +304,17 @@ identity**: its name, rank and effect belong to the skill, and a correction made
 the card reaches every sheet that holds it, in one step.
 
 Make one on a character's sheet with **Add skill**: give it a name, a rank, the
-chapter it was learned in and, if you want it drawn on the board, an existing skill
-card. The board itself no longer makes skill cards — a new skill belongs on a
-sheet, and the chapter it names shows it in that chapter's ledger straight away. A
-card put on a board in an earlier version still opens, still lists its holders and
-still takes a connection from a character card.
+chapter it was learned in and, if you want it drawn on the board, a skill card.
+**New card** beside that picker makes a card for you, named after the skill with its
+effect on it, and selects it — so a brand-new story with no cards on the board can
+still have them, without leaving the sheet. Typing the skill across two rows?
+**New card** works the same way on the edit form. The card is a step of its own in
+the history, so **Ctrl+Z** takes back the card and leaves the skill as it was.
+
+The board itself no longer makes skill cards: a new skill belongs on a sheet, and
+the chapter it names shows it in that chapter's ledger straight away. A card put on
+a board in an earlier version still opens, still lists its holders and still takes a
+connection from a character card.
 
 ![The skill card's drawer, with its holders and the form for adding one](screenshots/card-inspector.png)
 
@@ -506,6 +512,7 @@ Your work lives in a single file on your own machine (`Data location` in
 | Add a card for anything | Graph toolbar: pick the type, type a label, **Add Node** |
 | Add a person or a quest | Pick `character` or `quest` and **Add Node** for the full form |
 | Give somebody a skill | Their sheet: **Add skill**, with the chapter it was learned in |
+| Put a skill on the board | On that skill's form, **New card** beside the card picker |
 | Draw a relationship | Drag from a card's circle onto another card |
 | Put a person in a chapter | Connect their card to the chapter card, or **Cast** on the chapter row |
 | Change the reading order | Chapters tab: drag a row's grip, or the **↑**/**↓** arrows |

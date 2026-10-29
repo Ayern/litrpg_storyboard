@@ -3204,6 +3204,54 @@ body {
   cursor: not-allowed;
 }
 
+/* The card picker and the button that makes one. A fresh story has no skill
+   cards, so the form where a skill starts can place the card as well. */
+.skill-card-pick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.skill-card-pick select {
+  min-width: 0;
+}
+
+.skill-new-card {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  background: #2a2536;
+  border: 1px solid #463f5c;
+  border-radius: 3px;
+  color: #d8cffb;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.skill-new-card:hover:not(:disabled),
+.skill-new-card:focus-visible:not(:disabled) {
+  background: #352e45;
+  outline: none;
+}
+
+.skill-new-card:disabled {
+  color: #6f6a83;
+  border-color: #363246;
+  cursor: not-allowed;
+}
+
+/* The creator's own buttons are the primary action; this one is a side door. */
+.skill-creator .skill-new-card {
+  background: #2a2536;
+  border: 1px solid #463f5c;
+  color: #d8cffb;
+}
+
+.skill-creator .skill-new-card:disabled {
+  background: #2a2536;
+  color: #6f6a83;
+}
+
 /* A skill keeps its changes as events: an upgrade, a use, a sacrifice. They sit
    under the skill so the reading order reads down one column. */
 .skill-row {

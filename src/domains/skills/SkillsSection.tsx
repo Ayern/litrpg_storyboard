@@ -54,6 +54,7 @@ export function SkillsSection({
   onError,
   onCreate,
   onSave,
+  onCreateCard,
   onDelete,
   onSaveEvent,
   onDeleteEvent,
@@ -75,6 +76,10 @@ export function SkillsSection({
   onError: (message: string | null) => void;
   onCreate: (input: SkillDraft) => Promise<boolean>;
   onSave: (skill: CharacterSkill, input: SkillDraft) => Promise<boolean>;
+  // Makes a skill card on the board for the name being typed. A fresh story has
+  // no cards yet, and this form is where a skill starts, so the card can be made
+  // here rather than sending the author to the board first.
+  onCreateCard: (name: string, effect: string | null) => Promise<SkillOption | null>;
   onDelete: (skill: CharacterSkill) => Promise<boolean>;
   onSaveEvent: (
     skillId: string,
@@ -494,27 +499,44 @@ export function SkillsSection({
                       </option>
                     ))}
                   </select>
-                  <select
-                    aria-label="Skill card"
-                    title="The skill card this skill belongs to"
-                    value={skillNodeDraft}
-                    onChange={(e) => setSkillNodeDraft(e.target.value)}
-                  >
-                    <option value="">No card</option>
-                    {skillNodeDraft &&
-                      !cards.some(
-                        choice => choice.id === skillNodeDraft
-                      ) && (
-                        <option value={skillNodeDraft}>
-                          Card in the trash
+                  <div className="skill-card-pick">
+                    <select
+                      aria-label="Skill card"
+                      title="The skill card this skill belongs to"
+                      value={skillNodeDraft}
+                      onChange={(e) => setSkillNodeDraft(e.target.value)}
+                    >
+                      <option value="">No card</option>
+                      {skillNodeDraft &&
+                        !cards.some(
+                          choice => choice.id === skillNodeDraft
+                        ) && (
+                          <option value={skillNodeDraft}>
+                            Card in the trash
+                          </option>
+                        )}
+                      {cards.map(choice => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
                         </option>
-                      )}
-                    {cards.map(choice => (
-                      <option key={choice.id} value={choice.id}>
-                        {choice.label}
-                      </option>
-                    ))}
-                  </select>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="skill-new-card"
+                      title="Make a card for this skill on the board"
+                      disabled={!skillNameDraft.trim()}
+                      onClick={async () => {
+                        const card = await onCreateCard(
+                          skillNameDraft,
+                          skillEffectDraft.trim() || null
+                        );
+                        if (card) setSkillNodeDraft(card.id);
+                      }}
+                    >
+                      New card
+                    </button>
+                  </div>
                   <div className="skill-actions">
                     <button
                       title={`Save this ${skill.name}`}
@@ -729,19 +751,40 @@ export function SkillsSection({
             </option>
           ))}
         </select>
-        <select
-          aria-label="New skill card"
-          title="The skill card this skill belongs to"
-          value={newSkillNodeId}
-          onChange={(e) => setNewSkillNodeId(e.target.value)}
-        >
-          <option value="">No card</option>
-          {cards.map(choice => (
-            <option key={choice.id} value={choice.id}>
-              {choice.label}
-            </option>
-          ))}
-        </select>
+        <div className="skill-card-pick">
+          <select
+            aria-label="New skill card"
+            title="The skill card this skill belongs to"
+            value={newSkillNodeId}
+            onChange={(e) => setNewSkillNodeId(e.target.value)}
+          >
+            <option value="">No card</option>
+            {newSkillNodeId &&
+              !cards.some(choice => choice.id === newSkillNodeId) && (
+                <option value={newSkillNodeId}>Card in the trash</option>
+              )}
+            {cards.map(choice => (
+              <option key={choice.id} value={choice.id}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="skill-new-card"
+            title="Make a card for this skill on the board"
+            disabled={!newSkillName.trim()}
+            onClick={async () => {
+              const card = await onCreateCard(
+                newSkillName,
+                newSkillEffect.trim() || null
+              );
+              if (card) setNewSkillNodeId(card.id);
+            }}
+          >
+            New card
+          </button>
+        </div>
         <button
           title="Add this skill to the selected character"
           onClick={addSkill}

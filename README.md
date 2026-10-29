@@ -172,9 +172,12 @@ Cancelling, closing, or clicking the dimmed backdrop writes nothing.
 skill card made there recorded nothing on the chapter it happened in. A skill is
 added under a character's **Skills** with the chapter it was learned in, and the
 chapter card's **Progression & Events** ledger shows it from the sheet itself (as a
-row tagged **sheet**, which the card cannot delete). Boards that already carry
-skill cards still draw them and still add holders; the card is a shortcut to a
-skill's shared identity, not the place a skill is created.
+row tagged **sheet**, which the card cannot delete). A card for a skill is made from
+the same form: **New card** beside the card picker calls `create_graph_node` with the
+name and effect being typed, selects the new card and records one step of its own,
+so a fresh story can still put skills on the board. Boards that already carry skill
+cards still draw them and still add holders; the card is a shortcut to a skill's
+shared identity, not the place a skill is created.
 
 **Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
 canvas. Drag a card onto the board and it becomes a `character` node already

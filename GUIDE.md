@@ -367,9 +367,14 @@ shown.
 
 The canvas toolbar does not make skill cards: `canvasCreateNodeTypes` in
 `src/domains/canvas/types.ts` leaves `skill` out of the type list, because a card
-made there recorded nothing on any chapter. Boards that already hold skill cards
-still draw them, open their holders and take connections; the card is a shortcut to
-a skill's identity, never the place a skill is born.
+made there recorded nothing on any chapter. The sheet is where one is made instead.
+**New card** beside the card picker calls `create_graph_node` with the name and
+effect being typed, puts the card on the board and selects it in the picker; the
+write is its own history step, `Add the "<name>" card`, so linking the skill to it
+stays a separate step and Undo can take the card back without touching the sheet.
+Boards that already hold skill cards still draw them, open their holders and take
+connections; the card is a shortcut to a skill's identity, never the place a skill
+is born.
 
 Dragging a connection from a chapter card into empty canvas still opens a form with
 the chapter pre-filled, and off a character card it fills the giver. Both forms are

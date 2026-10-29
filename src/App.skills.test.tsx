@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -198,6 +198,13 @@ beforeEach(() => {
         skills = skills.map(skill => (skill.id === updated.id ? updated : skill));
         return { ...updated };
       }
+      case 'create_graph_node':
+        return {
+          ...nodeRow('n7', args.nodeType, args.label),
+          content: args.content ?? null,
+          pos_x: args.posX ?? 0,
+          pos_y: args.posY ?? 0,
+        };
       case 'delete_skill':
         skills = skills.filter(skill => skill.id !== args.id);
         return null;
@@ -286,6 +293,73 @@ describe('skills on the character sheet', () => {
     expect(
       skillRow('Greater Fireball').getByText('Learned in Chapter Two')
     ).toBeInTheDocument();
+  });
+
+  it('makes a skill card from the form that adds the skill', async () => {
+    const user = await openSheet();
+
+    // A story with no cards yet: the form is where the card is made, and the
+    // card carries the name and effect being typed.
+    await user.type(screen.getByLabelText('New skill name'), 'Glass Ward');
+    await user.type(screen.getByLabelText('New skill effect'), '+2 ward');
+    await user.click(screen.getByRole('button', { name: 'New card' }));
+
+    expect(lastCall('create_graph_node')).toMatchObject({
+      storyId: story.id,
+      nodeType: 'skill',
+      label: 'Glass Ward',
+      content: '+2 ward',
+    });
+
+    // The new card is the skill's card, so saving links the sheet to it.
+    await waitFor(() =>
+      expect(screen.getByLabelText('New skill card')).toHaveValue('n7')
+    );
+    expect(
+      within(screen.getByLabelText('New skill card')).getByRole('option', {
+        name: 'Glass Ward',
+      })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Add skill' }));
+
+    expect(lastCall('add_skill')).toMatchObject({
+      characterId: 'char-1',
+      name: 'Glass Ward',
+      effect: '+2 ward',
+      nodeId: 'n7',
+    });
+    expect(
+      skillRow('Glass Ward').getByText('Card: Glass Ward')
+    ).toBeInTheDocument();
+  });
+
+  it('makes a card for a skill that is already on the sheet', async () => {
+    const user = await openSheet();
+
+    await user.click(skillRow('Fireball').getByRole('button', { name: 'Edit' }));
+    await user.clear(screen.getByLabelText('Skill name'));
+    await user.type(screen.getByLabelText('Skill name'), 'Greater Fireball');
+    await user.selectOptions(screen.getByLabelText('Skill card'), '');
+    // The creator form has its own New card button; this one belongs to the row.
+    const editor = document.querySelector('.skill-editor') as HTMLElement;
+    await user.click(within(editor).getByRole('button', { name: 'New card' }));
+
+    expect(lastCall('create_graph_node')).toMatchObject({
+      nodeType: 'skill',
+      label: 'Greater Fireball',
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Skill card')).toHaveValue('n7')
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(lastCall('update_skill')).toMatchObject({
+      id: 'skill-1',
+      name: 'Greater Fireball',
+      nodeId: 'n7',
+    });
   });
 
   it('deletes a skill without touching the character', async () => {
