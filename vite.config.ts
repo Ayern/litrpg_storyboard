@@ -10,6 +10,31 @@ export default defineConfig(() => ({
 
   plugins: [react()],
 
+  // The board is the first screen, so React and React Flow are needed before
+  // anything is drawn and none of this is deferred. What the split buys is file
+  // size: the two libraries and the app's own code are downloaded in parallel
+  // off the local disk instead of as one 750 kB script, so none of the three is
+  // near the bundler's warning size and a change to the app does not mint a new
+  // URL for React.
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react',
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            {
+              name: 'reactflow',
+              test: /node_modules[\\/](@reactflow|reactflow|d3-[^\\/]+|zustand|classcat)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

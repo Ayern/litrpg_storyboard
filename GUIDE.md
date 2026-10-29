@@ -578,6 +578,12 @@ cd src-tauri && cargo fmt --check
 npm run screenshots               # the guide's pictures, and the check that none drifted
 ```
 
+`npm run build` writes three scripts rather than one: `react`, `reactflow` and the
+app's own chunk, grouped in `build.rolldownOptions` in `vite.config.ts`. Nothing is
+deferred — the board needs all three before its first paint — so `index.html`
+preloads them together and they download in parallel; the split is about file size,
+and it means a change to the app does not mint a new URL for React.
+
 The frontend suite renders the real `App` with `invoke` mocked, so it covers what
 the Rust tests cannot see: what a tab requests, what it does with a page that
 arrives late, and what it says when a filter matches nothing. Several panels also
