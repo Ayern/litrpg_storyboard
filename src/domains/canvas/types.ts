@@ -23,6 +23,20 @@ export interface ChapterCastBadge {
 // the row reads without a lookup.
 export interface ChapterEventRow extends ChapterEvent {
   actorName: string;
+  // The name of the skill a rank-up, evolution or sacrifice acted on. The event
+  // stores the row's id; the sheet supplies the word, so a line reads without a
+  // lookup of its own.
+  skillName?: string | null;
+}
+
+// A skill a sheet records in a chapter, as the chapter card's ledger shows it.
+// The card cannot edit or delete one: the sheet is where the skill lives.
+export interface ChapterSheetSkill {
+  skillId: string;
+  characterId: string;
+  actorName: string;
+  name: string;
+  rank: string | null;
 }
 
 // One skill the event popover can act on: the sheet row's id and the words the
@@ -98,6 +112,11 @@ export type NodeData = {
   // or take a line back. XP, a learned skill and an acquired item also touch the
   // sheet; the other kinds are the scene's own record.
   chapterEvents?: ChapterEventRow[];
+  // The skills the sheets place in this chapter, read from the sheets rather
+  // than logged as events. A skill added or ranked on the Characters tab shows
+  // up here without being written twice; the row is a mirror and cannot be
+  // removed from the card.
+  chapterSheetSkills?: ChapterSheetSkill[];
   onAddChapterEvent?: (
     actorId: string,
     eventType: ChapterEventType,
@@ -151,6 +170,14 @@ export const nodeTypes = [
 ] as const;
 
 export type NodeType = typeof nodeTypes[number];
+
+// The kinds the toolbar can make a new card of. A skill card is not one of
+// them: a skill is written on a sheet, against the chapter that grants it, and
+// a card made here recorded nothing on that chapter. Boards that already hold
+// skill cards still draw and open them.
+export const canvasCreateNodeTypes: readonly NodeType[] = nodeTypes.filter(
+  type => type !== 'skill'
+);
 
 export function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);
@@ -215,8 +242,8 @@ export function edgeKindClass(relationType: string | null | undefined): string {
 
 // The card types whose Add form also creates the record behind the card. The
 // other types are narrative cards and keep the quick label-only creation.
-export type CanvasCreateKind = 'character' | 'quest' | 'skill';
+export type CanvasCreateKind = 'character' | 'quest';
 
 export function isCanvasCreateKind(value: string): value is CanvasCreateKind {
-  return value === 'character' || value === 'quest' || value === 'skill';
+  return value === 'character' || value === 'quest';
 }

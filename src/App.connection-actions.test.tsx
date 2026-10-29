@@ -1234,16 +1234,14 @@ describe('connection actions', () => {
     expect(edges[0]).toMatchObject({ label: 'ally', relation_type: 'ally' });
   });
 
-  it('pre-fills a skill owner and a quest giver from a character card', async () => {
+  it('pre-fills a quest giver from a character card', async () => {
     const user = await openCanvas();
     const type = screen.getByTitle('The kind of node the Add button creates');
 
-    await user.selectOptions(type, 'skill');
-    await user.click(screen.getByRole('button', { name: 'spawn from character' }));
-
-    const skill = await screen.findByRole('dialog', { name: 'New skill' });
-    expect(within(skill).getByLabelText('Skill owner')).toHaveValue('char-1');
-    await user.click(within(skill).getByRole('button', { name: 'Cancel' }));
+    // A skill card is no longer made from the board; a quest still is.
+    expect(
+      within(type).queryByRole('option', { name: 'skill' })
+    ).not.toBeInTheDocument();
 
     await user.selectOptions(type, 'quest');
     await user.click(screen.getByRole('button', { name: 'spawn from character' }));
@@ -1252,16 +1250,9 @@ describe('connection actions', () => {
     expect(within(quest).getByLabelText('Quest giver')).toHaveValue('char-1');
   });
 
-  it('pre-fills a skill chapter and a quest chapter from a chapter card', async () => {
+  it('pre-fills a quest chapter from a chapter card', async () => {
     const user = await openCanvas();
     const type = screen.getByTitle('The kind of node the Add button creates');
-
-    await user.selectOptions(type, 'skill');
-    await user.click(screen.getByRole('button', { name: 'spawn from chapter' }));
-
-    const skill = await screen.findByRole('dialog', { name: 'New skill' });
-    expect(within(skill).getByLabelText('Skill chapter')).toHaveValue('n3');
-    await user.click(within(skill).getByRole('button', { name: 'Cancel' }));
 
     await user.selectOptions(type, 'quest');
     await user.click(screen.getByRole('button', { name: 'spawn from chapter' }));

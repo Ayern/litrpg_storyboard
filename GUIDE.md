@@ -243,7 +243,9 @@ her numbers without leaving the canvas.*
 its roster with a level *as of that chapter*, its objective checklist, **Cast** and
 its **Progression & Events** ledger, then the quests that touch it and its own
 continuity warnings. **+ Event** on the card logs one scene event — XP, a learned
-skill, a rank-up, an evolution, a sacrifice or an acquired item. The cast
+skill, a rank-up, an evolution, a sacrifice or an acquired item — and under those
+lines the ledger mirrors the skills the sheets place in the chapter, each tagged
+**sheet**. The cast
 rail is on the left, character cards in the middle, skill cards and a faction card
 below. The lines the board is drawn around are solid and named: `next` between
 chapters, `rival` / `enemy` between two characters, `member` into a faction. A line
@@ -256,6 +258,16 @@ step. **Cast** writes a `chapter_cast` row through `add_chapter_cast_member` (or
 takes one back with `remove_chapter_cast_member`), and the point of view is a
 column written with `set_chapter_details`. **Add** and the objective checkboxes
 write `chapter_tasks` rows with `add_chapter_task` / `set_chapter_task_done`.
+
+Under the logged events the card also mirrors the skills the sheets place in this
+chapter. `App.tsx` derives those rows with `sheetSkillsByChapter`: every live skill
+whose `chapter_id` is this chapter, minus any skill an event on the chapter already
+names (its `source_id`, `skill_id` or `new_skill_id`), handed to the card as
+`chapterSheetSkills`. They are drawn with a **sheet** tag, cannot be removed from
+the card, and follow the sheet live — adding, renaming, re-ranking, re-chaptering or
+deleting a skill on the Characters tab changes the card's ledger without a second
+write, and without a `chapter_events` row of its own.
+
 **+ Event** calls `add_chapter_event`, which writes one `chapter_events` row
 (schema v34) and, for XP, a learned skill or an acquired item, the award, skill or
 inventory row it stands for. A rank-up, evolution or sacrifice names a
@@ -343,20 +355,26 @@ that is only a drawing never was.
 *Goal: create a skill, decide who holds it, and fix a rank for one holder — and
 watch the card stay one identity across both sheets.*
 
-### Creating the card
+### Creating the skill
 
-Pick **skill** in the canvas toolbar's type list and press **Add Node**. That opens
-the full card form rather than a label-only card, because a skill is the kind of
-card that has a record behind it. The form's **owner** field is optional: a skill
-may be placed on the board before anybody holds it, and a character joins later by
-connecting their card to it or by using the card's own holder form. Submitting runs
-`createGraphNode` and, only when an owner was chosen, `add_skill` — one step,
-`Add "<name>"`, whose undo deletes the hold and then the card.
+A skill starts on a sheet, not on the board. **Add skill** under the character's
+**Skills** takes a name, an optional rank and effect, the chapter it was learned in
+and optionally the skill card it belongs to; the write is `add_skill`, and the
+chapter it names is what puts the skill in that chapter's ledger (see
+[Workflow C](#6-workflow-c--chapters-on-the-sheet-and-on-the-board)). A skill with
+no chapter still exists on the sheet — it just has nowhere on the board to be
+shown.
 
-Dragging a connection from a character card into empty canvas does the same thing
-with the form pre-filled: with **skill** selected, the character becomes the
-skill's owner. (Dragging off a *chapter* card fills the chapter field instead, and
-off a character card with **quest** selected fills the quest's giver.)
+The canvas toolbar does not make skill cards: `canvasCreateNodeTypes` in
+`src/domains/canvas/types.ts` leaves `skill` out of the type list, because a card
+made there recorded nothing on any chapter. Boards that already hold skill cards
+still draw them, open their holders and take connections; the card is a shortcut to
+a skill's identity, never the place a skill is born.
+
+Dragging a connection from a chapter card into empty canvas still opens a form with
+the chapter pre-filled, and off a character card it fills the giver. Both forms are
+now the quest's: **character** and **quest** are the two types that create a record
+behind their card.
 
 ### The card's holders
 
@@ -567,7 +585,7 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | # | Anchor point | Workflow | File |
 | --- | --- | --- | --- |
 | 1 | First-run welcome card | Mental model | [`screenshots/onboarding-welcome.png`](screenshots/onboarding-welcome.png) |
-| 2 | Graph tab: cards, labels, cast rail, legend | C | [`screenshots/canvas-board.png`](screenshots/canvas-board.png) |
+| 2 | Graph tab: cards, labels, cast rail, legend, the sheet-tagged ledger rows | C | [`screenshots/canvas-board.png`](screenshots/canvas-board.png) |
 | 3 | Node inspector drawer, with the skill holder form | A, B | [`screenshots/card-inspector.png`](screenshots/card-inspector.png) |
 | 4 | Holder form filled in on a skill card | B | [`screenshots/skill-holder-form.png`](screenshots/skill-holder-form.png) |
 | 5 | Connection editor for a drawn line | A | [`screenshots/connection-editor.png`](screenshots/connection-editor.png) |
@@ -584,6 +602,8 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | 16 | Trash: deleted stories and deleted rows | D | [`screenshots/trash-tab.png`](screenshots/trash-tab.png) |
 | 17 | The author's guide read in the app, pictures and all | — | [`screenshots/in-app-guide.png`](screenshots/in-app-guide.png) |
 | 18 | Board with chapter notes shown | C | [`screenshots/canvas-notes.png`](screenshots/canvas-notes.png) |
+| 19 | Chapter card's + Event form: skill picker, evolved name, keep-base toggle | B, C | [`screenshots/chapter-event-evolve.png`](screenshots/chapter-event-evolve.png) |
+| 20 | The same form on a sacrifice, with the keep-as-record toggle | C | [`screenshots/chapter-event-sacrifice.png`](screenshots/chapter-event-sacrifice.png) |
 
 An anchor point with no picture, and why: **a drag in progress** — a cast name held
 over the board, or a connection being pulled out of a card's handle. A screenshot

@@ -43,6 +43,9 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
   const [eventError, setEventError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const events = data.chapterEvents ?? [];
+  // Skills the sheets put in this chapter. They are read from the sheets, not
+  // logged here, so the card shows them without offering to take them back.
+  const sheetSkills = data.chapterSheetSkills ?? [];
 
   const eventTarget =
     eventActorId ||
@@ -152,9 +155,13 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       case 'skill_learn':
         return `learns ${event.details}`;
       case 'skill_evolve':
-        return `evolves into ${event.details}`;
+        // The event names the new skill; the sheet supplies the one it grew out
+        // of, so the line says both.
+        return event.skillName
+          ? `evolves ${event.skillName} into ${event.details}`
+          : `evolves into ${event.details}`;
       case 'skill_sacrifice':
-        return `sacrifices ${event.details}`;
+        return `sacrifices ${event.skillName ?? event.details}`;
       case 'item_acquire':
         return `${event.details} ×${event.amount ?? 1}`;
       default:
@@ -497,7 +504,7 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
             )}
           </div>
 
-          {events.length === 0 ? (
+          {events.length === 0 && sheetSkills.length === 0 ? (
             <p className="chapter-events-empty">
               Nothing has happened here yet — log the scene’s first event.
             </p>
@@ -525,6 +532,28 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
                   >
                     ×
                   </button>
+                </li>
+              ))}
+              {/* What the sheets recorded here. These come from the sheets
+                  themselves, so a skill added or ranked on the Characters tab
+                  is on the board without a second entry — and none of them can
+                  be removed from the card. */}
+              {sheetSkills.map(skill => (
+                <li
+                  key={`sheet-${skill.skillId}`}
+                  className="chapter-event skill_learn chapter-event-sheet"
+                  title={`${skill.actorName} has this skill on their sheet, learned in ${data.label}. Change it on the sheet — the card only mirrors it.`}
+                >
+                  <span className="chapter-event-icon" aria-hidden="true">
+                    🔥
+                  </span>
+                  <span className="chapter-event-who">{skill.actorName}</span>
+                  <span className="chapter-event-what">
+                    {skill.rank
+                      ? `has ${skill.name} (${skill.rank})`
+                      : `has ${skill.name}`}
+                  </span>
+                  <span className="chapter-event-source">sheet</span>
                 </li>
               ))}
             </ul>
@@ -757,14 +786,22 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
               type="button"
               className="nodrag nopan"
               disabled={!eventTarget}
-              onClick={() => void submitEvent()}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                // Saving a scene event is a write on the card, not a click that
+                // opens the inspector over it.
+                event.stopPropagation();
+                void submitEvent();
+              }}
             >
               Save
             </button>
             <button
               type="button"
               className="nodrag nopan"
-              onClick={() => {
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
                 setEventAmount('');
                 setEventDetails('');
                 setEventError(null);

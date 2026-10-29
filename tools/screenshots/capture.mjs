@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Regenerates the guide's sample story and re-shoots every picture in it.
 //
-//   npm run screenshots                 # the fixture, then all eighteen images
+//   npm run screenshots                 # the fixture, then all twenty images
 //   npm run screenshots -- --no-fixture # images only, from the fixture on disk
 //   npm run fixture                     # the fixture only, no images
 //
 // The pictures are of the app, so this drives the app: it starts the harness
 // server (the real `src/App.tsx`, Tauri's commands answered from
-// `backend.ts`), walks the eighteen anchor states in order, and writes each one
+// `backend.ts`), walks the twenty anchor states in order, and writes each one
 // into `screenshots/`. A step that cannot be reached fails the run rather than
 // quietly writing a picture of the wrong screen.
 //
@@ -208,6 +208,30 @@ async function shoot(page, fixture) {
   await page.getByRole('button', { name: 'fit view' }).click();
   await page.waitForTimeout(700);
   await capture(page, 'canvas-board.png');
+
+  // The chapter card's + Event form, on the two kinds that change a skill: the
+  // character's own rows in the Skill picker, the evolved name and the
+  // keep-base toggle, then the sacrifice record toggle.
+  const eventCard = page.locator(
+    `.react-flow__node[data-id="${node('A Ledger of Cinders', 'chapter')}"]`
+  );
+
+  await eventCard.getByRole('button', { name: '+ Event' }).click();
+  await eventCard
+    .getByRole('combobox', { name: 'Event type in A Ledger of Cinders' })
+    .selectOption('skill_evolve');
+  await eventCard
+    .getByRole('textbox', { name: 'Detail of the event in A Ledger of Cinders' })
+    .fill('Cinder Step');
+  await capture(page, 'chapter-event-evolve.png');
+  await eventCard.getByRole('button', { name: 'Cancel' }).click();
+
+  await eventCard.getByRole('button', { name: '+ Event' }).click();
+  await eventCard
+    .getByRole('combobox', { name: 'Event type in A Ledger of Cinders' })
+    .selectOption('skill_sacrifice');
+  await capture(page, 'chapter-event-sacrifice.png');
+  await eventCard.getByRole('button', { name: 'Cancel' }).click();
 
   // 3. A skill card's drawer, opened by clicking its card.
   await page.locator(`.react-flow__node[data-id="${node('Ash Step', 'skill')}"]`).click();

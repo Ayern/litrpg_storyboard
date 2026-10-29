@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ReactFlowProvider } from 'reactflow';
 
@@ -518,6 +518,92 @@ describe('GraphNode chapter workbench', () => {
     expect(ledger).toHaveTextContent('⚡');
     expect(ledger).toHaveTextContent('🔥');
     expect(ledger).toHaveTextContent('💀');
+  });
+
+  it('mirrors the skills a sheet records here, without offering to remove them', () => {
+    renderNode({
+      chapterSheetSkills: [
+        {
+          skillId: 's-3',
+          characterId: 'c-2',
+          actorName: 'Rook',
+          name: 'Cinder Step',
+          rank: null,
+        },
+        {
+          skillId: 's-2',
+          characterId: 'c-1',
+          actorName: 'Mira',
+          name: 'Ash Step',
+          rank: 'Rank 3',
+        },
+      ],
+    });
+
+    const ledger = screen.getByRole('group', {
+      name: 'Progression and events in The Ashen Gate',
+    });
+
+    expect(ledger).toHaveTextContent('Rook');
+    expect(ledger).toHaveTextContent('has Cinder Step');
+    expect(ledger).toHaveTextContent('Mira');
+    expect(ledger).toHaveTextContent('has Ash Step (Rank 3)');
+    expect(within(ledger).getAllByText('sheet')).toHaveLength(2);
+
+    // The sheet is where a skill is changed, so the card has no line to take back.
+    expect(
+      within(ledger).queryByRole('button', { name: /Remove the event/ })
+    ).not.toBeInTheDocument();
+    expect(
+      within(ledger).getByTitle(/Mira has this skill on their sheet/)
+    ).toHaveTextContent('has Ash Step');
+  });
+
+  it('does not call the ledger empty while the sheets hold skills here', () => {
+    renderNode({
+      chapterSheetSkills: [
+        {
+          skillId: 's-3',
+          characterId: 'c-2',
+          actorName: 'Rook',
+          name: 'Cinder Step',
+          rank: null,
+        },
+      ],
+    });
+
+    expect(
+      screen.queryByText(/Nothing has happened here yet/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('names the skill an evolution grew out of', () => {
+    renderNode({
+      chapterEvents: [
+        {
+          id: 'e-4',
+          chapter_id: 'n-1',
+          actor_id: 'c-1',
+          actorName: 'Mira',
+          event_type: 'skill_evolve',
+          details: 'Cinder Secret',
+          amount: null,
+          source_id: null,
+          skill_id: 's-1',
+          skillName: 'Ember Whisper',
+          position: 0,
+          created_by: 'Ada',
+          created_at: '2026-01-01T00:03:00Z',
+          updated_at: '2026-01-01T00:03:00Z',
+        },
+      ],
+    });
+
+    expect(
+      screen.getByRole('group', {
+        name: 'Progression and events in The Ashen Gate',
+      })
+    ).toHaveTextContent('evolves Ember Whisper into Cinder Secret');
   });
 
   it('removes one event from the card', async () => {

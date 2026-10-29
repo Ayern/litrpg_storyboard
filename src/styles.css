@@ -4680,6 +4680,23 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A skill the sheet records in this chapter. It is a mirror, not an entry the
+   card owns, so it is quieter than a logged event and says where it came from. */
+.chapter-event.chapter-event-sheet .chapter-event-what {
+  color: #c9a887;
+}
+
+.chapter-event-source {
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid #3f3a52;
+  border-radius: 6px;
+  color: #77738a;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .chapter-event-remove {
   flex-shrink: 0;
   margin-left: auto;

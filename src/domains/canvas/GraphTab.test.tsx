@@ -1150,7 +1150,15 @@ describe('the graph tab', () => {
     expect(wired.onNodeDragStop).toBe(spies.onNodeDragStop);
 
     const select = screen.getByTitle('The kind of node the Add button creates');
-    expect(within(select).getAllByRole('option').length).toBeGreaterThan(10);
+    const addable = within(select)
+      .getAllByRole('option')
+      .map(option => (option as HTMLOptionElement).value);
+
+    // A skill is learned on the chapter that grants it, so the toolbar does not
+    // make skill cards; the board still understands the ones already drawn.
+    expect(addable).not.toContain('skill');
+    expect(addable).toContain('chapter');
+    expect(addable.length).toBeGreaterThan(10);
   });
 
   it('draws the search palette over the board', () => {

@@ -364,6 +364,21 @@ beforeEach(() => {
           ...state,
           skills: state.skills.map(skill => ({ ...skill })),
         }));
+      case 'add_skill': {
+        const row = {
+          id: `skill-new-${storySkills.length}`,
+          character_id: args.characterId,
+          name: String(args.name),
+          rank: args.rank ?? null,
+          effect: args.effect ?? null,
+          chapter_id: args.chapterId ?? null,
+          node_id: args.nodeId ?? null,
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+        };
+        storySkills = [...storySkills, row];
+        return row;
+      }
       case 'add_chapter_cast_member': {
         const row = {
           id: `cast-${args.characterId}`,
@@ -883,6 +898,13 @@ describe('chapter card cast badges', () => {
         keepBaseSkill: false,
       });
     });
+
+    // The card names both ends of the evolution, not only the new skill.
+    await waitFor(() => {
+      expect(
+        within(card).getByText('evolves Ash Step into Cinder Step')
+      ).toBeInTheDocument();
+    });
   });
 
   it('sacrifices a skill, keeping it as a record or taking it off the sheet', async () => {
@@ -921,5 +943,45 @@ describe('chapter card cast badges', () => {
         keepOnSheet: false,
       });
     });
+  });
+
+  it('shows a skill written on the Characters tab on the chapter it was learned in', async () => {
+    const { user, container } = await openGraph();
+
+    // Chapter Two has no scene ledger yet, so its card says so.
+    expect(
+      within(cardFor(container, 'n2')).getByText(/Nothing has happened here yet/)
+    ).toBeInTheDocument();
+
+    // The skill is written on the sheet, where a skill belongs, and never on the
+    // card: the card has to pick it up by itself.
+    await user.click(screen.getByRole('button', { name: 'Characters' }));
+    await user.click(screen.getByTitle("Show Rook's sheet"));
+    await user.type(screen.getByLabelText('New skill name'), 'Gate Sigil');
+    await user.type(screen.getByLabelText('New skill rank'), 'Rank 1');
+    await user.selectOptions(screen.getByLabelText('New skill chapter'), 'n2');
+    await user.click(screen.getByRole('button', { name: 'Add skill' }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(call => call[0] === 'add_skill')
+      ).toBe(true);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+
+    const card = cardFor(container, 'n2');
+    await waitFor(() => {
+      expect(within(card).getByText('has Gate Sigil (Rank 1)')).toBeInTheDocument();
+    });
+    expect(within(card).getByText('Rook')).toBeInTheDocument();
+
+    // A mirror of the sheet, not a scene entry: there is nothing to remove here.
+    expect(
+      within(card).queryByRole('button', { name: /Remove the event/ })
+    ).not.toBeInTheDocument();
+    expect(
+      invokeMock.mock.calls.some(call => call[0] === 'add_chapter_event')
+    ).toBe(false);
   });
 });

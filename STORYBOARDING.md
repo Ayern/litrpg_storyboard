@@ -61,10 +61,16 @@ the toolbar says what kind you are about to add:
 - **chapter**, **idea**, **location**, **event**, **plot**, **system**, **item**,
   **faction** and **misc** are plain notes. Type a label, press **Add Node**, and
   drag it where you want it.
-- **character**, **quest** and **skill** open a short form instead, because those
-  cards stand for real records — a person, a contract, a skill somebody holds.
-  The form asks for the few things that make the record, creates it, and puts the
-  card on the board already pointed at it.
+- **character** and **quest** open a short form instead, because those cards stand
+  for real records — a person, a contract. The form asks for the few things that
+  make the record, creates it, and puts the card on the board already pointed at
+  it.
+
+A **skill** is not made here. A skill is written on the sheet of whoever learns it,
+against the chapter that grants it, and the chapter's card then shows it in its
+ledger by itself. Skill cards that are already on a board still draw, open their
+holders and take connections; the board just no longer starts one that recorded
+nothing anywhere.
 
 ![The Graph tab with the demo story on it](screenshots/canvas-board.png)
 
@@ -144,10 +150,16 @@ can stay on the board:
   a checkbox for everyone else in the scene. The POV is always present and its box
   is locked, because the POV is not a cast row.
 - **Progression & Events** on the card is the scene's ledger, listed in the order
-  you logged it: `⚡ +250 XP · Paid for a name at the toll gate`. **+ Event** opens a
+  you logged it: `⚡ +250 XP · Paid for a name at the toll gate`. Under those lines
+  the card also shows the skills the sheets place in this chapter, marked **sheet**
+  — `🔥 Rook has Ash Step (Rank 1)`. You never type those twice: adding, renaming,
+  re-ranking or deleting a skill on a character's sheet (or giving it a different
+  chapter) changes that line at once, and it has no **×** because the sheet is where
+  it is changed. A scene event that already names the skill takes the line over, so
+  the card never says the same thing twice. **+ Event** opens a
   short form: who it happened to (the point of view by default) and what kind of
   event it was — **+ XP**, **Learn Skill**, **Rank Up**, **Evolve**, **Sacrifice**
-  or **Acquire Item** — with  the reason or detail line, and a quantity for an
+  or **Acquire Item** — with the reason or detail line, and a quantity for an
   item. XP pays into that chapter's income, so the curve, the level it buys and the
   stats that level hands out all follow from the one write. A learned skill and an
   acquired item are written on the sheet and in the inventory. A rank-up, an
@@ -160,6 +172,10 @@ can stay on the board:
 - Every one of those clicks is one **Undo** step: the added line disappears, the
   ticked line reopens, the name leaves the roster, and the event comes back off the
   ledger with the award, skill or item it wrote.
+
+![The chapter card's + Event form on an evolution: the character's own skills, the new name, and the toggle that keeps the base skill](screenshots/chapter-event-evolve.png)
+
+![The same form on a sacrifice, with the toggle that keeps the skill as an inactive record](screenshots/chapter-event-sacrifice.png)
 
 ![The board with chapter notes shown](screenshots/canvas-notes.png)
 
@@ -287,8 +303,12 @@ A skill is one thing, however many people hold it. **A skill card has one
 identity**: its name, rank and effect belong to the skill, and a correction made on
 the card reaches every sheet that holds it, in one step.
 
-Make one either way: add it on a character's sheet with **Add skill**, or drop a
-**skill** card on the board and open it.
+Make one on a character's sheet with **Add skill**: give it a name, a rank, the
+chapter it was learned in and, if you want it drawn on the board, an existing skill
+card. The board itself no longer makes skill cards — a new skill belongs on a
+sheet, and the chapter it names shows it in that chapter's ledger straight away. A
+card put on a board in an earlier version still opens, still lists its holders and
+still takes a connection from a character card.
 
 ![The skill card's drawer, with its holders and the form for adding one](screenshots/card-inspector.png)
 
@@ -484,7 +504,8 @@ Your work lives in a single file on your own machine (`Data location` in
 | --- | --- |
 | Start a story, or load the demo | Sidebar: **New story title** → **Create**, or **Load demo story** |
 | Add a card for anything | Graph toolbar: pick the type, type a label, **Add Node** |
-| Add a person, a quest or a skill | Pick `character`, `quest` or `skill` and **Add Node** for the full form |
+| Add a person or a quest | Pick `character` or `quest` and **Add Node** for the full form |
+| Give somebody a skill | Their sheet: **Add skill**, with the chapter it was learned in |
 | Draw a relationship | Drag from a card's circle onto another card |
 | Put a person in a chapter | Connect their card to the chapter card, or **Cast** on the chapter row |
 | Change the reading order | Chapters tab: drag a row's grip, or the **↑**/**↓** arrows |

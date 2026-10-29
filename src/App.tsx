@@ -81,6 +81,7 @@ import type { CanvasCreateKind, EdgeData } from './domains/canvas/types';
 import type {
   ChapterCastBadge,
   ChapterEventRow,
+  ChapterSheetSkill,
   ChapterSkillChoice,
   IndexedEdge,
   IndexedNode,
@@ -179,8 +180,6 @@ interface CanvasCreateDraft {
   kind: CanvasCreateKind;
   name: string;
   description: string;
-  ownerId: string;
-  rank: string;
   chapterId: string;
   completedChapterId: string;
   giverId: string;
@@ -1813,9 +1812,10 @@ function App() {
     }
   };
 
-  // Add is one button for every card type. A character, quest or skill card is
-  // a view of a real record, so those open their own form instead of creating a
-  // label-only card; the narrative types keep the quick path.
+  // Add is one button for every card type. A character or quest card is a view
+  // of a real record, so those open their own form instead of creating a
+  // label-only card; the narrative types keep the quick path. A skill card is
+  // not made here: a skill belongs to a sheet and the chapter that grants it.
   const openCanvasCreate = (spawn?: {
     position: { x: number; y: number };
     sourceNodeId: string;
@@ -1837,9 +1837,8 @@ function App() {
       );
 
     // A connection dragged into empty canvas carries the card it came from into
-    // the form: a character becomes the skill's owner or the quest's giver, and
-    // a chapter becomes the chapter the skill was learned in or the quest was
-    // accepted in.
+    // the form: a character becomes the quest's giver, and a chapter becomes the
+    // chapter the quest was accepted in.
     const source = spawn ? nodes.find(node => node.id === spawn.sourceNodeId) : null;
     const sourceCharacterId =
       source?.data.nodeType === 'character' ? source.data.characterId ?? null : null;
@@ -1850,17 +1849,8 @@ function App() {
       kind: newNodeType,
       name: newNodeLabel.trim(),
       description: '',
-      // Only a drag from a character card picks an owner. Otherwise the field
-      // starts empty: placing a card nobody holds yet is a real answer, and the
-      // author should be the one who says who has it.
-      ownerId: newNodeType === 'skill' ? sourceCharacterId ?? '' : '',
-      rank: '',
       chapterId:
-        newNodeType === 'quest'
-          ? sourceChapterId ?? chapters[0]?.id ?? ''
-          : newNodeType === 'skill'
-            ? sourceChapterId ?? ''
-            : '',
+        newNodeType === 'quest' ? sourceChapterId ?? chapters[0]?.id ?? '' : '',
       completedChapterId: '',
       giverId: newNodeType === 'quest' ? sourceCharacterId ?? '' : '',
       factionId: '',
@@ -1997,75 +1987,6 @@ function App() {
               ...previous,
               { ...again, rewards: again.rewards ?? [] },
             ]);
-          },
-        });
-      } else {
-        const node: any = await canvasApi.createGraphNode(
-          currentStory.id,
-          'skill',
-          name,
-          description,
-          position.x,
-          position.y,
-          actor,
-          null
-        );
-
-        // An owner is optional: a skill can be placed on the board before anybody
-        // holds it. A character joins later by connecting their card to it, or
-        // with the card's Add holder form, and that is when the first sheet row
-        // and the shared definition are written.
-        const learn = (characterId: string) =>
-          skillsApi.addSkill(
-            characterId,
-            name,
-            draft.rank.trim() || null,
-            description,
-            draft.chapterId || null,
-            node.id,
-            actor
-          );
-
-        let skill: CharacterSkill | null = null;
-
-        if (draft.ownerId) {
-          try {
-            skill = await learn(draft.ownerId);
-          } catch (e) {
-            // The skill was refused, so the card made for it must not stay behind.
-            await canvasApi.deleteNode(node.id, actor).catch(() => {});
-            await recordHistoryEvent(
-              'step_rolled_back',
-              `Put back — “${name}”: its holder row could not be written (${String(
-                e
-              )}), so the card was not kept.`
-            );
-            throw e;
-          }
-        }
-
-        setNodes(nds => [...nds, toFlowNode(node)]);
-        if (skill) showSkillOnLists(skill);
-
-        let currentSkillId = skill?.id ?? null;
-
-        recordStep({
-          label: `Add “${name}”`,
-          undo: async () => {
-            if (currentSkillId) {
-              await skillsApi.deleteSkill(currentSkillId, actor);
-              hideSkillOnLists(currentSkillId, draft.ownerId);
-            }
-            await canvasApi.deleteNode(node.id, actor);
-          },
-          redo: async () => {
-            await trashApi.restoreDeleted(node.id, 'node', actor);
-
-            if (!draft.ownerId) return;
-
-            const again = await learn(draft.ownerId);
-            currentSkillId = again.id;
-            showSkillOnLists(again);
           },
         });
       }
@@ -2212,8 +2133,12 @@ function App() {
   }, [storyChapterTasks]);
 
   // Each chapter's progression ledger, in the order it was logged, with the
-  // actor's name resolved once so a card row needs no lookup of its own.
+  // actor's name and the skill it acted on resolved once so a card row needs no
+  // lookup of its own. A skill event stores the row's id, and it is the sheet
+  // that holds the word: without this the evolution line could name the new skill
+  // but not the one it grew out of.
   const chapterEventsByChapter = useMemo(() => {
+    const skillNames = new Map(storySkills.map(skill => [skill.id, skill.name]));
     const byChapter = new Map<string, ChapterEventRow[]>();
 
     for (const event of storyChapterEvents) {
@@ -2221,6 +2146,7 @@ function App() {
       list.push({
         ...event,
         actorName: castNames.get(event.actor_id) ?? 'Cast member in the trash',
+        skillName: event.skill_id ? skillNames.get(event.skill_id) ?? null : null,
       });
       byChapter.set(event.chapter_id, list);
     }
@@ -2233,7 +2159,55 @@ function App() {
     }
 
     return byChapter;
-  }, [storyChapterEvents, castNames]);
+  }, [storyChapterEvents, castNames, storySkills]);
+
+  // The skills the sheets place in a chapter, which a chapter card's ledger
+  // shows beside the events logged on the card itself. A skill added, renamed or
+  // ranked on the Characters tab appears here at once, because the sheet is the
+  // only place it is written; a scene event that already names the skill keeps
+  // the line instead, so nothing is said twice.
+  const sheetSkillsByChapter = useMemo(() => {
+    const chapterIds = new Set(chapterNodes.map(node => node.id));
+    const named = new Map<string, Set<string>>();
+
+    for (const event of storyChapterEvents) {
+      const ids = [event.source_id, event.skill_id, event.new_skill_id].filter(
+        (id): id is string => Boolean(id)
+      );
+
+      if (ids.length === 0) continue;
+
+      const set = named.get(event.chapter_id) ?? new Set<string>();
+      for (const id of ids) set.add(id);
+      named.set(event.chapter_id, set);
+    }
+
+    const byChapter = new Map<string, ChapterSheetSkill[]>();
+
+    for (const skill of storySkills) {
+      if (!skill.chapter_id || !chapterIds.has(skill.chapter_id)) continue;
+      if (named.get(skill.chapter_id)?.has(skill.id)) continue;
+
+      const list = byChapter.get(skill.chapter_id) ?? [];
+      list.push({
+        skillId: skill.id,
+        characterId: skill.character_id,
+        actorName: castNames.get(skill.character_id) ?? 'Cast member in the trash',
+        name: skill.name,
+        rank: skill.rank,
+      });
+      byChapter.set(skill.chapter_id, list);
+    }
+
+    for (const list of byChapter.values()) {
+      list.sort(
+        (a, b) =>
+          a.actorName.localeCompare(b.actorName) || a.name.localeCompare(b.name)
+      );
+    }
+
+    return byChapter;
+  }, [chapterNodes, storyChapterEvents, storySkills, castNames]);
 
   // Everybody a chapter card can name, as the card needs them: an id and a
   // name, not a whole sheet.
@@ -7766,6 +7740,7 @@ function App() {
       const chapterQuests = questBadgesByChapter.get(node.id) ?? [];
       const chapterTasks = chapterTasksByChapter.get(node.id) ?? [];
       const chapterEvents = chapterEventsByChapter.get(node.id) ?? [];
+      const chapterSheetSkills = sheetSkillsByChapter.get(node.id) ?? [];
       const isChapterCard = node.data.nodeType === 'chapter';
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
@@ -7859,6 +7834,7 @@ function App() {
                 onRemoveChapterObjective: (task: ChapterTask) =>
                   void removeChapterObjective(task),
                 chapterEvents,
+                chapterSheetSkills,
                 chapterSkills: skillsByCharacter,
                 onAddChapterEvent: (
                   actorId: string,
@@ -7914,6 +7890,7 @@ function App() {
     chapterCastByChapter,
     chapterTasksByChapter,
     chapterEventsByChapter,
+    sheetSkillsByChapter,
     castChoices,
     skillsByCharacter,
     dropTargetNodeId,
@@ -9902,11 +9879,7 @@ function App() {
             role="dialog"
             aria-modal="true"
             aria-label={
-              canvasCreate.kind === 'character'
-                ? 'New character'
-                : canvasCreate.kind === 'quest'
-                  ? 'New quest'
-                  : 'New skill'
+              canvasCreate.kind === 'character' ? 'New character' : 'New quest'
             }
             onSubmit={event => {
               event.preventDefault();
@@ -9915,11 +9888,7 @@ function App() {
           >
             <div className="canvas-create-head">
               <h3>
-                {canvasCreate.kind === 'character'
-                  ? 'New character'
-                  : canvasCreate.kind === 'quest'
-                    ? 'New quest'
-                    : 'New skill'}
+                {canvasCreate.kind === 'character' ? 'New character' : 'New quest'}
               </h3>
               <button
                 type="button"
@@ -9939,9 +9908,7 @@ function App() {
             <p className="canvas-create-note">
               {canvasCreate.kind === 'character'
                 ? 'The cast member and a card on the board are created together.'
-                : canvasCreate.kind === 'quest'
-                  ? 'The contract in the ledger and a quest card are created together.'
-                  : "The card and the skill on its owner's sheet are created together."}
+                : 'The contract in the ledger and a quest card are created together.'}
             </p>
 
             {canvasCreate.kind === 'character' && (
@@ -10122,113 +10089,12 @@ function App() {
               </>
             )}
 
-            {canvasCreate.kind === 'skill' && (
-              <>
-                <label className="canvas-create-field">
-                  Skill owner
-                  <select
-                    value={canvasCreate.ownerId}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setCanvasCreate(current =>
-                        current ? { ...current, ownerId: value } : current
-                      );
-                    }}
-                  >
-                    <option value="">No holder yet</option>
-                    {characters.map(character => (
-                      <option key={character.id} value={character.id}>
-                        {character.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="canvas-create-field">
-                  Skill name
-                  <input
-                    autoFocus
-                    value={canvasCreate.name}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setCanvasCreate(current =>
-                        current ? { ...current, name: value } : current
-                      );
-                    }}
-                  />
-                </label>
-                <div className="canvas-create-row">
-                  <label className="canvas-create-field">
-                    Skill rank
-                    <input
-                      value={canvasCreate.rank}
-                      onChange={event => {
-                        const value = event.target.value;
-                        setCanvasCreate(current =>
-                          current ? { ...current, rank: value } : current
-                        );
-                      }}
-                    />
-                  </label>
-                  <label className="canvas-create-field">
-                    Skill chapter
-                    <select
-                      value={canvasCreate.chapterId}
-                      onChange={event => {
-                        const value = event.target.value;
-                        setCanvasCreate(current =>
-                          current ? { ...current, chapterId: value } : current
-                        );
-                      }}
-                    >
-                      <option value="">No chapter</option>
-                      {nodes
-                        .filter(node => node.data.nodeType === 'chapter')
-                        .sort(
-                          (a, b) =>
-                            (a.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
-                              (b.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) ||
-                            a.data.label.localeCompare(b.data.label)
-                        )
-                        .map(node => (
-                          <option key={node.id} value={node.id}>
-                            {node.data.label}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                </div>
-                <label className="canvas-create-field">
-                  Skill effect
-                  <textarea
-                    rows={2}
-                    value={canvasCreate.description}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setCanvasCreate(current =>
-                        current ? { ...current, description: value } : current
-                      );
-                    }}
-                  />
-                </label>
-              </>
-            )}
-
             {canvasCreate.kind === 'quest' &&
               !nodes.some(node => node.data.nodeType === 'chapter') && (
                 <p className="canvas-create-hint">
                   Add a chapter on the Chapters tab first — a quest needs one.
                 </p>
               )}
-
-            {canvasCreate.kind === 'skill' && (
-              <p className="canvas-create-hint">
-                {canvasCreate.ownerId
-                  ? 'The skill is written onto that sheet as well as the board.'
-                  : characters.length === 0
-                    ? 'Nobody can hold it yet — place the card now and add a character later.'
-                    : 'Leave the owner unset to place the card now; connect a character to it later to give the skill out.'}
-              </p>
-            )}
 
             {canvasCreateError && (
               <div className="canvas-create-error" role="alert">

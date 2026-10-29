@@ -18,6 +18,7 @@ import type { Story } from '../stories/types';
 import { flowNodeTypes } from './GraphNode';
 import {
   CAST_DRAG_TYPE,
+  canvasCreateNodeTypes,
   edgeRelationTypes,
   isCanvasCreateKind,
   NODE_STAT_BADGES,
@@ -308,7 +309,7 @@ export function GraphTab({
               value={newNodeType}
               onChange={(e) => setNewNodeType(e.target.value as NodeType)}
             >
-              {nodeTypes.map(t => (
+              {canvasCreateNodeTypes.map(t => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>

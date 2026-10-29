@@ -27,7 +27,7 @@ npm run screenshots
 
 That is the whole refresh, and the only command the gallery needs: it regenerates
 `fixture.json` with the Rust example below, then walks the app in a real browser
-and re-shoots the eighteen pictures `GUIDE.md` shows. `npm run screenshots --
+and re-shoots the twenty pictures the guides show. `npm run screenshots --
 --no-fixture` shoots from the fixture already on disk, and `npm run fixture`
 regenerates the story and leaves the pictures alone.
 

@@ -156,23 +156,25 @@ declining leaves the author's name alone.
 
 **Creating a card that is also a record** — the type picker and **Add Node** are
 the quick path for narrative cards (chapter, idea, location, event, plot, system,
-item, faction, misc): type a label and the card is made. Choosing **character**,
-**quest** or **skill** opens a full form instead, because those cards stand for
-real rows. A character form takes a name and description and creates the cast
-member plus a linked card. A quest form takes a title, giver, faction, accepted
-and optional ending chapters, description and notes; it creates the contract in
-the ledger — completed when an ending chapter is chosen — and a quest card. A
-skill form takes owner, name, rank, effect and chapter, and creates the skill on
-the owner's sheet plus the skill card that grants it; with **No holder yet**
-chosen it places the card alone, because a skill can be put on the board before
-anybody holds it. The owner starts unset unless the form was opened by dragging a
-connection off a character card, so nobody is attached by accident. The label typed in the
-toolbar prefills the name or title, **Create card** stays disabled until the
-required fields are there, and a refused write leaves no half-made card: a card
-whose skill is rejected is removed again. The board history records both halves,
-so Undo removes the card and the record and Redo puts them back; the cast rail and
-the sheets follow without reopening the story. Cancelling, closing, or clicking
-the dimmed backdrop writes nothing.
+item, faction, misc): type a label and the card is made. Choosing **character** or
+**quest** opens a full form instead, because those cards stand for real rows. A
+character form takes a name and description and creates the cast member plus a
+linked card. A quest form takes a title, giver, faction, accepted and optional
+ending chapters, description and notes; it creates the contract in the ledger —
+completed when an ending chapter is chosen — and a quest card. The label typed in
+the toolbar prefills the name or title, **Create card** stays disabled until the
+required fields are there, and a refused write leaves no half-made card. The board
+history records both halves, so Undo removes the card and the record and Redo puts
+them back; the cast rail and the sheets follow without reopening the story.
+Cancelling, closing, or clicking the dimmed backdrop writes nothing.
+
+**Skills are written on sheets** — the picker no longer offers `skill`, because a
+skill card made there recorded nothing on the chapter it happened in. A skill is
+added under a character's **Skills** with the chapter it was learned in, and the
+chapter card's **Progression & Events** ledger shows it from the sheet itself (as a
+row tagged **sheet**, which the card cannot delete). Boards that already carry
+skill cards still draw them and still add holders; the card is a shortcut to a
+skill's shared identity, not the place a skill is created.
 
 **Dragging cast onto the canvas** — the Graph tab has a cast rail beside the
 canvas. Drag a card onto the board and it becomes a `character` node already
