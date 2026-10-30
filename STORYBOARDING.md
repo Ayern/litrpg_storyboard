@@ -234,6 +234,46 @@ A stat row says `Agility: 12 → 13` in the box with `+1` beside it, and `12 →
 in a copy. A level that only moved one way still reads: `Level: 4` is a level
 reached, and a half-typed `3 →` keeps its arrow so the other box stays empty.
 
+### Writing a box from the scene
+
+A chapter card's ledger already records what happened, so the drawer does not make
+you copy it out. **Write from a chapter event** lists the scenes that can be
+announcements — an XP award that carried a level, and the skills a scene learned,
+ranked, evolved or gave up — each line naming the chapter, the person and what
+happened:
+
+- `Ch. 3 · Ivy Marrow · 600 XP, level 2 → 3`
+- `Ch. 4 · Ivy Marrow · learns Salt-Sight`
+- `Ch. 5 · Ivy Marrow · Ember Whisper → Cinder Secret`
+
+Choose one and the type and its fields are filled: the level it moved between, the
+points the rule hands out for each level crossed, the skill's rank, or what it
+evolved out of. The box on the card updates with it, and the numbers come from the
+story's own growth rule, so an announcement cannot claim a level the ledger did not
+pay for. An XP award that did not carry a level is not offered at all, and an item
+the scene handed over is left to you — no box kind is an inventory row.
+
+The picker answers for one chapter, not the whole story. A box belongs to the scene
+it was written for, so a connection between the card and a chapter settles it — draw
+the line and that is the chapter. With no line to read, the chapter card nearest on
+the board is used, measured from the middle of one card to the middle of the other,
+so a wide chapter you are sitting under still counts as the one beside you. The note
+under the picker names the chapter and which of the two reasons chose it:
+
+- `From Ch. 5 · The Ninth Bell, the chapter this box is connected to.`
+- `From Ch. 2 · The Drowned Stair, the nearest chapter card on the board.`
+
+Move the card, or draw a line, and the picker moves with it. If that chapter has
+nothing logged that a box can announce, every chapter is listed instead — an empty
+picker would be worse than a wider one — and the note says so.
+
+Narrowing is a default, not a cage. **Show every chapter** on that line lists every
+scene in the story without moving the card, and **This chapter only** narrows it back;
+opening another card starts narrow again.
+
+Everything stays editable afterwards: the picker writes the fields, it does not lock
+them. A box written this way is still one Save and one Undo.
+
 ### Copying the box out
 
 **Copy System Box** sits on the card face and in the drawer, and **Copy HTML** beside
@@ -742,6 +782,7 @@ Your work lives in a single file on your own machine (`Data location` in
 | Add a person or a quest | Pick `character` or `quest` and **Add Node** for the full form |
 | Put a ledger-only quest on the board | Drag its **Unplaced** tile out of the rail, or **Place card** in the ledger |
 | Write a System announcement | A `system` card: pick its **Message type** in the drawer, then fill the fields it asks for |
+| Announce what a scene did | The system card's drawer: **Write from a chapter event** |
 | Copy a System announcement | **Copy System Box** (Markdown) or **Copy HTML** on the card or in its drawer |
 | Give somebody a skill | Their sheet: **Add skill**, with the chapter it was learned in |
 | Put a skill on the board | On that skill's form, **New card** beside the card picker |

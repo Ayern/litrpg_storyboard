@@ -1625,7 +1625,7 @@ impl Db {
         // is Ivy's fourth level, the row the story's own curve puts at 1,800 XP
         // in chapter five, with the two stat gains that level recorded. The four
         // points are the rule's, not a number invented here.
-        let _gain_card = demo_card(
+        let gain_card = demo_card(
             self,
             story_id,
             "system",
@@ -2035,6 +2035,10 @@ impl Db {
             (debt_card.clone(), nine_minutes.id.clone(), "seeds"),
             (choir_plot_card.clone(), after_bell.id.clone(), "seeds"),
             (system_card.clone(), low_tide.id.clone(), "rules"),
+            // The gain card is the fourth level chapter five paid, so it is drawn
+            // from that chapter: a System box in the demo shows a card whose
+            // scene is settled by the line the author drew to it.
+            (gain_card.clone(), ninth_bell.id.clone(), "records"),
             (ivy_card.clone(), key_card.clone(), "holds"),
             (ivy_card.clone(), fragment_card.clone(), "holds"),
             (event_card.clone(), nine_minutes.id.clone(), "happens in"),
@@ -20296,7 +20300,7 @@ mod tests {
 
         // The board, the ledgers and the trash the guide documents, all of them
         // part of the seed rather than of the screenshot harness.
-        assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 32);
         // Two quests with cards and one still waiting for one, which is what the
         // rail lists as unplaced.
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 3);
@@ -20425,7 +20429,7 @@ mod tests {
         assert_eq!(db.list_story_growth_points(&story.id).unwrap().len(), 6);
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 10);
         assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 11);
-        assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
+        assert_eq!(db.list_edges(&story.id).unwrap().len(), 32);
         // Two quests with cards and one still waiting for one, which is what the
         // rail lists as unplaced.
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 3);

@@ -346,6 +346,27 @@ rows matching the row the story's curve already records at 1,800 XP — so the g
 picture is of a typed box and the board shows both shapes. Remaining: the type lives
 in the notes, so an author who edits them by hand can drop back to a notice. **M**
 
+**4i. A System box can be written from the scene that caused it.** **Done.** The
+ledger on a chapter card already records the XP paid, the skill learned and the
+rank that moved, so the drawer no longer makes an author retype it: **Write from a
+chapter event** lists the scenes that can be announcements and fills the type and
+its fields when one is chosen. The levels are the ones the story's own curve
+produces — `chapterEventChoices` adds the chapter incomes in reading order and asks
+`levelForXp` with the character's rule or the story's — so an award that crossed a
+level offers the points the rule hands out for each crossing, and an award that
+crossed nothing is not offered at all. Skill events offer the name, the rank on the
+sheet and, for an evolution, what it grew out of; an acquired item is left to the
+author because no box kind is an inventory row. Everything stays editable, and the
+prefill is one draft write, so it is one Save and one Undo. The picker offers the
+chapter the box belongs to rather than the whole story: `chapterBesideCard` reads a
+drawn edge to a chapter first, then the nearest chapter card on the board, and the
+note under the picker says which chapter and why; a chapter with nothing writeable
+falls back to every chapter instead of an empty picker. That line also carries **Show
+every chapter** and **This chapter only**, so the narrowing is a default rather than a
+cage, and returning to a card starts narrow. The demo's typed gain card is drawn from
+chapter five, so the guide's picture shows the connected case. Remaining: a stat delta
+is still typed by hand because a scene event does not record one. **M**
+
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a
 confirmation. The chosen file is copied to a staging file, opened and migrated

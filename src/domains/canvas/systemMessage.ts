@@ -300,6 +300,42 @@ export function serializeSystemMessage(message: SystemMessage): string {
   return lines.join('\n');
 }
 
+/** What a scene's own record writes into the box: the fields of one kind, with no
+ *  header — the label above stays the box's name. */
+export interface SystemEventPrefill {
+  kind: SystemKind;
+  title: string;
+  levelFrom?: string;
+  levelTo?: string;
+  points?: string;
+  rank?: string;
+  evolution?: string;
+  body?: string;
+}
+
+/** A box written from an event replaces what the box said: the kind, its fields
+ *  and the text under it. Rows belonging to another kind are dropped rather than
+ *  hidden in the notes and reappearing on the next switch. */
+export function applySystemPrefill(
+  message: SystemMessage,
+  prefill: SystemEventPrefill
+): SystemMessage {
+  return {
+    ...message,
+    kind: prefill.kind,
+    title: prefill.title,
+    body: prefill.body ?? '',
+    levelFrom: prefill.levelFrom ?? '',
+    levelTo: prefill.levelTo ?? '',
+    points: prefill.points ?? '',
+    stats: [],
+    rank: prefill.rank ?? '',
+    evolution: prefill.evolution ?? '',
+    objectives: [],
+    rewards: [],
+  };
+}
+
 /** `+1`, `-2`, or nothing when the two values are not both numbers. A stat that
  *  went from 12 to 13 is worth saying so in the box. */
 export function statDelta(from: string, to: string): string {

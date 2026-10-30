@@ -1,10 +1,12 @@
 import {
+  applySystemPrefill,
   questStatuses,
   questStatusLabels,
   systemKindLabels,
   systemKinds,
 } from './systemMessage';
 import type { SystemKind, SystemMessage, SystemStat } from './systemMessage';
+import type { SystemEventChoice } from './systemEvents';
 
 // The fields a card's kind asks for, rather than one text box for every
 // announcement. The form writes the card's notes (through the caller), so
@@ -14,9 +16,28 @@ import type { SystemKind, SystemMessage, SystemStat } from './systemMessage';
 interface SystemMessageFormProps {
   message: SystemMessage;
   onChange: (next: SystemMessage) => void;
+  // The scene's own record, offered as boxes already written: choosing one fills
+  // the fields rather than asking the author to copy the ledger by hand.
+  eventChoices?: SystemEventChoice[];
+  // The chapter those events were narrowed to, and why: a card belongs to the
+  // scene it was written beside, but the author should be able to see which
+  // scene that was rather than wonder where the missing options went. The line
+  // carries the way back out, so narrowing never hides a scene for good.
+  eventScope?: {
+    title: string;
+    via: 'link' | 'near';
+    fellBack: boolean;
+    showingAll: boolean;
+    onToggleAll: (all: boolean) => void;
+  } | null;
 }
 
-export function SystemMessageForm({ message, onChange }: SystemMessageFormProps) {
+export function SystemMessageForm({
+  message,
+  onChange,
+  eventChoices = [],
+  eventScope = null,
+}: SystemMessageFormProps) {
   const patch = (next: Partial<SystemMessage>) => onChange({ ...message, ...next });
 
   const setStat = (index: number, next: Partial<SystemStat>) =>
@@ -41,6 +62,57 @@ export function SystemMessageForm({ message, onChange }: SystemMessageFormProps)
           </option>
         ))}
       </select>
+
+      {eventChoices.length > 0 && (
+        <>
+          <label className="node-drawer-label" htmlFor="system-prefill">
+            Write from a chapter event
+          </label>
+          <select
+            id="system-prefill"
+            className="node-editor-select"
+            value=""
+            onChange={event => {
+              const choice = eventChoices.find(entry => entry.id === event.target.value);
+              if (choice) onChange(applySystemPrefill(message, choice.prefill));
+            }}
+          >
+            <option value="">Write it by hand</option>
+            {eventChoices.map(choice => (
+              <option key={choice.id} value={choice.id}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+          {eventScope && (
+            <p className="node-drawer-note system-prefill-scope">
+              <span>
+                {eventScope.fellBack
+                  ? `${eventScope.title} has nothing logged to write yet, so every chapter is listed.`
+                  : eventScope.showingAll
+                    ? `Every chapter, not just ${eventScope.title}.`
+                    : eventScope.via === 'link'
+                      ? `From ${eventScope.title}, the chapter this box is connected to.`
+                      : `From ${eventScope.title}, the nearest chapter card on the board.`}
+              </span>
+              {!eventScope.fellBack && (
+                <button
+                  type="button"
+                  className="system-prefill-scope-escape"
+                  title={
+                    eventScope.showingAll
+                      ? `List only ${eventScope.title} again`
+                      : 'List every chapter’s events instead of this one’s'
+                  }
+                  onClick={() => eventScope.onToggleAll(!eventScope.showingAll)}
+                >
+                  {eventScope.showingAll ? 'This chapter only' : 'Show every chapter'}
+                </button>
+              )}
+            </p>
+          )}
+        </>
+      )}
 
       <label className="node-drawer-label" htmlFor="system-title">
         Title

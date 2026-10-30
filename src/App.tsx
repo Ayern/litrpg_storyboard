@@ -65,6 +65,7 @@ import { GuideReader } from './domains/guide/GuideReader';
 import { questsByChapter } from './domains/quests/ledger';
 import type { CharacterAttribute } from './domains/characters/types';
 import { GraphTab } from './domains/canvas/GraphTab';
+import { chapterEventChoices } from './domains/canvas/systemEvents';
 import { useCanvasDrafts } from './domains/canvas/useCanvasDrafts';
 import { useCanvasInspector } from './domains/canvas/useCanvasInspector';
 import { useSkillHolderForm } from './domains/canvas/useSkillHolderForm';
@@ -2375,6 +2376,22 @@ function App() {
 
     return byChapter;
   }, [storyChapterEvents, castNames, storySkills]);
+
+  // The scene events that can be written out as a System box, already shaped as
+  // one: an XP award that carried a level, and the skill events that changed a
+  // sheet. The drawer offers these so an announcement is copied from the ledger
+  // rather than retyped from it.
+  const systemEventChoices = useMemo(
+    () =>
+      chapterEventChoices({
+        events: [...chapterEventsByChapter.values()].flat(),
+        chapters: chapterNodes,
+        progress: storyCharacterProgress,
+        rules: storyGrowthRules,
+        skills: storySkills,
+      }),
+    [chapterEventsByChapter, chapterNodes, storyCharacterProgress, storyGrowthRules, storySkills]
+  );
 
   // The skills the sheets place in a chapter, which a chapter card's ledger
   // shows beside the events logged on the card itself. A skill added, renamed or
@@ -9844,6 +9861,7 @@ function App() {
             changeNodeCharacter={changeNodeCharacter}
             onOpenSheet={openCharacterSheet}
             onOpenChapter={openChapterFromInspector}
+            systemEventChoices={systemEventChoices}
             skills={storySkills}
             skillHolderCharacterId={skillHolderCharacterId}
             setSkillHolderCharacterId={setSkillHolderCharacterId}

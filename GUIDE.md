@@ -410,8 +410,27 @@ Flavour text, any length.
   through `escapeHtml`, so a stat line of `<HP>` stays text. Stats are the one place
   the two disagree on purpose: Markdown writes `Agility: 12 → 13 (+1)` and HTML puts
   the change beside the row.
-- `SystemMessageForm.tsx` is the drawer's fields: the type selector, and only the
-  inputs that type asks for. It edits a parsed message and hands back a serialized
+- `systemEvents.ts` turns the scenes' own records into boxes. `chapterEventChoices`
+  walks every chapter event, adds the experience up in reading order and asks
+  `levelForXp` (with the character's rule or the story's) where the award left the
+  character: an award that crossed a level becomes a `level_up` prefill with the
+  levels and `points_per_level × levels crossed`, a learned/ranked/evolved/sacrificed
+  skill becomes a `skill` prefill with its rank and what it grew from, and an award
+  that crossed nothing is dropped rather than announcing a level that did not move.
+  `applySystemPrefill` writes one into the message, dropping rows that belong to the
+  kind being left so they cannot reappear on the next switch.  The choice is one
+  `setNodeContentDraft`, so it is still one Save and one Undo. Each choice carries its
+  `chapterId`, and `chapterBesideCard` reads the board for the chapter a box belongs
+  to: a drawn edge to a chapter wins, otherwise the nearest chapter card by the
+  distance between card centres, with the reading order settling a tie. The tab
+  narrows the list to that chapter and hands the form the chapter's name and how it
+  was chosen; a chapter with nothing writeable falls back to the whole list rather
+  than an empty picker. The line under the picker carries **Show every chapter** and
+  **This chapter only**, which flip a tab-held flag rather than moving the card, and
+  the flag resets when another card is opened so every drawer starts narrow.
+- `SystemMessageForm.tsx` is the drawer's fields: the type selector, the
+  **Write from a chapter event** picker with the line naming the chapter it is reading,
+  and only the inputs that type asks for. It edits a parsed message and hands back a serialized
   one, so it never holds state of its own — the card's notes are the state. The
   generics are written so a half-typed entry round-trips: `Level: 3 →` keeps which
   side was typed, and `Stat: Agility |` keeps a name that has no value yet, because

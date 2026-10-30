@@ -1016,6 +1016,34 @@ body {
   color: #777;
 }
 
+/* The line under the chapter-event picker is a sentence rather than a field
+   label, and the way out of the narrowing is a press inside that sentence. */
+.system-prefill-scope {
+  margin: 3px 0 2px;
+  line-height: 1.5;
+}
+
+.system-prefill-scope-escape {
+  margin-left: 5px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #8fb7ff;
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.system-prefill-scope-escape:hover,
+.system-prefill-scope-escape:focus-visible {
+  color: #bcd4ff;
+  text-decoration-style: solid;
+  outline: none;
+}
+
 .node-drawer-row {
   display: flex;
   align-items: center;

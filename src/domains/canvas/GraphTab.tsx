@@ -22,6 +22,8 @@ import { CardSections } from './CardSections';
 import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
 import { SystemMessageForm } from './SystemMessageForm';
 import { serializeSystemMessage, systemMessageOf } from './systemMessage';
+import { chapterBesideCard } from './systemEvents';
+import type { SystemEventChoice } from './systemEvents';
 import {
   CARD_DRAG_TYPE,
   CAST_DRAG_TYPE,
@@ -141,6 +143,9 @@ export interface GraphTabProps {
   // A card is a shortcut to what it stands for as well as a place to edit it.
   onOpenSheet: (characterId: string) => void;
   onOpenChapter: (chapterId: string) => void;
+  // The scenes' own records, already shaped as System boxes, so a level-up the
+  // chapter logged can be written out on the card without retyping it.
+  systemEventChoices: SystemEventChoice[];
 
   // The skill card's holders.
   skills: CharacterSkill[];
@@ -250,6 +255,7 @@ export function GraphTab({
   changeNodeCharacter,
   onOpenSheet,
   onOpenChapter,
+  systemEventChoices,
   skills,
   skillHolderCharacterId,
   setSkillHolderCharacterId,
@@ -324,6 +330,56 @@ export function GraphTab({
   // The form writes the card's notes, which is where the message lives, so one
   // Save carries the whole edit and one Undo takes it back.
   const systemMessageDraft = systemMessageOf(nodeLabelDraft, nodeContentDraft);
+
+  // The scene a System box is written for: the chapter it is connected to, or
+  // else the chapter card it sits nearest. Two chapters can sit a finger apart on
+  // a board, so the picker asks this one chapter instead of offering the whole
+  // story's events and leaving the author to work out which is which.
+  const systemEventScope = React.useMemo(
+    () =>
+      selectedNode?.data.nodeType === 'system'
+        ? chapterBesideCard({ nodeId: selectedNode.id, nodes, edges })
+        : null,
+    [selectedNode, nodes, edges]
+  );
+
+  // A narrow picker is a good default and a bad cage, so the note under it can
+  // open the whole story's events without moving the card. The press belongs to
+  // the drawer rather than the form, which holds no state of its own, and a
+  // different card starts narrow again.
+  const [showEveryChapter, setShowEveryChapter] = React.useState(false);
+
+  React.useEffect(() => {
+    setShowEveryChapter(false);
+  }, [selectedNodeId]);
+
+  // A chapter with nothing logged yet would leave an empty picker, so the whole
+  // story is offered then, and the note under it says why.
+  const systemEventListing = React.useMemo(() => {
+    if (!systemEventScope) return { choices: systemEventChoices, scope: null };
+
+    const inChapter = systemEventChoices.filter(
+      choice => choice.chapterId === systemEventScope.chapterId
+    );
+
+    const scope = (showingAll: boolean) => ({
+      ...systemEventScope,
+      fellBack: false,
+      showingAll,
+      onToggleAll: setShowEveryChapter,
+    });
+
+    if (inChapter.length === 0) {
+      return {
+        choices: systemEventChoices,
+        scope: { ...systemEventScope, fellBack: true, showingAll: false, onToggleAll: setShowEveryChapter },
+      };
+    }
+
+    return showEveryChapter
+      ? { choices: systemEventChoices, scope: scope(true) }
+      : { choices: inChapter, scope: scope(false) };
+  }, [systemEventChoices, systemEventScope, showEveryChapter]);
 
   const writeNodeContent = (content: string) => {
     setNodeContentDraft(content);
@@ -732,6 +788,8 @@ export function GraphTab({
                     </div>
                     <SystemMessageForm
                       message={systemMessageDraft}
+                      eventChoices={systemEventListing.choices}
+                      eventScope={systemEventListing.scope}
                       onChange={next =>
                         writeNodeContent(serializeSystemMessage(next))
                       }
