@@ -211,7 +211,12 @@ export function TrashPanel({
       <span className={`trash-kind ${item.kind}`}>
         {trashKindLabels[item.kind] ?? item.kind}
       </span>
-      <span className="trash-label">{item.label}</span>
+      {/* The name, and — under it — what deleting forever would take with it,
+          so the one irreversible action is never a surprise. */}
+      <span className="trash-text">
+        <span className="trash-label">{item.label}</span>
+        {item.detail && <span className="trash-detail">{item.detail}</span>}
+      </span>
       <span className="trash-when">deleted {formatWhen(item.deleted_at)}</span>
 
       {confirmPurgeId === item.id ? (

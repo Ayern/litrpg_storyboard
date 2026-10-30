@@ -5558,12 +5558,25 @@ body {
   flex-shrink: 0;
 }
 
-.trash-label {
+.trash-text {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trash-label {
   color: #ddd;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* What a permanent delete would take with the card, in the author's words. */
+.trash-detail {
+  font-size: 11px;
+  color: #c8a97e;
 }
 
 .trash-when {

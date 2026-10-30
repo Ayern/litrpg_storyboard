@@ -35,6 +35,7 @@ interface DeletedRow {
   label: string;
   story_id: string;
   deleted_at: string;
+  detail?: string | null;
 }
 
 const story = {
@@ -195,6 +196,38 @@ describe('trash tab', () => {
     await waitFor(() =>
       expect(screen.queryByText('Rook')).not.toBeInTheDocument()
     );
+  });
+
+  it('says what a permanent delete would take with a card', async () => {
+    storyTrash = [
+      {
+        ...deleted('node-1', 'node', 'Cinder Secret'),
+        detail: 'Deleting forever also removes 2 skills and 1 chapter event.',
+      },
+      deleted('node-2', 'node', 'A bell under the floor'),
+    ];
+
+    const user = await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    const card = within(items).getByText('Cinder Secret').closest('li')!;
+    expect(
+      within(card).getByText(
+        'Deleting forever also removes 2 skills and 1 chapter event.'
+      )
+    ).toBeInTheDocument();
+
+    // A card that owns nothing beyond itself says nothing extra.
+    const plain = within(items).getByText('A bell under the floor').closest('li')!;
+    expect(
+      within(plain).queryByText(/Deleting forever also removes/)
+    ).not.toBeInTheDocument();
+
+    // The warning is on the line before the confirmation is asked for.
+    await user.click(within(card).getByRole('button', { name: 'Delete forever' }));
+    expect(
+      within(card).getByText(/Deleting forever also removes 2 skills/)
+    ).toBeInTheDocument();
   });
 
   it('keeps a cancelled permanent delete', async () => {

@@ -120,6 +120,43 @@ const itemIsOnTheBoard = (item: Row) =>
 const hiddenItemIds = () =>
   new Set(store.inventory.filter(item => !itemIsOnTheBoard(item)).map(item => item.id));
 
+// What a permanent delete would take with a card, in the words the trash shows
+// under its name. The database reads the same rows its purge removes: the card's
+// skills and items, the scene rows that named them or that belong to it, and the
+// notes written under it.
+const purgeDetail = (nodeId: string) => {
+  const skills = store.skills.filter(skill => skill.node_id === nodeId);
+  const items = store.inventory.filter(item => item.node_id === nodeId);
+  const notes = store.notes.filter(note => note.parent_node_id === nodeId);
+  const named = new Set([...skills, ...items].map(row => row.id));
+
+  const events = store.chapterEvents.filter(
+    event =>
+      event.chapter_id === nodeId ||
+      [event.source_id, event.skill_id, event.new_skill_id].some(
+        id => typeof id === 'string' && named.has(id)
+      )
+  );
+
+  const counts: [number, string, string][] = [
+    [skills.length, 'skill', 'skills'],
+    [items.length, 'item', 'items'],
+    [events.length, 'chapter event', 'chapter events'],
+    [notes.length, 'note', 'notes'],
+  ];
+
+  const parts = counts
+    .filter(([count]) => count > 0)
+    .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+
+  if (parts.length === 0) return null;
+
+  const last = parts.pop()!;
+  return `Deleting forever also removes ${
+    parts.length > 0 ? `${parts.join(', ')} and ${last}` : last
+  }.`;
+};
+
 const chapterEventIsShown = (event: Row) => {
   const skills = hiddenSkillIds();
   const items = hiddenItemIds();
@@ -750,6 +787,7 @@ const writes: Record<string, (args: Row) => unknown> = {
         label: node.label,
         story_id: node.story_id,
         deleted_at: now(),
+        detail: purgeDetail(node.id),
       });
       drop(store.nodes, node.id);
     }

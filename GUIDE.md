@@ -622,6 +622,13 @@ that fades.
 deleted (read with no story named) and the rows deleted inside the open story
 (read with one). Both have **Restore** and **Delete forever**.*
 
+A card's line carries a `detail` sentence naming what a permanent delete would
+take with it. `list_deleted` builds it from the rows the purge itself removes —
+the skills and items the card owns, the chapter events that named them or that
+belong to it, and the notes written under it — so the sentence cannot promise
+less than the purge does. A row with nothing of its own carries no detail, and
+the line is there before the confirmation is asked for, not after it.
+
 Deleting a story, character, node or connection sets `deleted_at` instead of
 destroying anything, and the reads that feed the app filter those rows out. The
 retention window (**Keep deleted items for**) is what empties the list afterwards:

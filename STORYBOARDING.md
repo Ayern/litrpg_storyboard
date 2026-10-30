@@ -546,9 +546,11 @@ links the history stores as names (a chapter, a card) cannot be reverted.
 *Deleting a story, a person, a card or a line moves it here. **Restore** puts it
 back as it was: a person with their stats and attributes, a card with the lines that
 went with it, a story with everything that was live inside it. **Delete forever** is
-the only irreversible thing in the app and it asks first. **Keep deleted items for**
-decides how long the trash holds things — forever by default, or 7, 30, 90 days or a
-year, cleared when the app starts.*
+the only irreversible thing in the app and it asks first, so a card that owns rows
+says so on its line — “Deleting forever also removes 2 skills and 1 chapter event” —
+before you click anything. **Keep deleted items for** decides how long the trash
+holds things — forever by default, or 7, 30, 90 days or a year, cleared when the
+app starts.*
 
 A deleted chapter is the one thing that does not come back whole: its cast rows were
 never deleted with it, and its lines wait in the trash to be restored one at a time.

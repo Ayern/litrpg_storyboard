@@ -11877,7 +11877,7 @@ impl Db {
             )?,
         };
 
-        let items = match story_id {
+        let mut items = match story_id {
             None => {
                 let rows = stmt.query_map([], |row| {
                     Ok(DeletedItem {
@@ -11886,6 +11886,7 @@ impl Db {
                         label: row.get(2)?,
                         story_id: row.get(3)?,
                         deleted_at: row.get(4)?,
+                        detail: None,
                     })
                 })?;
                 rows.collect::<SqliteResult<Vec<_>>>()?
@@ -11898,11 +11899,21 @@ impl Db {
                         label: row.get(2)?,
                         story_id: row.get(3)?,
                         deleted_at: row.get(4)?,
+                        detail: None,
                     })
                 })?;
                 rows.collect::<SqliteResult<Vec<_>>>()?
             }
         };
+
+        // A card is only a line in the trash until it is purged, and a purge
+        // takes whatever the card owned with it. Saying so on the line is the
+        // warning an author gets before those rows are gone for good.
+        if story_id.is_some() {
+            for item in items.iter_mut().filter(|item| item.kind == "node") {
+                item.detail = purge_detail(&guard, &item.id)?;
+            }
+        }
 
         Ok(items)
     }
@@ -14312,7 +14323,8 @@ impl Db {
 ///
 /// `kind` is `story`, `character`, `node` or `edge`; `story_id` names the story
 /// it belongs to (for a story, its own id), so a restore knows which view to
-/// refresh.
+/// refresh. `detail` names what a permanent delete would take with the row, in
+/// the author's words, and is absent when it would take nothing else.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct DeletedItem {
     pub id: String,
@@ -14320,6 +14332,8 @@ pub struct DeletedItem {
     pub label: String,
     pub story_id: String,
     pub deleted_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// One copy of the database, as the backups dialog lists it.
@@ -18749,6 +18763,56 @@ fn expired_rows(
 fn purge_card_rows(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResult<()> {
     purge_skill_cards(tx, node_id)?;
     purge_item_cards(tx, node_id)
+}
+
+/// What a permanent delete would take with a card, in the words the trash shows
+/// under its name: the skills and items it owns, the scene rows that named them
+/// or that belong to it, and the notes written under it. `None` when a purge
+/// would remove nothing but the card itself.
+///
+/// This reads the same rows `purge_card_rows` and `purge_node` remove, so the
+/// line cannot promise less than the purge does.
+fn purge_detail(conn: &Connection, node_id: &str) -> SqliteResult<Option<String>> {
+    let count = |sql: &str| -> SqliteResult<i64> {
+        conn.query_row(sql, params![node_id], |row| row.get(0))
+    };
+
+    let skills = count("SELECT COUNT(*) FROM character_skills WHERE node_id = ?1")?;
+    let items = count("SELECT COUNT(*) FROM character_inventory WHERE node_id = ?1")?;
+    let notes = count("SELECT COUNT(*) FROM nodes WHERE parent_node_id = ?1")?;
+    let events = count(
+        "SELECT COUNT(*) FROM chapter_events
+          WHERE chapter_id = ?1
+             OR source_id IN (SELECT id FROM character_skills WHERE node_id = ?1)
+             OR skill_id IN (SELECT id FROM character_skills WHERE node_id = ?1)
+             OR new_skill_id IN (SELECT id FROM character_skills WHERE node_id = ?1)
+             OR source_id IN (SELECT id FROM character_inventory WHERE node_id = ?1)",
+    )?;
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for (count, one, many) in [
+        (skills, "skill", "skills"),
+        (items, "item", "items"),
+        (events, "chapter event", "chapter events"),
+        (notes, "note", "notes"),
+    ] {
+        if count > 0 {
+            parts.push(format!("{count} {}", if count == 1 { one } else { many }));
+        }
+    }
+
+    let Some(last) = parts.pop() else {
+        return Ok(None);
+    };
+
+    let list = if parts.is_empty() {
+        last
+    } else {
+        format!("{} and {last}", parts.join(", "))
+    };
+
+    Ok(Some(format!("Deleting forever also removes {list}.")))
 }
 
 /// Removes the skills a skill card owned. The chapter rows that named the skills
@@ -30972,6 +31036,88 @@ mod tests {
         assert_eq!(events, 0);
         assert!(db.list_story_inventory(&story.id).unwrap().is_empty());
         assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_trash_says_what_a_purge_takes_with_a_card() {
+        let (db, story, character, chapter, card) = inventory_story();
+
+        // The card owns one item, and the scene row that wrote it names it. The
+        // chapter also carries that row and a note written under it, so its own
+        // line has to count the same rows without counting the item.
+        let event = db
+            .add_chapter_event(
+                chapter.id.clone(),
+                character.id.clone(),
+                "item_acquire".into(),
+                "Iron Sword".into(),
+                None,
+                None,
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let item_id = event.source_id.clone().unwrap();
+        db.update_inventory_item(
+            item_id,
+            "Iron Sword".into(),
+            None,
+            1,
+            None,
+            Some(chapter.id.clone()),
+            None,
+            Some(card.id.clone()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_chapter_note(&chapter.id, "The warder watches".into(), "Ada".into())
+            .unwrap();
+
+        // A card with nothing of its own says nothing extra.
+        let plain = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A bell under the floor".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+        db.delete_node(&chapter.id, "Ada".into()).unwrap();
+        db.delete_node(&plain.id, "Ada".into()).unwrap();
+
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        let line = |id: &str| trash.iter().find(|row| row.id == id).unwrap();
+
+        assert_eq!(
+            line(&card.id).detail.as_deref(),
+            Some("Deleting forever also removes 1 item and 1 chapter event.")
+        );
+        assert_eq!(
+            line(&chapter.id).detail.as_deref(),
+            Some("Deleting forever also removes 1 chapter event and 1 note.")
+        );
+        assert_eq!(line(&plain.id).detail, None);
+
+        // The line promises exactly what the purge does: nothing it named survives.
+        db.purge_node(&card.id, "Ada".into()).unwrap();
+
+        let guard = db.conn().unwrap();
+        let items: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM character_inventory WHERE node_id = ?1",
+                params![&card.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(guard);
+
+        assert_eq!(items, 0);
     }
 
     #[test]
