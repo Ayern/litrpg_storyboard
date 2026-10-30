@@ -121,6 +121,47 @@ export function SystemBoxFace({ message }: { message: SystemMessage }) {
 
 export type SystemBoxFormat = 'markdown' | 'html';
 
+const copyFormats: { format: SystemBoxFormat; label: string; title: string }[] = [
+  {
+    format: 'markdown',
+    label: 'Plain text',
+    title: 'The text Copy System Box puts on the clipboard',
+  },
+  { format: 'html', label: 'HTML', title: 'The tags Copy HTML puts on the clipboard' },
+];
+
+/** What a paste will say, before it is pasted. The box above shows the words a
+ *  reader meets; this shows the marks an editor meets — the asterisks, or the
+ *  tags — so nothing reaches a chapter that the author has not looked at. */
+export function SystemCopyPreview({ message }: { message: SystemMessage }) {
+  const [format, setFormat] = useState<SystemBoxFormat>('markdown');
+
+  return (
+    <section className="system-copy-preview" aria-label="Copy preview">
+      <div className="system-copy-preview-head">
+        <span className="node-drawer-label">What a paste will say</span>
+        <div className="system-copy-preview-tabs" role="group" aria-label="Copy format">
+          {copyFormats.map(entry => (
+            <button
+              key={entry.format}
+              type="button"
+              className={format === entry.format ? 'active' : ''}
+              aria-pressed={format === entry.format}
+              title={entry.title}
+              onClick={() => setFormat(entry.format)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <pre className="system-copy-preview-text">
+        {format === 'html' ? systemMessageHtml(message) : systemMessageMarkdown(message)}
+      </pre>
+    </section>
+  );
+}
+
 /** Copy, with its own answer: a clipboard that refuses says so rather than
  *  claiming the box is on it. Each format is its own button, so pressing one
  *  never leaves the other looking pressed. */

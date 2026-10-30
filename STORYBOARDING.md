@@ -335,6 +335,13 @@ your own text. In HTML anything that looks like a tag is escaped, so a stat line
 `<HP>` stays text. Each button says **Copied** when the clipboard took it and **Copy
 failed** when it did not, so a box never looks copied when it is not.
 
+Under the box the drawer shows the paste itself, in **What a paste will say**. Its two
+buttons, **Plain text** and **HTML**, switch between the two copies, marks and all —
+the asterisks on the bold lines, the tags around them — so the first sight of a paste
+is in the drawer rather than in the middle of a chapter. It reads what you are typing
+rather than the last save, so it answers while the box is still half written, and it
+is a look and not an edit: the panel cannot change what goes on the clipboard.
+
 ## 3. Chapters are the spine
 
 Everything else hangs off the reading order, which is why the board opens on it.

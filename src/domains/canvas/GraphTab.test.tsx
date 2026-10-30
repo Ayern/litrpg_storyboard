@@ -1316,6 +1316,40 @@ describe('the graph tab', () => {
       expect(within(box).getByText('+1')).toHaveClass('system-box-delta');
     });
 
+    it('shows what the two copies will paste, under the box', async () => {
+      const user = userEvent.setup();
+      const system = node('n-4', '[TIDAL LEDGER]', 'system', { content: 'Type: notice' });
+
+      open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+        },
+        {
+          nodeContentDraft: ['Type: level_up', 'Title: The Tide Advances', 'Level: 3 → 4'].join(
+            '\n'
+          ),
+        }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+      const preview = within(box).getByRole('region', { name: 'Copy preview' });
+
+      expect(preview.querySelector('pre')).toHaveTextContent('**[TIDAL LEDGER]**');
+      expect(preview.querySelector('pre')).toHaveTextContent('**Level 3 → 4**');
+
+      // It reads the drawer's draft rather than the last saved row, so the
+      // preview answers while the author is still typing.
+      const title = within(box).getByLabelText('Title');
+
+      await user.clear(title);
+      await user.type(title, 'The Tide Turns');
+
+      expect(preview.querySelector('pre')).toHaveTextContent('**The Tide Turns**');
+    });
+
     it('writes a box from a chapter event the scene already logged', async () => {
       const user = userEvent.setup();
       const system = node('n-4', '[TIDAL LEDGER]', 'system', { content: 'Type: notice' });

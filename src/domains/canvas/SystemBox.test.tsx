@@ -6,7 +6,7 @@ const { writeText } = vi.hoisted(() => ({ writeText: vi.fn() }));
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText }));
 
-import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
+import { CopySystemBoxButton, SystemBoxFace, SystemCopyPreview } from './SystemBox';
 import { systemMessageOf } from './systemMessage';
 
 // The card face and the two copy buttons: what the box looks like for each kind
@@ -185,6 +185,34 @@ describe('the copy buttons', () => {
       ].join('\n')
     );
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  it('shows the copy before it is pasted, in either format', async () => {
+    const user = userEvent.setup();
+    render(<SystemCopyPreview message={systemMessageOf('The Tidal Ledger', levelUp)} />);
+
+    const preview = screen.getByRole('region', { name: 'Copy preview' });
+
+    // The panel shows the marks an editor will meet, not the words alone: the
+    // plain text arrives with its asterisks, so an author can see what a paste
+    // into a chapter will look like before making it.
+    expect(preview.querySelector('pre')).toHaveTextContent('**The Tidal Ledger**');
+    expect(preview.querySelector('pre')).toHaveTextContent('**Agility: 12 → 13 (+1)**');
+    expect(screen.getByRole('button', { name: 'Plain text' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'HTML' }));
+
+    expect(preview.querySelector('pre')).toHaveTextContent('<div style="text-align: center;">');
+    expect(preview.querySelector('pre')).toHaveTextContent(
+      '<strong>Agility: 12 → 13 (+1)</strong>'
+    );
+    expect(screen.getByRole('button', { name: 'HTML' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   it('does not claim a copy a locked clipboard refused', async () => {

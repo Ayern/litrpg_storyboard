@@ -4902,6 +4902,76 @@ body {
   border-top: 1px solid #333;
 }
 
+/* The copy as it will leave the app. The box above reads the way a reader will
+   meet it; this reads the way an editor will, marks and all. */
+.system-copy-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #2c2c2c;
+}
+
+.system-copy-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.system-copy-preview-tabs {
+  display: inline-flex;
+  border: 1px solid #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.system-copy-preview-tabs button {
+  padding: 2px 8px;
+  border: 0;
+  background: #252526;
+  color: #999;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.system-copy-preview-tabs button + button {
+  border-left: 1px solid #333;
+}
+
+.system-copy-preview-tabs button:hover {
+  color: #a5f3fc;
+}
+
+.system-copy-preview-tabs button.active {
+  background: #0e2b39;
+  color: #a5f3fc;
+}
+
+.system-copy-preview-tabs button:focus-visible {
+  outline: 1px solid #a5f3fc;
+  outline-offset: -2px;
+}
+
+.system-copy-preview-text {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: #171717;
+  border: 1px solid #2c2c2c;
+  border-radius: 4px;
+  color: #cfd6d8;
+  font-family: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .graph-node.misc {
   --accent: #9a9a9a;
 }

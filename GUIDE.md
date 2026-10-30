@@ -415,6 +415,10 @@ Flavour text, any length.
   style="text-align: center;">` of `<p>`s, joins the lines inside a statement with
   `<br />`, and puts every heading, stat and objective in its own `<strong>`, with
   every part passed through `escapeHtml` so a stat line of `<HP>` stays text.
+  `SystemCopyPreview` puts that text in the drawer under the box, with a
+  **Plain text** / **HTML** switch, so what the two buttons will paste is read
+  before it is pasted; it renders from the drawer's draft, so it answers before
+  the card is saved, and holds only which format is showing.
 - `systemEvents.ts` turns the scenes' own records into boxes. `chapterEventChoices`
   walks every chapter event, adds the experience up in reading order and asks
   `levelForXp` (with the character's rule or the story's) where the award left the

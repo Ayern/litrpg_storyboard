@@ -19,7 +19,7 @@ import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { flowNodeTypes } from './GraphNode';
 import { CardSections } from './CardSections';
-import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
+import { CopySystemBoxButton, SystemBoxFace, SystemCopyPreview } from './SystemBox';
 import { SystemMessageForm } from './SystemMessageForm';
 import { serializeSystemMessage, systemMessageOf } from './systemMessage';
 import { chapterBesideCard, chapterEventsFor } from './systemEvents';
@@ -810,6 +810,10 @@ export function GraphTab({
                       <CopySystemBoxButton message={systemMessageDraft} />
                       <CopySystemBoxButton message={systemMessageDraft} format="html" />
                     </div>
+                    {/* What those two buttons will put on the clipboard,
+                        marks and all, so the paste is never the first sight of
+                        it. */}
+                    <SystemCopyPreview message={systemMessageDraft} />
                   </section>
                 )}
 
