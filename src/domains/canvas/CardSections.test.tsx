@@ -78,6 +78,7 @@ function props(overrides: Partial<React.ComponentProps<typeof CardSections>> = {
     characters: cast,
     castStats: stats,
     nodes: cards,
+    unplacedQuests: [],
     draggingCastId: null,
     setDraggingCastId: vi.fn(),
     setDropTargetNodeId: vi.fn(),
@@ -185,6 +186,44 @@ describe('the board’s side sections', () => {
     // A copy is about to be made, so the drag is a copy rather than a move.
     expect(payload.getData('application/x-litrpg-card')).toBe('n-item-b');
     expect(payload.effectAllowed).toBe('copy');
+  });
+
+  it('lists a quest with no card as unplaced, and drags its ledger row', () => {
+    render(
+      <CardSections
+        {...props({ unplacedQuests: [{ id: 'q-1', title: 'The Ledger' }] })}
+      />
+    );
+
+    const quests = screen.getByRole('region', { name: 'Quests' });
+    const tile = within(quests).getByText('The Ledger').closest('.card-tile') as HTMLElement;
+
+    // The badge says why the tile looks unlike a card: there is no card yet.
+    expect(tile).toHaveTextContent('Unplaced');
+    expect(tile).toHaveClass('unplaced');
+
+    const payload = dragPayload();
+    fireEvent.dragStart(tile, { dataTransfer: payload });
+
+    // A quest still in the ledger carries its row, not a card id.
+    expect(payload.getData('application/x-litrpg-quest')).toBe('q-1');
+    expect(payload.effectAllowed).toBe('copy');
+  });
+
+  it('keeps a kind’s section when the only thing in it has no card yet', () => {
+    render(
+      <CardSections
+        {...props({
+          nodes: cards.filter(entry => entry.data.nodeType !== 'quest'),
+          unplacedQuests: [{ id: 'q-1', title: 'The Ledger' }],
+        })}
+      />
+    );
+
+    const quests = screen.getByRole('region', { name: 'Quests' });
+    expect(within(quests).getByText('The Ledger')).toBeInTheDocument();
+    // The count is everything the section lists, card or not.
+    expect(within(quests).getByRole('button', { name: /Quests/ })).toHaveTextContent('1');
   });
 
   it('gives a tile nothing to delete: the cards are removed where they are', () => {

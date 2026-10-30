@@ -19,6 +19,9 @@ import type { Character, CharacterSkill, CharacterStat } from '../shared/types';
 import type { Story } from '../stories/types';
 import { flowNodeTypes } from './GraphNode';
 import { CardSections } from './CardSections';
+import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
+import { SystemMessageForm } from './SystemMessageForm';
+import { serializeSystemMessage, systemMessageOf } from './systemMessage';
 import {
   CARD_DRAG_TYPE,
   CAST_DRAG_TYPE,
@@ -27,8 +30,9 @@ import {
   edgeRelationTypes,
   isCanvasCreateKind,
   nodeTypes,
+  QUEST_DRAG_TYPE,
 } from './types';
-import type { EdgeData, NodeData, NodeType } from './types';
+import type { EdgeData, NodeData, NodeType, UnplacedQuest } from './types';
 
 // The Graph tab: the Add form, Undo and Redo, the cast rail, the board itself,
 // the connection editor that hangs over it and the inspector drawer beside it.
@@ -94,6 +98,11 @@ export interface GraphTabProps {
   // A card dragged out of a section is copied where it lands: a second card of
   // that name, with its layer switched back on.
   copyCardFromRail: (id: string, position: { x: number; y: number }) => void;
+  // Writes the card an unplaced quest has been waiting for and links the two, as
+  // one step the undo history holds together.
+  placeQuestFromRail: (questId: string, position: { x: number; y: number }) => void;
+  // Quest records the board has no card for, listed in the rail marked as such.
+  unplacedQuests: UnplacedQuest[];
 
   // The connection editor.
   selectedEdgeId: string | null;
@@ -210,6 +219,8 @@ export function GraphTab({
   nodeUnderPointer,
   dropCastMember,
   copyCardFromRail,
+  placeQuestFromRail,
+  unplacedQuests,
   selectedEdgeId,
   closeEdge,
   selectedEdge,
@@ -308,6 +319,19 @@ export function GraphTab({
         .sort((a, b) => a.characterName.localeCompare(b.characterName))
     : [];
 
+  // The system card's message as the drawer is holding it, so the fields, the
+  // preview and the copy all follow the typing rather than the last saved row.
+  // The form writes the card's notes, which is where the message lives, so one
+  // Save carries the whole edit and one Undo takes it back.
+  const systemMessageDraft = systemMessageOf(nodeLabelDraft, nodeContentDraft);
+
+  const writeNodeContent = (content: string) => {
+    setNodeContentDraft(content);
+    if (selectedNodeId) {
+      rememberNodeDraft(selectedNodeId, { label: nodeLabelDraft, content });
+    }
+  };
+
   const skillHolderCandidates = skillCardNode
     ? characters.filter(
         character =>
@@ -315,11 +339,23 @@ export function GraphTab({
       )
     : [];
 
+  // Where a drop lands, asked for in the board's own coordinates: a card placed
+  // under the pointer stays under the pointer at whatever zoom and pan the board
+  // is at.
+  const boardPoint = (event: React.DragEvent<HTMLDivElement>) => {
+    const instance = flowRef.current;
+
+    return instance?.screenToFlowPosition
+      ? instance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : instance?.project?.({
+          x: event.clientX - event.currentTarget.getBoundingClientRect().left,
+          y: event.clientY - event.currentTarget.getBoundingClientRect().top,
+        });
+  };
+
   // A card out of a section lands where the pointer is, and it lands as a new
   // card rather than as the one that was dragged: the list names the skill, the
-  // place or the trinket, and each card is one use of it. The point is asked
-  // for in the board's own coordinates, so it lands under the pointer at
-  // whatever zoom and pan the board is at.
+  // place or the trinket, and each card is one use of it.
   const dropCardOnBoard = (event: React.DragEvent<HTMLDivElement>) => {
     const id = event.dataTransfer.getData(CARD_DRAG_TYPE);
 
@@ -327,15 +363,23 @@ export function GraphTab({
 
     event.preventDefault();
 
-    const instance = flowRef.current;
-    const point = instance?.screenToFlowPosition
-      ? instance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      : instance?.project?.({
-          x: event.clientX - event.currentTarget.getBoundingClientRect().left,
-          y: event.clientY - event.currentTarget.getBoundingClientRect().top,
-        });
+    const point = boardPoint(event);
 
     if (point) copyCardFromRail(id, point);
+  };
+
+  // A quest with no card carries its ledger row instead of a card id, because
+  // there is no card to copy yet. The drop writes one and links the two.
+  const dropUnplacedQuest = (event: React.DragEvent<HTMLDivElement>) => {
+    const questId = event.dataTransfer.getData(QUEST_DRAG_TYPE);
+
+    if (!questId) return;
+
+    event.preventDefault();
+
+    const point = boardPoint(event);
+
+    if (point) placeQuestFromRail(questId, point);
   };
 
   return (
@@ -457,6 +501,7 @@ export function GraphTab({
               characters={characters}
               castStats={castStats}
               nodes={nodes}
+              unplacedQuests={unplacedQuests}
               draggingCastId={draggingCastId}
               setDraggingCastId={setDraggingCastId}
               setDropTargetNodeId={setDropTargetNodeId}
@@ -472,9 +517,11 @@ export function GraphTab({
                 // The payload type says what is in the air even if the state
                 // update from the drag has not landed yet.
                 const carryingCard = event.dataTransfer.types.includes(CARD_DRAG_TYPE);
+                const carryingQuest = event.dataTransfer.types.includes(QUEST_DRAG_TYPE);
 
                 if (
                   !carryingCard &&
+                  !carryingQuest &&
                   !draggingCastId &&
                   !event.dataTransfer.types.includes(CAST_DRAG_TYPE)
                 ) {
@@ -490,7 +537,7 @@ export function GraphTab({
 
                 // A card being placed is going to a point, not onto another
                 // card, so nothing is outlined under the pointer for it.
-                if (carryingCard) return;
+                if (carryingCard || carryingQuest) return;
   
                 const next = nodeUnderPointer(event);
                 setDropTargetNodeId(current => (current === next ? current : next));
@@ -504,6 +551,11 @@ export function GraphTab({
                 }
               }}
               onDrop={event => {
+                if (event.dataTransfer.types.includes(QUEST_DRAG_TYPE)) {
+                  dropUnplacedQuest(event);
+                  return;
+                }
+
                 if (event.dataTransfer.types.includes(CARD_DRAG_TYPE)) {
                   dropCardOnBoard(event);
                   return;
@@ -667,6 +719,116 @@ export function GraphTab({
                   </p>
                 )}
 
+                {/* A system card is copied out of this app and into a web
+                    editor, so the box is shown here in the shape it will be
+                    pasted, built from the two fields above. */}
+                {selectedNode.data.nodeType === 'system' && (
+                  <section className="node-drawer-system" aria-label="System box">
+                    <div className="node-drawer-section">
+                      System message
+                      <span className="node-drawer-note">
+                        the Label above is the header
+                      </span>
+                    </div>
+                    <SystemMessageForm
+                      message={systemMessageDraft}
+                      onChange={next =>
+                        writeNodeContent(serializeSystemMessage(next))
+                      }
+                    />
+                    <SystemBoxFace message={systemMessageDraft} />
+                    <div className="system-box-actions">
+                      <CopySystemBoxButton message={systemMessageDraft} />
+                      <CopySystemBoxButton message={systemMessageDraft} format="html" />
+                    </div>
+                  </section>
+                )}
+
+                {/* A faction is stored as its card alone, so the drawer names the
+                    quests that lean on it and opens each where it is edited: the
+                    other half of the link the ledger draws to this card. */}
+                {selectedNode.data.nodeType === 'faction' && (
+                  <section
+                    className="node-drawer-faction"
+                    aria-label="Quests naming this faction"
+                  >
+                    <div className="node-drawer-section">
+                      Issued from this faction
+                      <span className="node-drawer-note">
+                        {(selectedNode.data.factionQuests ?? []).length === 0
+                          ? 'no quests yet'
+                          : `${(selectedNode.data.factionQuests ?? []).length} quest${
+                              (selectedNode.data.factionQuests ?? []).length === 1
+                                ? ''
+                                : 's'
+                            }`}
+                      </span>
+                    </div>
+                    {(selectedNode.data.factionQuests ?? []).length > 0 && (
+                      <ul className="node-drawer-holder-list">
+                        {(selectedNode.data.factionQuests ?? []).map(quest => (
+                          <li className="node-drawer-holder" key={quest.id}>
+                            <button
+                              type="button"
+                              className="node-drawer-holder-name"
+                              title={`Open “${quest.title}” in the quest ledger`}
+                              onClick={() => selectedNode.data.onOpenQuest?.(quest.id)}
+                            >
+                              {quest.title}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                  </section>
+                )}
+
+                {/* The other half of what the card holds: who stands where in
+                    the faction, with each name opening that sheet. */}
+                {selectedNode.data.nodeType === 'faction' && (
+                  <section
+                    className="node-drawer-faction"
+                    aria-label="Standings held through this faction"
+                  >
+                    <div className="node-drawer-section">
+                      Standings held through it
+                      <span className="node-drawer-note">
+                        {(selectedNode.data.factionStandings ?? []).length === 0
+                          ? 'nobody yet'
+                          : `${(selectedNode.data.factionStandings ?? []).length}`}
+                      </span>
+                    </div>
+                    {(selectedNode.data.factionStandings ?? []).length > 0 && (
+                      <ul className="node-drawer-holder-list">
+                        {(selectedNode.data.factionStandings ?? []).map(standing => (
+                          <li className="node-drawer-holder" key={standing.id}>
+                            <button
+                              type="button"
+                              className="node-drawer-holder-name"
+                              title={
+                                standing.chapterLabel
+                                  ? `Open ${standing.characterName}'s sheet — ${standing.standing} since ${standing.chapterLabel}`
+                                  : `Open ${standing.characterName}'s sheet`
+                              }
+                              onClick={() =>
+                                selectedNode.data.onOpenStandingSheet?.(
+                                  standing.characterId
+                                )
+                              }
+                            >
+                              {standing.characterName}
+                            </button>
+                            <span className="node-drawer-holder-rank">
+                              {standing.standing}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                )}
+
                 <label className="node-drawer-label" htmlFor="inspector-label">
                   Label
                 </label>
@@ -693,28 +855,25 @@ export function GraphTab({
                   }}
                 />
   
-                <label className="node-drawer-label" htmlFor="inspector-notes">
-                  Notes
-                </label>
-                <textarea
-                  id="inspector-notes"
-                  className="node-editor-content"
-                  placeholder="Notes for this node (optional)"
-                  value={nodeContentDraft}
-                  onChange={e => {
-                    const content = e.target.value;
-                    setNodeContentDraft(content);
-                    if (selectedNodeId) {
-                      rememberNodeDraft(selectedNodeId, {
-                        label: nodeLabelDraft,
-                        content,
-                      });
-                    }
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Escape') closeNodeInspector();
-                  }}
-                />
+                {/* A system card's notes are the message its fields write, so the
+                    drawer does not offer a second, plainer box over them. */}
+                {selectedNode.data.nodeType !== 'system' && (
+                  <>
+                    <label className="node-drawer-label" htmlFor="inspector-notes">
+                      Notes
+                    </label>
+                    <textarea
+                      id="inspector-notes"
+                      className="node-editor-content"
+                      placeholder="Notes for this node (optional)"
+                      value={nodeContentDraft}
+                      onChange={e => writeNodeContent(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') closeNodeInspector();
+                      }}
+                    />
+                  </>
+                )}
   
                 {nodeEditError && (
                   <div className="node-editor-error">{nodeEditError}</div>

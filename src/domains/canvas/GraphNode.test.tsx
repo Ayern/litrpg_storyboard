@@ -697,6 +697,24 @@ describe('GraphNode chapter workbench', () => {
     );
   });
 
+  it('draws a system card as the box a reader meets, with the copy on it', () => {
+    renderNode({
+      nodeType: 'system',
+      label: '[SYSTEM ANNOUNCEMENT]',
+      content: 'The Choir Notes You\nThe Salt Choir has taken an interest.',
+    });
+
+    // The label and the notes become the box rather than a label with a note
+    // under it: one header, one title, one block of body text.
+    expect(screen.getAllByText('[SYSTEM ANNOUNCEMENT]')).toHaveLength(1);
+    expect(screen.getByText('[SYSTEM ANNOUNCEMENT]')).toHaveClass('system-box-header');
+    expect(screen.getByText('The Choir Notes You')).toHaveClass('system-box-title');
+    expect(screen.getByText('The Salt Choir has taken an interest.')).toHaveClass(
+      'system-box-body'
+    );
+    expect(screen.getByRole('button', { name: 'Copy System Box' })).toBeInTheDocument();
+  });
+
   it('keeps the workbench off every other kind of card', () => {
     renderNode({ nodeType: 'character' });
 

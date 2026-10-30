@@ -11,7 +11,13 @@ import { GraphTab } from './GraphTab';
 import type { GraphTabProps } from './GraphTab';
 import { allLayers, CHAPTER_SPINE_LAYERS } from './layers';
 import type { GraphLayers } from './layers';
-import { CARD_DRAG_TYPE, CAST_DRAG_TYPE, NODE_STAT_BADGES, edgeKindClass } from './types';
+import {
+  CARD_DRAG_TYPE,
+  CAST_DRAG_TYPE,
+  NODE_STAT_BADGES,
+  QUEST_DRAG_TYPE,
+  edgeKindClass,
+} from './types';
 import type { EdgeData, NodeData, NodeType } from './types';
 
 // The Graph tab renders what the app holds and hands every keystroke back
@@ -165,6 +171,7 @@ function canvasSpies() {
     nodeUnderPointer: vi.fn(() => null),
     dropCastMember: vi.fn(),
     copyCardFromRail: vi.fn(),
+    placeQuestFromRail: vi.fn(),
     closeEdge: vi.fn(),
     saveEdge: vi.fn(),
     closeNodeInspector: vi.fn(),
@@ -258,6 +265,8 @@ function props(spies: Spies, start: Start = {}, overrides: Partial<GraphTabProps
     setDraggingCastId: spies.setDraggingCastId,
     setDropTargetNodeId: spies.setDropTargetNodeId,
     copyCardFromRail: spies.copyCardFromRail,
+    placeQuestFromRail: spies.placeQuestFromRail,
+    unplacedQuests: [],
     nodeUnderPointer: spies.nodeUnderPointer,
     dropCastMember: spies.dropCastMember,
 
@@ -739,6 +748,53 @@ describe('the graph tab', () => {
       // The board's own coordinates, so it lands under the pointer at any zoom.
       expect(spies.copyCardFromRail).toHaveBeenCalledWith(item.id, { x: 240, y: 120 });
     });
+
+    it('places an unplaced quest where it is let go, writing its card', () => {
+      const spies = open({
+        nodes: [],
+        unplacedQuests: [{ id: 'q-1', title: 'The Ledger' }],
+      });
+
+      const tile = screen.getByTitle(
+        'Drag “The Ledger” onto the board to place its card'
+      );
+      expect(tile).toHaveTextContent('Unplaced');
+
+      const payload: Record<string, string> = {};
+      fireEvent.dragStart(tile, {
+        dataTransfer: {
+          types: [],
+          setData: (type: string, value: string) => {
+            payload[type] = value;
+          },
+          getData: (type: string) => payload[type] ?? '',
+          effectAllowed: '',
+          dropEffect: '',
+        },
+      });
+
+      // The drag carries the ledger row, not a card: there is no card yet.
+      expect(payload[QUEST_DRAG_TYPE]).toBe('q-1');
+
+      const canvas = document.querySelector('.graph-canvas') as HTMLElement;
+      const drop = new MouseEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 320,
+        clientY: 90,
+      });
+      Object.defineProperty(drop, 'dataTransfer', {
+        value: {
+          types: [QUEST_DRAG_TYPE],
+          getData: (type: string) => payload[type] ?? '',
+          effectAllowed: '',
+          dropEffect: '',
+        },
+      });
+      fireEvent(canvas, drop);
+
+      expect(spies.placeQuestFromRail).toHaveBeenCalledWith('q-1', { x: 320, y: 90 });
+    });
   });
 
   describe('the skill card\u2019s holders', () => {
@@ -1031,6 +1087,262 @@ describe('the graph tab', () => {
       openDrawer();
 
       expect(screen.queryByText(/nothing else in the story stores it/)).toBeNull();
+    });
+
+    it('names the quests that lean on a faction card, and opens them', async () => {
+      const user = userEvent.setup();
+      const onOpenQuest = vi.fn();
+      const guild = node('n-3', 'The Salt Choir', 'faction', {
+        factionQuests: [
+          { id: 'q-1', title: 'The Ninth Bell' },
+          { id: 'q-2', title: 'Find the Drowned Stair' },
+        ],
+        onOpenQuest,
+      });
+
+      open({
+        nodes: [guild],
+        selectedNode: guild,
+        selectedNodeId: guild.id,
+        nodeLabelDraft: guild.data.label,
+      });
+
+      // The card is the whole record of the faction, so the note says what points
+      // at it rather than leaving a purge to be a surprise.
+      expect(
+        screen.getByText(
+          'This card is the record for this faction: its quests and standings name it, and nothing else in the story stores it.'
+        )
+      ).toBeInTheDocument();
+
+      const naming = screen.getByRole('region', {
+        name: 'Quests naming this faction',
+      });
+      expect(within(naming).getByText('2 quests')).toBeInTheDocument();
+
+      await user.click(within(naming).getByRole('button', { name: 'The Ninth Bell' }));
+
+      expect(onOpenQuest).toHaveBeenCalledWith('q-1');
+    });
+
+    it('shows a system card as the box its fields make, with the copy beside it', () => {
+      const notice = node('n-4', '[SYSTEM ANNOUNCEMENT]', 'system', {
+        content: 'The Choir Notes You\nThe Salt Choir has taken an interest.',
+      });
+
+      open(
+        {
+          nodes: [notice],
+          selectedNode: notice,
+          selectedNodeId: notice.id,
+          nodeLabelDraft: notice.data.label,
+        },
+        { nodeContentDraft: 'The Choir Notes You\nThe Salt Choir has taken an interest.' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+
+      expect(within(box).getByText('[SYSTEM ANNOUNCEMENT]')).toHaveClass(
+        'system-box-header'
+      );
+      expect(within(box).getByText('The Choir Notes You')).toHaveClass('system-box-title');
+      // The copy is of what the drawer is holding, not of the last saved row.
+      expect(
+        within(box).getByRole('button', { name: 'Copy System Box' })
+      ).toBeInTheDocument();
+    });
+
+    it('turns a notice into a level-up box, and writes that into its notes', async () => {
+      const user = userEvent.setup();
+      const system = node('n-4', '[TIDAL LEDGER]', 'system', {
+        content: 'Level 4\n+2 to place',
+      });
+
+      const spies = open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+        },
+        { nodeContentDraft: 'Level 4\n+2 to place' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+
+      await user.selectOptions(within(box).getByLabelText('Message type'), 'level_up');
+
+      // The level fields the kind asks for were not in the drawer before.
+      await user.type(within(box).getByLabelText('Level from'), '3');
+      await user.type(within(box).getByLabelText('Level to'), '4');
+      await user.type(within(box).getByLabelText('Points to place'), '2');
+
+      expect(spies.rememberNodeDraft).toHaveBeenLastCalledWith('n-4', {
+        label: '[TIDAL LEDGER]',
+        content: [
+          'Type: level_up',
+          'Title: Level 4',
+          'Level: 3 → 4',
+          'Points: 2',
+          '---',
+          '+2 to place',
+        ].join('\n'),
+      });
+
+      // And the box beside the fields is drawn from what they hold.
+      expect(within(box).getByText('Level 3 → 4')).toHaveClass('system-box-level');
+      expect(within(box).getByText('2 points to place')).toHaveClass('system-box-points');
+    });
+
+    it('adds stat rows to a level-up and prints each one with its change', async () => {
+      const user = userEvent.setup();
+      const system = node('n-4', '[TIDAL LEDGER]', 'system', {
+        content: 'Type: level_up\nTitle: The Tide Advances',
+      });
+
+      const spies = open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+        },
+        { nodeContentDraft: system.data.content ?? '' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+
+      await user.click(within(box).getByRole('button', { name: 'Add stat' }));
+      await user.type(within(box).getByLabelText('Stat 1 name'), 'Agility');
+      await user.type(within(box).getByLabelText('Stat 1 from'), '12');
+      await user.type(within(box).getByLabelText('Stat 1 to'), '13');
+
+      expect(spies.rememberNodeDraft).toHaveBeenLastCalledWith('n-4', {
+        label: '[TIDAL LEDGER]',
+        content: [
+          'Type: level_up',
+          'Title: The Tide Advances',
+          'Stat: Agility | 12 → 13',
+        ].join('\n'),
+      });
+      expect(within(box).getByText('Agility: 12 → 13')).toBeInTheDocument();
+      expect(within(box).getByText('+1')).toHaveClass('system-box-delta');
+    });
+
+    it('takes a quest’s objectives and ticks them into the box', async () => {
+      const user = userEvent.setup();
+      const system = node('n-4', '[QUEST]', 'system', { content: 'Type: quest' });
+
+      const spies = open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+        },
+        { nodeContentDraft: 'Type: quest' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+
+      await user.type(within(box).getByLabelText('Title'), 'The Drowned Stair');
+      await user.click(within(box).getByRole('button', { name: 'Add objective' }));
+      await user.type(
+        within(box).getByLabelText('Objective 1 text'),
+        'Reach the Drowned Stair'
+      );
+      await user.click(within(box).getByLabelText('Objective 1 done'));
+
+      expect(spies.rememberNodeDraft).toHaveBeenLastCalledWith('n-4', {
+        label: '[QUEST]',
+        content: [
+          'Type: quest',
+          'Title: The Drowned Stair',
+          'Status: accepted',
+          'Objective: [x] Reach the Drowned Stair',
+        ].join('\n'),
+      });
+      expect(
+        within(box).getByText('QUEST ACCEPTED', { selector: '.system-box-status' })
+      ).toBeInTheDocument();
+    });
+
+    it('keeps the plainer notes box off a system card', () => {
+      const system = node('n-4', '[TIDAL LEDGER]', 'system', { content: 'Type: notice' });
+
+      open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+        },
+        { nodeContentDraft: 'Type: notice' }
+      );
+
+      expect(screen.queryByLabelText('Notes')).not.toBeInTheDocument();
+    });
+
+    it('names the standings held through a faction card, and opens their sheets', async () => {
+      const user = userEvent.setup();
+      const onOpenStandingSheet = vi.fn();
+      const guild = node('n-3', 'The Salt Choir', 'faction', {
+        factionStandings: [
+          {
+            id: 'standing-1',
+            characterId: 'c-1',
+            characterName: 'Mira',
+            standing: 'member',
+            note: null,
+            chapterLabel: 'The Low Tide',
+          },
+          {
+            id: 'standing-2',
+            characterId: 'c-2',
+            characterName: 'Rook',
+            standing: 'wanted',
+            note: null,
+            chapterLabel: null,
+          },
+        ],
+        onOpenStandingSheet,
+      });
+
+      open({
+        nodes: [guild],
+        selectedNode: guild,
+        selectedNodeId: guild.id,
+        nodeLabelDraft: guild.data.label,
+      });
+
+      const held = screen.getByRole('region', {
+        name: 'Standings held through this faction',
+      });
+      expect(within(held).getByText('2')).toBeInTheDocument();
+      expect(within(held).getByText('member')).toBeInTheDocument();
+      expect(within(held).getByText('wanted')).toBeInTheDocument();
+
+      await user.click(within(held).getByRole('button', { name: 'Mira' }));
+
+      expect(onOpenStandingSheet).toHaveBeenCalledWith('c-1');
+    });
+
+    it('says when no quest names a faction card yet', () => {
+      const guild = node('n-3', 'The Salt Choir', 'faction');
+
+      open({
+        nodes: [guild],
+        selectedNode: guild,
+        selectedNodeId: guild.id,
+        nodeLabelDraft: guild.data.label,
+      });
+
+      const naming = screen.getByRole('region', {
+        name: 'Quests naming this faction',
+      });
+
+      expect(within(naming).getByText('no quests yet')).toBeInTheDocument();
+      expect(within(naming).queryByRole('button')).toBeNull();
     });
 
     it('names the card and says it has unsaved changes', () => {

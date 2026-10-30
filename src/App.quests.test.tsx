@@ -1,12 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
 
 const { invokeMock, flowMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  flowMock: { setCenter: vi.fn(), getZoom: vi.fn(() => 1) },
+  flowMock: {
+    setCenter: vi.fn(),
+    getZoom: vi.fn(() => 1),
+    // An unzoomed board maps the pointer's screen position to itself, so a drop
+    // lands on the numbers the test gave it.
+    screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+  },
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
@@ -406,6 +412,34 @@ function lastCall(command: string) {
   return [...invokeMock.mock.calls].reverse().find(call => call[0] === command)?.[1];
 }
 
+// jsdom has no DragEvent with payload types, so a drag is a plain object that
+// answers the two questions the board asks: what is in the air, and where.
+function dragPayload(id?: string, type = 'application/x-litrpg-quest') {
+  const store: Record<string, string> = {};
+  if (id) store[type] = id;
+
+  return {
+    types: Object.keys(store),
+    effectAllowed: '',
+    dropEffect: '',
+    setData: (kind: string, value: string) => {
+      store[kind] = value;
+    },
+    getData: (kind: string) => store[kind] ?? '',
+  };
+}
+
+function dropOn(canvas: HTMLElement, payload: object, clientX: number, clientY: number) {
+  const event = new MouseEvent('drop', {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+    clientY,
+  });
+  Object.defineProperty(event, 'dataTransfer', { value: payload });
+  fireEvent(canvas, event);
+}
+
 async function openQuests() {
   const user = userEvent.setup();
   render(<App />);
@@ -471,6 +505,79 @@ describe('the quest ledger', () => {
     expect(card).toHaveTextContent('Giver: Rook');
     expect(card).toHaveTextContent('Faction: The Ashen Guild');
     expect(card).toHaveTextContent('No rewards recorded');
+  });
+
+  it('places an unplaced quest dragged out of the rail as one card and one link', async () => {
+    quests = [questRow({ card_node_id: null })];
+
+    const user = await openQuests();
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+
+    const rail = await screen.findByRole('complementary', { name: 'Cards' });
+    const tile = rail.querySelector('.card-tile.quest.unplaced') as HTMLElement;
+
+    // The tile says why it is not a card: the ledger row is all there is yet.
+    expect(tile).toHaveTextContent('The Ledger');
+    expect(tile).toHaveTextContent('Unplaced');
+
+    const payload = dragPayload('quest-1');
+    fireEvent.dragStart(tile, { dataTransfer: payload });
+    expect(payload.getData('application/x-litrpg-quest')).toBe('quest-1');
+
+    const canvas = document.querySelector('.graph-canvas') as HTMLElement;
+    fireEvent.dragOver(canvas, { dataTransfer: payload });
+    dropOn(canvas, payload, 260, 180);
+
+    await waitFor(() =>
+      expect(lastCall('create_graph_node')).toMatchObject({
+        storyId: story.id,
+        nodeType: 'quest',
+        label: 'The Ledger',
+        posX: 260,
+        posY: 180,
+      })
+    );
+    // The record is pointed at the card in the same step, so the ledger has a
+    // chip to open and the rail no longer calls the quest unplaced.
+    await waitFor(() =>
+      expect(lastCall('link_quest_card')).toMatchObject({
+        questId: 'quest-1',
+        cardNodeId: 'n5',
+      })
+    );
+    await waitFor(() =>
+      expect(rail.querySelector('.card-tile.quest.unplaced')).toBeNull()
+    );
+
+    // One Undo takes both halves back: the link first, then the card.
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(lastCall('link_quest_card')).toMatchObject({ cardNodeId: null });
+    expect(lastCall('delete_node')).toMatchObject({ id: 'n5' });
+  });
+
+  it('opens the faction card a quest was issued from, and names the quest back', async () => {
+    quests = [questRow({ faction_node_id: 'n4' })];
+
+    const user = await openQuests();
+
+    const row = questCard('The Ledger');
+    expect(row).toHaveTextContent('Faction: The Ashen Guild');
+
+    // A faction is stored as its card and nowhere else, so the name opens the
+    // card instead of sending the author looking for a faction form.
+    await user.click(within(row).getByRole('button', { name: 'The Ashen Guild' }));
+
+    const drawer = await screen.findByRole('complementary', { name: 'Node inspector' });
+    expect(
+      within(drawer).getByText(/This card is the record for this faction/)
+    ).toBeInTheDocument();
+
+    // And the card names the quest that leans on it, which opens it in the ledger.
+    const naming = within(drawer).getByRole('region', {
+      name: 'Quests naming this faction',
+    });
+    expect(within(naming).getByRole('button', { name: 'The Ledger' })).toBeInTheDocument();
   });
 
   it('shows every status at once, not just the word already in the field', async () => {

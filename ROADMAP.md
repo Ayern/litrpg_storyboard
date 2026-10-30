@@ -293,11 +293,58 @@ single undoable step. Skill cards come back to the board's **Add** menu for the
 matching reason: `canvasCreateNodeTypes` lists everything, a placed card starts
 with no holders, and the first holder is what turns it into the shared definition
 — so a skill can be planned before anyone learns it, without a second writer for
-the definition row. Last, the kinds with nothing behind the card say so in the
-drawer (`cardOnlyNote`), so an author never hunts for a form that never existed.
-Remaining: renaming a quest does not rename its card, and a card's own label can
-drift from the record it stands for — the chip shows the card, which is honest,
-but there is no nudge. **M**
+the definition row. The kinds with nothing behind the card say so in the drawer
+(`cardOnlyNote`), so an author never hunts for a form that never existed. A
+`faction` goes further, because two columns already point *at* its card and it has
+no table of its own: `quests.faction_node_id` and `faction_standings.node_id` both
+hold a `faction` node's id, so the ledger draws a quest's faction as a chip that
+opens that card (`onOpenCard`, the same call the **Card:** chip makes) and the
+card's drawer lists the quests issued from it, each opening the ledger focused on
+that contract. A faction card in the Trash reads as **faction in the trash**
+rather than opening nothing, and under the quests it lists the standings sheets hold
+through it, each name opening that sheet. Remaining: renaming a quest does not
+rename its card, and a card's own label can drift from the record it stands for —
+the chip shows the card, which is honest, but there is no nudge. **M**
+
+**4g. A quest with no card can still be dragged onto the board, and the System
+writes itself out.** **Done.** Two gaps about the same thing: a record the board
+could not show. The rail listed only cards, so a quest written in the ledger — and
+stored with no `card_node_id` — was invisible on the Graph tab until somebody went
+to the ledger. It is listed now as an **Unplaced** tile with a dashed edge, and it
+is dragged with its ledger row under `QUEST_DRAG_TYPE` rather than a card id,
+because there is no card to copy: `placeQuestFromRail` is `placeQuestCard` handed
+the drop's point, so the card, the `link_quest_card` and the history step are the
+same three writes the ledger's **Place card** makes. The second is the `system`
+card, which was a label and a paragraph. It is now the box a LitRPG reader meets —
+dark panel, cyan edge, gold hairline, header, title, stat block — and **Copy System
+Box** puts a Markdown blockquote on the clipboard from the card or from the drawer,
+because the announcement is written in this app and read in a web editor. **Copy
+HTML** sits beside it with the same three parts as a real `<blockquote>`, its parts
+escaped so a stat line of `<HP>` stays text, for a site whose editor takes tags.
+The box needs no schema: the label is the header, the first notes line the title
+and the rest the body, so `systemBoxOf` in `src/domains/canvas/SystemBox.tsx` reads
+the two fields every card already has. Remaining: the header cannot be styled
+apart from the card's label on the board. **M**
+
+**4h. A System box knows what it is announcing.** **Done.** The box drew one shape
+for every announcement: a header, a title and a paragraph, so a level-up could not
+say which level moved and a quest could not show a ticked objective. The drawer now
+opens on a **Message type** — notice, level up & stats, skill learn / evolve, quest
+offer / completion, achievement unlocked — and shows only the fields that type asks
+for: the level it moved between, the points to place and a row per stat; a skill's
+rank and what it evolved out of; a quest's status, objectives and rewards; an
+achievement's reward. The card face draws each in its own shape and the edge takes
+the kind's colour, and both copies write the structured box — Markdown with a
+quoted line per stat and `- [x]` per objective, HTML with a real `<ul>`. The
+message is still text: `systemMessage.ts` reads and writes `nodes.content` in a
+small line format (`Type:`, `Title:`, `Level: 3 → 4`, `Stat: Agility | 12 → 13`,
+`---`, then free text), so there is no migration, one Save is still one
+`update_node` and Undo takes the whole box back. A card written before the format
+reads as a notice and converts on its first edit. The demo now seeds two cards — the
+notice and Ivy's fourth level written out as a `level_up` box, its level and stat
+rows matching the row the story's curve already records at 1,800 XP — so the guide's
+picture is of a typed box and the board shows both shapes. Remaining: the type lives
+in the notes, so an author who edits them by hand can drop back to a notice. **M**
 
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a

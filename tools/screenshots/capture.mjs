@@ -215,6 +215,36 @@ async function capture(page, name) {
   log(`  ${name}`);
 }
 
+// Nudges the board by dragging empty canvas, so a card near the corner is not
+// photographed under the legend. The point to grab is found rather than guessed:
+// the first place over the pane itself, which is the board's own background.
+async function panBoard(page, dx, dy) {
+  const point = await page.evaluate(() => {
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return null;
+
+    const rect = pane.getBoundingClientRect();
+
+    for (let y = rect.top + 80; y < rect.bottom - 80; y += 40) {
+      for (let x = rect.left + 80; x < rect.right - 80; x += 60) {
+        if (document.elementFromPoint(x, y)?.classList.contains('react-flow__pane')) {
+          return { x: Math.round(x), y: Math.round(y) };
+        }
+      }
+    }
+
+    return null;
+  });
+
+  if (!point) fail('the board had no empty canvas to pan by');
+
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.mouse.move(point.x + dx, point.y + dy, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+}
+
 async function shoot(page, fixture) {
   const story = fixture.storyId;
   const node = (label, type) => {
@@ -328,6 +358,28 @@ async function shoot(page, fixture) {
   // and a card off the picture cannot be clicked.
   await page.getByRole('button', { name: 'fit view' }).click();
   await page.waitForTimeout(600);
+
+  // 2b. The System's box, close enough to read, with its drawer open so the card
+  //     and the inspector show the same announcement side by side. The demo seeds
+  //     two: the notice and the written-out level, and the level is the one whose
+  //     drawer shows the fields its type asks for.
+  const systemCard = node('[TIDAL LEDGER · GAIN]', 'system');
+  await zoomOnCard(page, systemCard, READABLE_ZOOM, { x: 20, y: 20 });
+  await page.waitForTimeout(400);
+  // The card sits at the far left of the bottom tier, where the legend floats:
+  // the board is nudged right and up so the whole box is on screen and clear of
+  // the legend.
+  await panBoard(page, 150, -120);
+  await page.locator(`.react-flow__node[data-id="${systemCard}"]`).click();
+  await page
+    .waitForSelector('[aria-label="System box"]', { timeout: 5_000 })
+    .catch(() => {
+      fail(chat('the system card never opened its box in the drawer'));
+    });
+  await capture(page, 'system-box.png');
+
+  await page.getByRole('button', { name: 'fit view' }).click();
+  await page.waitForTimeout(500);
 
   // 3. A skill card's drawer, opened by clicking its card.
   await page.locator(`.react-flow__node[data-id="${node('Brine-Lung', 'skill')}"]`).click();

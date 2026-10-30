@@ -211,7 +211,10 @@ describe.each(documents)('$name', ({ source }) => {
   });
 
   it('leaves no Markdown syntax in the text it draws', () => {
-    const container = draw(source, pictures);
+    // A fenced block is quoted text the document asked for verbatim — the stars in
+    // a sample of what a copy puts on the clipboard are the sample, not a
+    // construct the reader failed to draw — so the check reads the prose.
+    const container = draw(prose, pictures);
     const text = container.textContent ?? '';
 
     // If any of these survive into the text, the reader has a construct it does

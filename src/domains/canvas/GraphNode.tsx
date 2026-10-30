@@ -7,6 +7,8 @@ import type { ChapterEventRow } from './types';
 import type { ChapterEventType } from '../narrative/types';
 import type { ChapterCastBadge, NodeData } from './types';
 import { isNodeType, NODE_STAT_BADGES, QUEST_BADGES_SHOWN } from './types';
+import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
+import { systemMessageOf } from './systemMessage';
 
 // The card a node is drawn as. Its type is both the colour of its edge and the
 // word above the label, so a board reads at a glance instead of every note
@@ -204,11 +206,17 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
       ? `Level ${member.level}${member.levelIsPenalty ? ' (penalty)' : ''}`
       : 'No level recorded as of this chapter';
 
+  // A system card's shape decides both what its face draws and which accent its
+  // edge takes: gold for an achievement, amber for a quest, cyan for a notice.
+  const systemMessage =
+    kind === 'system' ? systemMessageOf(data.label, data.content) : null;
+
   return (
     <>
     <div
       ref={cardRef}
       className={`graph-node ${kind}${kind === 'chapter' ? ' workbench' : ''}`}
+      data-system-kind={systemMessage?.kind}
     >
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} />
       <span className="graph-node-topline">
@@ -219,7 +227,20 @@ export function GraphNode({ data, isConnectable }: NodeProps<NodeData>) {
           </span>
         )}
       </span>
-      <span className="graph-node-label">{data.label}</span>
+      {/* A system card is the box the characters see, so it is drawn like one
+          rather than as a label with notes under it, in the shape its message
+          type asks for. */}
+      {kind === 'system' && systemMessage ? (
+        <>
+          <SystemBoxFace message={systemMessage} />
+          <div className="system-box-actions">
+            <CopySystemBoxButton message={systemMessage} />
+            <CopySystemBoxButton message={systemMessage} format="html" />
+          </div>
+        </>
+      ) : (
+        <span className="graph-node-label">{data.label}</span>
+      )}
       {/* A chapter card names the cast whose snapshot applies there. The badge is
           a real button, so the hover title works with a keyboard too, and the
           help dot says where the list comes from: three places on the chapter,

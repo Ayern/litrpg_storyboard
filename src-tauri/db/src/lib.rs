@@ -1606,13 +1606,32 @@ impl Db {
             None,
             &user,
         )?;
+        // The System's card is the box the characters see: the label is the
+        // header, the first line of the notes the title, and the rest the stat
+        // block. The demo writes it that way so the board shows what an author
+        // would copy out of it.
         let system_card = demo_card(
             self,
             story_id,
             "system",
-            "The Tidal Ledger",
-            "A level costs 600 XP, four points to place, and a point each of Insight and Agility. What the tide takes is written down as spent.",
+            "[TIDAL LEDGER]",
+            "The Sea Keeps What You Spend\nA level costs 600 XP and hands out four points to place.\nThe tide records each one: +1 Insight, +1 Agility.\nWhat it takes is written down as spent.",
             760.0,
+            2000.0,
+            None,
+            &user,
+        )?;
+        // The second System card is a typed one, because a box has a shape: this
+        // is Ivy's fourth level, the row the story's own curve puts at 1,800 XP
+        // in chapter five, with the two stat gains that level recorded. The four
+        // points are the rule's, not a number invented here.
+        let _gain_card = demo_card(
+            self,
+            story_id,
+            "system",
+            "[TIDAL LEDGER · GAIN]",
+            "Type: level_up\nTitle: The Fourth Entry\nLevel: 3 → 4\nPoints: 4\nStat: Insight | 14 → 15\nStat: Agility | 12 → 13\n---\nTwo of the four are written where the ledger already has them. The rest are hers to place.",
+            80.0,
             2000.0,
             None,
             &user,
@@ -1745,6 +1764,24 @@ impl Db {
             "item".into(),
             Some(bram.id.clone()),
             Some("A chart with the stair drawn back in".into()),
+            user.clone(),
+        )?;
+
+        // A quest written in the ledger with no card yet: the rail lists it as
+        // unplaced and the ledger's “Card: none yet” has something to say, so the
+        // demo shows what dragging one onto the board is for.
+        self.add_quest(
+            story_id.to_string(),
+            "Where the Salt Goes".into(),
+            Some(tamsin.id.clone()),
+            Some(choir_card.clone()),
+            tally.id.clone(),
+            None,
+            "active".into(),
+            Some(
+                "Follow the Choir's salted silver from the Tally Room to whatever buys it.".into(),
+            ),
+            Some("Planned for chapter four; no card on the board yet.".into()),
             user.clone(),
         )?;
 
@@ -20102,7 +20139,7 @@ mod tests {
         // The card list is the canvas's, so the two note cards that hang under
         // their chapters are counted with the notes rather than with the board.
         let nodes = db.list_nodes(&story.id).unwrap();
-        assert_eq!(nodes.len(), 28);
+        assert_eq!(nodes.len(), 29);
 
         for kind in [
             "chapter",
@@ -20167,6 +20204,22 @@ mod tests {
             .any(|change| change.stat_name == "Agility"
                 && change.amount == Some(1)
                 && change.value_after == Some(13)));
+
+        // The typed System card is that same level, written out as the box a
+        // reader meets, so the guide's picture of a level-up cannot drift from
+        // the sheet it was drawn from.
+        let gain = nodes
+            .iter()
+            .find(|node| node.label == "[TIDAL LEDGER · GAIN]")
+            .expect("the demo has a written-out level-up box");
+        let gain_content = gain.content.as_deref().unwrap_or_default();
+
+        assert_eq!(gain.node_type, "system");
+        assert!(gain_content.starts_with("Type: level_up"));
+        assert!(gain_content.contains("Level: 3 → 4"));
+        assert!(gain_content.contains("Points: 4"), "the rule's four points");
+        assert!(gain_content.contains("Stat: Insight | 14 → 15"));
+        assert!(gain_content.contains("Stat: Agility | 12 → 13"));
 
         // Bram's own rule raises nothing by itself, so his levels carry no stat
         // rows at all.
@@ -20244,7 +20297,17 @@ mod tests {
         // The board, the ledgers and the trash the guide documents, all of them
         // part of the seed rather than of the screenshot harness.
         assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
-        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
+        // Two quests with cards and one still waiting for one, which is what the
+        // rail lists as unplaced.
+        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 3);
+        assert_eq!(
+            db.list_story_quests(&story.id, None)
+                .unwrap()
+                .iter()
+                .filter(|quest| quest.card_node_id.is_none())
+                .count(),
+            1
+        );
         assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_chapter_notes(&story.id).unwrap().len(), 2);
 
@@ -20335,7 +20398,7 @@ mod tests {
             .all(|character| character.name != "Trespasser"));
 
         let nodes = db.list_nodes(&story.id).unwrap();
-        assert_eq!(nodes.len(), 28, "six chapters and the live cards");
+        assert_eq!(nodes.len(), 29, "six chapters and the live cards");
         assert!(nodes.iter().all(|node| node.label != "Stray chapter"));
         assert_eq!(
             db.list_deleted(Some(&story.id)).unwrap().len(),
@@ -20363,7 +20426,17 @@ mod tests {
         assert_eq!(db.list_story_chapter_cast(&story.id).unwrap().len(), 10);
         assert_eq!(db.list_story_stats(&story.id).unwrap().len(), 11);
         assert_eq!(db.list_edges(&story.id).unwrap().len(), 31);
-        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
+        // Two quests with cards and one still waiting for one, which is what the
+        // rail lists as unplaced.
+        assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 3);
+        assert_eq!(
+            db.list_story_quests(&story.id, None)
+                .unwrap()
+                .iter()
+                .filter(|quest| quest.card_node_id.is_none())
+                .count(),
+            1
+        );
 
         // The trial run's history went with the data it described, and the reset
         // itself is recorded under the person who asked for it.

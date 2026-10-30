@@ -106,6 +106,14 @@ sheet, the ledger, the skill's holders, the inventory. For a place, a plot, an i
 an event, a faction or a note it is the record: the drawer says so plainly, so you
 never go looking for a second half that was never missing.
 
+A faction card goes one step further, since its card is the only place a faction is
+stored: the drawer lists the quests issued from it under **Issued from this
+faction**, and each one opens that contract in the ledger. Under that it lists
+**Standings held through it** — who stands where in the faction, and the chapter
+they have stood there since — and a name opens that person's sheet, where the
+standing is edited. The card and the ledger name each other, so you can start from
+either end.
+
 ## 2a. Which cards the board draws
 
 A story opens on the **chapter spine**: the reading order, left to right, and
@@ -175,11 +183,97 @@ canvas and the app makes a card already pointing at them; drop it on a card to
 point that card at them instead. Chapters are not listed, because the spine is the
 board.
 
+A quest written in the ledger with no card yet is listed too, in **Quests**, marked
+**Unplaced** and drawn with a dashed edge — nothing is on the board behind it yet.
+Drag one out and the app writes its card and points the quest at it in one step, so
+the tile becomes an ordinary one and the ledger's row stops saying **Card: none
+yet**. Dragging the same card out again copies the card, as it does for any other
+kind; the ledger is only involved the first time. The demo's **Where the Salt Goes**
+is one of these.
+
 Keep to the spine while you plan. A chapter card holds its summary, its roster, its
 checklist and its progression events, so a scene is planned without leaving the
 board; the layers underneath are for checking the shape of the whole story — who is
 where, what was learned, which quest started when — rather than for planning a
 scene.
+
+### The System’s box
+
+A LitRPG announcement is a box the characters see, so the `system` card is drawn as
+one: a dark panel with an inset edge, a gold hairline inside it, the header in small
+caps and the title under it.
+
+![A system card on the board, and its drawer with the type and its fields](screenshots/system-box.png)
+
+*The demo's level-up box, with its drawer open beside it. **Message type** decides
+what the drawer asks for and what the box draws; everything else in the drawer is
+the box on the card, drawn from what is typed above it. The demo keeps a notice
+beside it, **The Sea Keeps What You Spend**, so a board shows both shapes.*
+
+### What is the box announcing?
+
+Pick a **Message type** at the top of the drawer, and the fields under it change to
+match. The card's edge takes the kind's colour, so a board of boxes reads at a
+glance: cyan for a notice, green for a level, violet for a skill, amber for a quest,
+gold for an achievement.
+
+| Type | What the drawer asks for | What the box shows |
+| --- | --- | --- |
+| **System notice** | A title and a body | The announcement, as written |
+| **Level up & stats** | The level it moved from and to, the points to place, then a row per stat that changed | `Level 3 → 4`, the points as a chip, and each stat with its change beside it |
+| **Skill learn / evolve** | The skill's name as the title, its rank or tier, and the evolution note | `Rank 2 (Evolved)` and *Evolved from [Spark Step] via Deep Water immersion* |
+| **Quest offer / completion** | The quest's title, its status, its objectives with a tick each, and its rewards | The status banner, the objectives as a ticked checklist, and the rewards under them |
+| **Achievement unlocked** | A title and its rewards | **ACHIEVEMENT UNLOCKED** over the title and the reward line |
+
+The **label** is still the header — `[TIDAL LEDGER]`, `[SKILL]`, `[QUEST OFFER]` —
+and it is the one field above the type, because a box is named before it is written.
+Anything under a title that does not fit a field goes in the extra-text box, which is
+the bottom of the box.
+
+A stat row says `Agility: 12 → 13` in the box with `+1` beside it, and `12 → 13 (+1)`
+in a copy. A level that only moved one way still reads: `Level: 4` is a level
+reached, and a half-typed `3 →` keeps its arrow so the other box stays empty.
+
+### Copying the box out
+
+**Copy System Box** sits on the card face and in the drawer, and **Copy HTML** beside
+it. They put the box on the clipboard as a Markdown blockquote, or as a real
+`<blockquote>` for a site whose editor takes tags:
+
+```markdown
+> **[TIDAL LEDGER · GAIN]**
+>
+> **The Fourth Entry**
+>
+> **Level 3 → 4**
+>
+> 4 points to place
+>
+> - Insight: 14 → 15 (+1)
+> - Agility: 12 → 13 (+1)
+>
+> Two of the four are written where the ledger already has them. The rest are hers to place.
+```
+
+```html
+<blockquote>
+  <p><strong>[TIDAL LEDGER · GAIN]</strong></p>
+  <p><strong>The Fourth Entry</strong></p>
+  <p><strong>Level 3 → 4</strong></p>
+  <p>4 points to place</p>
+  <ul>
+    <li>Insight: 14 → 15 (+1)</li>
+    <li>Agility: 12 → 13 (+1)</li>
+  </ul>
+  <p>Two of the four are written where the ledger already has them. The rest are hers to place.</p>
+</blockquote>
+```
+
+Paste either into a Royal Road chapter, a Scribble Hub text box or a plain text file
+and the box still reads like a box. In HTML anything that looks like a tag is
+escaped, so a stat line of `<HP>` stays text. Each button says **Copied** when the
+clipboard took it and **Copy failed** when it did not, so a box never looks copied
+when it is not.
 
 ## 3. Chapters are the spine
 
@@ -483,8 +577,16 @@ the ledger can never say different things. Left on **Not ended** it is recorded 
 active; given an ending chapter, it is completed. The card lands on the board, and
 its dot is what you drag from to link it to the chapters it is about.*
 
+A quest also appears in the board's left rail while it has no card: that is the
+tile marked **Unplaced**, and dragging it out is the second way to place the card
+(see [the lists down the left edge](#the-lists-down-the-left-edge)).
+
 Each row names the **Card** it stands for on the board — click it and the board
-opens with that card in the inspector. A quest written here in the ledger has no
+opens with that card in the inspector. A row that names a **faction** names that
+faction's card in the same way, as a chip you can click: a faction has no form
+anywhere else, so the card is where it is edited, and its inspector lists the
+quests issued from it in return. If that card is in the Trash the row says
+**faction in the trash** rather than opening nothing. A quest written here in the ledger has no
 card yet, so the row says **Card: none yet** with **Place card** beside it, which
 puts a card on the board and links the two in one step that **Ctrl+Z** takes back.
 If the card went to the Trash the row says **Card: in the trash** instead of offering
@@ -638,6 +740,9 @@ Your work lives in a single file on your own machine (`Data location` in
 | See every card in the story | Graph toolbar: **Show all** in the **Layers** chips |
 | Go back to the chapters alone | Graph toolbar: **Chapters only** |
 | Add a person or a quest | Pick `character` or `quest` and **Add Node** for the full form |
+| Put a ledger-only quest on the board | Drag its **Unplaced** tile out of the rail, or **Place card** in the ledger |
+| Write a System announcement | A `system` card: pick its **Message type** in the drawer, then fill the fields it asks for |
+| Copy a System announcement | **Copy System Box** (Markdown) or **Copy HTML** on the card or in its drawer |
 | Give somebody a skill | Their sheet: **Add skill**, with the chapter it was learned in |
 | Put a skill on the board | On that skill's form, **New card** beside the card picker |
 | Draw a relationship | Drag from a card's circle onto another card |

@@ -47,6 +47,24 @@ export interface ChapterSkillChoice {
   rank: string | null;
 }
 
+// One standing held through a faction card, as the card's drawer lists it: who
+// holds it, the place in the author's words, and where it began.
+export interface FactionStandingRow {
+  id: string;
+  characterId: string;
+  characterName: string;
+  standing: string;
+  note: string | null;
+  chapterLabel: string | null;
+}
+
+// A quest record with no card on the board, as the rail catalog lists it. It is
+// the ledger row itself, so dragging it out can write the card and the link.
+export interface UnplacedQuest {
+  id: string;
+  title: string;
+}
+
 export interface QuestBadge {
   questId: string;
   title: string;
@@ -133,6 +151,14 @@ export type NodeData = {
   // The quests accepted or ended in this chapter, and where their badges lead.
   questBadges?: QuestBadge[];
   onOpenQuest?: (questId: string) => void;
+  // The quests that name this faction card as the one they were issued from. The
+  // card is the whole record of the faction, so the drawer lists what leans on it
+  // and opens each one where it is edited.
+  factionQuests?: { id: string; title: string }[];
+  // The standings sheets hold through this faction card, filled in when the
+  // canvas is drawn. Each row opens the character whose place it records.
+  factionStandings?: FactionStandingRow[];
+  onOpenStandingSheet?: (characterId: string) => void;
   // Continuity warnings that belong to this chapter, short enough for the card
   // and complete in the tooltip.
   continuityFlags?: ChapterContinuityFlag[];
@@ -196,6 +222,13 @@ const CARD_ONLY_NOUNS: Record<string, string> = {
  *  kinds that are a view of a record elsewhere (a person, a quest, a skill, an
  *  item) or a chapter, which carries its own fields on the card. */
 export function cardOnlyNote(type: string): string | null {
+  // A faction is named by the quests issued from it and by the standings sheets
+  // hang on it, both by this card's id, so the note says what leans on it rather
+  // than leaving the author to find out when a purge takes it.
+  if (type === 'faction') {
+    return 'This card is the record for this faction: its quests and standings name it, and nothing else in the story stores it.';
+  }
+
   const noun = CARD_ONLY_NOUNS[type];
 
   return noun
@@ -251,6 +284,11 @@ export const CAST_DRAG_TYPE = 'application/x-litrpg-character';
 // already on the board, hidden or not. A drop places that same card rather than
 // writing a second one.
 export const CARD_DRAG_TYPE = 'application/x-litrpg-card';
+
+// What an unplaced quest carries: the ledger row's id, not a card's, because the
+// whole point of the drag is that no card exists yet. A drop writes the card and
+// the link together.
+export const QUEST_DRAG_TYPE = 'application/x-litrpg-quest';
 
 // Suggested relation types for a connection. The field stays free text, because
 // a story's own verbs matter more than a fixed list.

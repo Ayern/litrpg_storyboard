@@ -83,10 +83,12 @@ import type {
   ChapterEventRow,
   ChapterSheetSkill,
   ChapterSkillChoice,
+  FactionStandingRow,
   IndexedEdge,
   IndexedNode,
   NodeData,
   NodeType,
+  UnplacedQuest,
 } from './domains/canvas/types';
 import type { CharacterCurrency, InventoryItem } from './domains/inventory/types';
 import type {
@@ -2160,11 +2162,14 @@ function App() {
   // them; where it sits is the author's to move.
   const placeQuestCard = async (
     quest: Quest,
-    onError: (message: string) => void
+    onError: (message: string) => void,
+    where?: { x: number; y: number }
   ): Promise<void> => {
     if (!currentStory) return;
 
-    const position = { x: 120 + Math.random() * 360, y: 120 + Math.random() * 240 };
+    const position = where
+      ? { x: Math.round(where.x), y: Math.round(where.y) }
+      : { x: 120 + Math.random() * 360, y: 120 + Math.random() * 240 };
 
     try {
       const node: any = await canvasApi.createGraphNode(
@@ -2217,6 +2222,20 @@ function App() {
     }
   };
 
+  // An unplaced quest dragged out of the rail is the same write as the ledger's
+  // Place card, landing where it was let go: the card is written, the record is
+  // pointed at it, and one Undo takes both back.
+  const placeQuestFromRail = (
+    questId: string,
+    position: { x: number; y: number }
+  ) => {
+    const quest = storyQuests.find(row => row.id === questId);
+
+    if (!quest) return;
+
+    void placeQuestCard(quest, setActionError, position);
+  };
+
   // Everything the Chapters tab and the chapter cards work out from the reading
   // order. The chapter logic itself lives in the narrative domain; these memos
   // only say when it is worth running again.
@@ -2225,6 +2244,17 @@ function App() {
   // quests domain, because the ledger and the chapter cards read the same one.
   const questBadgesByChapter = useMemo(
     () => questsByChapter(storyQuests),
+    [storyQuests]
+  );
+
+  // The quests the board has no card for, which the rail lists so a contract
+  // written in the ledger can still be dragged onto the board.
+  const unplacedQuests = useMemo<UnplacedQuest[]>(
+    () =>
+      storyQuests
+        .filter(quest => !quest.card_node_id)
+        .map(quest => ({ id: quest.id, title: quest.title }))
+        .sort((a, b) => a.title.localeCompare(b.title)),
     [storyQuests]
   );
 
@@ -8261,6 +8291,52 @@ function App() {
       holders.sort((a, b) => a.characterName.localeCompare(b.characterName));
     }
 
+    // A faction card is the whole record of its faction, so it is drawn with the
+    // quests that name it: the card opens them, the way the ledger's chip opens
+    // the card. One pass over the quests rather than a read per card.
+    const questsByFaction = new Map<string, { id: string; title: string }[]>();
+
+    for (const quest of storyQuests) {
+      if (!quest.faction_node_id) continue;
+
+      const named = questsByFaction.get(quest.faction_node_id) ?? [];
+      named.push({ id: quest.id, title: quest.title });
+      questsByFaction.set(quest.faction_node_id, named);
+    }
+
+    for (const named of questsByFaction.values()) {
+      named.sort((a, b) => a.title.localeCompare(b.title));
+    }
+
+    // The standings sheets keep through a faction card, in the same pass shape:
+    // the drawer names who stands where and opens that sheet, and a standing held
+    // by a character in the trash has no sheet to open, so it is left out.
+    const standingsByFaction = new Map<string, FactionStandingRow[]>();
+
+    for (const standing of storyFactionStandings) {
+      if (!standing.faction_node_id) continue;
+
+      const character = castById.get(standing.character_id);
+      if (!character) continue;
+
+      const held = standingsByFaction.get(standing.faction_node_id) ?? [];
+      held.push({
+        id: standing.id,
+        characterId: standing.character_id,
+        characterName: character.name,
+        standing: standing.standing,
+        note: standing.note,
+        chapterLabel: standing.since_chapter_id
+          ? nodeLabels.get(standing.since_chapter_id) ?? null
+          : null,
+      });
+      standingsByFaction.set(standing.faction_node_id, held);
+    }
+
+    for (const held of standingsByFaction.values()) {
+      held.sort((a, b) => a.characterName.localeCompare(b.characterName));
+    }
+
     return nodes.map(node => {
       const characterId = node.data.characterId;
       // A card whose layer is switched off keeps its position, its lines and
@@ -8276,6 +8352,8 @@ function App() {
       const chapterTasks = chapterTasksByChapter.get(node.id) ?? [];
       const chapterEvents = chapterEventsByChapter.get(node.id) ?? [];
       const chapterSheetSkills = sheetSkillsByChapter.get(node.id) ?? [];
+      const factionQuests = questsByFaction.get(node.id) ?? [];
+      const factionStandings = standingsByFaction.get(node.id) ?? [];
       const isChapterCard = node.data.nodeType === 'chapter';
       const continuityFlags = [
         ...(inventoryFlagsByChapter.get(node.id) ?? []),
@@ -8298,6 +8376,8 @@ function App() {
         itemHolders.length === 0 &&
         chapterCast.length === 0 &&
         chapterQuests.length === 0 &&
+        factionQuests.length === 0 &&
+        factionStandings.length === 0 &&
         continuityFlags.length === 0
       ) {
         return node;
@@ -8403,6 +8483,14 @@ function App() {
                 onOpenQuest: openQuest,
               }
             : {}),
+          ...(node.data.nodeType === 'faction'
+            ? {
+                factionQuests,
+                onOpenQuest: openQuest,
+                factionStandings,
+                onOpenStandingSheet: openCharacterSheet,
+              }
+            : {}),
           ...(continuityFlags.length > 0
             ? {
                 continuityFlags,
@@ -8440,6 +8528,8 @@ function App() {
     inventoryFlagsByChapter,
     progressFlagsByChapter,
     questBadgesByChapter,
+    storyQuests,
+    storyFactionStandings,
     openQuest,
     openCharacterSheet,
     openChapterCastSheet,
@@ -9716,6 +9806,8 @@ function App() {
             nodeUnderPointer={nodeUnderPointer}
             dropCastMember={dropCastMember}
             copyCardFromRail={copyCardFromRail}
+            placeQuestFromRail={placeQuestFromRail}
+            unplacedQuests={unplacedQuests}
             selectedEdgeId={selectedEdgeId}
             closeEdge={closeEdge}
             selectedEdge={selectedEdge}

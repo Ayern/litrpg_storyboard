@@ -2,8 +2,13 @@ import { useState } from 'react';
 import type { Node } from 'reactflow';
 
 import type { Character, CharacterStat } from '../shared/types';
-import { CARD_DRAG_TYPE, CAST_DRAG_TYPE, NODE_STAT_BADGES } from './types';
-import type { NodeData, NodeType } from './types';
+import {
+  CARD_DRAG_TYPE,
+  CAST_DRAG_TYPE,
+  NODE_STAT_BADGES,
+  QUEST_DRAG_TYPE,
+} from './types';
+import type { NodeData, NodeType, UnplacedQuest } from './types';
 
 // Everything the story already holds, in sections down the side of the board.
 //
@@ -34,6 +39,10 @@ export interface CardSectionsProps {
   characters: Character[];
   castStats: Record<string, CharacterStat[]>;
   nodes: Node<NodeData>[];
+  // Quest records the board has no card for. They are listed with the quest
+  // cards and marked, because a quest written in the ledger is still a quest:
+  // dragging one out is how it gets a card.
+  unplacedQuests: UnplacedQuest[];
   draggingCastId: string | null;
   setDraggingCastId: React.Dispatch<React.SetStateAction<string | null>>;
   setDropTargetNodeId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -64,6 +73,7 @@ export function CardSections({
   characters,
   castStats,
   nodes,
+  unplacedQuests,
   draggingCastId,
   setDraggingCastId,
   setDropTargetNodeId,
@@ -139,8 +149,11 @@ export function CardSections({
 
       {CARD_SECTIONS.map(option => {
         const names = catalogue(nodes, option.type);
+        // An unplaced quest is a ledger row, not a card, so it is listed by the
+        // tile that makes its card rather than by a name copied from one.
+        const unplaced = option.type === 'quest' ? unplacedQuests : [];
 
-        if (names.length === 0) return null;
+        if (names.length === 0 && unplaced.length === 0) return null;
 
         return (
           <section
@@ -148,10 +161,31 @@ export function CardSections({
             className="card-section"
             aria-label={option.label}
           >
-            {sectionHeader(option.type, option.label, names.length)}
+            {sectionHeader(option.type, option.label, names.length + unplaced.length)}
 
             {!closed[option.type] && (
               <div className="card-section-tiles">
+                {unplaced.map(quest => (
+                  <div
+                    key={`unplaced-${quest.id}`}
+                    className="card-tile quest unplaced"
+                    draggable
+                    data-unplaced-quest={quest.id}
+                    title={`Drag “${quest.title}” onto the board to place its card`}
+                    onDragStart={event => {
+                      event.dataTransfer.setData(QUEST_DRAG_TYPE, quest.id);
+                      event.dataTransfer.effectAllowed = 'copy';
+                    }}
+                  >
+                    <span className="card-tile-label">{quest.title}</span>
+                    <span
+                      className="card-tile-badge"
+                      title="This quest is in the ledger with no card on the board"
+                    >
+                      Unplaced
+                    </span>
+                  </div>
+                ))}
                 {names.map(card => (
                   <div
                     key={card.id}

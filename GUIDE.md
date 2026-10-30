@@ -357,6 +357,15 @@ name match breaks the first time either side is renamed:
 | skill | `skill_definitions` | `skill_definitions.node_id` |
 | item | `character_inventory` | `character_inventory.node_id` |
 
+Two columns point the other way, *at* a card, because a faction has no table of its
+own: `quests.faction_node_id` and `faction_standings.node_id` both hold a `faction`
+node's id. That is why the ledger draws a quest's faction as a button and not as
+text — it calls the same `onOpenCard` the **Card:** chip does — and why the card's
+drawer lists the quests issued from it (`factionQuests`, built once in `App.tsx`
+from `storyQuests` and handed to the card as data) with an `onOpenQuest` chip back
+into the ledger. A faction card in the Trash reads as **faction in the trash**, and
+a purge clears the columns through `ON DELETE SET NULL`.
+
 `quests.card_node_id` is new in schema v35 and was back-filled once, from the label
 match the board had been relying on, so a story written before it keeps the pairing
 it was already drawing. The column is `ON DELETE SET NULL` for a purge and left
@@ -366,6 +375,61 @@ card is **in the trash** and a restore puts the chip back. A partial unique inde
 refuses a card of another kind or one another quest already claims. The link is
 never written by `add_quest`: a quest made in the ledger has no card until the board
 places one, and that is a state the ledger shows rather than papers over.
+
+### The System's box
+
+A `system` card is not a note with an outline: it is the announcement a reader
+meets, and what it is announcing decides what it needs — a level that moved, a
+quest's objectives, a skill's evolution. The feature is three files, and the reason
+there is no migration behind it is the format in the first one.
+
+- `systemMessage.ts` holds the shape. `SystemMessage` has every kind's fields on
+  it, `systemMessageOf(label, content)` reads a card into one, and
+  `serializeSystemMessage` writes it back into `nodes.content`. The card still
+  stores text: the **label** is the header and the notes are the message under the
+  small line format below.
+- No new column, so one Save is still one `update_node` and one history step, and
+  Undo takes the whole box back. A card written before the format — a title on the
+  first line, the body under it — reads as a `notice`, which is what it was, and the
+  first edit converts it.
+
+```
+Type: level_up
+Title: The Tide Advances
+Level: 3 → 4
+Points: 2
+Stat: Agility | 12 → 13
+---
+Flavour text, any length.
+```
+
+- `systemBlocks(message)` is the body as `paragraph`/`bullets` parts, and the two
+  exports are built from it so Markdown and HTML can never say different things.
+  `systemMessageMarkdown` quotes one `>` line per line; `systemMessageHtml` writes a
+  real `<blockquote>`, with `<ul><li>` for stats and objectives and every part passed
+  through `escapeHtml`, so a stat line of `<HP>` stays text. Stats are the one place
+  the two disagree on purpose: Markdown writes `Agility: 12 → 13 (+1)` and HTML puts
+  the change beside the row.
+- `SystemMessageForm.tsx` is the drawer's fields: the type selector, and only the
+  inputs that type asks for. It edits a parsed message and hands back a serialized
+  one, so it never holds state of its own — the card's notes are the state. The
+  generics are written so a half-typed entry round-trips: `Level: 3 →` keeps which
+  side was typed, and `Stat: Agility |` keeps a name that has no value yet, because
+  a lone value would otherwise read as the wrong column.
+- `SystemBox.tsx` draws the box (`SystemBoxFace`) in the shape its kind asks for and
+  copies it (`CopySystemBoxButton`, whose `format` prop picks Markdown or HTML, each
+  button with its own **Copied** / **Copy failed**). `GraphNode` draws it in place of
+  the plain label and puts `data-system-kind` on the card, which is what the edge
+  colours hang off in `styles.css`; the drawer draws it under the fields, from
+  `nodeLabelDraft` and `nodeContentDraft`, so it copies what is on screen rather than
+  the last saved row.
+
+![The System's box on a card, and its fields in the inspector](screenshots/system-box.png)
+
+*The demo's level-up box, nudged clear of the legend. The type decides the fields,
+the fields decide the box, and the box is what the two buttons copy. The demo seeds
+this card as the typed form and keeps its notice beside it, so the guide has one of
+each to photograph.*
 
 ### Clicking a line instead of a card
 
@@ -580,6 +644,20 @@ the other. The step it records undoes to `delete_node` and redoes to
 `restoreDeleted`, the same pair a card made by **Add Node** uses. The original node
 is never touched: no position write, no new edge, nothing.
 
+One entry in the rail is not a card at all. A quest written in the ledger has no
+card until somebody places one, so `CardSections` is also handed `unplacedQuests`
+— the `storyQuests` rows whose `card_node_id` is null, worked out once in
+`App.tsx` — and lists them under **Quests** as a dashed tile marked **Unplaced**.
+Such a tile carries its ledger row under `QUEST_DRAG_TYPE`
+(`application/x-litrpg-quest`) rather than a card id, because there is no card to
+copy yet: `dropUnplacedQuest` asks the board for the point, and
+`placeQuestFromRail` is `placeQuestCard` with that position passed in. It writes the
+card with `create_graph_node`, points the record at it with `link_quest_card`, and
+records one history step whose undo is link-first, card-second — the same write the
+ledger's **Place card** button makes, which is why the two cannot disagree about
+what a placed quest is. Once linked, the quest has a card and the tile becomes an
+ordinary one.
+
 Clicking a tile opens the card through the same `selectNode` a click on the board
 uses — which is what brings the layer back. A tile has no delete of its own; a card
 is removed where it is, on the board, and the Trash keeps it. Because the list is a
@@ -694,6 +772,9 @@ its name behind, not its description.
 | You want to… | Start at |
 | --- | --- |
 | Add a card type, colour or caption | `src/domains/canvas/types.ts` (`nodeTypes`) and `.graph-node` rules in `src/styles.css` |
+| Change what a copied System box looks like | `systemMessageMarkdown` or `systemMessageHtml` in `src/domains/canvas/systemMessage.ts` |
+| Add a kind of System box | `systemKinds`, its block in `systemBlocks`, and its fields in `SystemMessageForm.tsx` |
+| Put another kind of record in the rail before it has a card | `unplacedQuests` in `CardSections.tsx`, and a drag type beside `QUEST_DRAG_TYPE` |
 | Change what a connection does | `onConnect` / `onConnectEnd` / `dropCastMember` in `src/App.tsx`, then the api function it calls |
 | Change what a card's drawer shows | `src/domains/canvas/GraphTab.tsx`, and `GraphNode.tsx` for the card itself |
 | Change which cards the board draws | `src/domains/canvas/layers.ts`, and the `canvasNodes` / `drawnEdges` memos in `src/App.tsx` |
@@ -760,6 +841,7 @@ All of them are in [`screenshots/`](screenshots/) and are images of the running 
 | 20 | The same form on a sacrifice, with the keep-as-record toggle | C | [`screenshots/chapter-event-sacrifice.png`](screenshots/chapter-event-sacrifice.png) |
 | 21 | The whole web at once, with every layer drawn | C | [`screenshots/canvas-web.png`](screenshots/canvas-web.png) |
 | 22 | The same board zoomed to a scale the cards can be read at | C | [`screenshots/canvas-layers.png`](screenshots/canvas-layers.png) |
+| 23 | The System's box on its card, and the same box in the inspector | C | [`screenshots/system-box.png`](screenshots/system-box.png) |
 
 An anchor point with no picture, and why: **a drag in progress** — a cast name held
 over the board, or a connection being pulled out of a card's handle. A screenshot

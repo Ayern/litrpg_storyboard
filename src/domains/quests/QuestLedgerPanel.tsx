@@ -948,9 +948,12 @@ export function QuestLedgerPanel({
                   ? (characterNameById.get(quest.giver_character_id) ??
                     'cast in the trash')
                   : null;
-                const factionName = quest.faction_node_id
-                  ? (factions.find(faction => faction.id === quest.faction_node_id)
-                      ?.label ?? 'faction in the trash')
+                // A faction is stored as nothing but its card, so the row names
+                // that card and opens it, the way the quest's own card is
+                // treated: there is no form elsewhere for the author to hunt for.
+                const factionCard = quest.faction_node_id
+                  ? (factions.find(faction => faction.id === quest.faction_node_id) ??
+                    null)
                   : null;
                 const warnings = questWarningsByQuest.get(quest.id) ?? [];
                 // The card this record stands for, if it is on the board. Three
@@ -1043,7 +1046,23 @@ export function QuestLedgerPanel({
                         )}
                       </span>
                       {giverName && <span>Giver: {giverName}</span>}
-                      {factionName && <span>Faction: {factionName}</span>}
+                      {quest.faction_node_id && (
+                        <span className="quest-card-link">
+                          Faction:{' '}
+                          {factionCard ? (
+                            <button
+                              type="button"
+                              className="quest-card-chip"
+                              title={`Open “${factionCard.label}” on the board`}
+                              onClick={() => onOpenCard(factionCard.id)}
+                            >
+                              {factionCard.label}
+                            </button>
+                          ) : (
+                            <span className="quest-card-missing">faction in the trash</span>
+                          )}
+                        </span>
+                      )}
                     </div>
 
                     {quest.description && (
@@ -1082,6 +1101,14 @@ export function QuestLedgerPanel({
 
                       <ul className="quest-reward-list">
                         {quest.rewards.map(reward => {
+                          // A faction standing points at a faction card, and that
+                          // card is the whole record, so it opens from here too.
+                          const rewardFaction =
+                            reward.reward_type === 'faction_standing'
+                              ? (factions.find(
+                                  faction => faction.id === reward.target_id
+                                ) ?? null)
+                              : null;
                           const targetName =
                             reward.reward_type === 'faction_standing'
                               ? (factions.find(
@@ -1099,7 +1126,20 @@ export function QuestLedgerPanel({
                                 {questRewardLabels[reward.reward_type] ??
                                   reward.reward_type}
                               </span>
-                              <span className="quest-reward-target">{targetName}</span>
+                              <span className="quest-reward-target">
+                                {rewardFaction ? (
+                                  <button
+                                    type="button"
+                                    className="quest-card-chip"
+                                    title={`Open “${rewardFaction.label}” on the board`}
+                                    onClick={() => onOpenCard(rewardFaction.id)}
+                                  >
+                                    {rewardFaction.label}
+                                  </button>
+                                ) : (
+                                  targetName
+                                )}
+                              </span>
                               <span className="quest-reward-details">
                                 {reward.amount_or_details?.trim() || 'no details'}
                               </span>

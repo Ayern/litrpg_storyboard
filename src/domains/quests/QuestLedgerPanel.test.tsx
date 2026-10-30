@@ -383,6 +383,48 @@ describe('a quest it shows', () => {
     );
   });
 
+  it('opens the faction card a contract was issued from', async () => {
+    const user = userEvent.setup();
+    const onOpenCard = vi.fn();
+
+    renderLedger({
+      quests: [quest('q-1', { faction_node_id: 'f-1' })],
+      // A faction is stored as its card and nothing else, so the row names the
+      // card and opens it the way a quest's own card is opened.
+      cards: [{ id: 'f-1', label: 'The Guild' }],
+      onOpenCard,
+    });
+
+    const row = card('The Ledger');
+    expect(row).toHaveTextContent('Faction: The Guild');
+
+    await user.click(within(row).getByRole('button', { name: 'The Guild' }));
+
+    expect(onOpenCard).toHaveBeenCalledWith('f-1');
+  });
+
+  it('opens a faction card from the standing a reward pays it', async () => {
+    const user = userEvent.setup();
+    const onOpenCard = vi.fn();
+
+    renderLedger({
+      quests: [
+        quest('q-1', {
+          rewards: [
+            reward('r-1', { reward_type: 'faction_standing', target_id: 'f-1' }),
+          ],
+        }),
+      ],
+      cards: [{ id: 'f-1', label: 'The Guild' }],
+      onOpenCard,
+    });
+
+    const row = card('The Ledger');
+    await user.click(within(row).getByRole('button', { name: 'The Guild' }));
+
+    expect(onOpenCard).toHaveBeenCalledWith('f-1');
+  });
+
   it('lists the continuity advisories the panel was handed', () => {
     const warnings: QuestWarning[] = [
       {
