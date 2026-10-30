@@ -65,6 +65,17 @@ export function deleteQuest(id: string, actor: string) {
   return invoke<void>('delete_quest', { id, user: actor });
 }
 
+// Points a quest at the card that stands for it on the board, or clears the link
+// with a null card id. The link is by id, so a rename on either side keeps it, and
+// a card in the trash keeps it until the card is purged.
+export function linkQuestCard(questId: string, cardNodeId: string | null, actor: string) {
+  return invoke<Quest>('link_quest_card', {
+    questId,
+    cardNodeId,
+    user: actor,
+  });
+}
+
 export function addQuestReward(
   questId: string,
   rewardType: string,

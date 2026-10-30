@@ -23,6 +23,7 @@ import {
   CARD_DRAG_TYPE,
   CAST_DRAG_TYPE,
   canvasCreateNodeTypes,
+  cardOnlyNote,
   edgeRelationTypes,
   isCanvasCreateKind,
   nodeTypes,
@@ -658,6 +659,14 @@ export function GraphTab({
                   </button>
                 </div>
   
+                {/* A card nothing else stores says so, so an author never has to
+                    wonder whether half of it is written somewhere else. */}
+                {cardOnlyNote(selectedNode.data.nodeType) && (
+                  <p className="node-drawer-record">
+                    {cardOnlyNote(selectedNode.data.nodeType)}
+                  </p>
+                )}
+
                 <label className="node-drawer-label" htmlFor="inspector-label">
                   Label
                 </label>

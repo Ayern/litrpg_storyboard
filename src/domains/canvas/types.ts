@@ -171,13 +171,37 @@ export const nodeTypes = [
 
 export type NodeType = typeof nodeTypes[number];
 
-// The kinds the toolbar can make a new card of. A skill card is not one of
-// them: a skill is written on a sheet, against the chapter that grants it, and
-// a card made here recorded nothing on that chapter. Boards that already hold
-// skill cards still draw and open them.
-export const canvasCreateNodeTypes: readonly NodeType[] = nodeTypes.filter(
-  type => type !== 'skill'
-);
+// The kinds the toolbar can make a new card of: every one of them. A skill card
+// written here is the shared definition — the name and what it does — with nobody
+// holding it yet, so an author can place a skill before anyone learns it. Who
+// holds it, at what rank and in which chapter stays the sheet's business, and the
+// card's drawer adds holders the same way it does for a card made from a sheet.
+export const canvasCreateNodeTypes: readonly NodeType[] = nodeTypes;
+
+// The kinds with no record behind the card. A location, an idea, an event, a plot,
+// the story's system notes, a faction and the odds and ends are stored as their
+// card and nowhere else, so the drawer says so plainly and an author never has to
+// wonder whether something was meant to be filled in elsewhere.
+const CARD_ONLY_NOUNS: Record<string, string> = {
+  location: 'location',
+  event: 'event',
+  plot: 'plot',
+  idea: 'idea',
+  system: 'system note',
+  misc: 'note',
+  faction: 'faction',
+};
+
+/** What the inspector says about a card nothing else stores, or `null` for the
+ *  kinds that are a view of a record elsewhere (a person, a quest, a skill, an
+ *  item) or a chapter, which carries its own fields on the card. */
+export function cardOnlyNote(type: string): string | null {
+  const noun = CARD_ONLY_NOUNS[type];
+
+  return noun
+    ? `This card is the record for this ${noun}: nothing else in the story stores it.`
+    : null;
+}
 
 export function isNodeType(value: string): value is NodeType {
   return (nodeTypes as readonly string[]).includes(value);

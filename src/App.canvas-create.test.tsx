@@ -171,6 +171,27 @@ beforeEach(() => {
           created_by: 'Ada',
           created_at: '2026-10-22T12:00:00Z',
           updated_at: '2026-10-22T12:00:00Z',
+          card_node_id: null,
+          rewards: [],
+        };
+      case 'link_quest_card':
+        // The form writes the card and the link together, so the command has to
+        // answer with the quest the ledger then holds.
+        return {
+          id: args.questId,
+          story_id: story.id,
+          title: 'The Ashen Key',
+          giver_character_id: 'char-1',
+          faction_node_id: null,
+          accepted_chapter_id: 'n1',
+          completed_chapter_id: 'n2',
+          status: 'completed',
+          description: null,
+          notes: 'The key is a lie.',
+          created_by: 'Ada',
+          created_at: '2026-10-22T12:00:00Z',
+          updated_at: '2026-10-22T12:00:00Z',
+          card_node_id: args.cardNodeId ?? null,
           rewards: [],
         };
       case 'add_skill':
@@ -318,6 +339,12 @@ describe('creating canvas cards from their real forms', () => {
     expect(lastCall('create_graph_node')).toMatchObject({
       nodeType: 'quest',
       label: 'The Ashen Key',
+    });
+    // The record is pointed at the card that was just made, so the ledger has
+    // something to open rather than a quest with no card.
+    expect(lastCall('link_quest_card')).toMatchObject({
+      questId: 'quest-1',
+      cardNodeId: expect.any(String),
     });
     expect(canvasCard('node-1')).toHaveTextContent('The Ashen Key');
   });

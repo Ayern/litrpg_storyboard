@@ -60,18 +60,18 @@ The board is where you think. A card is one thing in the story, and the picker i
 the toolbar says what kind you are about to add:
 
 - **chapter**, **idea**, **location**, **event**, **plot**, **system**, **item**,
-  **faction** and **misc** are plain notes. Type a label, press **Add Node**, and
-  drag it where you want it.
+  **faction** and **misc** are plain cards. Type a label, press **Add Node**, and
+  drag it where you want it. There is no separate record behind them: the card is
+  the whole of the place, the idea or the note, and the inspector says so when you
+  open it.
 - **character** and **quest** open a short form instead, because those cards stand
   for real records — a person, a contract. The form asks for the few things that
   make the record, creates it, and puts the card on the board already pointed at
   it.
-
-A **skill** is not made here. A skill is written on the sheet of whoever learns it,
-against the chapter that grants it, and the chapter's card then shows it in its
-ledger by itself. Skill cards that are already on a board still draw, open their
-holders and take connections; the board just no longer starts one that recorded
-nothing anywhere.
+- **skill** makes a card with no holders, which is how a skill is planned before
+  anyone learns it. See [section 6](#6-skills-that-travel-between-people): the first
+  holder turns the card into the shared skill, and its drawer is where holders are
+  added.
 
 ![The Graph tab with the demo story on it, drawn as the chapter spine](screenshots/canvas-board.png)
 
@@ -99,6 +99,12 @@ Two more moves worth trying:
 - **Select a card or a line and press Delete** (or `Backspace`) to remove it. The
   card's lines go with it, and everything lands in the Trash, where **Undo** or
   **Restore** can bring it back.
+
+Clicking a card opens the inspector beside the board. For a person, a quest, a skill
+or an item it edits the card that stands in front of a record kept elsewhere — the
+sheet, the ledger, the skill's holders, the inventory. For a place, a plot, an idea,
+an event, a faction or a note it is the record: the drawer says so plainly, so you
+never go looking for a second half that was never missing.
 
 ## 2a. Which cards the board draws
 
@@ -394,10 +400,14 @@ canvas as well as the other way round. **Learned in The Low Tide** on the same
 row does the same for the chapter card, so a skill's row is a way around the whole
 story without a trip to the Graph tab first.
 
-The board itself no longer makes skill cards: a new skill belongs on a sheet, and
-the chapter it names shows it in that chapter's ledger straight away. A card put on
-a board in an earlier version still opens, still lists its holders and still takes a
-connection from a character card.
+The board makes them too, for the times a skill exists before anyone has it:
+choose `skill` in the toolbar's type list, type a name and press **Add Node**. The
+card lands on the board with no holders, which is the truth — nobody has learned it
+yet — and the first holder is what turns it into a shared definition: whoever
+learns it takes the card's name and effect, and the card lists them from then on.
+So a skill can be planned on the board and handed out later, or written on a sheet
+first and given a card after; either way there is one skill and one card, and the
+holder rows keep their own rank and chapter.
 
 ![The skill card's drawer, with its holders and the form for adding one](screenshots/card-inspector.png)
 
@@ -472,6 +482,16 @@ writes the ledger row and the card together, so a quest on the board and a quest
 the ledger can never say different things. Left on **Not ended** it is recorded as
 active; given an ending chapter, it is completed. The card lands on the board, and
 its dot is what you drag from to link it to the chapters it is about.*
+
+Each row names the **Card** it stands for on the board — click it and the board
+opens with that card in the inspector. A quest written here in the ledger has no
+card yet, so the row says **Card: none yet** with **Place card** beside it, which
+puts a card on the board and links the two in one step that **Ctrl+Z** takes back.
+If the card went to the Trash the row says **Card: in the trash** instead of offering
+a second one: restore it there and the chip comes back, because the link is by id,
+not by name. A quest and its card are never the same row — deleting the card leaves
+the contract and its rewards alone, and deleting the quest leaves the card on the
+board.
 
 **Rewards** are the rows under the quest: XP, an item, a stat gain or a faction
 standing, each with the character or faction it goes to and your own wording. They

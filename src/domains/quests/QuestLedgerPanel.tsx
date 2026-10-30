@@ -77,6 +77,12 @@ export interface QuestLedgerPanelProps {
   chapters: LedgerChoice[];
   factions: LedgerChoice[];
   characters: Character[];
+  // The quest cards that are on the board right now. A quest names one by id, so
+  // a row whose card is not in this list is a record with nothing to open.
+  cards: LedgerChoice[];
+  onOpenCard: (cardId: string) => void;
+  // Writes the card and the link for a quest that has none, as one undoable step.
+  placeCard: (quest: Quest, onError: (message: string) => void) => Promise<void>;
 
   // The two reads a payout reaches: income rows, and what it puts in a bag.
   characterProgress: CharacterProgress[];
@@ -101,6 +107,9 @@ export function QuestLedgerPanel({
   chapters,
   factions,
   characters,
+  cards,
+  onOpenCard,
+  placeCard,
   characterProgress,
   reloadCharacterProgress,
   reloadInventory,
@@ -944,6 +953,13 @@ export function QuestLedgerPanel({
                       ?.label ?? 'faction in the trash')
                   : null;
                 const warnings = questWarningsByQuest.get(quest.id) ?? [];
+                // The card this record stands for, if it is on the board. Three
+                // states, and the row says which one it is in: a live card to
+                // open, a card the trash is holding, or no card at all.
+                const card = quest.card_node_id
+                  ? (cards.find(entry => entry.id === quest.card_node_id) ?? null)
+                  : null;
+                const cardIsTrashed = Boolean(quest.card_node_id) && !card;
                 const focused = focus?.questId === quest.id;
                 const statusKey = quest.status.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
                 const { allApplied, anyApplied } = rewardApplicationState(quest);
@@ -984,6 +1000,36 @@ export function QuestLedgerPanel({
                     </div>
 
                     <div className="quest-card-meta">
+                      <span className="quest-card-link">
+                        {card ? (
+                          <>
+                            Card:{' '}
+                            <button
+                              type="button"
+                              className="quest-card-chip"
+                              title={`Open “${card.label}” on the board`}
+                              onClick={() => onOpenCard(card.id)}
+                            >
+                              {card.label}
+                            </button>
+                          </>
+                        ) : cardIsTrashed ? (
+                          <>
+                            Card: <span className="quest-card-missing">in the trash</span>
+                          </>
+                        ) : (
+                          <>
+                            Card: <span className="quest-card-missing">none yet</span>
+                            <button
+                              type="button"
+                              title="Place a card for this quest on the board"
+                              onClick={() => void placeCard(quest, setQuestError)}
+                            >
+                              Place card
+                            </button>
+                          </>
+                        )}
+                      </span>
                       <span>
                         Accepted in <strong>{acceptedLabel}</strong>
                       </span>

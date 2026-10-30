@@ -958,6 +958,19 @@ body {
   margin-top: 4px;
 }
 
+/* What a card with no record behind it is: the drawer says the card is the whole
+   of the thing, so an author does not go looking for a form that never existed. */
+.node-drawer-record {
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  border-left: 2px solid #4a4a52;
+  background: #2b2b2e;
+  border-radius: 0 4px 4px 0;
+  color: #a9a9b0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .node-drawer-cast {
   display: flex;
   flex-direction: column;
@@ -6217,6 +6230,43 @@ body {
 .quest-card-meta strong {
   color: #c9c9c9;
   font-weight: 600;
+}
+
+/* The card a quest stands for: a chip that opens it, or the state that says why
+   there is nothing to open. */
+.quest-card-chip {
+  background: #31313a;
+  border: 1px solid #44444f;
+  border-radius: 3px;
+  color: #d5d5dc;
+  font-size: 11px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+
+.quest-card-chip:hover {
+  border-color: #5c5c6b;
+  color: #fff;
+}
+
+.quest-card-missing {
+  color: #b08a5a;
+}
+
+.quest-card-link button:not(.quest-card-chip) {
+  margin-left: 5px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #ddd;
+  font-size: 11px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+
+.quest-card-link button:not(.quest-card-chip):hover {
+  border-color: #5c5c6b;
+  color: #fff;
 }
 
 .quest-description,

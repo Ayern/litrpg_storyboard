@@ -8,6 +8,10 @@ export interface Quest {
   title: string;
   giver_character_id: string | null;
   faction_node_id: string | null;
+  // The quest card that stands for this record on the board. Null, or pointing at
+  // a card in the trash, is a state the ledger says out loud rather than hiding:
+  // the record is real, but there is nothing on the canvas to open.
+  card_node_id?: string | null;
   accepted_chapter_id: string | null;
   completed_chapter_id: string | null;
   status: string;

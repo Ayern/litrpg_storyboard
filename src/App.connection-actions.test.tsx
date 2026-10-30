@@ -1238,10 +1238,11 @@ describe('connection actions', () => {
     const user = await openCanvas();
     const type = screen.getByTitle('The kind of node the Add button creates');
 
-    // A skill card is no longer made from the board; a quest still is.
+    // Every kind is made from the board, a skill included: a skill card placed
+    // here is the definition, and its drawer is where holders are added.
     expect(
-      within(type).queryByRole('option', { name: 'skill' })
-    ).not.toBeInTheDocument();
+      within(type).getByRole('option', { name: 'skill' })
+    ).toBeInTheDocument();
 
     await user.selectOptions(type, 'quest');
     await user.click(screen.getByRole('button', { name: 'spawn from character' }));

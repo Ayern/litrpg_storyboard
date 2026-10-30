@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from './App';
@@ -135,6 +135,7 @@ interface QuestRow {
   title: string;
   giver_character_id: string | null;
   faction_node_id: string | null;
+  card_node_id: string | null;
   accepted_chapter_id: string | null;
   completed_chapter_id: string | null;
   status: string;
@@ -182,6 +183,7 @@ const questRow = (overrides: Partial<QuestRow> = {}): QuestRow => ({
   title: 'The Ledger',
   giver_character_id: 'char-1',
   faction_node_id: 'n4',
+  card_node_id: null,
   accepted_chapter_id: 'n1',
   completed_chapter_id: null,
   status: 'active',
@@ -285,6 +287,18 @@ beforeEach(() => {
           status: args.status,
           description: args.description ?? null,
           notes: args.notes ?? null,
+        };
+        quests = quests.map(quest => (quest.id === updated.id ? updated : quest));
+        return { ...updated, rewards: updated.rewards.map(r => ({ ...r })) };
+      }
+      // The link is by id, so the quest the ledger holds answers with the card
+      // the board is showing.
+      case 'link_quest_card': {
+        const existing = quests.find(quest => quest.id === args.questId);
+        if (!existing) return null;
+        const updated: QuestRow = {
+          ...existing,
+          card_node_id: args.cardNodeId ?? null,
         };
         quests = quests.map(quest => (quest.id === updated.id ? updated : quest));
         return { ...updated, rewards: updated.rewards.map(r => ({ ...r })) };
@@ -484,6 +498,41 @@ describe('the quest ledger', () => {
     );
 
     expect(status).toHaveValue('failed');
+  });
+
+  it('places a card for a quest that has none, as one undoable step', async () => {
+    quests = [questRow({ card_node_id: null })];
+
+    const user = await openQuests();
+
+    expect(questCard('The Ledger')).toHaveTextContent('Card: none yet');
+
+    await user.click(
+      within(questCard('The Ledger')).getByRole('button', { name: 'Place card' })
+    );
+
+    expect(lastCall('create_graph_node')).toMatchObject({
+      storyId: story.id,
+      nodeType: 'quest',
+      label: 'The Ledger',
+    });
+    expect(lastCall('link_quest_card')).toMatchObject({
+      questId: 'quest-1',
+      cardNodeId: 'n5',
+    });
+
+    // The ledger names the card now, and clicking it opens the board.
+    await waitFor(() =>
+      expect(questCard('The Ledger')).toHaveTextContent('Card: The Ledger')
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Graph' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    // One step, both halves: the link goes back to nothing and the card is
+    // deleted with it.
+    expect(lastCall('link_quest_card')).toMatchObject({ cardNodeId: null });
+    expect(lastCall('delete_node')).toMatchObject({ id: 'n5' });
   });
 
   it('makes a faction card from the quest form', async () => {

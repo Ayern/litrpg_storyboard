@@ -1884,11 +1884,38 @@ const writes: Record<string, (args: Row) => unknown> = {
       created_by: args.user ?? 'Ada',
       created_at: timestamp,
       updated_at: timestamp,
+      // A quest starts with no card, the same as the database: placing one is a
+      // separate step, and the ledger says so until it happens.
+      card_node_id: null,
       rewards: [],
     };
 
     store.quests.push(row);
     return row;
+  },
+
+  // The card a quest stands for, or the link cleared with a null id. The card must
+  // be a live quest card of the same story, and one card stands for one quest,
+  // which is what the database's unique index enforces.
+  link_quest_card: args => {
+    const quest = store.quests.find(row => row.id === args.questId);
+    if (!quest) throw new Error('no such quest');
+
+    if (args.cardNodeId) {
+      const card = store.nodes.find(
+        row => row.id === args.cardNodeId && row.node_type === 'quest'
+      );
+      if (!card) throw new Error('a quest is stood for by a quest card of the same story');
+
+      const claimed = store.quests.find(
+        row => row.card_node_id === args.cardNodeId && row.id !== quest.id
+      );
+      if (claimed) throw new Error(`that card already stands for “${claimed.title}”`);
+    }
+
+    quest.card_node_id = args.cardNodeId ?? null;
+    quest.updated_at = now();
+    return quest;
   },
 
   update_quest: args => {

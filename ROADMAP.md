@@ -266,13 +266,38 @@ named rather than discovered. The same line reaches the other kinds: a character
 counts the sheet, scenes, cast places, relationships and standings that cascade
 with them and names apart the links a purge only clears (a card's cast link or POV,
 a reward's target, a quest's giver), and a connection's names the two cards it
-joined and says it takes nothing but the link. Remaining is the same question for
-the other card kinds: a `quest` card and its contract are separate rows that
-never ask about each other, `faction` standings are deliberately read with
-trashed cards included so a standing outlives a card, and a `character` card is
-only a shortcut to a cast member expected to outlive it. A card copied off the
+joined and says it takes nothing but the link. The quest half of that question is 4f. Remaining are the other kinds: `faction`
+standings are deliberately read with trashed cards included so a standing
+outlives a card, and a `character` card is only a shortcut to a cast member
+expected to outlive it. A card copied off the
 rail starts with no owner and no chapter, so it owns nothing to lose until an
 author gives it a holder. **M**
+
+**4f. A card and its record name each other.** **Done.** The four card kinds with a
+record behind them are joined by id, so a rename on either side leaves the pairing
+alone: `nodes.character_id` for a person, `skill_definitions.node_id` for a skill,
+`character_inventory.node_id` for an item, and — new in schema v35 —
+`quests.card_node_id` for a contract. The quest column was the missing one; a quest
+and its card were joined by nothing but a shared label, so the ledger could not name
+the card, deleting one half left the other looking complete, and `link_quest_card`
+could not be written at all. The migration back-fills the pairing from the label
+match the board had been relying on (earliest quest with each title takes the
+earliest card, case and spacing ignored, so the unique index holds), and a file
+that never went through v3 keeps its quests unlinked rather than failing. The link
+is by id and survives a card's trip to the Trash, which the ledger reads as
+**Card: in the trash**; a purge clears it through `ON DELETE SET NULL`, and a
+partial unique index lets one card stand for one quest while `link_quest_card`
+refuses a card of the wrong kind or one another quest claims. A quest written in
+the ledger has no card until **Place card** makes one, which writes both halves as a
+single undoable step. Skill cards come back to the board's **Add** menu for the
+matching reason: `canvasCreateNodeTypes` lists everything, a placed card starts
+with no holders, and the first holder is what turns it into the shared definition
+— so a skill can be planned before anyone learns it, without a second writer for
+the definition row. Last, the kinds with nothing behind the card say so in the
+drawer (`cardOnlyNote`), so an author never hunts for a form that never existed.
+Remaining: renaming a quest does not rename its card, and a card's own label can
+drift from the record it stands for — the chip shows the card, which is honest,
+but there is no nudge. **M**
 
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a

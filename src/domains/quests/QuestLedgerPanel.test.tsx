@@ -114,6 +114,9 @@ function baseProps(overrides: Partial<QuestLedgerPanelProps> = {}): QuestLedgerP
     chapters,
     factions,
     characters: [mira, rook],
+    cards: [],
+    onOpenCard: vi.fn(),
+    placeCard: vi.fn(async () => {}),
     characterProgress: [],
     reloadCharacterProgress: vi.fn(async () => {}),
     reloadInventory: vi.fn(async () => {}),
@@ -340,6 +343,44 @@ describe('a quest it shows', () => {
     expect(row).toHaveTextContent('a chapter in the trash');
     expect(row).toHaveTextContent('cast in the trash');
     expect(row).toHaveTextContent('faction in the trash');
+  });
+
+  it('names the card a quest stands for, and says when there is none', async () => {
+    const user = userEvent.setup();
+    const onOpenCard = vi.fn();
+    const placeCard = vi.fn(async () => {});
+
+    renderLedger({
+      quests: [
+        quest('q-1', { title: 'The Ledger', card_node_id: 'card-1' }),
+        // The pointer survives the card going to the trash, so the row can tell
+        // the author where it is rather than offering a second card.
+        quest('q-2', { title: 'The Toll', card_node_id: 'card-gone' }),
+        quest('q-3', { title: 'The Bell' }),
+      ],
+      cards: [{ id: 'card-1', label: 'The Ledger, a contract' }],
+      onOpenCard,
+      placeCard,
+    });
+
+    const linked = card('The Ledger');
+    expect(linked).toHaveTextContent('Card:');
+    await user.click(
+      within(linked).getByRole('button', { name: 'The Ledger, a contract' })
+    );
+    expect(onOpenCard).toHaveBeenCalledWith('card-1');
+
+    const trashed = card('The Toll');
+    expect(trashed).toHaveTextContent('Card: in the trash');
+    expect(within(trashed).queryByRole('button', { name: 'Place card' })).toBeNull();
+
+    const bare = card('The Bell');
+    expect(bare).toHaveTextContent('Card: none yet');
+    await user.click(within(bare).getByRole('button', { name: 'Place card' }));
+    expect(placeCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'q-3' }),
+      expect.any(Function)
+    );
   });
 
   it('lists the continuity advisories the panel was handed', () => {

@@ -629,6 +629,19 @@ fn update_quest(
     .map_err(|e| e.to_string())
 }
 
+/// Points a quest at the card that stands for it on the board, or clears the
+/// link with a null card id.
+#[tauri::command]
+fn link_quest_card(
+    db: tauri::State<'_, Db>,
+    quest_id: String,
+    card_node_id: Option<String>,
+    user: String,
+) -> Result<Quest, String> {
+    db.link_quest_card(&quest_id, card_node_id.as_deref(), user)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_quest(db: tauri::State<'_, Db>, id: String, user: String) -> Result<(), String> {
     db.delete_quest(&id, user).map_err(|e| e.to_string())
@@ -1582,6 +1595,7 @@ pub fn run() {
             get_story_quests_as_of,
             add_quest,
             update_quest,
+            link_quest_card,
             delete_quest,
             add_quest_reward,
             update_quest_reward,

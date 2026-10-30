@@ -1008,6 +1008,31 @@ describe('the graph tab', () => {
       );
     }
 
+    it('says when the card is the whole record', () => {
+      const place = node('n-2', 'The Low Tide Gate', 'location');
+
+      open({
+        nodes: [place],
+        selectedNode: place,
+        selectedNodeId: place.id,
+        nodeLabelDraft: place.data.label,
+      });
+
+      expect(
+        screen.getByText(
+          'This card is the record for this location: nothing else in the story stores it.'
+        )
+      ).toBeInTheDocument();
+    });
+
+    it('says nothing of the sort for a card that is a view of a record', () => {
+      // A character is a sheet with a card in front of it, so the drawer has no
+      // reason to call the card the record.
+      openDrawer();
+
+      expect(screen.queryByText(/nothing else in the story stores it/)).toBeNull();
+    });
+
     it('names the card and says it has unsaved changes', () => {
       openDrawer({ nodeIsDirty: true });
 
@@ -1321,9 +1346,9 @@ describe('the graph tab', () => {
       .getAllByRole('option')
       .map(option => (option as HTMLOptionElement).value);
 
-    // A skill is learned on the chapter that grants it, so the toolbar does not
-    // make skill cards; the board still understands the ones already drawn.
-    expect(addable).not.toContain('skill');
+    // Every kind can be made here, a skill included: a skill card placed from the
+    // toolbar is the definition, and its drawer is where holders are added.
+    expect(addable).toContain('skill');
     expect(addable).toContain('chapter');
     expect(addable.length).toBeGreaterThan(10);
   });

@@ -2065,7 +2065,15 @@ function App() {
           null
         );
 
-        setStoryQuests(previous => [...previous, { ...quest, rewards: quest.rewards ?? [] }]);
+        // The card and the record name each other: the ledger shows this card, and
+        // the card's deletion leaves the quest saying it has none. Written after
+        // the card exists, so a quest never points at an id the story lacks.
+        const linked = await questsApi.linkQuestCard(quest.id, node.id, actor);
+
+        setStoryQuests(previous => [
+          ...previous,
+          { ...linked, rewards: linked.rewards ?? [] },
+        ]);
         addBoardNode(toFlowNode(node));
 
         // Quests are deleted for good rather than trashed, so a redo records a
@@ -2095,9 +2103,10 @@ function App() {
               actor
             );
             currentQuestId = again.id;
+            const relinked = await questsApi.linkQuestCard(again.id, node.id, actor);
             setStoryQuests(previous => [
               ...previous,
-              { ...again, rewards: again.rewards ?? [] },
+              { ...relinked, rewards: relinked.rewards ?? [] },
             ]);
           },
         });
@@ -2141,6 +2150,70 @@ function App() {
     } catch (e) {
       console.error('Failed to create a faction:', e);
       onError(`Could not create the faction: ${String(e)}`);
+    }
+  };
+
+  // A quest written in the ledger has no card until the board is given one, which
+  // the ledger's row says out loud. Placing it writes the card and the link as one
+  // undoable step, so the chip appears with the card it names and one Undo takes
+  // both back. The card is drawn among the board's cards rather than on top of
+  // them; where it sits is the author's to move.
+  const placeQuestCard = async (
+    quest: Quest,
+    onError: (message: string) => void
+  ): Promise<void> => {
+    if (!currentStory) return;
+
+    const position = { x: 120 + Math.random() * 360, y: 120 + Math.random() * 240 };
+
+    try {
+      const node: any = await canvasApi.createGraphNode(
+        currentStory.id,
+        'quest',
+        quest.title,
+        quest.description,
+        position.x,
+        position.y,
+        actor,
+        null
+      );
+      const linked = await questsApi.linkQuestCard(quest.id, node.id, actor);
+
+      addBoardNode(toFlowNode(node));
+      setStoryQuests(previous =>
+        previous.map(row =>
+          row.id === quest.id ? { ...linked, rewards: linked.rewards ?? [] } : row
+        )
+      );
+
+      recordStep({
+        label: `Place “${quest.title}” on the board`,
+        undo: async () => {
+          await questsApi.linkQuestCard(quest.id, null, actor);
+          await canvasApi.deleteNode(node.id, actor);
+          setNodes(previous => previous.filter(row => row.id !== node.id));
+          setStoryQuests(previous =>
+            previous.map(row =>
+              row.id === quest.id ? { ...row, card_node_id: null } : row
+            )
+          );
+        },
+        redo: async () => {
+          await trashApi.restoreDeleted(node.id, 'node', actor);
+          await questsApi.linkQuestCard(quest.id, node.id, actor);
+          setNodes(previous =>
+            previous.some(row => row.id === node.id) ? previous : [...previous, toFlowNode(node)]
+          );
+          setStoryQuests(previous =>
+            previous.map(row =>
+              row.id === quest.id ? { ...row, card_node_id: node.id } : row
+            )
+          );
+        },
+      });
+    } catch (e) {
+      console.error('Failed to place a quest card:', e);
+      onError(`Could not place the card: ${String(e)}`);
     }
   };
 
@@ -8438,6 +8511,18 @@ function App() {
     [nodes]
   );
 
+  // The quest cards on the board, which is what a ledger row names once one is
+  // placed. A card in the trash is not in the list, so the row can tell an author
+  // the card is gone rather than drawing a chip that opens nothing.
+  const questCardChoices = useMemo(
+    () =>
+      nodes
+        .filter(node => node.data.nodeType === 'quest')
+        .sort((a, b) => a.data.label.localeCompare(b.data.label))
+        .map(node => ({ id: node.id, label: node.data.label })),
+    [nodes]
+  );
+
   const itemCardChoices = useMemo(
     () =>
       nodes
@@ -10006,6 +10091,9 @@ function App() {
               label: node.data.label,
             }))}
             characters={characters}
+            cards={questCardChoices}
+            onOpenCard={openCardOnBoard}
+            placeCard={placeQuestCard}
             characterProgress={storyCharacterProgress}
             reloadCharacterProgress={reloadCharacterProgress}
             reloadInventory={reloadInventory}

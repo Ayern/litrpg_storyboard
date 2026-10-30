@@ -192,7 +192,7 @@ src/
 | **narrative** | Chapters: reading order, arcs, POV, day and time, word counts, the cast on a chapter, its objective checklist, the notes under it, and the continuity advisories the chapter cards raise | `set_chapter_order`, `set_chapter_details`, `get_story_chapter_cast`, `get_story_chapter_cast_states`, `add_chapter_cast_member`, `get_story_chapter_tasks`, `add_chapter_task`, `set_chapter_task_done`, `add_chapter_note`, `update_chapter_note` |
 | **characters** | The sheet's sections — attributes, stats, items, currency, bonds, faction standings, level rows and XP by chapter — each keeping its own open row and draft fields | `get_character_stats`, `set_character_stat`, `get_character_attributes`, `get_character_inventory`, `get_character_currency`, `get_character_state_at_chapter` |
 | **skills** | The skill section on a sheet, what a level-up did to a skill (`used`, `upgraded`, `sacrificed`), and the evolution tree with its cycle guard | `add_skill`, `update_skill`, `delete_skill`, `add_skill_event`, `add_skill_evolution`, `get_story_skill_evolutions` |
-| **quests** | The ledger: quest drafts, reward drafts, the status filter, the apply notices, and the continuity warnings a payout raises | `get_story_quests`, `add_quest`, `update_quest`, `add_quest_reward`, `mark_quest_rewards_applied` |
+| **quests** | The ledger: quest drafts, reward drafts, the status filter, the apply notices, the card each quest stands for, and the continuity warnings a payout raises | `get_story_quests`, `add_quest`, `update_quest`, `link_quest_card`, `add_quest_reward`, `mark_quest_rewards_applied` |
 | **audit** | One page of history, the entity filter, the extendable window, and the revert notices | `get_audit_history`, `revert_change`, `record_history_event` |
 | **trash** | Both deleted lists (the open story's, and the stories themselves), which row is waiting on a permanent-delete confirmation, and the retention window | `get_trash`, `get_trash_retention`, `set_trash_retention`, `restore_deleted`, `purge_deleted` |
 | **progression** | The power curve: which metric, which cast members are shown, the chapter the sheet is read as of, the whole sheet — stats, skills and carried items — that chapter opens, what a level hands out, and the gains that skipped a level-up | `get_story_levels`, `get_story_level_growth_rules`, `get_story_character_awards`, `get_story_character_progress`, `get_character_state_at_chapter` |
@@ -337,6 +337,36 @@ character's stats and attributes for the card that is open. Editing a stat there
 writes `set_character_stat`, the same command the sheet uses, so the two views
 cannot disagree.
 
+### The card and the record
+
+A card is one of two things, and the drawer says which. For a person, a quest, a
+skill or an item it is a *view*: the record lives in `characters`, `quests`,
+`skill_definitions` and `character_inventory`, and the card is the face it wears on
+the board. For a chapter, a location, a plot, an idea, an event, a faction or a
+note there is no second table — the card *is* the record, which is what
+`cardOnlyNote` in `src/domains/canvas/types.ts` says in the drawer, so an author
+does not go looking for a form that never existed.
+
+The kinds with a record behind them are joined by id rather than by name, because a
+name match breaks the first time either side is renamed:
+
+| card | its record | the link |
+| --- | --- | --- |
+| character | `characters` | `nodes.character_id` |
+| quest | `quests` | `quests.card_node_id`, written by `link_quest_card` |
+| skill | `skill_definitions` | `skill_definitions.node_id` |
+| item | `character_inventory` | `character_inventory.node_id` |
+
+`quests.card_node_id` is new in schema v35 and was back-filled once, from the label
+match the board had been relying on, so a story written before it keeps the pairing
+it was already drawing. The column is `ON DELETE SET NULL` for a purge and left
+alone by a delete, because a trashed card keeps the link: the ledger then says the
+card is **in the trash** and a restore puts the chip back. A partial unique index
+(`idx_quests_card`) makes one card stand for one quest, and `link_quest_card`
+refuses a card of another kind or one another quest already claims. The link is
+never written by `add_quest`: a quest made in the ledger has no card until the board
+places one, and that is a state the ledger shows rather than papers over.
+
 ### Clicking a line instead of a card
 
 ![The connection editor](screenshots/connection-editor.png)
@@ -368,13 +398,16 @@ chapter it names is what puts the skill in that chapter's ledger (see
 no chapter still exists on the sheet — it just has nowhere on the board to be
 shown.
 
-The canvas toolbar does not make skill cards: `canvasCreateNodeTypes` in
-`src/domains/canvas/types.ts` leaves `skill` out of the type list, because a card
-made there recorded nothing on any chapter. The sheet is where one is made instead.
-**New card** beside the card picker calls `create_graph_node` with the name and
-effect being typed, puts the card on the board and selects it in the picker; the
-write is its own history step, `Add the "<name>" card`, so linking the skill to it
-stays a separate step and Undo can take the card back without touching the sheet.
+The board makes one too. `canvasCreateNodeTypes` in `src/domains/canvas/types.ts`
+lists every node type, `skill` included: **Add Node** with `skill` selected calls
+`create_graph_node` and the card lands with no holders, which is exactly the state a
+planned-but-unlearned skill is in. Nothing is written to a sheet until somebody
+holds it, and `skill_definition_for` resolves that holder to the card they name, so
+a card placed first and a card made from a sheet afterwards converge on one skill.
+**New card** beside the sheet's card picker is the same write, puts the card on the
+board and selects it in the picker; either way it is its own history step, `Add the
+"<name>" card`, so linking the skill to it stays a separate step and Undo can take
+the card back without touching the sheet.
 A skill that already has a card says **Card: Brine-Lung** on its row, and clicking
 that link is a way back: `openCardOnBoard` switches to the Graph tab, opens the
 card's drawer and centres the board on it, exactly as a search result does. The

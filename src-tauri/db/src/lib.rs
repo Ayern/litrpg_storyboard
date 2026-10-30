@@ -25,7 +25,7 @@ const RETENTION_ACTOR: &str = "Trash retention";
 /// Schema version tracked with `PRAGMA user_version`.
 ///
 /// Bump this and add a matching block to [`migrate`] whenever the schema changes.
-const SCHEMA_VERSION: i32 = 34;
+const SCHEMA_VERSION: i32 = 35;
 
 /// The progression events a chapter card can log. XP pays into the chapter's
 /// income, a learned skill and an acquired item are written onto the sheet, and
@@ -1747,6 +1747,15 @@ impl Db {
             Some("A chart with the stair drawn back in".into()),
             user.clone(),
         )?;
+
+        // A quest and its card are one thing on the board: the ledger names the
+        // card it can be opened from, so the demo links the two it just made.
+        for (quest, card) in [
+            (&bell_quest, &bell_quest_card),
+            (&stair_quest, &stair_quest_card),
+        ] {
+            self.link_quest_card(&quest.id, Some(card), user.clone())?;
+        }
 
         for (character, name, rarity, quantity, effect, chapter) in [
             (
@@ -3690,7 +3699,7 @@ impl Db {
             let mut stmt = guard.prepare(
                 "SELECT id, story_id, title, giver_character_id, faction_node_id,
                         accepted_chapter_id, completed_chapter_id, status, description,
-                        notes, created_by, created_at, updated_at
+                        notes, created_by, created_at, updated_at, card_node_id
                  FROM quests
                  WHERE story_id = ?1 AND (?2 IS NULL OR lower(status) = lower(?2))
                  ORDER BY created_at, id",
@@ -3729,7 +3738,8 @@ impl Db {
             let mut stmt = guard.prepare(
                 "SELECT q.id, q.story_id, q.title, q.giver_character_id, q.faction_node_id,
                         q.accepted_chapter_id, q.completed_chapter_id, q.status,
-                        q.description, q.notes, q.created_by, q.created_at, q.updated_at
+                        q.description, q.notes, q.created_by, q.created_at, q.updated_at,
+                        q.card_node_id
                  FROM quests q
                  JOIN nodes a ON a.id = q.accepted_chapter_id
                  LEFT JOIN nodes c ON c.id = q.completed_chapter_id
@@ -3864,6 +3874,10 @@ impl Db {
             title,
             giver_character_id,
             faction_node_id,
+            // The card is placed through `link_quest_card`, which is the only
+            // writer of the link: a quest made here is a record with no card
+            // until the board is given one, and the ledger says so.
+            card_node_id: None,
             accepted_chapter_id: Some(accepted_chapter_id),
             completed_chapter_id,
             status,
@@ -3908,7 +3922,7 @@ impl Db {
             .query_row(
                 "SELECT story_id, title, giver_character_id, faction_node_id,
                         accepted_chapter_id, completed_chapter_id, status, description, notes,
-                        created_by, created_at
+                        created_by, created_at, card_node_id
                  FROM quests WHERE id = ?1",
                 params![&id],
                 |row| {
@@ -3924,6 +3938,7 @@ impl Db {
                         row.get::<_, Option<String>>(8)?,
                         row.get::<_, String>(9)?,
                         row.get::<_, String>(10)?,
+                        row.get::<_, Option<String>>(11)?,
                     ))
                 },
             )
@@ -3942,6 +3957,7 @@ impl Db {
             old_notes,
             created_by,
             created_at,
+            card_node_id,
         ) = existing;
 
         // Links sent back unchanged are not checked again: a chapter or card may
@@ -4092,6 +4108,10 @@ impl Db {
             title,
             giver_character_id,
             faction_node_id,
+            // An edit of the record leaves the card's link alone: a card may be
+            // in the trash, and a rename is not a reason to forget which card it
+            // is. `link_quest_card` is what moves it.
+            card_node_id,
             accepted_chapter_id: Some(accepted_chapter_id),
             completed_chapter_id,
             status,
@@ -4102,6 +4122,105 @@ impl Db {
             updated_at: timestamp,
             rewards,
         })
+    }
+
+    /// Points a quest at the card that stands for it on the board, or clears the
+    /// link when `card_node_id` is `None`.
+    ///
+    /// The link is by id rather than by name, so a rename on either side leaves
+    /// it intact, and a card in the trash keeps it: restoring the card puts the
+    /// quest's chip back with no second step. A card is claimed by one quest, so
+    /// two records cannot point at the same card and draw the wrong one.
+    pub fn link_quest_card(
+        &self,
+        quest_id: &str,
+        card_node_id: Option<&str>,
+        user: String,
+    ) -> DbResult<Quest> {
+        let mut guard = self.conn()?;
+        let tx = guard.transaction()?;
+
+        let found = tx
+            .query_row(
+                "SELECT story_id, card_node_id FROM quests WHERE id = ?1",
+                params![quest_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .ok_or(DbError::NotFound("quest"))?;
+
+        let (story_id, previous) = found;
+
+        let previous_label = reference_label(&tx, previous.as_deref())?;
+        let new_label = reference_label(&tx, card_node_id)?;
+
+        if let Some(card) = card_node_id {
+            let card_type: Option<String> = tx
+                .query_row(
+                    "SELECT node_type FROM nodes
+                      WHERE id = ?1 AND story_id = ?2 AND deleted_at IS NULL",
+                    params![card, &story_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if card_type.as_deref() != Some("quest") {
+                return Err(DbError::Invalid(
+                    "a quest is stood for by a quest card of the same story".to_string(),
+                ));
+            }
+
+            let claimed: Option<String> = tx
+                .query_row(
+                    "SELECT title FROM quests WHERE card_node_id = ?1 AND id != ?2",
+                    params![card, quest_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if let Some(other) = claimed {
+                return Err(DbError::Invalid(format!(
+                    "that card already stands for “{other}”"
+                )));
+            }
+        }
+
+        tx.execute(
+            "UPDATE quests SET card_node_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![card_node_id, now(), quest_id],
+        )?;
+
+        if previous.as_deref() != card_node_id {
+            log_audit(
+                &tx,
+                AuditRecord {
+                    story_id: Some(&story_id),
+                    entity_type: "quest",
+                    entity_id: quest_id,
+                    action: "update",
+                    field_changed: Some("card"),
+                    old_value: previous_label,
+                    new_value: new_label,
+                    changed_by: &user,
+                },
+            )?;
+        }
+
+        let quest = tx.query_row(
+            "SELECT id, story_id, title, giver_character_id, faction_node_id,
+                    accepted_chapter_id, completed_chapter_id, status, description,
+                    notes, created_by, created_at, updated_at, card_node_id
+             FROM quests WHERE id = ?1",
+            params![quest_id],
+            quest_row,
+        )?;
+
+        let mut quests = vec![quest];
+        attach_quest_rewards(&tx, &story_id, &mut quests)?;
+
+        tx.commit()?;
+
+        Ok(quests.remove(0))
     }
 
     pub fn delete_quest(&self, id: &str, user: String) -> DbResult<()> {
@@ -10735,7 +10854,7 @@ impl Db {
             let mut stmt = guard.prepare(
                 "SELECT q.id, q.story_id, q.title, q.giver_character_id, q.faction_node_id,
                         q.accepted_chapter_id, q.completed_chapter_id, q.status, q.description,
-                        q.notes, q.created_by, q.created_at, q.updated_at
+                        q.notes, q.created_by, q.created_at, q.updated_at, q.card_node_id
                  FROM quests q
                  JOIN nodes a ON a.id = q.accepted_chapter_id
                  WHERE q.story_id = ?1 AND a.deleted_at IS NULL
@@ -10789,6 +10908,15 @@ impl Db {
                 .is_some_and(|id| !live_node_ids.contains(id))
             {
                 quest.accepted_chapter_id = None;
+            }
+            // A card in the trash is not in the file, so the link is dropped with
+            // it rather than exporting a quest whose card is not in the copy.
+            if quest
+                .card_node_id
+                .as_deref()
+                .is_some_and(|id| !live_node_ids.contains(id))
+            {
+                quest.card_node_id = None;
             }
         }
 
@@ -13914,8 +14042,8 @@ impl Db {
                 "INSERT INTO quests
                  (id, story_id, title, giver_character_id, faction_node_id,
                   accepted_chapter_id, completed_chapter_id, status, description, notes,
-                  created_by, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                  created_by, created_at, updated_at, card_node_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     &quest_ids[&quest.id],
                     &story_id,
@@ -13935,7 +14063,10 @@ impl Db {
                     &quest.notes,
                     &quest.created_by,
                     &quest.created_at,
-                    &quest.updated_at
+                    &quest.updated_at,
+                    // A card that did not come across with the file leaves the
+                    // quest unlinked rather than pointing at nothing.
+                    quest.card_node_id.as_ref().and_then(|id| nodes.get(id))
                 ],
             )?;
 
@@ -14549,6 +14680,12 @@ pub struct Quest {
     pub giver_character_id: Option<String>,
     #[serde(default)]
     pub faction_node_id: Option<String>,
+    /// The quest card that stands for this record on the board. `None` when no
+    /// card has been placed, which the ledger says out loud instead of drawing
+    /// a quest nobody can find on the canvas; the link is by id, so a card in
+    /// the trash keeps it and a restore puts the card back where it was.
+    #[serde(default)]
+    pub card_node_id: Option<String>,
     pub accepted_chapter_id: Option<String>,
     #[serde(default)]
     pub completed_chapter_id: Option<String>,
@@ -16139,6 +16276,7 @@ fn quest_row(row: &rusqlite::Row<'_>) -> SqliteResult<Quest> {
         created_by: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        card_node_id: row.get(13)?,
         rewards: Vec::new(),
     })
 }
@@ -18225,6 +18363,50 @@ CREATE INDEX IF NOT EXISTS idx_chapter_events_actor
 
 "#;
 
+/// v35 gives a quest the board card that stands for it.
+///
+/// Until now a quest and its card were joined by name and nothing else: the
+/// ledger could not name the card, and deleting one half left the other looking
+/// complete. The column makes the join explicit and by id, so a rename on either
+/// side keeps it.
+///
+/// A story already on file is back-filled from the names it was relying on — the
+/// earliest quest card whose label matches the quest's title, one quest per card
+/// so the unique index holds — which is exactly the pairing the old name match
+/// was drawing on the board.
+const MIGRATION_035_QUEST_CARDS: &str =
+    "ALTER TABLE quests ADD COLUMN card_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL";
+
+/// The pairing half of v35, kept apart from the column so it can be run on its
+/// own: a database gets its column once, and the work of matching the quests a
+/// story already has to the cards it already drew can be re-run or tested without
+/// adding the column a second time.
+const BACKFILL_035_QUEST_CARDS: &str = r#"
+UPDATE quests
+   SET card_node_id = (
+        SELECT n.id FROM nodes n
+         WHERE n.story_id = quests.story_id
+           AND n.node_type = 'quest'
+           AND n.deleted_at IS NULL
+           AND lower(trim(n.label)) = lower(trim(quests.title))
+         ORDER BY n.created_at, n.id
+         LIMIT 1
+   )
+ WHERE card_node_id IS NULL
+   AND id = (
+        SELECT q.id FROM quests q
+         WHERE q.story_id = quests.story_id
+           AND lower(trim(q.title)) = lower(trim(quests.title))
+         ORDER BY q.created_at, q.id
+         LIMIT 1
+   );
+"#;
+
+/// One card stands for one quest, so the pairing cannot be doubled by a bug or a
+/// second click. Partial, because an unplaced record is the ordinary state.
+const QUEST_CARD_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_quests_card
+    ON quests (card_node_id) WHERE card_node_id IS NOT NULL";
+
 fn migrate(conn: &Connection) -> SqliteResult<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
@@ -18479,6 +18661,22 @@ fn migrate(conn: &Connection) -> SqliteResult<()> {
                 [],
             )?;
         }
+    }
+
+    // v35 links a quest to the card that stands for it. The column is the test
+    // for whether that has happened, so a file whose version was never stamped
+    // past 34 is not back-filled twice.
+    if version < 35 && !column_exists(conn, "quests", "card_node_id")? {
+        conn.execute(MIGRATION_035_QUEST_CARDS, [])?;
+
+        // The pairing reads `nodes.deleted_at`, which every file that went
+        // through v3 has. One that never did keeps its quests unlinked — and so
+        // says they have no card — rather than failing the whole migration.
+        if column_exists(conn, "nodes", "deleted_at")? {
+            conn.execute_batch(BACKFILL_035_QUEST_CARDS)?;
+        }
+
+        conn.execute(QUEST_CARD_INDEX, [])?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -31541,6 +31739,184 @@ mod tests {
             .map(|row| row.name)
             .collect();
         assert_eq!(cast, vec!["Mira".to_string()]);
+    }
+
+    #[test]
+    fn a_quest_names_the_card_that_stands_for_it() {
+        let db = Db::open_in_memory().unwrap();
+        let story = db
+            .create_story("Ledger".into(), None, "Ada".into())
+            .unwrap();
+        let chapter = db
+            .create_node(
+                story.id.clone(),
+                "chapter".into(),
+                "One".into(),
+                None,
+                1.0,
+                2.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let card = db
+            .create_node(
+                story.id.clone(),
+                "quest".into(),
+                "The Toll".into(),
+                None,
+                3.0,
+                4.0,
+                "Ada".into(),
+            )
+            .unwrap();
+        let door = db
+            .create_node(
+                story.id.clone(),
+                "location".into(),
+                "The Gate".into(),
+                None,
+                5.0,
+                6.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        let quest = db
+            .add_quest(
+                story.id.clone(),
+                "The Toll".into(),
+                None,
+                None,
+                chapter.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(quest.card_node_id, None, "a quest starts with no card");
+
+        let linked = db
+            .link_quest_card(&quest.id, Some(&card.id), "Ada".into())
+            .unwrap();
+        assert_eq!(linked.card_node_id.as_deref(), Some(card.id.as_str()));
+
+        // The link is by id, so a rename on either side leaves it where it was.
+        let renamed = db
+            .update_quest(
+                quest.id.clone(),
+                "The Toll, renamed".into(),
+                None,
+                None,
+                chapter.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        assert_eq!(renamed.card_node_id.as_deref(), Some(card.id.as_str()));
+
+        // A card in the trash is still the quest's card: restoring it puts the
+        // chip back without a second step, so the link is not broken on the way.
+        db.delete_node(&card.id, "Ada".into()).unwrap();
+        assert_eq!(
+            db.list_story_quests(&story.id, None).unwrap()[0]
+                .card_node_id
+                .as_deref(),
+            Some(card.id.as_str())
+        );
+        db.restore_node(&card.id, "Ada".into()).unwrap();
+        assert_eq!(
+            db.list_story_quests(&story.id, None).unwrap()[0]
+                .card_node_id
+                .as_deref(),
+            Some(card.id.as_str())
+        );
+
+        // A card that is not a quest, and a card another quest already claims,
+        // are both refused rather than quietly rewired.
+        let wrong_kind = db
+            .link_quest_card(&quest.id, Some(&door.id), "Ada".into())
+            .unwrap_err();
+        assert!(wrong_kind.to_string().contains("quest card"));
+
+        let second = db
+            .add_quest(
+                story.id.clone(),
+                "The Toll again".into(),
+                None,
+                None,
+                chapter.id.clone(),
+                None,
+                "active".into(),
+                None,
+                None,
+                "Ada".into(),
+            )
+            .unwrap();
+        let claimed = db
+            .link_quest_card(&second.id, Some(&card.id), "Ada".into())
+            .unwrap_err();
+        assert!(claimed.to_string().contains("already stands for"));
+
+        // Clearing the link is a write of its own, and the ledger can then say
+        // the record has no card.
+        let cleared = db.link_quest_card(&quest.id, None, "Ada".into()).unwrap();
+        assert_eq!(cleared.card_node_id, None);
+    }
+
+    #[test]
+    fn migrating_to_v35_pairs_each_quest_with_the_card_it_named() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        conn.execute_batch(
+            "INSERT INTO stories (id, title, created_at, updated_at)
+             VALUES ('s1', 'Old', 'then', 'then');
+             INSERT INTO nodes (id, story_id, node_type, label, created_by, created_at, updated_at)
+             VALUES ('c1', 's1', 'chapter', 'One', 'Ada', 't0', 't0'),
+                    ('card1', 's1', 'quest', 'The Toll', 'Ada', 't1', 't1'),
+                    ('card2', 's1', 'quest', 'The Toll', 'Ada', 't2', 't2'),
+                    ('card3', 's1', 'quest', 'Other', 'Ada', 't3', 't3');
+             INSERT INTO quests
+                 (id, story_id, title, accepted_chapter_id, status, created_by, created_at, updated_at)
+             VALUES ('q1', 's1', 'The Toll', 'c1', 'active', 'Ada', 't1', 't1'),
+                    ('q2', 's1', 'the toll', 'c1', 'active', 'Ada', 't2', 't2'),
+                    ('q3', 's1', 'Other', 'c1', 'active', 'Ada', 't3', 't3');",
+        )
+        .unwrap();
+
+        // What a file written before the link arrived needs: each quest picks up
+        // the card it was already being read from by name, case and spacing
+        // included, and only one quest may claim a card.
+        conn.execute_batch(BACKFILL_035_QUEST_CARDS).unwrap();
+        conn.execute(QUEST_CARD_INDEX, []).unwrap();
+
+        let link = |id: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT card_node_id FROM quests WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(link("q1").as_deref(), Some("card1"));
+        assert_eq!(
+            link("q2"),
+            None,
+            "the second quest of the same name keeps no card rather than sharing one"
+        );
+        assert_eq!(link("q3").as_deref(), Some("card3"));
+
+        let shared = conn.execute(
+            "UPDATE quests SET card_node_id = 'card1' WHERE id = 'q2'",
+            [],
+        );
+        assert!(shared.is_err(), "a card is claimed by one quest");
     }
 
     #[test]
