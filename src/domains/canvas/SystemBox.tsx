@@ -14,8 +14,8 @@ import type { SystemMessage } from './systemMessage';
 
 // A system card as an in-world box. LitRPG stories announce things in a box the
 // characters see, and an author then has to retype that box into a web editor, so
-// the card is drawn the way the reader will meet it and copied as a blockquote in
-// one press.
+// the card is drawn the way the reader will meet it and copied in one press: as
+// plain text to centre in a chapter, or as centred HTML.
 //
 // What the box says depends on what it is announcing: a level that moved, a skill
 // that evolved, a quest with objectives. `systemMessage.ts` holds that shape and
@@ -165,13 +165,13 @@ export function CopySystemBoxButton({
     <CopyButton
       text={systemMessageHtml(message)}
       idle="Copy HTML"
-      title="Copy this box as an HTML blockquote, for an editor that takes tags"
+      title="Copy this box as centred HTML, for an editor that takes tags"
     />
   ) : (
     <CopyButton
       text={systemMessageMarkdown(message)}
       idle="Copy System Box"
-      title="Copy this box as a Markdown blockquote, ready for Royal Road or Scribble Hub"
+      title="Copy this box as plain text with its bold lines, ready to centre in Royal Road or Scribble Hub"
     />
   );
 }

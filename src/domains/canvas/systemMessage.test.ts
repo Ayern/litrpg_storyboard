@@ -204,22 +204,24 @@ describe('the numbers in a box', () => {
   });
 });
 
-describe('copying a box as Markdown', () => {
+describe('copying a box as plain text', () => {
+  // The copy is the box a reader sees, not a frame drawn in punctuation: no quote
+  // marks and no list dashes, because an author centres the block in the chapter
+  // and a stray `>` at the start of every line would land in the middle of it.
   it('writes a level-up with its line, its points and its stats', () => {
     expect(systemMessageMarkdown(systemMessageOf('The Tidal Ledger', levelUp))).toBe(
       [
-        '> **The Tidal Ledger**',
-        '>',
-        '> **The Tide Advances**',
-        '>',
-        '> **Level 3 → 4**',
-        '>',
-        '> 2 points to place',
-        '>',
-        '> - Agility: 12 → 13 (+1)',
-        '> - Insight: 15 → 16 (+1)',
-        '>',
-        '> The ledger remembers.',
+        '**The Tidal Ledger**',
+        '',
+        '**The Tide Advances**',
+        '**Level 3 → 4**',
+        '',
+        '2 points to place',
+        '',
+        '**Agility: 12 → 13 (+1)**',
+        '**Insight: 15 → 16 (+1)**',
+        '',
+        'The ledger remembers.',
       ].join('\n')
     );
   });
@@ -240,16 +242,14 @@ describe('copying a box as Markdown', () => {
 
     expect(systemMessageMarkdown(message)).toBe(
       [
-        '> **[QUEST OFFER]**',
-        '>',
-        '> **The Drowned Stair**',
-        '>',
-        '> **[QUEST ACCEPTED]**',
-        '>',
-        '> - [x] Reach the Drowned Stair',
-        '> - [ ] Retrieve the Bell Clapper',
-        '>',
-        '> Rewards: 400 XP; +10 Faction Standing (Salt Choir)',
+        '**[QUEST OFFER]**',
+        '',
+        '**The Drowned Stair**',
+        '**[QUEST ACCEPTED]**',
+        '',
+        '**[x] Reach the Drowned Stair**',
+        '**[ ] Retrieve the Bell Clapper**',
+        '**Rewards:** 400 XP; +10 Faction Standing (Salt Choir)',
       ].join('\n')
     );
   });
@@ -267,13 +267,12 @@ describe('copying a box as Markdown', () => {
 
     expect(systemMessageMarkdown(message)).toBe(
       [
-        '> **[SKILL]**',
-        '>',
-        '> **[Ember Step]**',
-        '>',
-        '> Rank 2 (Evolved)',
-        '>',
-        '> Evolved from [Spark Step] via Deep Water immersion',
+        '**[SKILL]**',
+        '',
+        '**[Ember Step]**',
+        'Rank 2 (Evolved)',
+        '',
+        'Evolved from [Spark Step] via Deep Water immersion',
       ].join('\n')
     );
   });
@@ -286,50 +285,38 @@ describe('copying a box as Markdown', () => {
 
     expect(systemMessageMarkdown(message)).toBe(
       [
-        '> **[ACHIEVEMENT]**',
-        '>',
-        '> **First Blood**',
-        '>',
-        '> **ACHIEVEMENT UNLOCKED**',
-        '>',
-        '> Rewards: +1 Feat point',
+        '**[ACHIEVEMENT]**',
+        '',
+        '**First Blood**',
+        '**ACHIEVEMENT UNLOCKED**',
+        '',
+        '**Rewards:** +1 Feat point',
       ].join('\n')
     );
   });
 
-  it('keeps a notice’s body as quoted paragraphs', () => {
+  it('keeps a notice’s body as its own paragraphs', () => {
     const message = systemMessageOf('Level Up', 'Level 4\n\nFirst.\nSecond.\n\nThird.');
 
     expect(systemMessageMarkdown(message)).toBe(
-      [
-        '> **Level Up**',
-        '>',
-        '> **Level 4**',
-        '>',
-        '> First.',
-        '> Second.',
-        '>',
-        '> Third.',
-      ].join('\n')
+      ['**Level Up**', '', '**Level 4**', '', 'First.', 'Second.', '', 'Third.'].join('\n')
     );
   });
 });
 
 describe('copying a box as HTML', () => {
-  it('writes a level-up with the stats as a list', () => {
+  // A centred div of paragraphs, with every heading and stat line its own
+  // `<strong>`: the tags an author would reach for by hand in a web editor.
+  it('writes a level-up centred, with its stats bold', () => {
     expect(systemMessageHtml(systemMessageOf('The Tidal Ledger', levelUp))).toBe(
       [
-        '<blockquote>',
+        '<div style="text-align: center;">',
         '  <p><strong>The Tidal Ledger</strong></p>',
-        '  <p><strong>The Tide Advances</strong></p>',
-        '  <p><strong>Level 3 → 4</strong></p>',
+        '  <p><strong>The Tide Advances</strong><br /><strong>Level 3 → 4</strong></p>',
         '  <p>2 points to place</p>',
-        '  <ul>',
-        '    <li>Agility: 12 → 13 (+1)</li>',
-        '    <li>Insight: 15 → 16 (+1)</li>',
-        '  </ul>',
+        '  <p><strong>Agility: 12 → 13 (+1)</strong><br /><strong>Insight: 15 → 16 (+1)</strong></p>',
         '  <p>The ledger remembers.</p>',
-        '</blockquote>',
+        '</div>',
       ].join('\n')
     );
   });
@@ -348,15 +335,11 @@ describe('copying a box as HTML', () => {
 
     expect(systemMessageHtml(message)).toBe(
       [
-        '<blockquote>',
+        '<div style="text-align: center;">',
         '  <p><strong>[QUEST COMPLETE]</strong></p>',
-        '  <p><strong>The Drowned Stair</strong></p>',
-        '  <p><strong>[QUEST COMPLETE]</strong></p>',
-        '  <ul>',
-        '    <li>[x] Retrieve the Bell Clapper</li>',
-        '  </ul>',
-        '  <p>Rewards: 400 XP</p>',
-        '</blockquote>',
+        '  <p><strong>The Drowned Stair</strong><br /><strong>[QUEST COMPLETE]</strong></p>',
+        '  <p><strong>[x] Retrieve the Bell Clapper</strong><br /><strong>Rewards:</strong> 400 XP</p>',
+        '</div>',
       ].join('\n')
     );
   });
@@ -373,29 +356,38 @@ describe('copying a box as HTML', () => {
 
     expect(systemMessageHtml(message)).toBe(
       [
-        '<blockquote>',
+        '<div style="text-align: center;">',
         '  <p><strong>&lt;Tidal Ledger&gt;</strong></p>',
-        '  <p><strong>HP &amp; MP</strong></p>',
-        '  <p><strong>Level 1 → 2</strong></p>',
-        '  <ul>',
-        '    <li>&lt;HP&gt;: 30 → 40 (+10)</li>',
-        '  </ul>',
-        '</blockquote>',
+        '  <p><strong>HP &amp; MP</strong><br /><strong>Level 1 → 2</strong></p>',
+        '  <p><strong>&lt;HP&gt;: 30 → 40 (+10)</strong></p>',
+        '</div>',
       ].join('\n')
     );
   });
 });
 
 describe('the parts a box is made of', () => {
-  it('puts a blank line in the body in its own paragraph', () => {
+  it('puts a blank line in the body in its own block', () => {
     const blocks = systemBlocks(
       systemMessageOf('Level Up', 'Level 4\n\nOne.\nTwo.\n\nThree.')
     );
 
     expect(blocks).toEqual([
-      { kind: 'paragraph', text: 'Level 4', bold: true },
-      { kind: 'paragraph', text: 'One.\nTwo.' },
-      { kind: 'paragraph', text: 'Three.' },
+      { lines: [{ text: 'Level 4', strong: true }] },
+      { lines: [{ text: 'One.' }, { text: 'Two.' }] },
+      { lines: [{ text: 'Three.' }] },
     ]);
+  });
+
+  it('keeps a title and the level it moved on consecutive lines', () => {
+    const blocks = systemBlocks(systemMessageOf('The Tidal Ledger', levelUp));
+
+    // One statement, so a centred paste does not leave a gap between them.
+    expect(blocks[0]).toEqual({
+      lines: [
+        { text: 'The Tide Advances', strong: true },
+        { text: 'Level 3 → 4', strong: true },
+      ],
+    });
   });
 });

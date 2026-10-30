@@ -317,10 +317,13 @@ the drop's point, so the card, the `link_quest_card` and the history step are th
 same three writes the ledger's **Place card** makes. The second is the `system`
 card, which was a label and a paragraph. It is now the box a LitRPG reader meets —
 dark panel, cyan edge, gold hairline, header, title, stat block — and **Copy System
-Box** puts a Markdown blockquote on the clipboard from the card or from the drawer,
-because the announcement is written in this app and read in a web editor. **Copy
-HTML** sits beside it with the same three parts as a real `<blockquote>`, its parts
-escaped so a stat line of `<HP>` stays text, for a site whose editor takes tags.
+Box** puts the box on the clipboard as plain text with its bold lines marked, from
+the card or from the drawer, because the announcement is written in this app and read
+in a web editor. **Copy HTML** sits beside it with the same parts as a centred
+`<div>`, every heading and stat line in its own `<strong>`, its parts escaped so a
+stat line of `<HP>` stays text, for a site whose editor takes tags. Neither copy
+carries a frame: no quote marks or list dashes, since the author centres the block
+rather than pasting punctuation into the chapter.
 The box needs no schema: the label is the header, the first notes line the title
 and the rest the body, so `systemBoxOf` in `src/domains/canvas/SystemBox.tsx` reads
 the two fields every card already has. Remaining: the header cannot be styled

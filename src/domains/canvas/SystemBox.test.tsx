@@ -148,7 +148,7 @@ describe('the box on the card', () => {
 });
 
 describe('the copy buttons', () => {
-  it('copies the box as Markdown and says so', async () => {
+  it('copies the box as plain text and says so', async () => {
     const user = userEvent.setup();
     render(
       <CopySystemBoxButton
@@ -159,13 +159,7 @@ describe('the copy buttons', () => {
     await user.click(screen.getByRole('button', { name: 'Copy System Box' }));
 
     expect(writeText).toHaveBeenCalledWith(
-      [
-        '> **Level Up**',
-        '>',
-        '> **Level 4**',
-        '>',
-        '> +2 to place',
-      ].join('\n')
+      ['**Level Up**', '', '**Level 4**', '', '+2 to place'].join('\n')
     );
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
@@ -183,11 +177,11 @@ describe('the copy buttons', () => {
 
     expect(writeText).toHaveBeenCalledWith(
       [
-        '<blockquote>',
+        '<div style="text-align: center;">',
         '  <p><strong>Level Up</strong></p>',
         '  <p><strong>Level 4</strong></p>',
         '  <p>+2 to place</p>',
-        '</blockquote>',
+        '</div>',
       ].join('\n')
     );
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();

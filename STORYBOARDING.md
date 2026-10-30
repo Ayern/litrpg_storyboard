@@ -294,43 +294,46 @@ them. A box written this way is still one Save and one Undo.
 ### Copying the box out
 
 **Copy System Box** sits on the card face and in the drawer, and **Copy HTML** beside
-it. They put the box on the clipboard as a Markdown blockquote, or as a real
-`<blockquote>` for a site whose editor takes tags:
+it. Neither draws a frame: there are no quote marks, list dashes or ASCII borders in
+what you paste, because the frame is the centring you apply in the chapter, not
+punctuation in the middle of the text. A statement of the box sits on consecutive
+lines and a blank line separates one statement from the next.
+
+**Copy System Box** gives you plain text with its bold lines marked, ready to paste
+into Royal Road, Scribble Hub or a text file and centre:
 
 ```markdown
-> **[TIDAL LEDGER · GAIN]**
->
-> **The Fourth Entry**
->
-> **Level 3 → 4**
->
-> 4 points to place
->
-> - Insight: 14 → 15 (+1)
-> - Agility: 12 → 13 (+1)
->
-> Two of the four are written where the ledger already has them. The rest are hers to place.
+**[TIDAL LEDGER · GAIN]**
+
+**The Fourth Entry**
+**Level 3 → 4**
+
+4 points to place
+
+**Insight: 14 → 15 (+1)**
+**Agility: 12 → 13 (+1)**
+
+Two of the four are written where the ledger already has them. The rest are hers to place.
 ```
+
+**Copy HTML** gives you the same box as centred HTML, with every heading, stat and
+checklist line in its own `<strong>` and `<br />` inside a statement, so a web editor
+that takes tags lands it already centred:
 
 ```html
-<blockquote>
+<div style="text-align: center;">
   <p><strong>[TIDAL LEDGER · GAIN]</strong></p>
-  <p><strong>The Fourth Entry</strong></p>
-  <p><strong>Level 3 → 4</strong></p>
+  <p><strong>The Fourth Entry</strong><br /><strong>Level 3 → 4</strong></p>
   <p>4 points to place</p>
-  <ul>
-    <li>Insight: 14 → 15 (+1)</li>
-    <li>Agility: 12 → 13 (+1)</li>
-  </ul>
+  <p><strong>Insight: 14 → 15 (+1)</strong><br /><strong>Agility: 12 → 13 (+1)</strong></p>
   <p>Two of the four are written where the ledger already has them. The rest are hers to place.</p>
-</blockquote>
+</div>
 ```
 
-Paste either into a Royal Road chapter, a Scribble Hub text box or a plain text file
-and the box still reads like a box. In HTML anything that looks like a tag is
-escaped, so a stat line of `<HP>` stays text. Each button says **Copied** when the
-clipboard took it and **Copy failed** when it did not, so a box never looks copied
-when it is not.
+A label like `Rewards:` is the only part of its line that is bold, so the payout stays
+your own text. In HTML anything that looks like a tag is escaped, so a stat line of
+`<HP>` stays text. Each button says **Copied** when the clipboard took it and **Copy
+failed** when it did not, so a box never looks copied when it is not.
 
 ## 3. Chapters are the spine
 

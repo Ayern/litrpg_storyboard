@@ -403,13 +403,18 @@ Stat: Agility | 12 → 13
 Flavour text, any length.
 ```
 
-- `systemBlocks(message)` is the body as `paragraph`/`bullets` parts, and the two
-  exports are built from it so Markdown and HTML can never say different things.
-  `systemMessageMarkdown` quotes one `>` line per line; `systemMessageHtml` writes a
-  real `<blockquote>`, with `<ul><li>` for stats and objectives and every part passed
-  through `escapeHtml`, so a stat line of `<HP>` stays text. Stats are the one place
-  the two disagree on purpose: Markdown writes `Agility: 12 → 13 (+1)` and HTML puts
-  the change beside the row.
+- `systemBlocks(message)` is the body as blocks of `SystemLine`s: a line is `text`
+  with an optional `strong` (a heading, a stat, a checklist row) or a `label` whose
+  rest stays plain (`Rewards:`). A block is the lines the author reads as one
+  statement, so the title and the level it moved stay consecutive while a blank line
+  separates the next statement; both exports walk that list, so plain text and HTML
+  can never say different things. Neither draws a frame — there is no `>` or `-` at
+  the start of a line, because the author centres the pasted block rather than
+  getting punctuation in the middle of a chapter. `systemMessageMarkdown` marks the
+  bold with asterisks, the way a Markdown editor reads it; `systemMessageHtml` writes one centred `<div
+  style="text-align: center;">` of `<p>`s, joins the lines inside a statement with
+  `<br />`, and puts every heading, stat and objective in its own `<strong>`, with
+  every part passed through `escapeHtml` so a stat line of `<HP>` stays text.
 - `systemEvents.ts` turns the scenes' own records into boxes. `chapterEventChoices`
   walks every chapter event, adds the experience up in reading order and asks
   `levelForXp` (with the character's rule or the story's) where the award left the

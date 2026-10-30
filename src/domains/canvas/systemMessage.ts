@@ -386,93 +386,120 @@ export function levelLine(message: SystemMessage): string {
 /** The words the achievement box puts over its title. */
 export const achievementBanner = 'ACHIEVEMENT UNLOCKED';
 
-export type SystemBlock =
-  | { kind: 'paragraph'; text: string; bold?: boolean }
-  | { kind: 'bullets'; items: string[] };
+/** One line of the box as a copy writes it. `strong` is the whole line — a
+ *  heading, a stat, a checklist row — and `label` is a word the line leads with,
+ *  like `Rewards:`, whose rest stays the author's plain text. */
+export interface SystemLine {
+  text: string;
+  strong?: boolean;
+  label?: string;
+}
 
-/** The box's body as the parts both exports draw, so Markdown and HTML can never
- *  say different things. */
+/** Lines the author reads as one statement: a title over the level it moved, the
+ *  stats a level paid, one paragraph of the body.
+ *
+ *  A copy keeps the groups apart with a blank line and the lines inside one on
+ *  consecutive lines, which is the shape a centred system box has on Royal Road
+ *  and the shape it keeps in a plain text file. Nothing here draws a frame: the
+ *  author centres the block, and no quote marks or bullet dashes are pasted into
+ *  the middle of a chapter. */
+export interface SystemBlock {
+  lines: SystemLine[];
+}
+
+const strong = (text: string): SystemLine => ({ text, strong: true });
+
+/** The box's body as the parts both copies write, so plain text and HTML can
+ *  never say different things. */
 export function systemBlocks(message: SystemMessage): SystemBlock[] {
   const blocks: SystemBlock[] = [];
+  const headline: SystemLine[] = [];
 
-  if (message.title.trim()) {
-    blocks.push({ kind: 'paragraph', text: message.title.trim(), bold: true });
-  }
+  if (message.title.trim()) headline.push(strong(message.title.trim()));
 
   if (message.kind === 'level_up') {
     const level = levelLine(message);
-    if (level) blocks.push({ kind: 'paragraph', text: level, bold: true });
-
-    if (message.points.trim()) {
-      blocks.push({ kind: 'paragraph', text: `${message.points.trim()} points to place` });
-    }
-
-    const stats = message.stats.map(statLine).filter(Boolean);
-    if (stats.length > 0) blocks.push({ kind: 'bullets', items: stats });
+    if (level) headline.push(strong(level));
   }
 
-  if (message.kind === 'skill') {
-    if (message.rank.trim()) blocks.push({ kind: 'paragraph', text: `Rank ${message.rank.trim()}` });
-    if (message.evolution.trim()) {
-      blocks.push({ kind: 'paragraph', text: message.evolution.trim() });
-    }
+  if (message.kind === 'skill' && message.rank.trim()) {
+    headline.push({ text: `Rank ${message.rank.trim()}` });
   }
 
   if (message.kind === 'quest') {
-    blocks.push({
-      kind: 'paragraph',
-      text: `[${questStatusLabels[message.status]}]`,
-      bold: true,
-    });
+    headline.push(strong(`[${questStatusLabels[message.status]}]`));
+  }
 
-    const objectives = message.objectives
-      .filter(objective => objective.text.trim())
-      .map(objective => `[${objective.done ? 'x' : ' '}] ${objective.text.trim()}`);
+  if (message.kind === 'achievement') headline.push(strong(achievementBanner));
 
-    if (objectives.length > 0) blocks.push({ kind: 'bullets', items: objectives });
+  if (headline.length > 0) blocks.push({ lines: headline });
 
-    const rewards = message.rewards.map(reward => reward.trim()).filter(Boolean);
-    if (rewards.length > 0) {
-      blocks.push({ kind: 'paragraph', text: `Rewards: ${rewards.join('; ')}` });
+  if (message.kind === 'level_up') {
+    if (message.points.trim()) {
+      blocks.push({ lines: [{ text: `${message.points.trim()} points to place` }] });
+    }
+
+    const stats = message.stats.map(statLine).filter(Boolean);
+    if (stats.length > 0) blocks.push({ lines: stats.map(strong) });
+  }
+
+  if (message.kind === 'skill' && message.evolution.trim()) {
+    blocks.push({ lines: [{ text: message.evolution.trim() }] });
+  }
+
+  const details: SystemLine[] = [];
+
+  if (message.kind === 'quest') {
+    for (const objective of message.objectives) {
+      if (objective.text.trim()) {
+        details.push(strong(`[${objective.done ? 'x' : ' '}] ${objective.text.trim()}`));
+      }
     }
   }
 
-  if (message.kind === 'achievement') {
-    blocks.push({ kind: 'paragraph', text: achievementBanner, bold: true });
+  const rewards = message.rewards.map(reward => reward.trim()).filter(Boolean);
 
-    const rewards = message.rewards.map(reward => reward.trim()).filter(Boolean);
-    if (rewards.length > 0) {
-      blocks.push({ kind: 'paragraph', text: `Rewards: ${rewards.join('; ')}` });
-    }
+  if (rewards.length > 0 && (message.kind === 'quest' || message.kind === 'achievement')) {
+    details.push({ label: 'Rewards:', text: rewards.join('; ') });
   }
+
+  if (details.length > 0) blocks.push({ lines: details });
 
   for (const paragraph of message.body.split(/\n{2,}/)) {
-    const text = paragraph.replace(/^\n+|\n+$/g, '');
-    if (text.trim()) blocks.push({ kind: 'paragraph', text });
+    const lines = paragraph
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    if (lines.length > 0) blocks.push({ lines: lines.map(text => ({ text })) });
   }
 
   return blocks;
 }
 
-/** What a Markdown copy puts on the clipboard: the box as a blockquote, with one
- *  quoted line per line of the paragraph it belongs to. */
+/** The box as the header followed by its body, which is the one place the two
+ *  copies share their walk. */
+const blocksWithHeader = (message: SystemMessage): SystemBlock[] => [
+  { lines: [strong(message.header)] },
+  ...systemBlocks(message),
+];
+
+/** A line as Markdown writes it: bold where the line is bold, and a bold label
+ *  over the plain text that follows it. */
+const markdownLine = (line: SystemLine) =>
+  line.label
+    ? `**${line.label}**${line.text ? ` ${line.text}` : ''}`
+    : line.strong
+      ? `**${line.text}**`
+      : line.text;
+
+/** What **Copy System Box** puts on the clipboard: the box as plain text with its
+ *  bold lines marked, one blank line between statements and none inside one, ready
+ *  to paste into a chapter and centre. */
 export function systemMessageMarkdown(message: SystemMessage): string {
-  const lines: string[] = [`> **${message.header}**`];
-
-  for (const block of systemBlocks(message)) {
-    lines.push('>');
-
-    if (block.kind === 'bullets') {
-      for (const item of block.items) lines.push(`> - ${item}`);
-      continue;
-    }
-
-    for (const line of block.text.split('\n')) {
-      lines.push(block.bold ? `> **${line.trim()}**` : `> ${line.trim()}`);
-    }
-  }
-
-  return lines.join('\n');
+  return blocksWithHeader(message)
+    .map(block => block.lines.map(markdownLine).join('\n'))
+    .join('\n\n');
 }
 
 /** Text that must survive being pasted as markup: a stat line reading `<HP>` is
@@ -480,33 +507,26 @@ export function systemMessageMarkdown(message: SystemMessage): string {
 const escapeHtml = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** The same box as a real HTML blockquote, for a site whose editor takes tags. */
-export function systemMessageHtml(message: SystemMessage): string {
-  const lines: string[] = [
-    '<blockquote>',
-    `  <p><strong>${escapeHtml(message.header)}</strong></p>`,
-  ];
+/** A line as HTML writes it. A stat or a checklist row is one `<strong>`, the
+ *  way an author bolds the whole line in an editor; a labelled line bolds only
+ *  its label. */
+const htmlLine = (line: SystemLine) => {
+  const text = escapeHtml(line.text);
 
-  for (const block of systemBlocks(message)) {
-    if (block.kind === 'bullets') {
-      lines.push('  <ul>');
-      for (const item of block.items) lines.push(`    <li>${escapeHtml(item)}</li>`);
-      lines.push('  </ul>');
-      continue;
-    }
-
-    const text = block.text
-      .split('\n')
-      .map(line => escapeHtml(line.trim()))
-      .filter(Boolean)
-      .join('<br />');
-
-    lines.push(
-      block.bold ? `  <p><strong>${text}</strong></p>` : `  <p>${text}</p>`
-    );
+  if (line.label) {
+    return `<strong>${escapeHtml(line.label)}</strong>${text ? ` ${text}` : ''}`;
   }
 
-  lines.push('</blockquote>');
+  return line.strong ? `<strong>${text}</strong>` : text;
+};
 
-  return lines.join('\n');
+/** The same box as centred HTML, for a site whose editor takes tags: a centred
+ *  div of paragraphs, each statement of the box on its own lines inside one, so a
+ *  paste into Royal Road lands as the writer formatted it. */
+export function systemMessageHtml(message: SystemMessage): string {
+  const paragraphs = blocksWithHeader(message).map(
+    block => `  <p>${block.lines.map(htmlLine).join('<br />')}</p>`
+  );
+
+  return ['<div style="text-align: center;">', ...paragraphs, '</div>'].join('\n');
 }
