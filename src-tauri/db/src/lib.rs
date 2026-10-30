@@ -2008,8 +2008,9 @@ impl Db {
 
         // ---- something in the trash -----------------------------------------
 
-        // A cut cast member and a cut card, so the trash is not empty on a fresh
-        // demo. Both are written and then deleted through the ordinary commands,
+        // A cut cast member, a cut card and a cut connection, so the trash is not
+        // empty on a fresh demo and every kind of removal has a line of its own.
+        // All three are written and then deleted through the ordinary commands,
         // which is what puts them in the history as well.
         let cut_cast = self.create_character(
             story_id.to_string(),
@@ -2017,8 +2018,63 @@ impl Db {
             Some("Cut in the second draft; kept here so the deletion can be undone.".into()),
             user.clone(),
         )?;
-        self.delete_character(&cut_cast.id, user.clone())?;
+
+        // She leaves a small sheet behind, so the trash has something to warn
+        // about: a purge takes the whole sheet with her, and the line says how
+        // much of it. The names are ones the demo already uses, so the seed adds
+        // no skill or item the rest of the story does not know.
+        for (stat_name, value) in [("Strength", 9), ("Wits", 10)] {
+            self.add_or_update_stat(
+                cut_cast.id.clone(),
+                stat_name.into(),
+                value,
+                None,
+                user.clone(),
+            )?;
+        }
+        self.add_or_update_attribute(
+            cut_cast.id.clone(),
+            "Class".into(),
+            "Choir runner".into(),
+            user.clone(),
+        )?;
+        self.add_skill(
+            cut_cast.id.clone(),
+            "Tide-Read".into(),
+            Some("Rank 1".into()),
+            Some("Reads the season off the water, badly.".into()),
+            Some(low_tide.id.clone()),
+            None,
+            user.clone(),
+        )?;
+        self.add_inventory_item(
+            cut_cast.id.clone(),
+            "Chalked Key".into(),
+            None,
+            1,
+            Some("Opens the low gate on the days it is supposed to be shut.".into()),
+            Some(low_tide.id.clone()),
+            None,
+            None,
+            user.clone(),
+        )?;
+
+        // A cut connection too: the link's line is short because a purge takes
+        // nothing but the link, and the picture should show that as well. The
+        // three are deleted oldest first so the trash, which lists newest first,
+        // reads sheet, card, link - the order the guide talks about them in.
+        let cut_link = self.create_edge(
+            story_id.to_string(),
+            room_card.clone(),
+            tower_card.clone(),
+            Some("cut with the second draft".into()),
+            None,
+            user.clone(),
+        )?;
+        self.delete_edge(&cut_link.id, user.clone())?;
+
         self.delete_node(&cut_card, user.clone())?;
+        self.delete_character(&cut_cast.id, user.clone())?;
 
         // A whole story in the trash too, since the shelf has a section for
         // those. A previous demo's scratch story is left as it is rather than
@@ -19993,7 +20049,46 @@ mod tests {
         assert_eq!(db.list_story_quests(&story.id, None).unwrap().len(), 2);
         assert_eq!(db.list_story_relations(&story.id).unwrap().len(), 3);
         assert_eq!(db.list_chapter_notes(&story.id).unwrap().len(), 2);
-        assert_eq!(db.list_deleted(Some(&story.id)).unwrap().len(), 2);
+
+        // Three rows in the trash, one of each kind, and each says what a
+        // permanent delete would take: the cut member's sheet, the link alone for
+        // the connection, and nothing extra for a card that owns nothing.
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        assert_eq!(
+            trash
+                .iter()
+                .map(|item| item.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["character", "node", "edge"],
+            "the trash lists the newest deletion first"
+        );
+
+        let detail_of = |kind: &str| {
+            trash
+                .iter()
+                .find(|item| item.kind == kind)
+                .unwrap_or_else(|| panic!("the demo trash has no {kind}"))
+                .detail
+                .clone()
+        };
+
+        assert_eq!(
+            detail_of("character").as_deref(),
+            Some("Deleting forever also removes 2 stats, 1 attribute, 1 skill and 1 item."),
+            "the picture of the trash warns about the cut member's sheet"
+        );
+        assert_eq!(
+            detail_of("node"),
+            None,
+            "a card that owns nothing says nothing extra"
+        );
+        assert_eq!(
+            detail_of("edge").as_deref(),
+            Some(
+                "Deleting forever removes only the link between The Tally Room and \
+                 The Ninth Bell Tower; both cards stay on the board."
+            )
+        );
     }
 
     #[test]
@@ -20046,8 +20141,8 @@ mod tests {
         assert!(nodes.iter().all(|node| node.label != "Stray chapter"));
         assert_eq!(
             db.list_deleted(Some(&story.id)).unwrap().len(),
-            2,
-            "the cut cast member and the cut card are back in the trash"
+            3,
+            "the cut cast member, the cut card and the cut link are back in the trash"
         );
 
         let ivy = characters

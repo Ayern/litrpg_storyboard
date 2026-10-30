@@ -550,7 +550,9 @@ the only irreversible thing in the app and it asks first, so each line says what
 would take before you click anything: a card that owns rows names them — “Deleting
 forever also removes 2 skills and 1 chapter event” — a person names the sheet that
 goes with them and the links that only clear, and a connection says it removes only
-itself and leaves both cards. **Keep deleted items for** decides how long the trash
+itself and leaves both cards. The picture has one of each: Wren Halloway's sheet,
+a card with nothing of its own to take, and a connection that takes nothing but
+the link between the two cards it joined. **Keep deleted items for** decides how long the trash
 holds things — forever by default, or 7, 30, 90 days or a year, cleared when the
 app starts.*
 

@@ -620,7 +620,10 @@ that fades.
 
 *The trash lists two different things under one command: the stories that were
 deleted (read with no story named) and the rows deleted inside the open story
-(read with one). Both have **Restore** and **Delete forever**.*
+(read with one). Both have **Restore** and **Delete forever**. The picture shows
+one row of each kind, and so one `detail` sentence of each shape: a character's
+sheet, a card with nothing of its own, and a connection that names the two cards
+it joined.*
 
 Each row carries a `detail` sentence naming what a permanent delete would take
 with it, and `list_deleted` builds it from the rows the purge itself removes, so
