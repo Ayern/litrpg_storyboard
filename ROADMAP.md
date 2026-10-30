@@ -259,10 +259,14 @@ step. A purge is the end of it: `purge_card_rows` runs before the node row goes
 and removes the chapter rows naming those skills and items, then the rows
 themselves, so a purged card cannot leave anything pointing at a node that is
 gone. The board, the open sheet and the ledgers re-read on delete, undo, redo and
-restore rather than waiting for a tab switch. A card's line in the Trash says what
+restore rather than waiting for a tab switch. A row's line in the Trash says what
 a permanent delete would take with it — `list_deleted` fills a `detail` from the
 same rows the purge removes, so the skills, items, chapter events and notes go
-named rather than discovered. Remaining is the same question for
+named rather than discovered. The same line reaches the other kinds: a character's
+counts the sheet, scenes, cast places, relationships and standings that cascade
+with them and names apart the links a purge only clears (a card's cast link or POV,
+a reward's target, a quest's giver), and a connection's names the two cards it
+joined and says it takes nothing but the link. Remaining is the same question for
 the other card kinds: a `quest` card and its contract are separate rows that
 never ask about each other, `faction` standings are deliberately read with
 trashed cards included so a standing outlives a card, and a `character` card is

@@ -157,6 +157,19 @@ const purgeDetail = (nodeId: string) => {
   }.`;
 };
 
+// A connection's purge takes nothing with it — the cards at either end stay on
+// the board — so the line names those cards and says so, as the database does.
+const edgePurgeDetail = (edge: Row) => {
+  const from = nodeLabel(edge.source_id);
+  const to = nodeLabel(edge.target_id);
+
+  if (!from || !to) {
+    return 'Deleting forever removes only this connection; both cards stay on the board.';
+  }
+
+  return `Deleting forever removes only the link between ${from} and ${to}; both cards stay on the board.`;
+};
+
 const chapterEventIsShown = (event: Row) => {
   const skills = hiddenSkillIds();
   const items = hiddenItemIds();
@@ -804,6 +817,7 @@ const writes: Record<string, (args: Row) => unknown> = {
         label: `${nodeLabel(edge.source_id) ?? '?'} → ${nodeLabel(edge.target_id) ?? '?'}`,
         story_id: edge.story_id,
         deleted_at: now(),
+        detail: edgePurgeDetail(edge),
       });
       drop(store.edges, edge.id);
     }

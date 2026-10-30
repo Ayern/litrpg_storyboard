@@ -230,6 +230,41 @@ describe('trash tab', () => {
     ).toBeInTheDocument();
   });
 
+  it('says what a permanent delete would take with a character and a connection', async () => {
+    storyTrash = [
+      {
+        ...deleted('char-1', 'character', 'Wren Halloway'),
+        detail:
+          'Deleting forever also removes 2 stats, 1 skill and 1 chapter event, and clears 2 links to them.',
+      },
+      {
+        ...deleted('edge-1', 'edge', 'Chapter One → Iron Sword'),
+        detail:
+          'Deleting forever removes only the link between Chapter One and Iron Sword; both cards stay on the board.',
+      },
+    ];
+
+    await openTrashTab();
+    const items = await screen.findByRole('list', { name: 'Deleted from this story' });
+
+    // A character's line names the sheet rows going with them and, separately, the
+    // links clearing on the cards that stay.
+    const character = within(items).getByText('Wren Halloway').closest('li')!;
+    expect(
+      within(character).getByText(
+        'Deleting forever also removes 2 stats, 1 skill and 1 chapter event, and clears 2 links to them.'
+      )
+    ).toBeInTheDocument();
+
+    // A connection takes nothing with it, and says so.
+    const connection = within(items).getByText('Chapter One → Iron Sword').closest('li')!;
+    expect(
+      within(connection).getByText(
+        'Deleting forever removes only the link between Chapter One and Iron Sword; both cards stay on the board.'
+      )
+    ).toBeInTheDocument();
+  });
+
   it('keeps a cancelled permanent delete', async () => {
     storyTrash = [deleted('char-1', 'character', 'Rook')];
 

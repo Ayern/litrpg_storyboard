@@ -11906,12 +11906,18 @@ impl Db {
             }
         };
 
-        // A card is only a line in the trash until it is purged, and a purge
-        // takes whatever the card owned with it. Saying so on the line is the
-        // warning an author gets before those rows are gone for good.
+        // A row is only a line in the trash until it is purged, and a purge can
+        // take more than the row: a card its skills and items, a character their
+        // whole sheet, and a connection nothing but the link itself. Saying so on
+        // the line is the warning an author gets before it is gone for good.
         if story_id.is_some() {
-            for item in items.iter_mut().filter(|item| item.kind == "node") {
-                item.detail = purge_detail(&guard, &item.id)?;
+            for item in items.iter_mut() {
+                item.detail = match item.kind.as_str() {
+                    "node" => purge_detail(&guard, &item.id)?,
+                    "character" => character_purge_detail(&guard, &item.id)?,
+                    "edge" => edge_purge_detail(&guard, &item.id)?,
+                    _ => None,
+                };
             }
         }
 
@@ -18765,6 +18771,34 @@ fn purge_card_rows(tx: &rusqlite::Transaction<'_>, node_id: &str) -> SqliteResul
     purge_item_cards(tx, node_id)
 }
 
+/// One phrase of a detail line — `3 skills` — or nothing at all when there are
+/// none, so the list only ever names rows that exist.
+fn counted(count: i64, one: &str, many: &str) -> Option<String> {
+    (count > 0).then(|| format!("{count} {}", if count == 1 { one } else { many }))
+}
+
+/// `a`, `a and b`, `a, b and c`: the list a detail line ends with.
+fn join_counts(parts: Vec<String>) -> String {
+    match parts.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The sentence the trash shows for what a purge removes, or `None` when it
+/// removes nothing beyond the row itself.
+fn removal_sentence(parts: Vec<String>) -> Option<String> {
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Deleting forever also removes {}.",
+        join_counts(parts)
+    ))
+}
+
 /// What a permanent delete would take with a card, in the words the trash shows
 /// under its name: the skills and items it owns, the scene rows that named them
 /// or that belong to it, and the notes written under it. `None` when a purge
@@ -18789,30 +18823,159 @@ fn purge_detail(conn: &Connection, node_id: &str) -> SqliteResult<Option<String>
              OR source_id IN (SELECT id FROM character_inventory WHERE node_id = ?1)",
     )?;
 
-    let mut parts: Vec<String> = Vec::new();
+    Ok(removal_sentence(
+        [
+            counted(skills, "skill", "skills"),
+            counted(items, "item", "items"),
+            counted(events, "chapter event", "chapter events"),
+            counted(notes, "note", "notes"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    ))
+}
 
-    for (count, one, many) in [
-        (skills, "skill", "skills"),
-        (items, "item", "items"),
-        (events, "chapter event", "chapter events"),
-        (notes, "note", "notes"),
-    ] {
-        if count > 0 {
-            parts.push(format!("{count} {}", if count == 1 { one } else { many }));
-        }
-    }
-
-    let Some(last) = parts.pop() else {
-        return Ok(None);
+/// What a permanent delete would take with a character: every sheet row the
+/// cascade removes, the scenes they acted in, their relationships, standings and
+/// rosters, and the links the purge clears on the cards and quests that stay.
+///
+/// The two halves are named apart because a link is not removed with them: the
+/// card is still on the board, only its cast link, point of view or reward target
+/// is gone. `None` when a character owns neither.
+fn character_purge_detail(conn: &Connection, character_id: &str) -> SqliteResult<Option<String>> {
+    let count = |sql: &str| -> SqliteResult<i64> {
+        conn.query_row(sql, params![character_id], |row| row.get(0))
     };
 
-    let list = if parts.is_empty() {
-        last
-    } else {
-        format!("{} and {last}", parts.join(", "))
+    let parts: Vec<String> = [
+        counted(
+            count("SELECT COUNT(*) FROM character_stats WHERE character_id = ?1")?,
+            "stat",
+            "stats",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_attributes WHERE character_id = ?1")?,
+            "attribute",
+            "attributes",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_skills WHERE character_id = ?1")?,
+            "skill",
+            "skills",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_inventory WHERE character_id = ?1")?,
+            "item",
+            "items",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_currency WHERE character_id = ?1")?,
+            "currency amount",
+            "currency amounts",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_level_records WHERE character_id = ?1")?,
+            "level record",
+            "level records",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_growth_points WHERE character_id = ?1")?,
+            "growth point",
+            "growth points",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_progress WHERE character_id = ?1")?,
+            "XP record",
+            "XP records",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM character_awards WHERE character_id = ?1")?,
+            "award",
+            "awards",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM level_growth_rules WHERE character_id = ?1")?,
+            "growth rule",
+            "growth rules",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM chapter_events WHERE actor_id = ?1")?,
+            "chapter event",
+            "chapter events",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM chapter_cast WHERE character_id = ?1")?,
+            "chapter cast entry",
+            "chapter cast entries",
+        ),
+        counted(
+            count(
+                "SELECT COUNT(*) FROM character_relations
+                  WHERE from_character_id = ?1 OR to_character_id = ?1",
+            )?,
+            "relationship",
+            "relationships",
+        ),
+        counted(
+            count("SELECT COUNT(*) FROM faction_standings WHERE character_id = ?1")?,
+            "standing",
+            "standings",
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    // Counted by card rather than by column, so a chapter that names them as both
+    // its point of view and a cast member is one link and not two.
+    let links = count("SELECT COUNT(*) FROM nodes WHERE character_id = ?1 OR chapter_pov = ?1")?
+        + count(
+            "SELECT COUNT(*) FROM quest_rewards
+              WHERE target_id = ?1 AND reward_type != 'faction_standing'",
+        )?
+        + count("SELECT COUNT(*) FROM quests WHERE giver_character_id = ?1")?;
+
+    let links = match links {
+        0 => None,
+        1 => Some("1 link to them".to_string()),
+        many => Some(format!("{many} links to them")),
     };
 
-    Ok(Some(format!("Deleting forever also removes {list}.")))
+    Ok(match (parts.is_empty(), links) {
+        (true, None) => None,
+        (true, Some(links)) => Some(format!("Deleting forever also clears {links}.")),
+        (false, None) => removal_sentence(parts),
+        (false, Some(links)) => Some(format!(
+            "Deleting forever also removes {}, and clears {links}.",
+            join_counts(parts)
+        )),
+    })
+}
+
+/// A connection's purge takes nothing with it — the cards at either end stay on
+/// the board — so the line names those cards and says so, which is the only thing
+/// an author could fear losing here.
+fn edge_purge_detail(conn: &Connection, edge_id: &str) -> SqliteResult<Option<String>> {
+    let ends = conn
+        .query_row(
+            "SELECT start_node.label, end_node.label
+               FROM edges edge
+               JOIN nodes start_node ON start_node.id = edge.source_id
+               JOIN nodes end_node ON end_node.id = edge.target_id
+              WHERE edge.id = ?1",
+            params![edge_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+
+    Ok(Some(match ends {
+        Some((from, to)) => format!(
+            "Deleting forever removes only the link between {from} and {to}; both cards stay on the board."
+        ),
+        None => "Deleting forever removes only this connection; both cards stay on the board."
+            .to_string(),
+    }))
 }
 
 /// Removes the skills a skill card owned. The chapter rows that named the skills
@@ -31118,6 +31281,207 @@ mod tests {
         drop(guard);
 
         assert_eq!(items, 0);
+    }
+
+    #[test]
+    fn the_trash_says_what_a_purge_takes_with_a_character() {
+        let (db, story, character, chapter, _) = inventory_story();
+        let rival = db
+            .create_character(story.id.clone(), "Mira".into(), None, "Ada".into())
+            .unwrap();
+        let linked_card = db
+            .create_node(
+                story.id.clone(),
+                "idea".into(),
+                "A bell under the floor".into(),
+                None,
+                0.0,
+                0.0,
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.add_or_update_stat(
+            character.id.clone(),
+            "Strength".into(),
+            12,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_or_update_stat(
+            character.id.clone(),
+            "Insight".into(),
+            7,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_or_update_attribute(
+            character.id.clone(),
+            "Class".into(),
+            "Warden".into(),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_skill(
+            character.id.clone(),
+            "Ember Whisper".into(),
+            Some("1".into()),
+            None,
+            Some(chapter.id.clone()),
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_currency(character.id.clone(), "Gold".into(), 20, "Ada".into())
+            .unwrap();
+        db.add_inventory_item(
+            character.id.clone(),
+            "Torch".into(),
+            None,
+            1,
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_character_award(
+            character.id.clone(),
+            Some(chapter.id.clone()),
+            "stat".into(),
+            Some("Strength".into()),
+            1,
+            Some("a blessing".into()),
+            "Ada".into(),
+        )
+        .unwrap();
+        db.add_chapter_cast_member(chapter.id.clone(), character.id.clone(), "Ada".into())
+            .unwrap();
+        db.set_chapter_details(
+            &chapter.id,
+            None,
+            None,
+            None,
+            Some(character.id.clone()),
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        db.set_node_character(&linked_card.id, Some(character.id.clone()), "Ada".into())
+            .unwrap();
+        db.add_relation(
+            character.id.clone(),
+            rival.id.clone(),
+            "rival".into(),
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+        // The scene's acquisition writes the item, so they end up holding two.
+        db.add_chapter_event(
+            chapter.id.clone(),
+            character.id.clone(),
+            "item_acquire".into(),
+            "Iron Sword".into(),
+            None,
+            None,
+            None,
+            None,
+            "Ada".into(),
+        )
+        .unwrap();
+
+        // A cast member with nothing of their own says nothing extra.
+        let bare = db
+            .create_character(story.id.clone(), "Tam".into(), None, "Ada".into())
+            .unwrap();
+
+        db.delete_character(&character.id, "Ada".into()).unwrap();
+        db.delete_character(&bare.id, "Ada".into()).unwrap();
+
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        let line = |id: &str| trash.iter().find(|row| row.id == id).unwrap();
+
+        // The sheet rows are removed with them; the card and the chapter are only
+        // unlinked, so they are counted apart and the links are not called removals.
+        assert_eq!(
+            line(&character.id).detail.as_deref(),
+            Some(
+                "Deleting forever also removes 2 stats, 1 attribute, 1 skill, 2 items, \
+                 1 currency amount, 1 award, 1 chapter event, 1 chapter cast entry and \
+                 1 relationship, and clears 2 links to them."
+            )
+        );
+        assert_eq!(line(&bare.id).detail, None);
+
+        db.purge_character(&character.id, "Ada".into()).unwrap();
+
+        // Nothing the line named survives, and the two cards it named as links are
+        // still on the board with no member attached.
+        assert!(db.list_stats(&character.id).unwrap().is_empty());
+        assert!(db.list_skills(&character.id).unwrap().is_empty());
+        assert!(db.list_inventory(&character.id).unwrap().is_empty());
+        assert!(db.list_story_chapter_events(&story.id).unwrap().is_empty());
+
+        let nodes = db.list_nodes(&story.id).unwrap();
+        let card = nodes.iter().find(|node| node.id == linked_card.id).unwrap();
+        let chapter = nodes.iter().find(|node| node.id == chapter.id).unwrap();
+        assert_eq!(card.character_id, None);
+        assert_eq!(chapter.chapter_pov, None);
+        assert!(nodes
+            .iter()
+            .any(|node| node.label == "A bell under the floor"));
+        // The rival the relationship named is untouched; the purged character and
+        // the other trashed one are the only cast members missing from the rail.
+        let cast: Vec<String> = db
+            .list_characters(&story.id)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.name)
+            .collect();
+        assert_eq!(cast, vec!["Mira".to_string()]);
+    }
+
+    #[test]
+    fn the_trash_says_a_connection_takes_nothing_but_the_link() {
+        let (db, story, _, chapter, card) = inventory_story();
+
+        let edge = db
+            .create_edge(
+                story.id.clone(),
+                chapter.id.clone(),
+                card.id.clone(),
+                None,
+                Some("leads to".into()),
+                "Ada".into(),
+            )
+            .unwrap();
+
+        db.delete_edge(&edge.id, "Ada".into()).unwrap();
+
+        let trash = db.list_deleted(Some(&story.id)).unwrap();
+        let line = trash.iter().find(|row| row.id == edge.id).unwrap();
+
+        assert_eq!(
+            line.detail.as_deref(),
+            Some(
+                "Deleting forever removes only the link between Chapter One and Iron Sword; \
+                 both cards stay on the board."
+            )
+        );
+
+        db.purge_edge(&edge.id, "Ada".into()).unwrap();
+
+        // The line's promise, checked: purging the link leaves both cards alone.
+        let nodes = db.list_nodes(&story.id).unwrap();
+        assert!(nodes.iter().any(|node| node.id == chapter.id));
+        assert!(nodes.iter().any(|node| node.id == card.id));
     }
 
     #[test]

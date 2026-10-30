@@ -622,12 +622,21 @@ that fades.
 deleted (read with no story named) and the rows deleted inside the open story
 (read with one). Both have **Restore** and **Delete forever**.*
 
-A card's line carries a `detail` sentence naming what a permanent delete would
-take with it. `list_deleted` builds it from the rows the purge itself removes —
-the skills and items the card owns, the chapter events that named them or that
-belong to it, and the notes written under it — so the sentence cannot promise
-less than the purge does. A row with nothing of its own carries no detail, and
-the line is there before the confirmation is asked for, not after it.
+Each row carries a `detail` sentence naming what a permanent delete would take
+with it, and `list_deleted` builds it from the rows the purge itself removes, so
+the sentence cannot promise less than the purge does. A card's line counts the
+skills and items it owns, the chapter events that named them or that belong to it,
+and the notes written under it. A character's line counts the whole sheet going
+with them — stats, attributes, skills, items, currency, level records, growth
+points, XP records, awards — plus the scenes they acted in, their cast places,
+relationships and standings, and, named apart, the links the purge only *clears*
+(a card's cast link or point of view, a reward's target, a quest's giver): those
+cards stay on the board, so a removal and a link are never counted as one thing.
+A connection's line names the two cards it joined and says it removes nothing
+else. A row with nothing of its own carries no detail; a connection always does,
+because there the whole promise is that both cards stay. The line is there before
+the confirmation is asked for, not after it, and the screenshot harness counts its
+mock store the same way so a preview answers like the database.
 
 Deleting a story, character, node or connection sets `deleted_at` instead of
 destroying anything, and the reads that feed the app filter those rows out. The
