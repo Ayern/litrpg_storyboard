@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { chapterBesideCard, chapterEventChoices } from './systemEvents';
-import type { BoardCard } from './systemEvents';
+import { chapterBesideCard, chapterEventChoices, chapterEventsFor } from './systemEvents';
+import type { BoardCard, SystemEventChoice } from './systemEvents';
 import type { ChapterEventRow } from './types';
 import type { ChapterNode } from '../narrative/chapters';
-import type { CharacterProgress, CharacterSkill, LevelGrowthRule } from '../shared/types';
+import type {
+  CharacterLevel,
+  CharacterProgress,
+  CharacterSkill,
+  LevelGrowthRule,
+} from '../shared/types';
 
 // A scene's ledger already says what happened; these tests hold the translation
 // from one of those rows into a System box, and the order the experience is
@@ -91,8 +96,35 @@ const choices = (events: ChapterEventRow[], extra: Partial<Parameters<typeof cha
     progress: [progress('p-1', ch1.id, 600), progress('p-2', ch2.id, 600)],
     rules: [rule],
     skills: [],
+    levels: [],
     ...extra,
   });
+
+// A level the author recorded, with the stat gains it carries.
+function level(
+  levelNumber: number,
+  changes: { stat_name: string; amount?: number | null; value_after?: number | null }[],
+  characterId = 'ivy'
+): CharacterLevel {
+  return {
+    id: `lvl-${characterId}-${levelNumber}`,
+    character_id: characterId,
+    level: levelNumber,
+    chapter_id: null,
+    is_debuff: false,
+    stat_changes: changes.map((change, index) => ({
+      id: `change-${levelNumber}-${index}`,
+      level_record_id: `lvl-${characterId}-${levelNumber}`,
+      stat_name: change.stat_name,
+      amount: change.amount ?? null,
+      value_after: change.value_after ?? null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    })),
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  };
+}
 
 describe('what a scene can write', () => {
   it('writes an XP award that carried a level as a level-up box', () => {
@@ -355,6 +387,163 @@ describe('the chapter a box belongs to', () => {
     expect(
       chapterBesideCard({ nodeId: 'n-system', nodes: [box(0)], edges: [] })
     ).toBeNull();
+  });
+});
+
+describe('the stats a level-up recorded', () => {
+  // The levels carry the gains: a sheet records what a level gave, and the award
+  // that crossed it can announce the same numbers without the author copying
+  // them across.
+  it('writes the gain of a level the award crossed', () => {
+    const [choice] = choices([event(ch2.id, { amount: 600 })], {
+      levels: [level(3, [{ stat_name: 'Insight', amount: 1, value_after: 13 }])],
+    });
+
+    expect(choice.prefill.stats).toEqual([{ name: 'Insight', from: '12', to: '13' }]);
+  });
+
+  it('adds up a stat two crossed levels both raised', () => {
+    const [choice] = choices([event(ch2.id, { amount: 1800 })], {
+      levels: [
+        level(3, [{ stat_name: 'Insight', amount: 1, value_after: 13 }]),
+        level(4, [{ stat_name: 'Insight', amount: 1, value_after: 14 }]),
+        level(5, [{ stat_name: 'Insight', amount: 1, value_after: 15 }]),
+      ],
+    });
+
+    // Level two to five, so the row is one move rather than the same name three
+    // times: where the first gain started and where the last one left it.
+    expect(choice.prefill.levelTo).toBe('5');
+    expect(choice.prefill.stats).toEqual([{ name: 'Insight', from: '12', to: '15' }]);
+  });
+
+  it('counts a gain spelled differently as the same stat', () => {
+    const [choice] = choices([event(ch2.id, { amount: 1800 })], {
+      levels: [
+        level(3, [{ stat_name: 'Insight', amount: 1, value_after: 13 }]),
+        level(4, [{ stat_name: ' insight ', amount: 1, value_after: 14 }]),
+      ],
+    });
+
+    expect(choice.prefill.stats).toEqual([{ name: 'Insight', from: '12', to: '14' }]);
+  });
+
+  it('says a gain whose value was never recorded as the gain', () => {
+    const [choice] = choices([event(ch2.id, { amount: 600 })], {
+      levels: [level(3, [{ stat_name: 'Agility', amount: 2 }])],
+    });
+
+    // The sheet recorded what the level gave, not what it added to, so the box
+    // says the gain rather than inventing a number.
+    expect(choice.prefill.stats).toEqual([{ name: 'Agility', from: '', to: '+2' }]);
+  });
+
+  it('leaves a level the award never crossed out of the box', () => {
+    const [choice] = choices([event(ch2.id, { amount: 600 })], {
+      levels: [level(6, [{ stat_name: 'Strength', amount: 2, value_after: 20 }])],
+    });
+
+    // The award reached level three; a gain recorded at six is somebody else's
+    // announcement. The key is left off rather than left empty.
+    expect(choice.prefill).not.toHaveProperty('stats');
+  });
+
+  it('leaves the gains off another character’s award', () => {
+    const [choice] = choices([event(ch2.id, { amount: 600 })], {
+      levels: [level(3, [{ stat_name: 'Insight', amount: 1, value_after: 13 }], 'bram')],
+    });
+
+    expect(choice.prefill).not.toHaveProperty('stats');
+  });
+});
+
+describe('which chapters the picker offers', () => {
+  const choice = (chapterId: string): SystemEventChoice => ({
+    id: `c-${chapterId}`,
+    chapterId,
+    label: chapterId,
+    prefill: { kind: 'skill', title: chapterId },
+  });
+
+  const ch4 = chapter('ch-4', 'The Tally', 4);
+  const ch5 = chapter('ch-5', 'After the Bell', 5);
+  const five = [ch1, ch2, ch3, ch4, ch5];
+
+  it('offers the chapter the box belongs to when it has events', () => {
+    const listing = chapterEventsFor({
+      choices: [choice(ch1.id), choice(ch3.id), choice(ch5.id)],
+      chapterId: ch3.id,
+      chapters: five,
+    });
+
+    expect(listing.scope).toBe('chapter');
+    expect(listing.choices.map(entry => entry.chapterId)).toEqual([ch3.id]);
+  });
+
+  it('offers the chapters either side when its own has nothing logged', () => {
+    const listing = chapterEventsFor({
+      choices: [choice(ch2.id), choice(ch4.id)],
+      chapterId: ch3.id,
+      chapters: five,
+    });
+
+    // A box written beside a scene with nothing in it is usually announcing what
+    // happened on the way in or out, so those two are offered before the story.
+    expect(listing.scope).toBe('nearby');
+    expect(listing.choices.map(entry => entry.chapterId)).toEqual([ch2.id, ch4.id]);
+    expect(listing.nearby).toEqual([
+      { chapterId: ch2.id, title: 'Ch. 2 · The Drowned Stair' },
+      { chapterId: ch4.id, title: 'Ch. 4 · The Tally' },
+    ]);
+  });
+
+  it('walks out another ring when the chapters beside it are empty too', () => {
+    const listing = chapterEventsFor({
+      choices: [choice(ch1.id)],
+      chapterId: ch3.id,
+      chapters: five,
+    });
+
+    expect(listing.scope).toBe('nearby');
+    expect(listing.choices.map(entry => entry.chapterId)).toEqual([ch1.id]);
+    // Only the chapter that answered is named: saying “the chapters beside Ch. 3”
+    // would point at two scenes with nothing to write.
+    expect(listing.nearby).toEqual([{ chapterId: ch1.id, title: 'Ch. 1 · The Low Tide' }]);
+  });
+
+  it('names the chapter when it has no number to read', () => {
+    const unnumbered = chapter('ch-6', 'A Chapter With No Number', null);
+
+    const listing = chapterEventsFor({
+      choices: [choice(ch1.id)],
+      chapterId: 'ch-6',
+      chapters: [ch1, unnumbered],
+    });
+
+    expect(listing.nearby).toEqual([
+      { chapterId: ch1.id, title: 'Ch. 1 · The Low Tide' },
+    ]);
+  });
+
+  it('falls back to the whole story when no chapter has anything to write', () => {
+    const listing = chapterEventsFor({
+      choices: [],
+      chapterId: ch3.id,
+      chapters: five,
+    });
+
+    expect(listing.scope).toBe('all');
+  });
+
+  it('lists the whole story when the board has only the one chapter', () => {
+    const listing = chapterEventsFor({
+      choices: [choice(ch1.id)],
+      chapterId: ch3.id,
+      chapters: [ch3],
+    });
+
+    // There is no neighbour to widen to, so nothing is hidden either.
+    expect(listing.scope).toBe('all');
   });
 });
 

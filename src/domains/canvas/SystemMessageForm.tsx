@@ -26,10 +26,38 @@ interface SystemMessageFormProps {
   eventScope?: {
     title: string;
     via: 'link' | 'near';
-    fellBack: boolean;
-    showingAll: boolean;
+    scope: 'chapter' | 'nearby' | 'all';
+    // The chapters a widened list drew on, named for the note.
+    nearby: string[];
+    // The press that changes the width, or null when the list is already every
+    // chapter and there is nothing left to widen to.
+    escapeLabel: string | null;
     onToggleAll: (all: boolean) => void;
   } | null;
+}
+
+// “A”, “A and B”, “A, B and C”.
+const andList = (names: string[]) =>
+  names.length <= 1
+    ? (names[0] ?? '')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+// What the picker is listing and why, in the author's words. A narrowed list says
+// which scene it came from; a widened one says what it was widened to and never
+// hides that the chapter the box belongs to was passed over.
+function scopeNote(scope: NonNullable<SystemMessageFormProps['eventScope']>): string {
+  if (scope.scope === 'all') return `Every chapter, not just ${scope.title}.`;
+
+  if (scope.scope === 'nearby') {
+    const named = andList(scope.nearby);
+    const listed = scope.nearby.length === 1 ? 'is' : 'are';
+
+    return `Nothing is logged in ${scope.title} yet, so ${named} ${listed} listed.`;
+  }
+
+  return scope.via === 'link'
+    ? `From ${scope.title}, the chapter this box is connected to.`
+    : `From ${scope.title}, the nearest chapter card on the board.`;
 }
 
 export function SystemMessageForm({
@@ -86,27 +114,19 @@ export function SystemMessageForm({
           </select>
           {eventScope && (
             <p className="node-drawer-note system-prefill-scope">
-              <span>
-                {eventScope.fellBack
-                  ? `${eventScope.title} has nothing logged to write yet, so every chapter is listed.`
-                  : eventScope.showingAll
-                    ? `Every chapter, not just ${eventScope.title}.`
-                    : eventScope.via === 'link'
-                      ? `From ${eventScope.title}, the chapter this box is connected to.`
-                      : `From ${eventScope.title}, the nearest chapter card on the board.`}
-              </span>
-              {!eventScope.fellBack && (
+              <span>{scopeNote(eventScope)}</span>
+              {eventScope.escapeLabel && (
                 <button
                   type="button"
                   className="system-prefill-scope-escape"
                   title={
-                    eventScope.showingAll
-                      ? `List only ${eventScope.title} again`
-                      : 'List every chapter’s events instead of this one’s'
+                    eventScope.scope === 'all'
+                      ? 'Narrow the list again, to the chapters this box belongs to'
+                      : 'List every chapter’s events instead of these'
                   }
-                  onClick={() => eventScope.onToggleAll(!eventScope.showingAll)}
+                  onClick={() => eventScope.onToggleAll(eventScope.scope !== 'all')}
                 >
-                  {eventScope.showingAll ? 'This chapter only' : 'Show every chapter'}
+                  {eventScope.escapeLabel}
                 </button>
               )}
             </p>
@@ -182,7 +202,9 @@ export function SystemMessageForm({
 
           {message.stats.length === 0 && (
             <p className="node-drawer-note">
-              A stat that moved, e.g. Agility 12 → 13, prints as a line in the box.
+              A stat that moved, e.g. Agility 12 → 13, prints as a line in the box. A
+              level-up written from a chapter event brings the gains its levels
+              recorded with it.
             </p>
           )}
 

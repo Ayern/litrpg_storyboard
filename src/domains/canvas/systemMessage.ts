@@ -308,6 +308,9 @@ export interface SystemEventPrefill {
   levelFrom?: string;
   levelTo?: string;
   points?: string;
+  // The gains the levels this award crossed had recorded, already written as the
+  // box prints them. Left out when the award moved no stat.
+  stats?: SystemStat[];
   rank?: string;
   evolution?: string;
   body?: string;
@@ -328,7 +331,7 @@ export function applySystemPrefill(
     levelFrom: prefill.levelFrom ?? '',
     levelTo: prefill.levelTo ?? '',
     points: prefill.points ?? '',
-    stats: [],
+    stats: prefill.stats ?? [],
     rank: prefill.rank ?? '',
     evolution: prefill.evolution ?? '',
     objectives: [],

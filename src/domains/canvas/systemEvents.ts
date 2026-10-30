@@ -1,10 +1,16 @@
 import { FALLBACK_XP_BASE } from '../progression/crossings';
 import { effectiveGrowthRule, levelForXp } from '../progression/growth';
+import { statKey } from '../progression/statNames';
 import { formatCount } from '../../lib/format';
 import type { ChapterNode } from '../narrative/chapters';
-import type { CharacterProgress, CharacterSkill, LevelGrowthRule } from '../shared/types';
+import type {
+  CharacterLevel,
+  CharacterProgress,
+  CharacterSkill,
+  LevelGrowthRule,
+} from '../shared/types';
 import type { ChapterEventRow } from './types';
-import type { SystemEventPrefill } from './systemMessage';
+import type { SystemEventPrefill, SystemStat } from './systemMessage';
 
 // A scene already knows what happened: the ledger on a chapter card records the
 // XP paid, the skill learned, the rank that moved. A System box announcing the
@@ -35,12 +41,22 @@ export interface ChapterEventChoiceInput {
   progress: CharacterProgress[];
   rules: LevelGrowthRule[];
   skills: Pick<CharacterSkill, 'id' | 'name' | 'rank'>[];
+  // The levels the author recorded, which is where a level's stat gains are
+  // written. An award that crossed one of them can announce the gains too.
+  levels: CharacterLevel[];
 }
 
 // The order a chapter's income counts in: the reading order, with the chapters
 // that have no place yet after every placed one. It is the order the crossings
 // use, so the box and the curve agree about which chapter paid for a level.
-function chapterOrder(chapters: ChapterNode[]): Map<string, number> {
+// As much of a chapter card as the reading order needs: the board and the story
+// both know it, so the order is worked out from either.
+export interface OrderedChapter {
+  id: string;
+  data: { label?: string; chapterSeq?: number | null };
+}
+
+function chapterOrder(chapters: readonly OrderedChapter[]): Map<string, number> {
   const placed = [...chapters].sort(
     (left, right) =>
       (left.data.chapterSeq ?? Number.MAX_SAFE_INTEGER) -
@@ -59,12 +75,77 @@ const ordered = (events: ChapterEventRow[], rank: (id: string | null) => number)
       left.id.localeCompare(right.id)
   );
 
+// The stats an award moved, read off the levels it crossed. One row per stat,
+// because a stat a long award raised twice should print the whole move rather
+// than the same name twice: the first recorded value the award started above and
+// the last one it left behind.
+//
+// A level record may hold both the gain and the value it left, or only one of
+// them. A row says what was recorded and leaves the other side blank, so a half
+// recorded level never invents a number the sheet does not have.
+function statMovesAcrossLevels(
+  characterId: string,
+  from: number,
+  to: number,
+  levels: CharacterLevel[]
+): SystemStat[] {
+  const crossed = levels
+    .filter(level => level.character_id === characterId && level.level > from && level.level <= to)
+    .sort((left, right) => left.level - right.level);
+
+  const moves = new Map<
+    string,
+    { name: string; before: number | null; after: number | null; gain: number | null }
+  >();
+
+  for (const level of crossed) {
+    for (const change of level.stat_changes ?? []) {
+      const key = statKey(change.stat_name);
+
+      if (!key) continue;
+
+      const move = moves.get(key) ?? {
+        name: change.stat_name.trim(),
+        before: null,
+        after: null,
+        gain: null,
+      };
+
+      if (move.before == null && change.amount != null && change.value_after != null) {
+        move.before = change.value_after - change.amount;
+      }
+
+      if (change.value_after != null) move.after = change.value_after;
+      if (change.amount != null) move.gain = (move.gain ?? 0) + change.amount;
+
+      moves.set(key, move);
+    }
+  }
+
+  const stats: SystemStat[] = [];
+
+  for (const move of moves.values()) {
+    if (move.before != null && move.after != null) {
+      stats.push({ name: move.name, from: String(move.before), to: String(move.after) });
+    } else if (move.after != null) {
+      stats.push({ name: move.name, from: '', to: String(move.after) });
+    } else if (move.gain != null) {
+      // Only the gain was recorded, so the box says the gain rather than pretend
+      // to know the number it was added to.
+      stats.push({ name: move.name, from: '', to: `${move.gain > 0 ? '+' : ''}${move.gain}` });
+    }
+  }
+
+  return stats;
+}
+
 export function chapterEventChoices({
   events,
   chapters,
   progress,
   rules,
   skills,
+  levels,
 }: ChapterEventChoiceInput): SystemEventChoice[] {
   const order = chapterOrder(chapters);
   const rank = (chapterId: string | null) =>
@@ -126,6 +207,7 @@ export function chapterEventChoices({
       if (to <= from) continue;
 
       const points = (to - from) * (rule?.points_per_level ?? 0);
+      const stats = statMovesAcrossLevels(event.actor_id, from, to, levels);
 
       choices.push({
         id: event.id,
@@ -138,6 +220,9 @@ export function chapterEventChoices({
           levelTo: String(to),
           points: points > 0 ? String(points) : '',
           body: `${actor} is paid ${formatCount(amount)} XP in ${chapterName}.`,
+          // Left off rather than left empty, so a box read from an award that
+          // moved no stat carries no stat rows at all.
+          ...(stats.length > 0 ? { stats } : {}),
         },
       });
 
@@ -233,6 +318,89 @@ export function chapterEventChoices({
   }
 
   return choices;
+}
+
+// ---- which chapters the picker lists -------------------------------------
+
+// A card belongs to one scene, so the picker offers that scene's events. A scene
+// with nothing to write yet would leave an empty picker, and a box written beside
+// it is usually announcing what happened on the way into it or on the way out —
+// so the chapters either side are added first, then the ones outside those, until
+// there is something to write. The whole story is the last resort, not the first
+// fallback.
+
+export interface NearbyChapter {
+  chapterId: string;
+  // “Ch. 3 · The Drowned Stair”, or the name alone for a chapter with no number.
+  title: string;
+}
+
+export interface ChapterEventListing {
+  choices: SystemEventChoice[];
+  // The chapter the card belongs to, the chapters beside it, or every chapter.
+  scope: 'chapter' | 'nearby' | 'all';
+  // The chapters a 'nearby' list drew on, in reading order, so the note can name
+  // them instead of saying “nearby” and leaving the author to guess.
+  nearby: NearbyChapter[];
+}
+
+const chapterTitle = (chapter: OrderedChapter) => {
+  const name = chapter.data.label ?? 'A chapter';
+
+  return chapter.data.chapterSeq != null ? `Ch. ${chapter.data.chapterSeq} · ${name}` : name;
+};
+
+export function chapterEventsFor({
+  choices,
+  chapterId,
+  chapters,
+}: {
+  choices: SystemEventChoice[];
+  chapterId: string;
+  chapters: readonly OrderedChapter[];
+}): ChapterEventListing {
+  const here = choices.filter(choice => choice.chapterId === chapterId);
+
+  if (here.length > 0) return { choices: here, scope: 'chapter', nearby: [] };
+
+  const order = chapterOrder(chapters);
+  const byId = new Map(chapters.map(chapter => [chapter.id, chapter]));
+  const placed = [...order.keys()].sort(
+    (left, right) => (order.get(left) ?? 0) - (order.get(right) ?? 0)
+  );
+  const at = order.get(chapterId);
+
+  // A chapter no card on the board claims has no neighbours to walk out to.
+  if (at == null || placed.length < 2) return { choices, scope: 'all', nearby: [] };
+
+  const beside = new Set<string>();
+
+  for (let ring = 1; ring < placed.length; ring += 1) {
+    for (const id of [placed[at - ring], placed[at + ring]]) {
+      if (id) beside.add(id);
+    }
+
+    const found = choices.filter(choice => choice.chapterId && beside.has(choice.chapterId));
+
+    if (found.length > 0) {
+      // Only the chapters that answered: one neighbour may be as empty as the
+      // chapter the box sits beside, and naming it would say nothing.
+      const drawn = new Set(found.map(choice => choice.chapterId));
+      const nearby = placed.flatMap(id => {
+        const chapter = byId.get(id);
+
+        return chapter && drawn.has(id) ? [{ chapterId: id, title: chapterTitle(chapter) }] : [];
+      });
+
+      return { choices: found, scope: 'nearby', nearby };
+    }
+
+    // Every other chapter is in the set, so widening further changes nothing:
+    // it is the whole story, and the note should say so.
+    if (beside.size >= placed.length - 1) break;
+  }
+
+  return { choices, scope: 'all', nearby: [] };
 }
 
 // The chapter a System box belongs to, read off the board rather than the story:

@@ -361,11 +361,17 @@ prefill is one draft write, so it is one Save and one Undo. The picker offers th
 chapter the box belongs to rather than the whole story: `chapterBesideCard` reads a
 drawn edge to a chapter first, then the nearest chapter card on the board, and the
 note under the picker says which chapter and why; a chapter with nothing writeable
-falls back to every chapter instead of an empty picker. That line also carries **Show
-every chapter** and **This chapter only**, so the narrowing is a default rather than a
-cage, and returning to a card starts narrow. The demo's typed gain card is drawn from
-chapter five, so the guide's picture shows the connected case. Remaining: a stat delta
-is still typed by hand because a scene event does not record one. **M**
+falls back instead of leaving an empty picker: first the chapters one ring out in the
+reading order, then the next ring, and the whole story only when no scene has anything
+writeable. That line also carries **Show every chapter** and the way back — **This
+chapter only**, or **Nearby chapters only** when it had widened — so the narrowing is a
+default rather than a cage, and returning to a card starts narrow. A level-up also
+writes the stat rows of the levels it crossed: one row per stat, aggregated across the
+crossing with `statKey` so a spelling difference does not split it, and a level holding
+only its gain prints the gain. The demo's typed gain card is drawn from chapter five, so
+the guide's picture shows the connected case. Remaining: an item the scene handed over
+still has no box kind, and an award that crossed no level is not offered even when the
+levels it paid into recorded a stat gain. **M**
 
 **5. Backups you can restore.** **Done.** The Backups dialog lists the launch
 copies newest first with date, size and file name, and restores one behind a

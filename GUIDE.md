@@ -417,6 +417,11 @@ Flavour text, any length.
   levels and `points_per_level × levels crossed`, a learned/ranked/evolved/sacrificed
   skill becomes a `skill` prefill with its rank and what it grew from, and an award
   that crossed nothing is dropped rather than announcing a level that did not move.
+  `statMovesAcrossLevels` reads the stat rows of the levels the award crossed — the
+  `stat_changes` on each `CharacterLevel` — into the same prefill, one row per stat
+  keyed by `statKey`, so a stat two crossed levels raised prints the whole move
+  (`12 → 14`) and a spelling difference does not split it in two; a level holding only
+  its gain writes the gain rather than a value the sheet never had.
   `applySystemPrefill` writes one into the message, dropping rows that belong to the
   kind being left so they cannot reappear on the next switch.  The choice is one
   `setNodeContentDraft`, so it is still one Save and one Undo. Each choice carries its
@@ -424,10 +429,13 @@ Flavour text, any length.
   to: a drawn edge to a chapter wins, otherwise the nearest chapter card by the
   distance between card centres, with the reading order settling a tie. The tab
   narrows the list to that chapter and hands the form the chapter's name and how it
-  was chosen; a chapter with nothing writeable falls back to the whole list rather
-  than an empty picker. The line under the picker carries **Show every chapter** and
-  **This chapter only**, which flip a tab-held flag rather than moving the card, and
-  the flag resets when another card is opened so every drawer starts narrow.
+  was chosen; `chapterEventsFor` widens it when that chapter has nothing writeable,
+  adding the chapters one ring out at a time before falling back to the whole story,
+  and reports `scope`/`nearby` so the note can name what is listed. The line under the
+  picker carries **Show every chapter** and its way back — **This chapter only**, or
+  **Nearby chapters only** when the list had already widened — which flip a tab-held
+  flag rather than moving the card, and the flag resets when another card is opened so
+  every drawer starts narrow.
 - `SystemMessageForm.tsx` is the drawer's fields: the type selector, the
   **Write from a chapter event** picker with the line naming the chapter it is reading,
   and only the inputs that type asks for. It edits a parsed message and hands back a serialized

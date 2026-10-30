@@ -1268,6 +1268,54 @@ describe('the graph tab', () => {
       ).toBeInTheDocument();
     });
 
+    it('writes the stat gains the crossed levels recorded into the box', async () => {
+      const user = userEvent.setup();
+      const system = node('n-4', '[TIDAL LEDGER]', 'system', { content: 'Type: notice' });
+
+      const spies = open(
+        {
+          nodes: [system],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+          systemEventChoices: [
+            {
+              id: 'e-1',
+              chapterId: 'ch-3',
+              label: 'Ch. 3 · Ivy Marrow · 600 XP, level 2 → 3',
+              prefill: {
+                kind: 'level_up',
+                title: 'The Drowned Stair',
+                levelFrom: '2',
+                levelTo: '3',
+                points: '4',
+                stats: [{ name: 'Insight', from: '12', to: '13' }],
+              },
+            },
+          ],
+        },
+        { nodeContentDraft: 'Type: notice' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+
+      await user.selectOptions(within(box).getByLabelText('Write from a chapter event'), 'e-1');
+
+      expect(spies.rememberNodeDraft).toHaveBeenLastCalledWith('n-4', {
+        label: '[TIDAL LEDGER]',
+        content: [
+          'Type: level_up',
+          'Title: The Drowned Stair',
+          'Level: 2 → 3',
+          'Points: 4',
+          'Stat: Insight | 12 → 13',
+        ].join('\n'),
+      });
+      expect(within(box).getByLabelText('Stat 1 name')).toHaveValue('Insight');
+      expect(within(box).getByText('Insight: 12 → 13')).toBeInTheDocument();
+      expect(within(box).getByText('+1')).toHaveClass('system-box-delta');
+    });
+
     it('writes a box from a chapter event the scene already logged', async () => {
       const user = userEvent.setup();
       const system = node('n-4', '[TIDAL LEDGER]', 'system', { content: 'Type: notice' });
@@ -1439,7 +1487,58 @@ describe('the graph tab', () => {
       ).not.toBeInTheDocument();
     });
 
-    it('lists every chapter when the one beside the box has nothing logged', () => {
+    it('offers the chapters either side when its own has nothing logged', async () => {
+      const user = userEvent.setup();
+      const system = placed('system', 'n-9', '[TIDAL LEDGER]', 780);
+      const chapters = [
+        placed('chapter', 'n-1', 'The Low Tide', 0, 1),
+        placed('chapter', 'n-2', 'The Drowned Stair', 400, 2),
+        placed('chapter', 'n-3', 'The Ninth Bell', 800, 3),
+        placed('chapter', 'n-4', 'The Tally', 1200, 4),
+        placed('chapter', 'n-5', 'After the Bell', 1600, 5),
+      ];
+
+      open(
+        {
+          nodes: [...chapters, system],
+          edges: [],
+          selectedNode: system,
+          selectedNodeId: system.id,
+          nodeLabelDraft: system.data.label,
+          systemEventChoices: [
+            chapterChoice('e-1', 'n-1', 'Ch. 1 · Ivy Marrow · 600 XP, level 1 → 2'),
+            chapterChoice('e-2', 'n-2', 'Ch. 2 · Ivy Marrow · 600 XP, level 2 → 3'),
+            chapterChoice('e-4', 'n-4', 'Ch. 4 · Ivy Marrow · learns Salt-Sight'),
+          ],
+        },
+        { nodeContentDraft: 'Type: notice' }
+      );
+
+      const box = screen.getByRole('region', { name: 'System box' });
+      const picker = within(box).getByLabelText('Write from a chapter event');
+
+      // The scene it sits beside has nothing to write, so the two scenes either
+      // side of it are offered — not the whole story.
+      expect(within(picker).queryByRole('option', { name: /Ch\. 1/ })).not.toBeInTheDocument();
+      expect(within(picker).getByRole('option', { name: /Ch\. 2/ })).toBeInTheDocument();
+      expect(within(picker).getByRole('option', { name: /Ch\. 4/ })).toBeInTheDocument();
+      expect(
+        within(box).getByText(
+          'Nothing is logged in Ch. 3 · The Ninth Bell yet, so Ch. 2 · The Drowned Stair and Ch. 4 · The Tally are listed.'
+        )
+      ).toBeInTheDocument();
+
+      await user.click(within(box).getByRole('button', { name: 'Show every chapter' }));
+
+      expect(within(picker).getByRole('option', { name: /Ch\. 1/ })).toBeInTheDocument();
+      expect(within(box).getByText('Every chapter, not just Ch. 3 · The Ninth Bell.')).toBeInTheDocument();
+
+      await user.click(within(box).getByRole('button', { name: 'Nearby chapters only' }));
+
+      expect(within(picker).queryByRole('option', { name: /Ch\. 1/ })).not.toBeInTheDocument();
+    });
+
+    it('lists the neighbour when it holds every event the story has', () => {
       const system = placed('system', 'n-4', '[TIDAL LEDGER]', 0);
       const first = placed('chapter', 'n-1', 'The Low Tide', 0, 1);
       const second = placed('chapter', 'n-2', 'The Drowned Stair', 900, 2);
@@ -1461,13 +1560,19 @@ describe('the graph tab', () => {
       const box = screen.getByRole('region', { name: 'System box' });
 
       // The near chapter has nothing to write, so the picker stays useful and
-      // says why it is showing more than one scene.
+      // says why it is showing another scene.
       expect(within(box).getByRole('option', { name: /Ch\. 2/ })).toBeInTheDocument();
       expect(
         within(box).getByText(
-          'Ch. 1 · The Low Tide has nothing logged to write yet, so every chapter is listed.'
+          'Nothing is logged in Ch. 1 · The Low Tide yet, so Ch. 2 · The Drowned Stair is listed.'
         )
       ).toBeInTheDocument();
+
+      // That neighbour is the whole story, so there is nothing left to widen to
+      // and no press is offered.
+      expect(
+        within(box).queryByRole('button', { name: 'Show every chapter' })
+      ).not.toBeInTheDocument();
     });
 
     it('keeps the plainer notes box off a system card', () => {

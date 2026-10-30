@@ -22,7 +22,7 @@ import { CardSections } from './CardSections';
 import { CopySystemBoxButton, SystemBoxFace } from './SystemBox';
 import { SystemMessageForm } from './SystemMessageForm';
 import { serializeSystemMessage, systemMessageOf } from './systemMessage';
-import { chapterBesideCard } from './systemEvents';
+import { chapterBesideCard, chapterEventsFor } from './systemEvents';
 import type { SystemEventChoice } from './systemEvents';
 import {
   CARD_DRAG_TYPE,
@@ -353,33 +353,44 @@ export function GraphTab({
     setShowEveryChapter(false);
   }, [selectedNodeId]);
 
-  // A chapter with nothing logged yet would leave an empty picker, so the whole
-  // story is offered then, and the note under it says why.
+  // A chapter with nothing logged yet would leave an empty picker, so the
+  // chapters either side of it are offered first and the whole story only when
+  // those are empty too. The note under the picker says which it did, and its own
+  // press opens every chapter without moving the card.
   const systemEventListing = React.useMemo(() => {
     if (!systemEventScope) return { choices: systemEventChoices, scope: null };
 
-    const inChapter = systemEventChoices.filter(
-      choice => choice.chapterId === systemEventScope.chapterId
-    );
-
-    const scope = (showingAll: boolean) => ({
-      ...systemEventScope,
-      fellBack: false,
-      showingAll,
-      onToggleAll: setShowEveryChapter,
+    const listing = chapterEventsFor({
+      choices: systemEventChoices,
+      chapterId: systemEventScope.chapterId,
+      // The same board the near chapter was read from, so the ring of chapters
+      // either side of it is the one the author can see.
+      chapters: nodes,
     });
 
-    if (inChapter.length === 0) {
-      return {
-        choices: systemEventChoices,
-        scope: { ...systemEventScope, fellBack: true, showingAll: false, onToggleAll: setShowEveryChapter },
-      };
-    }
+    // Every writeable event is already listed, so a press to widen would add
+    // nothing and is not drawn — whether the list came from the whole story or
+    // from neighbours that happen to hold all of it.
+    const widenable = listing.choices.length < systemEventChoices.length;
+    const widened = widenable && showEveryChapter;
 
-    return showEveryChapter
-      ? { choices: systemEventChoices, scope: scope(true) }
-      : { choices: inChapter, scope: scope(false) };
-  }, [systemEventChoices, systemEventScope, showEveryChapter]);
+    return {
+      choices: widened ? systemEventChoices : listing.choices,
+      scope: {
+        ...systemEventScope,
+        scope: widened ? ('all' as const) : listing.scope,
+        nearby: listing.nearby.map(chapter => chapter.title),
+        escapeLabel: !widenable
+          ? null
+          : widened
+            ? listing.scope === 'nearby'
+              ? 'Nearby chapters only'
+              : 'This chapter only'
+            : 'Show every chapter',
+        onToggleAll: setShowEveryChapter,
+      },
+    };
+  }, [systemEventChoices, systemEventScope, showEveryChapter, nodes]);
 
   const writeNodeContent = (content: string) => {
     setNodeContentDraft(content);

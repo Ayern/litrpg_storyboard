@@ -2389,8 +2389,18 @@ function App() {
         progress: storyCharacterProgress,
         rules: storyGrowthRules,
         skills: storySkills,
+        // Where a level's stat gains are written, so an award can announce the
+        // gains of every level it crossed instead of only the level numbers.
+        levels: storyLevels,
       }),
-    [chapterEventsByChapter, chapterNodes, storyCharacterProgress, storyGrowthRules, storySkills]
+    [
+      chapterEventsByChapter,
+      chapterNodes,
+      storyCharacterProgress,
+      storyGrowthRules,
+      storySkills,
+      storyLevels,
+    ]
   );
 
   // The skills the sheets place in a chapter, which a chapter card's ledger

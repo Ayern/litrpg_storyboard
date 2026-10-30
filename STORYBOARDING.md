@@ -253,6 +253,14 @@ story's own growth rule, so an announcement cannot claim a level the ledger did 
 pay for. An XP award that did not carry a level is not offered at all, and an item
 the scene handed over is left to you — no box kind is an inventory row.
 
+A level-up also carries the stat rows those levels recorded. If level three gained
+`Insight 1` and left the sheet at 13, choosing the award that crossed it writes
+`Insight 12 → 13` into the box, and an award that crossed three levels writes one row
+per stat rather than the same name three times: the first gain's start and the last
+one's finish. A level that recorded only its gain prints as the gain (`Agility +2`)
+rather than a value the sheet never held, and a stat whose name was spelled
+differently at two levels is still one stat.
+
 The picker answers for one chapter, not the whole story. A box belongs to the scene
 it was written for, so a connection between the card and a chapter settles it — draw
 the line and that is the chapter. With no line to read, the chapter card nearest on
@@ -264,12 +272,21 @@ under the picker names the chapter and which of the two reasons chose it:
 - `From Ch. 2 · The Drowned Stair, the nearest chapter card on the board.`
 
 Move the card, or draw a line, and the picker moves with it. If that chapter has
-nothing logged that a box can announce, every chapter is listed instead — an empty
-picker would be worse than a wider one — and the note says so.
+nothing logged that a box can announce, the chapters either side of it in the
+reading order are offered instead — a box written beside an empty scene is usually
+announcing what happened on the way into it or on the way out. If those are empty too
+it walks out another ring, and only when no scene in the story has anything writeable
+is the whole story listed. An empty picker would be worse than a wider one, and the
+note names what it widened to:
+
+- `Nothing is logged in Ch. 3 · The Ninth Bell yet, so Ch. 2 · The Drowned Stair and Ch. 4 · The Tally are listed.`
 
 Narrowing is a default, not a cage. **Show every chapter** on that line lists every
-scene in the story without moving the card, and **This chapter only** narrows it back;
-opening another card starts narrow again.
+scene in the story without moving the card, and **This chapter only** narrows it back —
+or **Nearby chapters only** when the list had already widened to reach a neighbour.
+Opening another card starts narrow again, and when the list already holds every
+writeable event in the story the press is not offered at all, because it would add
+nothing.
 
 Everything stays editable afterwards: the picker writes the fields, it does not lock
 them. A box written this way is still one Save and one Undo.
